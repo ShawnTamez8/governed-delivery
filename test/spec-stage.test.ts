@@ -30,6 +30,23 @@ function fixtureExecutor(scriptPath: string): ExecutorDefinition {
   };
 }
 
+/**
+ * The fixture source, normalized at the read boundary.
+ *
+ * These tests build scratch executors by substituting into the fixture's own
+ * text, several of them across multi-line targets. Under a CRLF working tree
+ * — which `core.autocrlf=true` produces on any fresh checkout — those
+ * substitutions silently no-match and the test then fails on a wrong-stage
+ * outcome that never mentions line endings. That is hazard 12: two checkouts
+ * of the same commit behaving as different products, diagnosed as a
+ * regression. `normalizeText` is the same tolerance the spec hash and the
+ * signing tool already apply; the fixture source is one more reader of bytes
+ * that crossed a checkout.
+ */
+function fixtureSource(): string {
+  return normalizeText(readFileSync(FIXTURE, "utf8"));
+}
+
 interface Ctx {
   store: Store;
   root: string;
@@ -87,7 +104,7 @@ test("blocked on budget exhaustion", async () => {
     // Scratch fixture whose reviewer branch ignores REVISED-spec, so every
     // round reports the material finding.
     const scratch = join(root, "emit-spec-stage-always-finds.mjs");
-    const source = readFileSync(FIXTURE, "utf8").replace(
+    const source = fixtureSource().replace(
       "const findings = stdin.includes(\"REVISED-spec\")",
       "const findings = false && stdin.includes(\"REVISED-spec\")"
     );
@@ -119,7 +136,7 @@ test("dedup: two reviewers reporting the same identity produce one row", async (
 test("an invalid author result aborts terminally and writes no spec", async () => {
   await withRun(async ({ store, root, runId }) => {
     const scratch = join(root, "emit-spec-stage-bogus.mjs");
-    const source = readFileSync(FIXTURE, "utf8").replace(
+    const source = fixtureSource().replace(
       '    status: "proposed",\n    agent: "spec-author",',
       '    status: "bogus",\n    agent: "spec-author",'
     );
@@ -137,7 +154,7 @@ test("an invalid author result aborts terminally and writes no spec", async () =
 test("a null finding entry aborts terminally naming the reviewer", async () => {
   await withRun(async ({ store, root, runId }) => {
     const scratch = join(root, "emit-spec-stage-null-finding.mjs");
-    const source = readFileSync(FIXTURE, "utf8").replace(
+    const source = fixtureSource().replace(
       '    : [\n        {\n          location: "## Acceptance criteria",',
       '    : [null, {\n          location: "## Acceptance criteria",'
     );
@@ -153,7 +170,7 @@ test("a null finding entry aborts terminally naming the reviewer", async () => {
 test("a reviewer returning blocked with empty findings cannot pass the gate by absence", async () => {
   await withRun(async ({ store, root, runId }) => {
     const scratch = join(root, "emit-spec-stage-blocked-reviewer.mjs");
-    const source = readFileSync(FIXTURE, "utf8").replace(
+    const source = fixtureSource().replace(
       '    status: "proposed",\n    agent: agentId,',
       '    status: "blocked",\n    agent: agentId,'
     );
@@ -169,7 +186,7 @@ test("a reviewer returning blocked with empty findings cannot pass the gate by a
 test("an invalid intentKey aborts terminally naming the reviewer", async () => {
   await withRun(async ({ store, root, runId }) => {
     const scratch = join(root, "emit-spec-stage-bad-key.mjs");
-    const source = readFileSync(FIXTURE, "utf8").replace(
+    const source = fixtureSource().replace(
       'intentKey: "missing-traceability",',
       'intentKey: "Bad Key!",'
     );
@@ -184,7 +201,7 @@ test("an invalid intentKey aborts terminally naming the reviewer", async () => {
 test("a spec whose change_kind contradicts the run aborts terminally", async () => {
   await withRun(async ({ store, root, runId }) => {
     const scratch = join(root, "emit-spec-stage-kind-mismatch.mjs");
-    const source = readFileSync(FIXTURE, "utf8").replace("change_kind: feature", "change_kind: defect_fix");
+    const source = fixtureSource().replace("change_kind: feature", "change_kind: defect_fix");
     writeFileSync(scratch, source);
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, false);
@@ -197,7 +214,7 @@ test("a spec whose change_kind contradicts the run aborts terminally", async () 
 test("a high-risk spec convenes the full three-reviewer panel", async () => {
   await withRun(async ({ store, root, runId }) => {
     const scratch = join(root, "emit-spec-stage-high-risk.mjs");
-    const source = readFileSync(FIXTURE, "utf8").replace("src/a1.ts", "src/agents/evil.ts");
+    const source = fixtureSource().replace("src/a1.ts", "src/agents/evil.ts");
     writeFileSync(scratch, source);
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
     // The gate outcome depends on findings; the panel must never be the
@@ -235,7 +252,7 @@ test("the panel is sized from distinct artifacts, not repeated ones", async () =
   // then bind a risk no panel of that size ever satisfied.
   await withRun(async ({ store, root, runId }) => {
     const scratch = join(root, "emit-spec-stage-duplicates.mjs");
-    const source = readFileSync(FIXTURE, "utf8")
+    const source = fixtureSource()
       .replace(
         'const spec = stdin.includes("## Revision") ? REVISED_SPEC : BASE_SPEC;',
         "const spec = DUPLICATE_SPEC;"

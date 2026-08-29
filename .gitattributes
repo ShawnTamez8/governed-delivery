@@ -1,0 +1,10 @@
+# Source and fixtures are read byte-for-byte by tests that substitute into
+# them, and by hashes that must reproduce across machines. A CRLF working tree
+# makes those comparisons silently no-match (hazard 12: two checkouts of one
+# commit behaving as different products). Pin the working-tree form so
+# core.autocrlf cannot reintroduce it.
+*.ts    text eol=lf
+*.mjs   text eol=lf
+*.sql   text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
