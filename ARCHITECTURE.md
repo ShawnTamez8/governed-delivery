@@ -1,6 +1,8 @@
-# Governed Delivery — Architecture
+# BuildWorks — Architecture
 
-**Status:** Design, pre-implementation. Written 2026-08-28.
+**Status:** Reconciled. Design, pre-implementation. Written 2026-08-28.
+
+**System name:** Configurable; default BuildWorks.
 
 **Purpose of this document.** This is the design, and the only source of truth
 for it. Every constraint here is binding; where one looks arbitrary, the reason
@@ -11,6 +13,8 @@ is stated beside it. Companion: `docs/hazards.md`.
 ## 1. The one principle
 
 > Agents propose. The system decides.
+
+Multi-agent software delivery model that automates and coordinates the SDLC from requirements through release. 
 
 Agents reason, draft, implement, review, and summarize. They never approve their
 own work, advance authoritative state, bypass policy, or write without
@@ -54,7 +58,9 @@ read.
 2. **One surface.** A CLI that calls the core directly. No RPC layer, no editor
    extension, no second entry point that can drift.
 3. **One schema per thing.** No unions, no version discriminators, no
-   compatibility handling. Nothing has shipped; change the shape and delete the
+   compatibility handling, and no version identifiers embedded in component
+   names or contracts. A stable name plus a content hash is identity; nothing
+   pins a version. Nothing has shipped; change the shape and delete the
    old one.
 4. **No abstraction without two real implementations.** Extract an interface
    when the second case exists, never in anticipation of it.
@@ -74,7 +80,7 @@ validated by a deterministic gate, writes an immutable record, and hands off.
 
 ```
 run
- └── stage(n)  input_stage_id -> output
+ └── stage(n)  input_stage_id -> output_ref
       ├── agent_run(s)      what each agent saw, produced, and cost
       ├── findings          typed, identity-stable
       └── gate result       deterministic, not a reviewer's verdict
@@ -84,9 +90,10 @@ There is no separate artifact lifecycle to keep consistent. A spec is not
 "planned"; either the plan stage produced an approved output or it did not. This
 single change removes the largest source of complexity in the previous design.
 
-**The handoff is a row, not an implicit sequence.** Stage N's output ID is
-literally stage N+1's input. A run is then a chain you can walk, the audit is a
-join, and the cost dashboard is one query.
+**The handoff is a row, not an implicit sequence.** A stage row carries its
+input's ID and the reference to its own output; stage N's `output_ref` is
+literally what stage N+1 was handed. A run is then a chain you can walk, the
+audit is a join, and the cost dashboard is one query.
 
 ## 5. Stage sequence
 
@@ -137,11 +144,14 @@ must never write.
 A git repository with a clean working tree at run start. The tree must still be
 clean between runs, which is a constraint on the ignore rules rather than on the
 operator: if anything the system writes during a run is tracked, every run ends
-dirty and the next one cannot start. Decide once, and prefer writing run state
-to an ignored location and committing only projections.
+dirty and the next one cannot start. The rule is simple — the system commits
+everything it writes to the run branch (projections and applied patches) and
+writes run state only to the ignored `.governance/` directory.
 
-Verification commands must be configured and must actually run. A stage that
-cannot verify fails closed.
+Verification commands live in a committed `governed.yaml` at the repository
+root, authored by the operator before the first run. The verification stage
+finds its commands there and must actually run them; a stage that cannot
+verify fails closed. `governed.yaml` is never part of any run's scope.
 
 ### What the system writes
 
@@ -159,7 +169,7 @@ Agents may never write these, and the prohibition is enforced at the point a
 patch is applied rather than requested in a prompt:
 
 - agent definitions and the executor definition;
-- policy and configuration the run snapshotted;
+- `governed.yaml`, policy, and configuration the run snapshotted;
 - the audit chain and anything under `.governance/`;
 - the design document that is the run's own input.
 
@@ -169,9 +179,13 @@ because a prompt-level instruction is a request and this is a rule.
 
 ### Branch and worktree isolation
 
-Delivery happens on a retained branch, in a worktree created for the run, never
-on the default branch and never in the operator's working copy. The base commit
-is recorded at run start and every proposed patch is validated against it.
+Delivery happens on a retained branch named `gov/<slug>/<run-id>`, in a
+worktree created for the run under `.governance/worktrees/<run-id>`, never on
+the default branch and never in the operator's working copy. The base commit
+is recorded at run start and anchors the run's branch. A patch binds to the
+head in effect when it is proposed, and re-validation at apply time refuses it
+if head has moved in any path it touches since proposal. Only the system moves
+the run's branch, so the only head movement a patch can see is its own run's.
 
 Retain the worktree after the run ends, including when it ends blocked. A failed
 run whose evidence has been deleted cannot be diagnosed, and the branch is the
@@ -189,8 +203,9 @@ recommended transition.
 Two properties are easy to lose and expensive to omit.
 
 - **A proposed patch is bound to a base commit.** Required, not optional.
-  Approval re-validates the diff against the current head, so a patch proposed
-  against a stale tree is refused rather than applied.
+  Re-validation at apply time refuses the patch if the branch has moved in any
+  path it touches since proposal, so a patch built on a stale tree is never
+  applied.
 - **Deletion is schema-legal but refused.** Accept the field so the schema does
   not churn later; reject the operation until its semantics are designed.
 
@@ -279,8 +294,14 @@ selectReviewers(stage, risk, spec) -> Agent[]
 ```
 
 Required specialties first, then ranked relevance to fill remaining slots, with
-role separation applied. Roughly eighty lines, trivially testable. Two reviewers
-per reviewed stage is a reasonable default; one at low risk.
+role separation applied. Roughly eighty lines, trivially testable. Panel size
+is configuration, resolved at run start and frozen in the profile: a count per
+risk level. Defaults: two reviewers at standard risk, one at low risk.
+
+Risk is computed once, deterministically, at intake — from the spec's
+`changeKind`, the size of its declared scope, and whether it touches protected
+paths. It sizes the panel and travels into the authorization for the operator
+to sign. An agent never assesses its own risk.
 
 Keep it free of model routing and telemetry concerns. Entangling selection with
 semantic model tiers and capability preflight is what made the previous
@@ -329,7 +350,7 @@ telemetry:                  # what this harness can actually report
   tokenUsage: true
   sessionCost: false
 sandbox:
-  allowedPaths: [docs/features/**]
+  allowedPaths: [docs/features/**]   # document stages; implementation: the signed scope
   deniedPaths: [.governance/**]
   commandAllowlist: []
   idleTimeoutSeconds: 600
@@ -339,7 +360,9 @@ sandbox:
 
 Capabilities and telemetry are declarations the system checks against, not
 documentation. A stage requiring a capability no configured executor declares
-must fail at configuration time, not at the moment it is dispatched.
+must fail at configuration time, not at the moment it is dispatched. Allowed
+paths are stage-scoped: document stages write under `docs/features/**`; the
+implementation stage writes only inside the run's signed scope.
 
 ### Invocation
 
@@ -391,15 +414,35 @@ gate itself.
 
 **`spec_review`.** Persist immutable source and policy intake first. Dispatch
 the author and the review panel. A material finding or any change to governed
-content triggers a closure pass. The deterministic gate decides completion.
+content triggers a closure pass — one further round by the same panel, charged
+against the remediation budget, after which the gate decides again. The
+reviewer assigns severity; materiality is a severity threshold set in
+configuration and frozen in the profile, never a reviewer's self-assessment.
+The deterministic gate decides completion.
 
-**`awaiting_approval`.** The only human gate. One signed authorization binds
-feature ID, spec version and content hash, starting commit, profile hash, risk,
-expiry, and scope. Approval re-checks that policy has not changed since intake.
+**`awaiting_approval`.** The only human gate. One signed authorization — an
+Ed25519 signature by the operator, verified by the gate against a public key
+held in machine-local configuration, never in a repository — binds feature ID,
+spec content hash, starting commit, profile hash, risk, expiry, and scope. The
+gate re-checks that policy has not changed since intake before honoring it.
 Worker sessions cannot resolve it and never receive signing secrets.
 
+The **profile** is the frozen record of everything the run resolved at start —
+model map, limits, policy, agent definitions, verification config, panel
+sizes, and system name — stored under `.governance/profiles/<run>/` with its
+hash on the run row. Policy is
+the subset of the profile that gates consult; the re-check compares the
+profile's policy hash against the policy in force. The **scope** the operator
+signs is the set of paths and artifacts the spec declares; the gate computes
+it at this stage, and the operator signs exactly that.
+
+The **system name** is configuration, resolved at run start and frozen in the
+profile, defaulting to BuildWorks. The CLI, projection headers, and
+notifications read it; nothing functional depends on it.
+
 **After approval.** One authorization covers the rest. Each patch is validated
-against the signed scope and applied without a fresh human decision. A stage
+against the signed scope and re-validated against its base commit, then applied
+without a fresh human decision. A stage
 that fails its requirement blocks the run rather than requesting a new
 signature.
 
@@ -510,6 +553,8 @@ report lives there.
 .governance/
   state.db          authoritative: runs, stages, agent runs, findings, audit
   raw/<run>/...     retained raw model output, one file per invocation
+  content/<hash>    content-addressed overflow for oversized prompts and results
+  profiles/<run>/   the frozen profile snapshot for a run
   migrations/       ordered .sql files, applied at startup
 ```
 
@@ -530,9 +575,7 @@ several repositories and answer "what is in flight across everything" without a
 central service. If a project's runs must be portable, export rows rather than
 sharing a file.
 
-**Backup is copying one file.** That is a genuine advantage over the previous
-design's state spread across JSON trees, a separate checkpoint database, and
-git.
+**Backup is copying one file.** A checkpoint database, and git.
 
 ### The evidence model
 
@@ -544,15 +587,20 @@ The idea that justifies the system to anyone outside it:
 Self-reported cost is not evidence. Read it from the harness transcript.
 
 ```sql
-run(id, project, feature_id, slug, change_kind, status, created_at, updated_at)
-stage(id, run_id, kind, ordinal, input_stage_id, status, gate_result, started_at, ended_at)
+run(id, project, feature_id, slug, change_kind, status, profile_ref, created_at, updated_at)
+stage(id, run_id, kind, ordinal, input_stage_id, output_ref, status, gate_result, started_at, ended_at)
 agent_run(id, stage_id, agent, role, executor, requested_model, effective_model,
           fallback, tokens_in, tokens_out, cache_read, cache_write, cost,
           duration_ms, input_hash, output_hash, raw_output_ref, independence)
 finding(id, stage_id, agent_run_id, severity, intent_key, subject, location, disposition)
-handoff(id, from_stage_id, to_stage_id, payload_ref, created_at)
+approval(id, run_id, feature_id, spec_hash, starting_commit, profile_hash, risk,
+         scope, expires_at, signature, signer, created_at)
 audit(id, run_id, stage_id, actor, actor_type, action, summary, hash, prev_hash, created_at)
 ```
+
+`run.status` is one of `in_progress`, `blocked`, `completed`; `stage.status` one
+of `pending`, `in_progress`, `passed`, `blocked`, `failed`; `gate_result` one of
+`pass`, `block`. A stage whose remediation budget is exhausted blocks the run.
 
 Cost per stage, per feature, per agent, and historical estimation all fall out
 of this without a separate service. Dashboards and notifications read it; they
@@ -621,7 +669,11 @@ cause.
 
 One writer per repository, via a lock file. A second invocation fails fast with
 a clear diagnostic rather than corrupting state. Optimistic concurrency on a
-version field for content writes. Audit appends serialized under the same lock.
+per-row revision counter for content writes — a counter, not a schema version.
+Audit appends serialize under the database's single-writer lock, never the
+repository lock: one database serves several repositories, so a SQLite busy
+timeout with a bounded retry keeps a cross-project append waiting instead of
+failing.
 
 Run state is machine-local and resumable. Resume reads authoritative state, never
 a human-readable projection.
@@ -638,14 +690,16 @@ silent truncation. A truncated prompt produces confidently wrong work at full
 price.
 
 - **Prompt size.** Cap it. An oversized prompt must go somewhere explicit — a
-  content-addressed file the invocation references — rather than being cut. If
-  it cannot be delivered intact, refuse the invocation.
+  content-addressed file under `.governance/content/<hash>` that the
+  invocation references — rather than being cut. If it cannot be delivered
+  intact, refuse the invocation.
 - **Result size.** Cap it, refuse above the cap, and retain the raw bytes anyway
   so the refusal is diagnosable.
 - **Concurrency.** One writer per repository, enforced by a lock. A second
   invocation fails fast with a clear diagnostic rather than interleaving writes.
-- **Remediation rounds.** A bounded budget per reviewed stage. Exhausting it
-  blocks; it does not silently accept.
+- **Remediation rounds.** A bounded budget per reviewed stage, set in
+  configuration and frozen in the profile — default three rounds, counting
+  closure passes. Exhausting it blocks; it does not silently accept.
 - **Invocation time.** An inactivity budget with a separate absolute ceiling,
   as "Harness invocation" describes.
 - **Run duration.** A ceiling, because an unattended run that cannot finish
@@ -676,7 +730,9 @@ from a mirror.
 
 **Keep a checker that re-derives documentation facts from source.** Counts,
 versions, stage sequences, and paths, verified mechanically. Roughly a hundred
-lines gets most of the value. Prose goes stale; a checker does not.
+lines gets most of the value. Prose goes stale; a checker does not. Give it
+one more assertion: every table the design prose names exists in the schema
+block.
 
 ## 22. Known hazards
 
