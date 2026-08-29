@@ -224,3 +224,47 @@ test("an expiry exactly at the ceiling is honoured, not refused by a millisecond
   const now = Date.parse("2026-08-29T00:00:00.000Z");
   assert.deepEqual(validateExpiry("2026-08-30T00:00:00.000Z", now, 86400), { ok: true });
 });
+
+test("an impossible date is refused rather than silently rolled over", () => {
+  // Date.parse("2026-02-30T00:00:00.000Z") returns a real timestamp that has
+  // rolled into March, so the ISO regex plus Number.isNaN cannot reject it.
+  // An operator who typed a date that does not exist must be told, not given
+  // an authorization expiring on a day they did not choose.
+  const now = Date.parse("2026-01-01T00:00:00.000Z");
+  for (const impossible of [
+    "2026-02-30T00:00:00.000Z",
+    "2026-02-29T00:00:00.000Z", // 2026 is not a leap year
+    "2026-04-31T00:00:00.000Z",
+  ]) {
+    const r = validateExpiry(impossible, now, 86400 * 400);
+    assert.equal(r.ok, false, `${impossible} must be refused`);
+    assert.match(
+      (r as { reason: string }).reason,
+      /--expires must be an ISO 8601 UTC timestamp/,
+      `${impossible} must be refused as malformed`
+    );
+  }
+});
+
+test("a real date without milliseconds still validates", () => {
+  // The round-trip comparison must not reject the shorter ISO form.
+  const now = Date.parse("2026-02-27T00:00:00.000Z");
+  assert.deepEqual(validateExpiry("2026-02-28T00:00:00Z", now, 86400 * 400), { ok: true });
+});
+
+test("a field carrying a newline cannot forge a payload line", () => {
+  // Interpolated raw, this produces a payload with two `risk:` lines that
+  // still signs and verifies: the operator reads one risk, a parser could
+  // take the other.
+  assert.throws(
+    () => approvalPayload({ ...BINDING, featureId: "f-1\nrisk: low" }),
+    /approval payload field featureId contains a line break or control character/
+  );
+});
+
+test("a scope entry carrying a newline is refused too", () => {
+  assert.throws(
+    () => approvalPayload({ ...BINDING, scope: ["src/a.ts", "src/b.ts\nsrc/evil.ts"] }),
+    /approval payload field scope\[1\] contains a line break or control character/
+  );
+});

@@ -64,3 +64,21 @@ test("computeScope preserves the case the spec declared", () => {
   // signed scope has to read back as the spec's own text.
   assert.deepEqual(computeScope(["Src/Agents/x.ts"]), ["Src/Agents/x.ts"]);
 });
+
+test("risk counts distinct artifacts, not repeated ones", () => {
+  // The panel is sized from this count and the operator signs the deduplicated
+  // scope. If risk used the raw list, a spec repeating a path could cross the
+  // >10 threshold and bind a risk the deduplicated scope never justified.
+  const distinct = Array.from({ length: 9 }, (_, i) => `src/a${i}.ts`);
+  const withDuplicates = [...distinct, "src/a0.ts", "src/a1.ts"]; // 11 raw, 9 distinct
+  assert.equal(computeScope(withDuplicates).length, 9);
+  assert.equal(
+    computeRisk("feature", computeScope(withDuplicates).length, false),
+    computeRisk("feature", distinct.length, false)
+  );
+  // And the raw count would have landed in a different band.
+  assert.notEqual(
+    computeRisk("feature", withDuplicates.length, false),
+    computeRisk("feature", computeScope(withDuplicates).length, false)
+  );
+});

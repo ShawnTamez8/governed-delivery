@@ -53,12 +53,12 @@
 
 **Steps:**
 
-- [ ] **Step 1: the failing test first**
+- [x] **Step 1: the failing test first**
   - Change: Add to `test/approval.test.ts` a case asserting `validateExpiry("2026-02-30T00:00:00.000Z", now, 86400)` is refused with the malformed-timestamp message, and the same for `"2026-02-29T00:00:00.000Z"` (2026 is not a leap year). Both currently pass validation: `Date.parse` returns a real timestamp that has silently rolled into March.
   - Verify: `node --test test/approval.test.ts`
   - Expected: the new case **fails** against the current code. Record this.
 
-- [ ] **Step 2: the round-trip check**
+- [x] **Step 2: the round-trip check**
   - Change: In `validateExpiry`, after `Date.parse` succeeds, re-serialize and compare. Build `const round = new Date(at).toISOString()`; when the input matched the no-milliseconds branch of `ISO_UTC`, compare against the input with `.000` inserted before the `Z`, otherwise against the input itself. On mismatch return the existing `--expires must be an ISO 8601 UTC timestamp such as 2026-08-30T12:00:00.000Z, got ${expiresAt}` refusal — from the operator's side an impossible date is a malformed one, and inventing a second message for it would mean two strings to keep in step.
   - Verify: `node --test test/approval.test.ts`
   - Expected: all pass, including the existing at-the-ceiling and expired cases.
@@ -76,22 +76,22 @@
 
 **Steps:**
 
-- [ ] **Step 1: the failing test first**
+- [x] **Step 1: the failing test first**
   - Change: In `test/approval.test.ts`, assert that a binding whose `featureId` is `"f-1\nrisk: low"` is refused by `approvalPayload`. Today it is interpolated raw, producing a payload carrying two `risk:` lines that still signs and verifies — the operator reads one risk and a parser could take the other.
   - Verify: `node --test test/approval.test.ts`
   - Expected: **fails** against the current code. Record this.
 
-- [ ] **Step 2: refuse at the payload builder**
+- [x] **Step 2: refuse at the payload builder**
   - Change: `approvalPayload` throws `approval payload field ${name} contains a line break or control character: ${JSON.stringify(value)}` when `featureId`, `specHash`, `startingCommit`, `profileHash`, `risk`, `expiresAt`, or any scope entry matches the control-character class `/[\u0000-\u001f\u007f]/` (write it with escapes, never literal bytes). A throw rather than a result union: every field is machine-derived by the time it reaches here, so a control character means an upstream validation hole, not operator error.
   - Verify: `node --test test/approval.test.ts`
   - Expected: passes.
 
-- [ ] **Step 3: refuse at the source**
+- [x] **Step 3: refuse at the source**
   - Change: `src/store.ts`'s `insertRun` validates `featureId` against `/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/`, throwing `invalid feature_id ${featureId}: must be 1-64 characters of letters, digits, dot, underscore, or hyphen, starting with a letter or digit`. This mirrors the `slug` validation immediately above it. `project` is deliberately not validated: it never enters the payload.
   - Verify: `node --test test/store.test.ts test/cli.test.ts test/spec-stage.test.ts test/approval-stage.test.ts`
   - Expected: all pass — every existing fixture uses `f-1` or `f`.
 
-- [ ] **Step 4: cover the refusal**
+- [x] **Step 4: cover the refusal**
   - Change: `test/store.test.ts` asserts `insertRun` refuses a `featureId` containing a newline and one of 65 characters, each naming the rule.
   - Verify: `node --test test/store.test.ts`
   - Expected: passes.
@@ -111,22 +111,22 @@ This task closes findings 3 and 9 together: they are the same miscount seen at t
 
 **Steps:**
 
-- [ ] **Step 1: risk from the deduplicated scope, on both sides**
+- [x] **Step 1: risk from the deduplicated scope, on both sides**
   - Change: In `src/spec-stage.ts` the `computeRisk` call at [spec-stage.ts:150](src/spec-stage.ts#L150) takes `computeScope(written.doc.declaredArtifacts).length` instead of `written.doc.declaredArtifacts.length`, importing `computeScope` from `./scope.ts` — the file already imports `touchesProtected` from there. Make the identical change in `src/approval-stage.ts`'s `buildBinding`, which currently passes `doc.value.declaredArtifacts.length`. Both sides must count the same set, or the risk the panel satisfied and the risk the operator signs diverge.
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 2: prove the miscount mattered**
+- [x] **Step 2: prove the miscount mattered**
   - Change: Add a case to `test/scope.test.ts` asserting that a declared-artifact list of eleven entries containing two duplicates produces the same risk as its nine distinct paths, rather than the higher band the raw count of eleven would produce. The `declaredArtifactCount > 10` term in `computeRisk` is what makes this observable.
   - Verify: `node --test test/scope.test.ts`
   - Expected: passes with the fix. Revert the argument to the raw length, confirm this case fails, restore. Record the break-it run.
 
-- [ ] **Step 3: the gate event carries what it gated**
+- [x] **Step 3: the gate event carries what it gated**
   - Change: The passing-gate audit call in `src/spec-stage.ts` becomes `audit(reviewStage.id, "spec.gate.pass", \`spec_review gate passed in round ${round}; specHash=${sha256Hex(normalizeText(specContent))}; risk=${risk}\`)`, importing `sha256Hex` and `normalizeText` from `./canonical.ts`. `specContent` is the variable already holding the content this round's panel reviewed; `risk` is the value from Step 1. Normalizing before hashing matches the gate side, which hashes `normalizeText(content)` — if only one side normalized, a CRLF checkout would break every approval.
   - Verify: `node --test test/spec-stage.test.ts`
   - Expected: the suite passes. If an existing assertion matches the old summary verbatim, update it to the new format rather than weakening it to a substring match.
 
-- [ ] **Step 4: the gate reads it back and refuses a mismatch**
+- [x] **Step 4: the gate reads it back and refuses a mismatch**
   - Change: In `buildBinding`, after the spec validates, read the run's most recent gate event with `SELECT * FROM audit WHERE run_id = ? AND action = 'spec.gate.pass' ORDER BY id DESC LIMIT 1` and extract both fields with `/specHash=([0-9a-f]{64}); risk=(low|standard|high)/`. Refuse with:
     - `run ${runId} has no spec.gate.pass audit event: the spec_review gate never recorded what it approved` when no row matches;
     - `run ${runId}'s spec.gate.pass event does not record a spec hash and risk` when a row exists but the pattern does not match — this is the path a database written before this change takes;
@@ -136,7 +136,7 @@ This task closes findings 3 and 9 together: they are the same miscount seen at t
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 5: cover every refusal**
+- [x] **Step 5: cover every refusal**
   - Change: `test/approval-stage.test.ts`'s fixture completes the `spec_review` stage directly through the store and writes no gate event, so it must gain a helper that appends a well-formed `spec.gate.pass` event — otherwise every existing success-path test now fails for the right reason at the wrong time. Then add cases for: no gate event at all; a gate event in the old prose format; a spec edited after the event was written; and a gate event recording `risk=low` for a spec that now computes `standard`.
   - Change: The existing test named "a spec edited after review fails the signature, because the payload moved" must be updated: the hash comparison now fires **before** signature verification, so the expected message changes. Assert the new message and rename the test — a spec change caught by name is a better diagnostic than a signature failure, and the test should say which one it is proving.
   - Verify: `node --test test/approval-stage.test.ts`
@@ -154,12 +154,12 @@ This task closes findings 3 and 9 together: they are the same miscount seen at t
 
 **Steps:**
 
-- [ ] **Step 1: the failing test first**
+- [x] **Step 1: the failing test first**
   - Change: Add a case where the spec on disk declares `change_kind: defect_fix` while the run row says `feature`. The spec stage refuses this at write time (the `written.doc.changeKind !== run.change_kind` guard in `src/spec-stage.ts`), but the gate never re-checks, so a spec edited after review can flip it — and section 14 makes `change_kind` the flag that requires a defect fix to carry regression coverage.
   - Verify: `node --test test/approval-stage.test.ts`
   - Expected: **fails** — the mismatch is not detected. Record this. Note that Task 3's spec-hash check will also fire on an edited spec, so this test must write the mismatched `change_kind` into the spec **before** the `spec.gate.pass` helper records its hash, isolating this guard from that one.
 
-- [ ] **Step 2: the check**
+- [x] **Step 2: the check**
   - Change: In `buildBinding`, immediately after `validateSpecDoc` succeeds, refuse with `the approved spec declares change_kind ${doc.value.changeKind}, but run ${runId} is ${run.change_kind}`.
   - Verify: `node --test test/approval-stage.test.ts`
   - Expected: all pass.

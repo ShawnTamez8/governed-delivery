@@ -7,7 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { approvalPayload } from "../src/approval.ts";
 import { approveRun, buildBinding } from "../src/approval-stage.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
-import { verifyAuditChain, type AuditRow } from "../src/audit.ts";
+import { appendAudit, verifyAuditChain, type AuditRow } from "../src/audit.ts";
 import { freezeProfile } from "../src/profile.ts";
 import { openStore, type Store } from "../src/store.ts";
 
@@ -27,11 +27,34 @@ change_kind: feature
 - It does the thing.
 `;
 
+/**
+ * What the spec_review gate writes when it passes. The approval gate reads it
+ * back to refuse an authorization binding a spec no panel gated, so a fixture
+ * that skips it is a run that was never actually reviewed.
+ */
+function writeGateEvent(
+  store: Store,
+  runId: number,
+  reviewStageId: number,
+  specContent: string,
+  risk = "low"
+): void {
+  appendAudit(store, {
+    runId,
+    stageId: reviewStageId,
+    actor: "system",
+    actorType: "cli",
+    action: "spec.gate.pass",
+    summary: `spec_review gate passed in round 1; specHash=${sha256Hex(normalizeText(specContent))}; risk=${risk}`,
+  });
+}
+
 interface Fixture {
   store: Store;
   root: string;
   runId: number;
   specPath: string;
+  reviewStageId: number;
   keyDir: string;
   privateKey: string;
   expiresAt: string;
@@ -42,7 +65,7 @@ interface Fixture {
  * spec and spec_review stages passed, profile frozen. No dispatch anywhere —
  * the gate must be reachable without spending anything.
  */
-function withFixture(fn: (f: Fixture) => void, opts: { spec?: string; commit?: string | null } = {}): void {
+function withFixture(fn: (f: Fixture) => void, opts: { spec?: string; commit?: string | null; risk?: string; gateSummary?: string | null } = {}): void {
   const root = mkdtempSync(join(tmpdir(), "bw-approve-"));
   const keyDir = mkdtempSync(join(tmpdir(), "bw-approve-key-"));
   const before = process.env.BW_APPROVAL_PUBLIC_KEY;
@@ -57,6 +80,23 @@ function withFixture(fn: (f: Fixture) => void, opts: { spec?: string; commit?: s
     store.completeStage(specStage.id, specPath, "pass");
     const reviewStage = store.insertStage(run.id, "spec_review", specStage.id);
     store.completeStage(reviewStage.id, specPath, "pass");
+    // SPEC declares two ordinary artifacts on a feature run, so the gate this
+    // fixture stands in for would have passed it at low risk. The success test
+    // pins that literal independently.
+    // The audit table is append-only by trigger, so a test cannot delete this
+    // event afterwards — the absent and malformed cases are configured here.
+    if (opts.gateSummary === undefined) {
+      writeGateEvent(store, run.id, reviewStage.id, opts.spec ?? SPEC, opts.risk ?? "low");
+    } else if (opts.gateSummary !== null) {
+      appendAudit(store, {
+        runId: run.id,
+        stageId: reviewStage.id,
+        actor: "system",
+        actorType: "cli",
+        action: "spec.gate.pass",
+        summary: opts.gateSummary,
+      });
+    }
 
     const frozen = freezeProfile(root, run.id, opts.commit === undefined ? COMMIT : opts.commit);
     store.setProfileRef(run.id, frozen.hash);
@@ -71,6 +111,7 @@ function withFixture(fn: (f: Fixture) => void, opts: { spec?: string; commit?: s
       root,
       runId: run.id,
       specPath,
+      reviewStageId: reviewStage.id,
       keyDir,
       privateKey: privateKey.export({ format: "pem", type: "pkcs8" }) as string,
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),
@@ -312,18 +353,107 @@ test("a spec that no longer validates is refused naming the schema failure", () 
   });
 });
 
-test("a spec edited after review fails the signature, because the payload moved", () => {
+test("a spec edited after review is refused by name, before the signature is even checked", () => {
   withFixture((f) => {
     const signature = signFor(f);
     appendFileSync(f.specPath, "\n- src/extra.ts\n");
     const r = approveRun(f.store, f.root, { runId: f.runId, expiresAt: f.expiresAt, signature });
     assert.equal(r.ok, false);
+    // A spec change caught by name is a better diagnostic than the signature
+    // failure it would otherwise surface as, so the hash check runs first.
     assert.match(
       (r as { reason: string }).reason,
-      /approval signature does not verify against the configured public key/
+      /the spec has changed since review: gated [0-9a-f]{64}, on disk [0-9a-f]{64}/
     );
     assertNothingWritten(f);
   });
+});
+
+test("a run whose spec_review gate recorded nothing cannot be approved", () => {
+  withFixture(
+    (f) => {
+      const r = approveRun(f.store, f.root, {
+        runId: f.runId,
+        expiresAt: f.expiresAt,
+        signature: Buffer.alloc(64).toString("base64"),
+      });
+      assert.equal(r.ok, false);
+      assert.match(
+        (r as { reason: string }).reason,
+        /has no spec[.]gate[.]pass audit event: the spec_review gate never recorded what it approved/
+      );
+      assertNothingWritten(f);
+    },
+    { gateSummary: null }
+  );
+});
+
+test("a gate event in the old prose format is refused, not approved past", () => {
+  // The shape a developer's existing database holds. Refusing by name beats
+  // approving past a review whose content cannot be verified.
+  withFixture(
+    (f) => {
+      const r = approveRun(f.store, f.root, {
+        runId: f.runId,
+        expiresAt: f.expiresAt,
+        signature: Buffer.alloc(64).toString("base64"),
+      });
+      assert.equal(r.ok, false);
+      assert.match(
+        (r as { reason: string }).reason,
+        /spec[.]gate[.]pass event does not record a spec hash and risk/
+      );
+      assertNothingWritten(f);
+    },
+    { gateSummary: "spec_review gate passed in round 1" }
+  );
+});
+
+test("a risk that has moved since the panel was sized is refused", () => {
+  withFixture(
+    (f) => {
+      const r = approveRun(f.store, f.root, {
+        runId: f.runId,
+        expiresAt: f.expiresAt,
+        signature: Buffer.alloc(64).toString("base64"),
+      });
+      assert.equal(r.ok, false);
+      // The panel was recorded as sized for `high`; the spec computes `low`.
+      // Approving would bind a risk no panel of that size ever satisfied.
+      assert.match(
+        (r as { reason: string }).reason,
+        /risk has changed since review: the panel was sized for high, the spec now computes low/
+      );
+      assertNothingWritten(f);
+    },
+    { risk: "high" }
+  );
+});
+
+const DEFECT_SPEC = SPEC.replace("change_kind: feature", "change_kind: defect_fix");
+
+test("a spec whose change_kind contradicts the run is refused at the gate", () => {
+  // The spec stage refuses this at write time, but a spec edited afterwards
+  // can flip it — and section 14 makes change_kind the flag that requires a
+  // defect fix to carry regression coverage. The gate must re-check.
+  // The gate event is written over this same spec, so the hash guard passes
+  // and this check is what fires.
+  withFixture(
+    (f) => {
+      const r = approveRun(f.store, f.root, {
+        runId: f.runId,
+        expiresAt: f.expiresAt,
+        signature: Buffer.alloc(64).toString("base64"),
+      });
+      assert.equal(r.ok, false);
+      assert.match(
+        (r as { reason: string }).reason,
+        /the approved spec declares change_kind defect_fix, but run \d+ is feature/
+      );
+      assertNothingWritten(f);
+    },
+    { spec: DEFECT_SPEC }
+  );
 });
 
 test("a signature from a different keypair is refused", () => {

@@ -318,3 +318,32 @@ test("setProfileRef records the frozen profile hash and names a missing run", ()
     assert.throws(() => store.setProfileRef(9999, "e".repeat(64)), /run 9999 does not exist/);
   });
 });
+
+test("insertRun refuses a feature_id that could forge a payload line", () => {
+  withStore((store) => {
+    // feature_id reaches the signed approval payload, so a line break here
+    // becomes a forged field there.
+    assert.throws(
+      () => store.insertRun("p", "f-1\nrisk: low", "s", "feature"),
+      // The message escapes the newline rather than reproducing it, so the
+      // diagnostic stays one readable line.
+      /invalid feature_id "f-1\\nrisk: low": must be 1-64 characters of letters, digits, dot, underscore, or hyphen/
+    );
+    assert.throws(
+      () => store.insertRun("p", "a".repeat(65), "s", "feature"),
+      /invalid feature_id .*: must be 1-64 characters/
+    );
+    assert.throws(
+      () => store.insertRun("p", "", "s", "feature"),
+      /invalid feature_id .*: must be 1-64 characters/
+    );
+  });
+});
+
+test("insertRun accepts the feature_id forms the fixtures use", () => {
+  withStore((store) => {
+    for (const id of ["f", "f-1", "FEAT.2", "a_b-c.1", "a".repeat(64)]) {
+      assert.ok(store.insertRun("p", id, "s", "feature").id > 0, `${id} must be accepted`);
+    }
+  });
+});

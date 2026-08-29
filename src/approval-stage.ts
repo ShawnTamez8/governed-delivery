@@ -91,20 +91,63 @@ export function buildBinding(
   if (!doc.ok) {
     return no(`the approved spec ${last.output_ref} no longer validates: ${doc.reason}`);
   }
+  // The spec stage checks this at write time, but a spec edited afterwards can
+  // flip it, and section 14 makes change_kind the flag that requires a defect
+  // fix to carry regression coverage. A gate that never re-checks it can
+  // authorize a run under obligations it will not be held to.
+  if (doc.value.changeKind !== run.change_kind) {
+    return no(
+      `the approved spec declares change_kind ${doc.value.changeKind}, but run ${runId} is ${run.change_kind}`
+    );
+  }
+  const specHash = sha256Hex(normalizeText(content));
+  const risk = computeRisk(
+    run.change_kind,
+    // The deduplicated count, matching how the spec stage sized the panel.
+    computeScope(doc.value.declaredArtifacts).length,
+    touchesProtected(doc.value.declaredArtifacts, run.slug)
+  );
+
+  // Section 12: the authorization must bind the specification a panel
+  // actually gated, not whatever happens to be on disk now. The spec_review
+  // gate records the hash and risk it passed; the audit chain is append-only
+  // and hash-chained, so it is a stronger place to read that historical fact
+  // from than any mutable column.
+  const gateEvent = store.query<{ summary: string }>(
+    "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.gate.pass' ORDER BY id DESC LIMIT 1",
+    [runId]
+  )[0];
+  if (!gateEvent) {
+    return no(
+      `run ${runId} has no spec.gate.pass audit event: the spec_review gate never recorded what it approved`
+    );
+  }
+  const gated = /specHash=([0-9a-f]{64}); risk=(low|standard|high)/.exec(gateEvent.summary);
+  if (!gated) {
+    return no(`run ${runId}'s spec.gate.pass event does not record a spec hash and risk`);
+  }
+  if (gated[1] !== specHash) {
+    return no(`the spec has changed since review: gated ${gated[1]}, on disk ${specHash}`);
+  }
+  if (gated[2] !== risk) {
+    return no(
+      `risk has changed since review: the panel was sized for ${gated[2]}, the spec now computes ${risk}`
+    );
+  }
+
   return {
     ok: true,
     specPath: last.output_ref,
     reviewStageId: last.id,
+    // The binding carries the recomputed values, not the gated ones: the
+    // comparison above is the guard, recomputation stays the source, so the
+    // two cannot silently diverge again.
     binding: {
       featureId: run.feature_id,
-      specHash: sha256Hex(normalizeText(content)),
+      specHash,
       startingCommit: loaded.profile.startingCommit,
       profileHash: run.profile_ref,
-      risk: computeRisk(
-        run.change_kind,
-        doc.value.declaredArtifacts.length,
-        touchesProtected(doc.value.declaredArtifacts, run.slug)
-      ),
+      risk,
       expiresAt,
       scope: computeScope(doc.value.declaredArtifacts),
     },

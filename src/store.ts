@@ -215,6 +215,16 @@ export class Store {
     if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) {
       throw new Error(`invalid slug ${slug}: must be lowercase kebab-case`);
     }
+    // feature_id is interpolated into the signed approval payload, where a
+    // line break would forge a second field. `project` is deliberately not
+    // constrained: it never enters the payload.
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(featureId)) {
+      throw new Error(
+        // JSON.stringify, not raw: an error about a line break must not itself
+        // contain one, or the diagnostic is as unreadable as the input.
+        `invalid feature_id ${JSON.stringify(featureId)}: must be 1-64 characters of letters, digits, dot, underscore, or hyphen, starting with a letter or digit`
+      );
+    }
     const now = new Date().toISOString();
     const result = this.#withRetry(() =>
       this.#db

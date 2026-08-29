@@ -6,7 +6,8 @@ import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { acquireLock } from "../src/lock.ts";
 import { openStore } from "../src/store.ts";
-import { canonicalJson, sha256Hex } from "../src/canonical.ts";
+import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
+import { appendAudit } from "../src/audit.ts";
 import { buildPolicy, policyHash } from "../src/policy.ts";
 
 // Absolute path: the CLI is spawned from temp directories, so relative
@@ -361,6 +362,18 @@ test("request, sign, and approve walk end to end through the CLI", () => {
     store.completeStage(specStage.id, specPath, "pass");
     const reviewStage = store.insertStage(runId, "spec_review", specStage.id);
     store.completeStage(reviewStage.id, specPath, "pass");
+    // What the real spec_review gate records; the approval gate reads it back
+    // to refuse binding a spec no panel gated.
+    appendAudit(store, {
+      runId,
+      stageId: reviewStage.id,
+      actor: "system",
+      actorType: "cli",
+      action: "spec.gate.pass",
+      summary: `spec_review gate passed in round 1; specHash=${sha256Hex(
+        normalizeText(readFileSync(specPath, "utf8"))
+      )}; risk=low`,
+    });
     const profilePath = join(cwd, ".governance", "profiles", String(runId), "profile.json");
     const profile = JSON.parse(readFileSync(profilePath, "utf8"));
     profile.startingCommit = "b".repeat(40);

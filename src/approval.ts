@@ -18,6 +18,22 @@ export interface ApprovalBinding {
 const HEADER = "buildworks-approval";
 const SIGNATURE_BYTES = 64;
 
+const UNSAFE_IN_PAYLOAD = /[\u0000-\u001f\u007f]/;
+
+/**
+ * Every payload field is machine-derived by the time it reaches here, so a
+ * line break means an upstream validation hole, not operator error — hence a
+ * throw rather than a result union. Without this, a newline in `featureId`
+ * forges a second `risk:` line into a payload that still signs and verifies.
+ */
+function assertPayloadSafe(name: string, value: string): void {
+  if (UNSAFE_IN_PAYLOAD.test(value)) {
+    throw new Error(
+      `approval payload field ${name} contains a line break or control character: ${JSON.stringify(value)}`
+    );
+  }
+}
+
 /**
  * The canonical payload. The `scope` count line bounds the path list so no
  * path can be mistaken for a field, and the whole string ends without a
@@ -27,6 +43,13 @@ const SIGNATURE_BYTES = 64;
  * system name: section 12 says nothing functional depends on that name.
  */
 export function approvalPayload(b: ApprovalBinding): string {
+  assertPayloadSafe("featureId", b.featureId);
+  assertPayloadSafe("specHash", b.specHash);
+  assertPayloadSafe("startingCommit", b.startingCommit);
+  assertPayloadSafe("profileHash", b.profileHash);
+  assertPayloadSafe("risk", b.risk);
+  assertPayloadSafe("expiresAt", b.expiresAt);
+  b.scope.forEach((path, i) => assertPayloadSafe(`scope[${i}]`, path));
   return [
     HEADER,
     `featureId: ${b.featureId}`,
@@ -47,13 +70,23 @@ export function validateExpiry(
   now: number,
   maxLifetimeSeconds: number
 ): { ok: true } | { ok: false; reason: string } {
+  const malformed = {
+    ok: false as const,
+    reason: `--expires must be an ISO 8601 UTC timestamp such as 2026-08-30T12:00:00.000Z, got ${expiresAt}`,
+  };
   if (!ISO_UTC.test(expiresAt) || Number.isNaN(Date.parse(expiresAt))) {
-    return {
-      ok: false,
-      reason: `--expires must be an ISO 8601 UTC timestamp such as 2026-08-30T12:00:00.000Z, got ${expiresAt}`,
-    };
+    return malformed;
   }
   const at = Date.parse(expiresAt);
+  // `Date.parse` rolls an impossible day over rather than rejecting it —
+  // 2026-02-30 becomes March 2 — so the pattern and `Number.isNaN` together
+  // still accept a date that does not exist. Re-serializing the parsed
+  // instant and comparing is what catches it. From the operator's side a
+  // date that cannot occur is a malformed one, so it earns no second message.
+  const canonical = /\.\d{3}Z$/.test(expiresAt) ? expiresAt : expiresAt.replace(/Z$/, ".000Z");
+  if (new Date(at).toISOString() !== canonical) {
+    return malformed;
+  }
   if (at <= now) {
     return { ok: false, reason: `approval expired at ${expiresAt}` };
   }

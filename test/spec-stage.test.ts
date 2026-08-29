@@ -7,6 +7,7 @@ import { openStore, type Store } from "../src/store.ts";
 import { runSpecStage } from "../src/spec-stage.ts";
 import { REMEDIATION_ROUNDS } from "../src/policy.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
+import { normalizeText, sha256Hex } from "../src/canonical.ts";
 
 const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-spec-stage.mjs");
 
@@ -226,4 +227,54 @@ test("a missing design document is refused before any dispatch", async () => {
     store.close();
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("the panel is sized from distinct artifacts, not repeated ones", async () => {
+  // 11 declared entries, 9 distinct. Deduplicated that is low risk (a panel of
+  // one); counted raw it is standard (a panel of two), and the approval would
+  // then bind a risk no panel of that size ever satisfied.
+  await withRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-spec-stage-duplicates.mjs");
+    const source = readFileSync(FIXTURE, "utf8")
+      .replace(
+        'const spec = stdin.includes("## Revision") ? REVISED_SPEC : BASE_SPEC;',
+        "const spec = DUPLICATE_SPEC;"
+      )
+      // Clean review, so the run reaches the gate in one round and the
+      // reviewer count is the panel size rather than a multiple of it.
+      .replace('const findings = stdin.includes("REVISED-spec")', "const findings = true");
+    writeFileSync(scratch, source);
+    const result = await runSpecStage(store, fixtureExecutor(scratch), {
+      runId,
+      requestedModel: "m",
+      rootDir: root,
+    });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    assert.equal(agentRunCounts(store, runId).reviewer, 1, "low risk seats one reviewer");
+    const gate = store.query<{ summary: string }>(
+      "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.gate.pass' ORDER BY id DESC LIMIT 1",
+      [runId]
+    )[0];
+    assert.ok(gate, "the gate must record what it passed");
+    assert.match(gate.summary, /risk=low/);
+  });
+});
+
+test("the passing gate records the spec hash and risk it gated", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), {
+      runId,
+      requestedModel: "m",
+      rootDir: root,
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    const gate = store.query<{ summary: string }>(
+      "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.gate.pass' ORDER BY id DESC LIMIT 1",
+      [runId]
+    )[0]!;
+    // The hash must be of the spec actually on disk after the last revision.
+    const onDisk = sha256Hex(normalizeText(readFileSync(result.specPath, "utf8")));
+    assert.match(gate.summary, new RegExp(`specHash=${onDisk}; risk=(low|standard|high)`));
+  });
 });

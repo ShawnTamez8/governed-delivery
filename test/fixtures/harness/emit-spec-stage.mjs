@@ -34,6 +34,36 @@ change_kind: feature
 
 const REVISED_SPEC = BASE_SPEC.replace("the thing works", "the thing works REVISED-spec");
 
+// Used by a scratch copy in test/spec-stage.test.ts (the env-var route cannot
+// work: envPassthrough keeps it out of the spawned child).
+// A spec whose artifact list is 11 entries but only 9 distinct paths. Risk is
+// sized from the deduplicated count, so this is `low` (a panel of one); if the
+// stage ever counted the raw list it would be `standard` (a panel of two), and
+// the operator would sign a risk the deduplicated scope never justified.
+const DUPLICATE_SPEC = `feature: demo
+change_kind: feature
+
+# Demo
+
+## Declared artifacts
+
+- src/a1.ts
+- src/a2.ts
+- src/a3.ts
+- src/a4.ts
+- src/a5.ts
+- src/a6.ts
+- src/a7.ts
+- src/a8.ts
+- src/a9.ts
+- src/a1.ts
+- ./src/a2.ts
+
+## Acceptance criteria
+
+- the thing works
+`;
+
 function emit(agentResult) {
   console.log(
     JSON.stringify({

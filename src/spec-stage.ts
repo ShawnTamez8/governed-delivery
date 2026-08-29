@@ -8,10 +8,11 @@ import { validateAgentResult } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import { SEVERITIES, SEVERITY_ORDER, findingIdentity, normalizeLocation } from "./finding.ts";
 import { computeRisk, selectReviewers, PANEL_SIZE } from "./select.ts";
-import { touchesProtected } from "./scope.ts";
+import { computeScope, touchesProtected } from "./scope.ts";
 import { buildSpecAuthorPrompt, buildSpecReviewPrompt } from "./prompts.ts";
 import { writeSpecDoc, type SpecDoc } from "./spec-doc.ts";
 import { appendAudit } from "./audit.ts";
+import { normalizeText, sha256Hex } from "./canonical.ts";
 import { MATERIAL_THRESHOLD, REMEDIATION_ROUNDS, REQUIRED_SPECIALTIES } from "./policy.ts";
 
 export type StageResult =
@@ -149,7 +150,7 @@ export async function runSpecStage(
     audit(reviewStage.id, "spec_review.stage.create", `created spec_review stage ${reviewStage.id}`);
     const risk = computeRisk(
       run.change_kind,
-      written.doc.declaredArtifacts.length,
+      computeScope(written.doc.declaredArtifacts).length,
       touchesProtected(written.doc.declaredArtifacts, run.slug)
     );
     const panel = selectReviewers(risk, REQUIRED_SPECIALTIES);
@@ -255,7 +256,14 @@ export async function runSpecStage(
       }
       const gate = specReviewGate(store.getFindings(reviewStage.id));
       if (gate.pass) {
-        audit(reviewStage.id, "spec.gate.pass", `spec_review gate passed in round ${round}`);
+        audit(
+          reviewStage.id,
+          "spec.gate.pass",
+          // Machine-readable: the approval gate reads these back to refuse an
+          // authorization binding a spec no panel gated. Normalized before
+          // hashing so a CRLF checkout cannot break the comparison.
+          `spec_review gate passed in round ${round}; specHash=${sha256Hex(normalizeText(specContent))}; risk=${risk}`
+        );
         store.completeStage(reviewStage.id, specPath, "pass");
         return { ok: true, stageIds: { spec: specStage.id, specReview: reviewStage.id }, specPath };
       }
