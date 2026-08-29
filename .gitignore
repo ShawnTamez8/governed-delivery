@@ -1,0 +1,7 @@
+# Machine-local authoritative state. Never committed: see ARCHITECTURE.md,
+# "State, storage, and evidence". Projections under docs/features/ are.
+.governance/
+
+node_modules/
+dist/
+*.tsbuildinfo
