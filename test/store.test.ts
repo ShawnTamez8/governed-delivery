@@ -181,3 +181,73 @@ test("a missing stage_id fails on the foreign key", () => {
     assert.throws(() => store.insertAgentRun(agentRunInput(9999)), /FOREIGN KEY constraint failed/);
   });
 });
+
+function findingInput(stageId: number, overrides: Record<string, unknown> = {}) {
+  return {
+    stageId,
+    agentRunId: null,
+    severity: "high",
+    intentKey: "missing-traceability",
+    subject: "no trace for criterion 3",
+    location: "## Acceptance criteria",
+    ...overrides,
+  };
+}
+
+test("two insertions with the same identity produce one row", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec", null);
+    store.insertFinding(findingInput(stage.id));
+    store.insertFinding(findingInput(stage.id, { subject: "reworded concern" }));
+    assert.equal(store.getFindings(stage.id).length, 1);
+    assert.equal(store.getFindings(stage.id)[0].subject, "reworded concern");
+  });
+});
+
+test("different intent keys produce two rows", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec", null);
+    store.insertFinding(findingInput(stage.id));
+    store.insertFinding(findingInput(stage.id, { intentKey: "different-concern" }));
+    assert.equal(store.getFindings(stage.id).length, 2);
+  });
+});
+
+test("an invalid severity or disposition is refused naming the allowed values", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec", null);
+    assert.throws(
+      () => store.insertFinding(findingInput(stage.id, { severity: "catastrophic" })),
+      /invalid severity catastrophic: allowed values are low, medium, high, critical/
+    );
+    assert.throws(
+      () => store.insertFinding(findingInput(stage.id, { disposition: "ignored" })),
+      /invalid disposition ignored: allowed values are open, resolved, disputed, accepted/
+    );
+  });
+});
+
+test("updateFindingDisposition changes the row", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec", null);
+    const finding = store.insertFinding(findingInput(stage.id));
+    store.updateFindingDisposition(finding.id, "resolved");
+    assert.equal(store.getFinding(finding.id)!.disposition, "resolved");
+  });
+});
+
+test("setRunStatus blocks a run and refuses invalid values", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    store.setRunStatus(run.id, "blocked");
+    assert.equal(store.getRun(run.id)!.status, "blocked");
+    assert.throws(
+      () => store.setRunStatus(run.id, "flying"),
+      /invalid run status flying: allowed values are in_progress, blocked, completed/
+    );
+  });
+});

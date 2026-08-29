@@ -87,10 +87,10 @@ test("architecture block has no handoff table", () => {
   assert.ok(!architectureTables().has("handoff"));
 });
 
-test("run, stage, agent_run, and audit columns in the migrations match the architecture block", () => {
+test("run, stage, agent_run, finding, and audit columns in the migrations match the architecture block", () => {
   const arch = architectureTables();
   const mig = migrationColumns(sql);
-  for (const table of ["run", "stage", "agent_run", "audit"]) {
+  for (const table of ["run", "stage", "agent_run", "finding", "audit"]) {
     assert.deepEqual(mig.get(table), arch.get(table), `columns of ${table}`);
   }
 });
@@ -110,6 +110,9 @@ test("enum CHECK constraints are present", () => {
   assert.ok(
     sql.includes("CHECK (independence IN ('unverified_self_attestation', 'configured_standalone'))")
   );
+  assert.ok(sql.includes("CHECK (severity IN ('low', 'medium', 'high', 'critical'))"));
+  assert.ok(sql.includes("CHECK (disposition IN ('open', 'resolved', 'disputed', 'accepted'))"));
+  assert.ok(sql.includes("UNIQUE (stage_id, intent_key, location)"));
 });
 
 test("audit is append-only by trigger", () => {

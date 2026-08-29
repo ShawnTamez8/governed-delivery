@@ -153,6 +153,29 @@ test("a non-decimal id is refused naming the cause", () => {
   }
 });
 
+test("spec with a nonexistent run exits 1 naming the run", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "spec", "--run", "9999", "--model", "m");
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /run 9999 does not exist/);
+    assert.ok(!existsSync(join(cwd, ".governance", "raw")), "no spawn happened");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("spec with a missing --run exits 2 naming the option", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "spec", "--model", "m");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /missing required option --run/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("dispatch with a nonexistent stage fails before any probe or spawn", () => {
   const cwd = tempCwd();
   try {

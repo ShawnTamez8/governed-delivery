@@ -54,6 +54,27 @@ export interface AgentRunRow {
   independence: "unverified_self_attestation" | "configured_standalone";
 }
 
+export interface FindingRow {
+  id: number;
+  stage_id: number;
+  agent_run_id: number | null;
+  severity: string;
+  intent_key: string;
+  subject: string;
+  location: string;
+  disposition: string;
+}
+
+export interface FindingInput {
+  stageId: number;
+  agentRunId: number | null;
+  severity: string;
+  intentKey: string;
+  subject: string;
+  location: string;
+  disposition?: string;
+}
+
 export interface AgentRunInput {
   stageId: number;
   agent: string;
@@ -79,6 +100,10 @@ const STAGE_STATUSES: readonly string[] = ["pending", "in_progress", "passed", "
 export const GATE_RESULTS: readonly string[] = ["pass", "block"];
 export const ROLES: readonly string[] = ["author", "reviewer"];
 export const INDEPENDENCE: readonly string[] = ["unverified_self_attestation", "configured_standalone"];
+const RUN_STATUSES: readonly string[] = ["in_progress", "blocked", "completed"];
+// Single source: finding.ts owns the finding enums; the store imports them
+// so the validation and the migration CHECK cannot drift apart.
+import { DISPOSITIONS as FINDING_DISPOSITIONS, SEVERITIES as FINDING_SEVERITIES } from "./finding.ts";
 
 // Anchored to this module, not the working directory: the CLI is spawned from
 // arbitrary directories in tests and in runs.
@@ -156,6 +181,9 @@ export class Store {
   insertRun(project: string, featureId: string, slug: string, changeKind: string): RunRow {
     if (!CHANGE_KINDS.includes(changeKind)) {
       throw new Error(`invalid change_kind ${changeKind}: allowed values are ${CHANGE_KINDS.join(", ")}`);
+    }
+    if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) {
+      throw new Error(`invalid slug ${slug}: must be lowercase kebab-case`);
     }
     const now = new Date().toISOString();
     const result = this.#withRetry(() =>
@@ -240,6 +268,72 @@ export class Store {
 
   getAgentRun(id: number): AgentRunRow | undefined {
     return this.query<AgentRunRow>("SELECT * FROM agent_run WHERE id = ?", [id])[0];
+  }
+
+  insertFinding(input: FindingInput): FindingRow {
+    if (!FINDING_SEVERITIES.includes(input.severity)) {
+      throw new Error(
+        `invalid severity ${input.severity}: allowed values are ${FINDING_SEVERITIES.join(", ")}`
+      );
+    }
+    const disposition = input.disposition ?? "open";
+    if (!FINDING_DISPOSITIONS.includes(disposition)) {
+      throw new Error(
+        `invalid disposition ${disposition}: allowed values are ${FINDING_DISPOSITIONS.join(", ")}`
+      );
+    }
+    const result = this.#withRetry(() =>
+      this.#db
+        .prepare(
+          `INSERT INTO finding (stage_id, agent_run_id, severity, intent_key, subject, location, disposition)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(stage_id, intent_key, location) DO UPDATE SET
+             severity = excluded.severity,
+             subject = excluded.subject,
+             agent_run_id = excluded.agent_run_id,
+             disposition = excluded.disposition`
+        )
+        .run(input.stageId, input.agentRunId, input.severity, input.intentKey, input.subject, input.location, disposition)
+    );
+    return this.getFinding(Number(result.lastInsertRowid))!;
+  }
+
+  getFinding(id: number): FindingRow | undefined {
+    return this.query<FindingRow>("SELECT * FROM finding WHERE id = ?", [id])[0];
+  }
+
+  getFindings(stageId: number): FindingRow[] {
+    return this.query<FindingRow>("SELECT * FROM finding WHERE stage_id = ? ORDER BY id", [stageId]);
+  }
+
+  updateFindingDisposition(id: number, disposition: string): void {
+    if (!FINDING_DISPOSITIONS.includes(disposition)) {
+      throw new Error(
+        `invalid disposition ${disposition}: allowed values are ${FINDING_DISPOSITIONS.join(", ")}`
+      );
+    }
+    const result = this.#withRetry(() =>
+      this.#db.prepare("UPDATE finding SET disposition = ? WHERE id = ?").run(disposition, id)
+    );
+    if (result.changes === 0) {
+      throw new Error(`finding ${id} does not exist`);
+    }
+  }
+
+  setRunStatus(id: number, status: string): void {
+    if (!RUN_STATUSES.includes(status)) {
+      throw new Error(`invalid run status ${status}: allowed values are ${RUN_STATUSES.join(", ")}`);
+    }
+    const result = this.#withRetry(() =>
+      this.#db.prepare("UPDATE run SET status = ?, updated_at = ? WHERE id = ?").run(
+        status,
+        new Date().toISOString(),
+        id
+      )
+    );
+    if (result.changes === 0) {
+      throw new Error(`run ${id} does not exist`);
+    }
   }
 
   getStageChain(runId: number): StageRow[] {

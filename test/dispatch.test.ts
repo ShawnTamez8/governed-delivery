@@ -139,6 +139,22 @@ test("a nonexistent stage fails without spawning", async () => {
   });
 });
 
+test("dispatchOnce forwards the requested model to the harness", async () => {
+  await withDispatchContext(async (store, root, stageId) => {
+    const result = await dispatchOnce(
+      store,
+      fixtureExecutor("echo-json"),
+      { stageId, agent: "a", role: "author", requestedModel: "sonnet", prompt: "x" },
+      root
+    );
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    const row = store.getAgentRun(result.agentRunId)!;
+    const raw = JSON.parse(readFileSync(join(root, row.raw_output_ref), "utf8")) as { argv: string[] };
+    assert.deepEqual(raw.argv, ["--model", "sonnet"]);
+  });
+});
+
 test("an oversized prompt is refused before any invocation", async () => {
   await withDispatchContext(async (store, root, stageId) => {
     const result = await dispatchOnce(

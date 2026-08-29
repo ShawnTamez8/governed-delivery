@@ -5,6 +5,7 @@ import { CHANGE_KINDS, GATE_RESULTS, ROLES, openStore, type Store } from "./stor
 import { appendAudit, verifyAuditChain } from "./audit.ts";
 import { CLAUDE_CODE } from "./executor.ts";
 import { dispatchOnce } from "./dispatch.ts";
+import { runSpecStage } from "./spec-stage.ts";
 
 const USAGE = `usage: bw <command>
 commands:
@@ -13,6 +14,7 @@ commands:
   stage-add --run <id> --kind <k> [--input <stage-id>]
   stage-complete --id <id> --output <ref> --gate-result pass|block
   dispatch --stage <id> --agent <id> --role author|reviewer --model <name> --prompt-file <path>
+  spec --run <id> --model <name>         run the spec and spec_review stages
   verify-audit                           recompute the audit chain`;
 
 class UsageError extends Error {}
@@ -69,7 +71,7 @@ function numericOptional(args: Map<string, string>, name: string): number | null
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const command = argv[0] ?? "";
-  const known = ["migrate", "new-run", "stage-add", "stage-complete", "dispatch", "verify-audit"];
+  const known = ["migrate", "new-run", "stage-add", "stage-complete", "dispatch", "spec", "verify-audit"];
   if (!known.includes(command)) {
     console.error(USAGE);
     process.exitCode = 2;
@@ -176,6 +178,20 @@ async function main(): Promise<void> {
         );
         if (result.ok) {
           console.log(String(result.agentRunId));
+        } else {
+          console.error(result.reason);
+          process.exitCode = 1;
+        }
+        break;
+      }
+      case "spec": {
+        const result = await runSpecStage(store, CLAUDE_CODE, {
+          runId: numeric(args, "run"),
+          requestedModel: required(args, "model"),
+          rootDir: process.cwd(),
+        });
+        if (result.ok) {
+          console.log(result.specPath);
         } else {
           console.error(result.reason);
           process.exitCode = 1;

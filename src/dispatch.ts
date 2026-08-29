@@ -20,7 +20,9 @@ export interface DispatchInput {
   invocation?: Partial<InvocationInput>;
 }
 
-export type DispatchResult = { ok: true; agentRunId: number } | { ok: false; reason: string };
+export type DispatchResult =
+  | { ok: true; agentRunId: number; envelope: ReturnType<typeof parseEnvelope> }
+  | { ok: false; reason: string };
 
 function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
@@ -52,7 +54,11 @@ export async function dispatchOnce(
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
   }
-  const outcome = await invokeHarness(executor, { prompt: input.prompt, ...(input.invocation ?? {}) });
+  const outcome = await invokeHarness(executor, {
+    prompt: input.prompt,
+    model: input.requestedModel,
+    ...(input.invocation ?? {}),
+  });
   // Hazard 2: retain before any parsing or branching.
   const rawOutputRef = writeRawOutput(rootDir, stage.run_id, outcome.raw);
   if (outcome.stderr !== "") {
@@ -90,7 +96,7 @@ export async function dispatchOnce(
       `dispatched agent ${input.agent} (${input.role}) on stage ${stage.id}: exited with code ${outcome.exitCode}`
     );
   }
-  let envelope;
+  let envelope: ReturnType<typeof parseEnvelope>;
   try {
     envelope = parseEnvelope(executor, outcome.raw);
   } catch (err) {
@@ -125,5 +131,5 @@ export async function dispatchOnce(
     action: "agent.dispatch",
     summary: `dispatched agent ${input.agent} (${input.role}) on stage ${stage.id}`,
   });
-  return { ok: true, agentRunId: row.id };
+  return { ok: true, agentRunId: row.id, envelope };
 }

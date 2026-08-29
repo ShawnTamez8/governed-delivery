@@ -31,6 +31,32 @@
 - Build order step 2: one harness adapter, concrete, no interface above it.
   Plan under `docs/features/` per the write-plan convention.
 
+## 2026-08-29 — Build order step 3 implemented (spec stage)
+
+- `bw spec` runs the spec and spec_review stages as two chained rows:
+  author → AgentResult validation → content write (spec row), then panel →
+  findings → deterministic gate → closure rounds (spec_review row). Every
+  failure path is terminal: blocked stage, blocked run, named reason, audit
+  event, retained raw output. The panel's re-review resolves findings — the
+  author's claim never does.
+- Enum choices (architecture left them open): severity low/medium/high/
+  critical (materiality threshold `high`), disposition open/resolved/
+  disputed/accepted, risk low/standard/high with panel sizes 1/2/3. Risk is
+  recomputed from the spec at approval time, never persisted.
+- The manual smoke against the real binary was the highest-value spend yet:
+  it exposed two prompt defects the fixtures could not. (1) Mentioning
+  `baseCommit` in the author prompt made the model refuse to produce a spec
+  without a git repo — patch rules do not belong in a content-write prompt.
+  (2) The reviewer returned a bare findings object until the prompt stated
+  the full envelope shape with every field. Real smoke output must drive
+  prompt iteration; fixtures cannot.
+- The real smoke also produced the designed terminal state: the demo spec
+  could not pass review in 3 rounds — run blocked naming finding ids 11 and
+  12, 15 findings total, 10 resolved by re-review, audit complete. Fail
+  closed, exactly as designed.
+- Next: build order step 4 — human approval binding state (Ed25519 signature
+  over spec hash, starting commit, profile hash, risk, scope).
+
 ## 2026-08-29 — Build order step 2 implemented (harness adapter)
 
 - `bw dispatch` is end to end against the real `claude` binary: probe →
