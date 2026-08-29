@@ -1,18 +1,91 @@
 # Project learnings — BuildWorks (governed-delivery)
 
+## Hardening execution, CRLF fix, and hazard enforcement (2026-08-29)
+
+### Decisions and assumptions
+
+- Operator decision: no `docs/hazards.md` entry for the CRLF fixture breakage.
+  That document records failures that have occurred in delivery; entries 1
+  (item 7) and 12 already cover the class. Latent fragilities do not earn an
+  entry.
+- Three standalone commits, deliberately not squashed: `617c42e` hardening
+  tasks 1-4, `e533ba3` CRLF fix, `0401fb7` hazard enforcement. The CRLF fix in
+  particular needed its own breakable guard.
+- The approval binds the spec a panel gated via the `spec.gate.pass` audit
+  event carrying `specHash=` and `risk=`, not a new `stage` column — section
+  15's table has no such column and `test/schema.test.ts` compares against it,
+  so a column would have meant editing ARCHITECTURE.md.
+
+### What failed
+
+- Three `test/spec-stage.test.ts` scratch builders substitute across multi-line
+  targets; under a CRLF working tree the replace silently no-matches and the
+  tests fail on wrong-stage-outcome asserts that never name line endings.
+  Fixed in `e533ba3`: `normalizeText` at the fixture-read boundary plus a
+  `.gitattributes` pinning ts/mjs/sql/json/md to `eol=lf`.
+- `open(p,"wb").write(open(p,"rb").read())` truncated
+  `test/fixtures/harness/emit-spec-stage.mjs` to 0 bytes — the write handle is
+  opened, truncating, before the read is evaluated. The full suite caught it
+  (11 failures); a single-file run had passed. Recovered with `git checkout`.
+- A heredoc-fed Python `replace` reported success while the literal control
+  bytes it targeted survived, twice. Verify an edit by re-reading the artifact,
+  never by trusting the tool's success report.
+
+### What worked
+
+- Break-first discipline caught a guard that guarded nothing: reverting the
+  `computeScope(...).length` argument in `src/spec-stage.ts` failed *no* test,
+  because no fixture declared duplicate artifacts. A scratch fixture with 11
+  raw / 9 distinct paths now makes the panel size observable (low risk seats
+  one reviewer), and the revert fails it.
+- The `audit_no_delete` trigger refused a test that tried `DELETE FROM audit`
+  to build a no-gate-event case; the fixture gained a `gateSummary` option
+  instead. Append-only means append-only in tests too.
+
+### Verification
+
+- `npm ci && npm run typecheck && npm test && npm run check:docs` — 225/225
+  green (was 212) at `0401fb7`.
+- Break-it runs recorded for every guard added: expiry round-trip, payload
+  control characters, `feature_id` at the source, spec-hash binding, risk
+  binding, missing gate event, `change_kind` re-check, deduplicated risk count,
+  the CRLF fixture path, and both hazard-consultation refusal paths.
+
+### Deferred and open
+
+- Open: 7 of the 12 step-4 findings remain — 7 (freeze-failure path unproven),
+  8 (`bw spec` spends on blocked zero-stage runs), 10 (sha256 object-format
+  repos), 11 (lexical `isInside`), 12 (`sign --key` containment), plus the two
+  accepted-deferred: the trust-anchor freeze (task 9) and approval write
+  atomicity (task 10). Tasks 1-4 are checked off in the plan.
+- Open: step-5 execution is blocked on hardening tasks 9 and 10. The
+  plan-stage plan depends on `Profile.approvalSigner` (task 9) and re-entrant
+  `Store.transaction` (task 10); `spec.gate.pass` (task 3) has landed.
+
+### Next time
+
+- `core.autocrlf=true` on this machine. Any `git checkout` of a file predates
+  `.gitattributes` at your peril — check `git ls-files --eol` when a
+  string-substitution test fails for no visible reason.
+- Python heredocs through Git Bash collapse doubled backslashes. Build regex
+  and escape text with `chr(92)` rather than `BSLASH`-style literals.
+- `npm test` runs test files in parallel; a single-file pass is not evidence
+  the suite passes.
+
+### Next up
+
+- Resume `docs/features/approval-gate-hardening/plan.md` at Task 5, then work
+  through Task 11. Step 5 unblocks once tasks 9 and 10 land.
+
 ## 2026-08-29 — Step 5 and the 12 findings planned; four planning lessons
 
 ### State
 
-- Two plans written, both `Status: Proposed`, neither executed:
-  - `docs/features/approval-gate-hardening/plan.md` — 11 tasks, closes all 12
-    step-4 review findings (10 open plus the 2 accepted-deferred).
-  - `docs/features/plan-stage/plan.md` — 7 tasks, build order step 5 plus the
-    profile’s deferred model map.
-- Hardening runs first. The plan-stage plan states the dependency explicitly:
-  `Store.transaction` re-entrancy, the `spec.gate.pass` contract, and
-  `Profile.approvalSigner` would otherwise be written twice.
-- Nothing implemented this session. Tree clean at `b1ac09b` apart from this file.
+- Two plans written: `docs/features/approval-gate-hardening/plan.md` (11 tasks,
+  all 12 step-4 findings) and `docs/features/plan-stage/plan.md` (7 tasks,
+  build order step 5 plus the profile model map). Hardening runs first — the
+  plan-stage plan states the dependency (`Store.transaction` re-entrancy, the
+  `spec.gate.pass` contract, `Profile.approvalSigner`).
 
 ### Lessons
 
@@ -56,14 +129,6 @@
   `docs/features/<slug>/<date>-plan-review.md` already exists as precedent
   (spec-stage, harness-adapter). Code reviews should follow it.
 
-### Next up
-
-- Execute `docs/features/approval-gate-hardening/plan.md`, then
-  `docs/features/plan-stage/plan.md`.
-- The plan-stage plan carries one real API spend (a manual smoke). Budget for
-  prompt iteration: step 3’s smoke found two prompt defects the fixtures could
-  not.
-
 ## 2026-08-29 — Context compaction wired; steps 1-4 shipped
 
 ### Decisions and assumptions
@@ -79,30 +144,10 @@
 - Build progress: steps 1-4 committed (`f68347c`, `14a7ea5`, `d489847`,
   `84dd23d`, `b1ac09b`); step 5 is next.
 
-### Deferred and open
-
-- Open: 12 step-4 review findings are the step-5 planning input — signed
-  risk recomputed from disk after the panel was sized, `validateExpiry`
-  accepting impossible dates, unescaped payload header lines, `change_kind`
-  not re-checked at the gate, lexical `isInside`, `sign --key` containment,
-  sha256-object-format repos, and the zero-stage spend guard. See the
-  step-4 review entry below for the full list.
-- Deferred: approval-write atomicity and the trust-anchor freeze (accepted
-  review findings 5/6) ride with step 5's profile model-map work.
-
 ### Verification
 
 - `npm ci && npm run typecheck && npm test && npm run check:docs` — 212/212
   green at commit `84dd23d`.
-
-### Next time
-
-- Read the step-4 entries below before planning step 5.
-
-### Next up
-
-- Build order step 5: plan stage and gate, carrying the profile's deferred
-  model map and the 12 open review findings.
 
 ## 2026-08-29 — Step 4 review reconciled: three Windows defects, all measured
 
