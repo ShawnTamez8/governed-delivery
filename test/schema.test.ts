@@ -1,13 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // The break-it step (plan task 2 step 5) points this at a scratch migration
-// copy to prove the assertions have teeth.
-const MIGRATION_FILE =
-  process.env.MIGRATION_FILE ??
-  join(process.cwd(), "src", "migrations", "001_init.sql");
+// copy to prove the assertions have teeth. All committed migration files are
+// concatenated so the checks cover every table.
+const MIGRATIONS_DIR = join(process.cwd(), "src", "migrations");
+const sql = readdirSync(MIGRATIONS_DIR)
+  .filter((f) => f.endsWith(".sql"))
+  .sort()
+  .map((f) =>
+    f === "001_init.sql" && process.env.MIGRATION_FILE
+      ? readFileSync(process.env.MIGRATION_FILE, "utf8")
+      : readFileSync(join(MIGRATIONS_DIR, f), "utf8")
+  )
+  .join("\n");
 
 const ARCHITECTURE = join(process.cwd(), "ARCHITECTURE.md");
 
@@ -70,8 +78,6 @@ function migrationColumns(sql: string): Map<string, string[]> {
   return cols;
 }
 
-const sql = readFileSync(MIGRATION_FILE, "utf8");
-
 test("architecture block defines exactly the six tables", () => {
   const names = [...architectureTables().keys()].sort();
   assert.deepEqual(names, ["agent_run", "approval", "audit", "finding", "run", "stage"]);
@@ -81,10 +87,10 @@ test("architecture block has no handoff table", () => {
   assert.ok(!architectureTables().has("handoff"));
 });
 
-test("run, stage, and audit columns in the migration match the architecture block", () => {
+test("run, stage, agent_run, and audit columns in the migrations match the architecture block", () => {
   const arch = architectureTables();
   const mig = migrationColumns(sql);
-  for (const table of ["run", "stage", "audit"]) {
+  for (const table of ["run", "stage", "agent_run", "audit"]) {
     assert.deepEqual(mig.get(table), arch.get(table), `columns of ${table}`);
   }
 });
@@ -100,6 +106,10 @@ test("enum CHECK constraints are present", () => {
     sql.includes("CHECK (status IN ('pending', 'in_progress', 'passed', 'blocked', 'failed'))")
   );
   assert.ok(sql.includes("CHECK (gate_result IN ('pass', 'block'))"));
+  assert.ok(sql.includes("CHECK (role IN ('author', 'reviewer'))"));
+  assert.ok(
+    sql.includes("CHECK (independence IN ('unverified_self_attestation', 'configured_standalone'))")
+  );
 });
 
 test("audit is append-only by trigger", () => {

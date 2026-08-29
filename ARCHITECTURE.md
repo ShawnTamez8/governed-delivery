@@ -348,12 +348,13 @@ telemetry:                  # what this harness can actually report
   perInvocationModel: true
   effectiveModel: true
   tokenUsage: true
-  sessionCost: false
+  sessionCost: true         # a recorded real envelope carries total_cost_usd
 sandbox:
   allowedPaths: [docs/features/**]   # document stages; implementation: the signed scope
   deniedPaths: [.governance/**]
   commandAllowlist: []
   idleTimeoutSeconds: 600
+  absoluteTimeoutSeconds: 3600       # the separate ceiling, a multiple of the idle budget
   envPassthrough: [PATH, HOME, USERPROFILE, APPDATA, TEMP, TMP, ...]
   network: inherit
 ```
@@ -399,7 +400,7 @@ asked for.
 asked what it cost will answer plausibly and wrongly. Read token counts, the
 effective model, and any fallback state from the harness's own structured
 output or transcript, and store them on the agent run. Where the harness cannot
-report something — session cost, in the example above — record the gap
+report something — a field absent from the envelope — record the gap
 explicitly rather than substituting a zero. A zero that means "not reported" is
 indistinguishable from a zero that means "free", and it will silently corrupt
 every estimate built on top of it.
@@ -613,6 +614,12 @@ never sit in the delivery path.
 bytes were discarded leaves only a truncated fragment in an error message.
 Retained bytes are how diagnosis becomes possible instead of guesswork, and they
 are the raw material for the contract tests in the verification section.
+
+**An invocation that produces no envelope records no `agent_run` row.** A
+timeout or a non-zero exit leaves its audit event and retained raw output as
+the record — the spend is visible, the row is honest by absence. Until a
+status column is designed into the schema, do not insert a row pretending an
+outcome that never arrived.
 
 ## 16. Audit
 

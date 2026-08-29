@@ -1,7 +1,10 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { acquireLock } from "./lock.ts";
-import { CHANGE_KINDS, GATE_RESULTS, openStore, type Store } from "./store.ts";
+import { CHANGE_KINDS, GATE_RESULTS, ROLES, openStore, type Store } from "./store.ts";
 import { appendAudit, verifyAuditChain } from "./audit.ts";
+import { CLAUDE_CODE } from "./executor.ts";
+import { dispatchOnce } from "./dispatch.ts";
 
 const USAGE = `usage: bw <command>
 commands:
@@ -9,6 +12,7 @@ commands:
   new-run --project <p> --feature <f> --slug <s> --change-kind <k>
   stage-add --run <id> --kind <k> [--input <stage-id>]
   stage-complete --id <id> --output <ref> --gate-result pass|block
+  dispatch --stage <id> --agent <id> --role author|reviewer --model <name> --prompt-file <path>
   verify-audit                           recompute the audit chain`;
 
 class UsageError extends Error {}
@@ -62,10 +66,10 @@ function numericOptional(args: Map<string, string>, name: string): number | null
   return Number(value);
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const command = argv[0] ?? "";
-  const known = ["migrate", "new-run", "stage-add", "stage-complete", "verify-audit"];
+  const known = ["migrate", "new-run", "stage-add", "stage-complete", "dispatch", "verify-audit"];
   if (!known.includes(command)) {
     console.error(USAGE);
     process.exitCode = 2;
@@ -142,6 +146,42 @@ function main(): void {
         console.log(String(stage.id));
         break;
       }
+      case "dispatch": {
+        // Validate every argument before anything spawns: a bad flag must
+        // never spend API cost.
+        const agent = required(args, "agent");
+        const role = required(args, "role");
+        if (!ROLES.includes(role)) {
+          throw new UsageError(`invalid role ${role}: allowed values are ${ROLES.join(", ")}`);
+        }
+        const requestedModel = required(args, "model");
+        const promptFile = required(args, "prompt-file");
+        const stageId = numeric(args, "stage");
+        // The stage check precedes the prompt-file read so a bad stage fails
+        // before touching the filesystem or anything that could spawn.
+        if (!store.getStage(stageId)) {
+          throw new Error(`stage ${stageId} does not exist`);
+        }
+        let prompt: string;
+        try {
+          prompt = readFileSync(promptFile, "utf8");
+        } catch (err) {
+          throw new UsageError(`cannot read prompt file ${promptFile}: ${(err as Error).message}`);
+        }
+        const result = await dispatchOnce(
+          store,
+          CLAUDE_CODE,
+          { stageId, agent, role, requestedModel, prompt },
+          process.cwd()
+        );
+        if (result.ok) {
+          console.log(String(result.agentRunId));
+        } else {
+          console.error(result.reason);
+          process.exitCode = 1;
+        }
+        break;
+      }
       case "verify-audit": {
         const brk = verifyAuditChain(store);
         if (brk) {
@@ -162,4 +202,4 @@ function main(): void {
   }
 }
 
-main();
+await main();

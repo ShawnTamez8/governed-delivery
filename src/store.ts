@@ -33,9 +33,52 @@ export interface StageRow {
   ended_at: string | null;
 }
 
+export interface AgentRunRow {
+  id: number;
+  stage_id: number;
+  agent: string;
+  role: "author" | "reviewer";
+  executor: string;
+  requested_model: string;
+  effective_model: string | null;
+  fallback: string | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  cache_read: number | null;
+  cache_write: number | null;
+  cost: number | null;
+  duration_ms: number;
+  input_hash: string;
+  output_hash: string;
+  raw_output_ref: string;
+  independence: "unverified_self_attestation" | "configured_standalone";
+}
+
+export interface AgentRunInput {
+  stageId: number;
+  agent: string;
+  role: string;
+  executor: string;
+  requestedModel: string;
+  effectiveModel: string | null;
+  fallback: string | null;
+  tokensIn: number | null;
+  tokensOut: number | null;
+  cacheRead: number | null;
+  cacheWrite: number | null;
+  cost: number | null;
+  durationMs: number;
+  inputHash: string;
+  outputHash: string;
+  rawOutputRef: string;
+  independence: string;
+}
+
 export const CHANGE_KINDS: readonly string[] = ["feature", "defect_fix"];
 const STAGE_STATUSES: readonly string[] = ["pending", "in_progress", "passed", "blocked", "failed"];
 export const GATE_RESULTS: readonly string[] = ["pass", "block"];
+export const ROLES: readonly string[] = ["author", "reviewer"];
+export const INDEPENDENCE: readonly string[] = ["unverified_self_attestation", "configured_standalone"];
 
 // Anchored to this module, not the working directory: the CLI is spawned from
 // arbitrary directories in tests and in runs.
@@ -155,6 +198,48 @@ export class Store {
 
   getStage(id: number): StageRow | undefined {
     return this.query<StageRow>("SELECT * FROM stage WHERE id = ?", [id])[0];
+  }
+
+  insertAgentRun(input: AgentRunInput): AgentRunRow {
+    if (!ROLES.includes(input.role)) {
+      throw new Error(`invalid role ${input.role}: allowed values are ${ROLES.join(", ")}`);
+    }
+    if (!INDEPENDENCE.includes(input.independence)) {
+      throw new Error(`invalid independence ${input.independence}: allowed values are ${INDEPENDENCE.join(", ")}`);
+    }
+    const result = this.#withRetry(() =>
+      this.#db
+        .prepare(
+          `INSERT INTO agent_run (stage_id, agent, role, executor, requested_model, effective_model,
+             fallback, tokens_in, tokens_out, cache_read, cache_write, cost, duration_ms,
+             input_hash, output_hash, raw_output_ref, independence)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          input.stageId,
+          input.agent,
+          input.role,
+          input.executor,
+          input.requestedModel,
+          input.effectiveModel,
+          input.fallback,
+          input.tokensIn,
+          input.tokensOut,
+          input.cacheRead,
+          input.cacheWrite,
+          input.cost,
+          input.durationMs,
+          input.inputHash,
+          input.outputHash,
+          input.rawOutputRef,
+          input.independence
+        )
+    );
+    return this.getAgentRun(Number(result.lastInsertRowid))!;
+  }
+
+  getAgentRun(id: number): AgentRunRow | undefined {
+    return this.query<AgentRunRow>("SELECT * FROM agent_run WHERE id = ?", [id])[0];
   }
 
   getStageChain(runId: number): StageRow[] {

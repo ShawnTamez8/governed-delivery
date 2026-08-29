@@ -115,3 +115,69 @@ test("completeStage maps gate_result block to status blocked", () => {
     assert.equal(done.gate_result, "block");
   });
 });
+
+function agentRunInput(stageId: number, overrides: Partial<import("../src/store.ts").AgentRunInput> = {}) {
+  return {
+    stageId,
+    agent: "planner",
+    role: "author",
+    executor: "claude-code",
+    requestedModel: "sonnet",
+    effectiveModel: "claude-sonnet",
+    fallback: null,
+    tokensIn: 100,
+    tokensOut: 20,
+    cacheRead: 0,
+    cacheWrite: 0,
+    cost: null,
+    durationMs: 3742,
+    inputHash: "sha-a",
+    outputHash: "sha-b",
+    rawOutputRef: ".governance/raw/1/x.json",
+    independence: "configured_standalone",
+    ...overrides,
+  };
+}
+
+test("insertAgentRun persists all fields, null ones included", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec", null);
+    const row = store.insertAgentRun(agentRunInput(stage.id));
+    assert.equal(row.stage_id, stage.id);
+    assert.equal(row.role, "author");
+    assert.equal(row.cost, null);
+    assert.equal(row.fallback, null);
+    assert.equal(row.tokens_in, 100);
+    assert.equal(row.duration_ms, 3742);
+    assert.deepEqual(store.getAgentRun(row.id), row);
+  });
+});
+
+test("an invalid role is refused naming the allowed values", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec", null);
+    assert.throws(
+      () => store.insertAgentRun(agentRunInput(stage.id, { role: "reviewer-and-author" })),
+      /invalid role reviewer-and-author: allowed values are author, reviewer/
+    );
+  });
+});
+
+test("an invalid independence is refused naming the allowed values", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec", null);
+    assert.throws(
+      () => store.insertAgentRun(agentRunInput(stage.id, { independence: "self_reported" })),
+      /invalid independence self_reported: allowed values are unverified_self_attestation, configured_standalone/
+    );
+  });
+});
+
+test("a missing stage_id fails on the foreign key", () => {
+  withStore((store) => {
+    assert.throws(() => store.insertAgentRun(agentRunInput(9999)), /FOREIGN KEY constraint failed/);
+  });
+});

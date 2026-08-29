@@ -11,9 +11,10 @@ validation.
 
 ## Status
 
-Build order step 1 implemented: run store, stage chain, and audit chain over
-SQLite, plus the documentation checker. Commands: see
-[`CLAUDE.md`](CLAUDE.md).
+Build order steps 1 and 2 implemented: run store, stage chain, and audit chain
+over SQLite, the concrete harness adapter (`bw dispatch` spawns `claude-code`,
+parses its envelope, retains raw output, and persists `agent_run` rows), and
+the documentation checker. Commands: see [`CLAUDE.md`](CLAUDE.md).
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the design, and its binding
   constraints.

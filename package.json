@@ -10,7 +10,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test",
+    "test": "node --test test/*.test.ts",
     "check:docs": "node scripts/doc-check.mjs"
   },
   "devDependencies": {

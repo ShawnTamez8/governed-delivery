@@ -152,3 +152,72 @@ test("a non-decimal id is refused naming the cause", () => {
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test("dispatch with a nonexistent stage fails before any probe or spawn", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(
+      cwd,
+      "dispatch",
+      "--stage",
+      "9999",
+      "--agent",
+      "a",
+      "--role",
+      "author",
+      "--model",
+      "m",
+      "--prompt-file",
+      "never-read.txt"
+    );
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /stage 9999 does not exist/);
+    // Raw retention is the first act after any spawn, so an absent raw
+    // directory proves no invocation ran — the stage check fired first.
+    assert.ok(
+      !existsSync(join(cwd, ".governance", "raw")),
+      "no raw output may exist when the stage check refused the dispatch"
+    );
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("dispatch with an unreadable prompt file exits 2 naming the option", () => {
+  const cwd = tempCwd();
+  try {
+    // A real stage must exist so the stage check passes and the prompt-file
+    // read is what fails.
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f", "--slug", "s", "--change-kind", "feature");
+    const stage = runCli(cwd, "stage-add", "--run", newRun.stdout.trim(), "--kind", "spec");
+    const r = runCli(
+      cwd,
+      "dispatch",
+      "--stage",
+      stage.stdout.trim(),
+      "--agent",
+      "a",
+      "--role",
+      "author",
+      "--model",
+      "m",
+      "--prompt-file",
+      "missing.txt"
+    );
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /cannot read prompt file missing\.txt/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("dispatch with a missing --role value exits 2 naming the option", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "dispatch", "--stage", "1", "--agent", "a", "--role", "--model", "m", "--prompt-file", "f");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /missing required option --role/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});

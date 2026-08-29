@@ -31,6 +31,31 @@
 - Build order step 2: one harness adapter, concrete, no interface above it.
   Plan under `docs/features/` per the write-plan convention.
 
+## 2026-08-29 — Build order step 2 implemented (harness adapter)
+
+- `bw dispatch` is end to end against the real `claude` binary: probe →
+  invoke → retain raw → audit → parse envelope → `agent_run` row. Failure
+  paths (timeout, non-zero exit) retain raw output and audit the attempt but
+  insert no `agent_run` row; the architecture section 15 now states that rule.
+- Discoveries from the one recorded real envelope (`test/fixtures/harness/
+  claude-code-envelope.json`), all ground truth now:
+  - `claude -p --output-format json` DOES report `total_cost_usd` — the
+    architecture's old `sessionCost: false` example was wrong; fixed to
+    `true`, and the fixture asserts cost, not null.
+  - `modelUsage` can contain auxiliary model queries (a title generation)
+    alongside the real turn; only the effective model's usage lands in the
+    top-level `usage.*`. The effective model is the unique `modelUsage` entry
+    whose `inputTokens` match `usage.input_tokens`; no unique match records
+    `null` (the smoke run did exactly that under proxy routing).
+- Windows gotchas: `taskkill` must run by full path (`SystemRoot\System32`)
+  — a PATH miss makes the tree-kill a silent no-op; `invokeHarness` is async
+  by necessity (timeout timers starve under any synchronous wait). A GNU
+  `timeout`-killed test run can look green because Node's exit teardown kills
+  the hung child — the duration assertions in `test/harness.test.ts` exist to
+  catch that lie.
+- Next: build order step 3 — spec stage and its review panel with a
+  deterministic gate.
+
 ## 2026-08-29 — Build order step 1 implemented
 
 - Run store, stage chain, and audit chain over SQLite shipped in TypeScript on
