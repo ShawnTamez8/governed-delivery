@@ -1,6 +1,7 @@
-# Governed Delivery
+# BuildWorks
 
-A repo-native control plane for AI-assisted software delivery.
+A repo-native control plane for AI-assisted software delivery. The system
+name is configuration; BuildWorks is the default.
 
 > Agents propose. The system decides.
 
@@ -10,7 +11,9 @@ validation.
 
 ## Status
 
-Design, pre-implementation. Nothing is built yet.
+Build order step 1 implemented: run store, stage chain, and audit chain over
+SQLite, plus the documentation checker. Commands: see
+[`CLAUDE.md`](CLAUDE.md).
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the design, and its binding
   constraints.

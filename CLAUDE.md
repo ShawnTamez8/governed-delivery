@@ -54,5 +54,14 @@ something critical without naming the configurations that reach it.
 
 ## Commands
 
-Nothing is built yet. When there is a build, its commands go here and nowhere
-else.
+Run from the repository root. These commands live here and nowhere else.
+
+- `npm install` — one-time: dev dependencies (`typescript`, `@types/node`);
+  commits `package-lock.json`.
+- `npm run typecheck` — strict `tsc --noEmit`.
+- `npm test` — `node --test` (Node 24 type stripping; relative imports carry
+  explicit `.ts` extensions).
+- `npm run check:docs` — the documentation checker (`scripts/doc-check.mjs`);
+  run before claiming a documentation change is consistent.
+- `node src/cli.ts migrate|new-run|stage-add|stage-complete|verify-audit` —
+  the CLI; `bw` works once `npm install` links the bin.

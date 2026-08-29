@@ -555,18 +555,20 @@ report lives there.
   raw/<run>/...     retained raw model output, one file per invocation
   content/<hash>    content-addressed overflow for oversized prompts and results
   profiles/<run>/   the frozen profile snapshot for a run
-  migrations/       ordered .sql files, applied at startup
 ```
 
 **What is git-tracked and what is not.** The database and raw output are
-machine-local and gitignored. Projections under `docs/features/<slug>/` are
+machine-local and gitignored. Migrations are committed with the system source
+under `src/migrations/`, because the schema must be readable and reviewable.
+Projections under `docs/features/<slug>/` are
 committed, because they are what a human reviews in a diff. Agent definitions,
 policy, and the design document are committed, because they are inputs that must
 be reviewable and protected. Tracking an audit directory while
 ignoring run state leaves the tree dirty after every run, so the next one fails
 its clean-tree precondition. Decide this once and make the ignore rules match.
 
-**Migrations are ordered plain SQL, applied at startup.** No ORM. The schema is
+**Migrations are ordered plain SQL, committed with the system source under
+`src/migrations/`, applied at startup.** No ORM. The schema is
 small enough to read, and you will want to read it when a cost number looks
 wrong.
 

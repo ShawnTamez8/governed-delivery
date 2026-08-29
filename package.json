@@ -1,0 +1,20 @@
+{
+  "name": "buildworks",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "bw": "src/cli.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test",
+    "check:docs": "node scripts/doc-check.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.8",
+    "@types/node": "^24"
+  }
+}
