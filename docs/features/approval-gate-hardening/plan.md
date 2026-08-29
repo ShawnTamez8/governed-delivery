@@ -6,6 +6,8 @@
 
 **Source:** The step-4 review findings recorded in the `step4-open-findings` memory (ten open, two accepted-and-deferred by operator decision) and the narrative in `.claude/sessions/project-learnings.md` (the three step-4 entries); `ARCHITECTURE.md` sections 6 (trust boundaries), 9 (risk sizes the panel), 12 (gates, the profile, the scope), 15 (evidence model), 16 (audit), 17 (security and secret handling), 19 (concurrency and resume); `docs/hazards.md` entries 4 and 14; `CLAUDE.md`.
 
+**Hazards considered:** `docs/hazards.md` 4 (every fix here is proven by breaking its guard first), 12 (configuration divergence — the CRLF and containment findings are this class, two environments behaving as different products), 14 (independence that cannot be proven — the trust-anchor freeze is a partial guarantee and is labelled as one). Entries 1 and 3 do not apply: the approval gate parses no model output and builds no prompt.
+
 **Assumptions:**
 
 - **The reviewed spec is bound through the audit chain, not a new column.** Finding 3 needs the approval to bind what the panel actually gated. `ARCHITECTURE.md` section 15's `stage` table has no column for a spec hash or a risk, and `test/schema.test.ts` compares migration columns against that block, so adding one would mean editing the design document. The audit chain is already append-only and hash-chained (section 16), which is a stronger place to read a historical fact from than a mutable column. The `spec.gate.pass` event therefore carries a machine-readable `specHash=` and `risk=`, and the approval gate reads them back. **Rejected alternative:** a `stage.spec_hash` column — it churns the schema, requires an `ARCHITECTURE.md` edit, and stores a derived value the audit already records.

@@ -3,6 +3,7 @@
 **Reviewed document:** `C:\Users\Shawn-work\repositories\governed-delivery\docs\features\harness-adapter\plan.md`
 **Document type:** Plan. A full implementation plan in the repository's write-plan format; its assumptions section resolves architecture ambiguities, and those resolutions receive review as design decisions.
 **Review date:** 2026-08-29
+**Hazards considered:** `docs/hazards.md` 1 (the seven parse shapes — the review checks the plan exercises all of them), 2 (discarded output is undiagnosable — the ordering of retention against parsing is the review's critical finding). No other entry bears on the reviewed document.
 
 ---
 

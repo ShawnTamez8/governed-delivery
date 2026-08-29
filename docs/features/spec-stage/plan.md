@@ -6,6 +6,8 @@
 
 **Source:** `ARCHITECTURE.md` sections 8 (contracts — AgentResult, write modes, finding identity), 9 (agents — definition, role separation, selection), 12 (gates — `spec_review`), 13 (conflict resolution), 14 (work intake and projections), 15 (evidence model — the `finding` table); `docs/hazards.md` entries 1, 3, 4, 11, 13, 14; `CLAUDE.md`; the shipped steps 1 and 2 as precedent (`docs/features/run-store/plan.md`, `docs/features/harness-adapter/plan.md`, `src/dispatch.ts`, `src/store.ts`).
 
+**Hazards considered:** `docs/hazards.md` 1 (parse shapes), 3 (a constrained field must state its constraint in the prompt), 4 (fixtures and code agreeing while both are wrong), 11 (a default install must complete a run — the seeded panel), 13 (specifications inventing obligations), 14 (independence that cannot be proven). Entries 2, 8, 9, 10 were settled by step 2; 5, 6, 7, 12 concern delivery and retries, which this step does not reach.
+
 **Assumptions:**
 
 - **Agent definitions are typed TypeScript modules, one file per agent** under `src/agents/`, following the executor-definition precedent from step 2. The architecture's example shows YAML, but Node has no YAML parser and step 1 committed to zero runtime dependencies; a loader for operator-editable files is deferred with the config loader (hard rule 4). Version-controlled and protected: agents are committed inputs an agent may never modify, and no write path in this plan touches `src/agents/`.

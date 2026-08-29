@@ -3,6 +3,7 @@
 **Reviewed document:** `C:\Users\Shawn-work\repositories\governed-delivery\docs\features\spec-stage\plan.md`
 **Document type:** Plan. A full implementation plan in the repository's write-plan format; its assumptions section resolves architecture ambiguities (severity, disposition, risk enums) and those resolutions receive review as design decisions.
 **Review date:** 2026-08-29
+**Hazards considered:** `docs/hazards.md` 7 (retries that vary nothing — the closure round must vary the prompt). Entries 1, 3, 4, 11, 13 and 14 are named by the reviewed plan itself and were checked as covered; no other entry bears on it.
 
 ---
 

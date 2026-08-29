@@ -6,6 +6,8 @@
 
 **Source:** `ARCHITECTURE.md` sections 4 (the stage chain and handoffs), 5 (stage sequence: `awaiting_approval -> plan -> plan_review`), 8 (contracts — AgentResult, write modes, finding identity), 9 (agents, role separation, selection), 10 (model configuration), 12 (gates — "Refuse promises that cannot be kept"), 13 (conflict resolution), 20 (limits), 23 (build order step 5); `docs/hazards.md` entries 1, 3, 4, 6, 7, 11, 13; `CLAUDE.md`; the shipped spec stage as the direct precedent (`src/spec-stage.ts`, `docs/features/spec-stage/plan.md`).
 
+**Hazards considered:** `docs/hazards.md` 1 (parse shapes — the plan author and reviewers return model output), 3 (constrained fields stated in the prompt), 4 (fixtures and code agreeing while both are wrong), 6 (promises a later stage cannot keep — the unkeepable-promise gate, and its stated limit), 7 (retries that vary nothing — the revision round injects open findings), 11 (a default install must complete a run), 13 (specifications inventing obligations). Entries 2, 8-10 were settled by step 2; 5 and 12 belong to delivery and configuration surfaces this step does not add.
+
 **Assumptions:**
 
 - **This plan is executed after `docs/features/approval-gate-hardening/plan.md`.** That plan changes `Store.transaction` to be re-entrant, adds a `spec.gate.pass` contract the approval gate reads, and adds `Profile.approvalSigner`. Building the plan stage first would mean writing the same gate-event and transaction code twice. If the hardening plan has not landed, stop and say so rather than duplicating its changes.

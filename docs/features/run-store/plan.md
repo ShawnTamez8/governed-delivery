@@ -6,6 +6,8 @@
 
 **Source:** `ARCHITECTURE.md` sections 15 (state, storage, and evidence), 16 (audit), 19 (concurrency, failure, and resume), 20 (limits), 21 (verification strategy), and 23 (build order, step 1); `docs/hazards.md` entries 2, 4, 9, and 11; `CLAUDE.md` layout and commands conventions.
 
+**Hazards considered:** `docs/hazards.md` 2 (discarded output is undiagnosable — raw retention precedes parsing), 4 (fixtures and code agreeing while both are wrong — every guard proven by breaking it), 9 (unverified hook interpreters — the interpreter is verified where it will be spawned), 11 (a default install that cannot complete a run). Entries 1, 3, 5-8, 10, 12-14 concern agent output, delivery, and prompts, none of which this step builds.
+
 **Assumptions:**
 
 - Step 1 creates only the `run`, `stage`, and `audit` tables. `agent_run`, `finding`, and `approval` arrive with their build-order steps (2, 3, and 4). The documentation checker still asserts the architecture's full six-table block, so the document stays the contract.

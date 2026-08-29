@@ -25,6 +25,8 @@ twice); `CLAUDE.md` layout and commands conventions;
 `docs/features/run-store/plan.md` as the precedent for structure, task
 granularity, and the "prove the guard by breaking it" discipline.
 
+**Hazards considered:** `docs/hazards.md` 1 (model output in shapes the schema refuses — the seven parse cases), 2 (discarded output is undiagnosable), 8 (Windows executable resolution), 9 (unverified hook interpreters), 10 (exact-match model acceptance against moving aliases), 14 (independence that cannot be proven — recorded, not claimed). Entries 3-7 and 11-13 concern prompts, delivery, and specification content, which arrive with the stages.
+
 **Assumptions:**
 
 - **The executor definition is a hardcoded TypeScript module, not a loaded

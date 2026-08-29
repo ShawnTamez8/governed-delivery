@@ -2,7 +2,7 @@
 // architecture document against them. Plain Node, no dependencies. Exit 1 on
 // any failed assertion, with one line per failure naming the fact.
 
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const failures = [];
@@ -180,6 +180,43 @@ if (layoutBad || proseBad) {
 const contract = section("Repository contract");
 if (!contract.includes("governed.yaml")) {
   fail("protected paths", "governed.yaml listed", "absent from the protected paths list");
+}
+
+// --- 6. Hazard consultation is stated, not assumed -----------------------
+
+// `docs/hazards.md` is a requirements list, but consulting it was prose-only
+// guidance, so a plan or a reconciliation could silently skip it. Silence is
+// the failure mode: an omitted entry and a considered-and-irrelevant entry
+// look identical. Every document under docs/features/ must say which entries
+// it weighed, naming `none` explicitly when that is the answer.
+function markdownFilesUnder(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...markdownFilesUnder(full));
+    else if (entry.name.endsWith(".md")) out.push(full);
+  }
+  return out;
+}
+
+if (existsSync("docs/features")) {
+  for (const file of markdownFilesUnder("docs/features")) {
+    const text = readFileSync(file, "utf8");
+    const stated = /^\*\*Hazards considered:\*\*\s*(.+)$/m.exec(text);
+    if (!stated) {
+      fail(
+        `hazard consultation: ${file}`,
+        "a '**Hazards considered:**' line naming the docs/hazards.md entries weighed, or 'none' with a reason",
+        "absent"
+      );
+    } else if (stated[1].trim().length < 4) {
+      fail(
+        `hazard consultation: ${file}`,
+        "a non-empty '**Hazards considered:**' statement",
+        `'${stated[1].trim()}'`
+      );
+    }
+  }
 }
 
 if (failures.length > 0) {

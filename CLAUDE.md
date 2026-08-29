@@ -39,6 +39,13 @@ a value invented in the same session as the code that consumes it. This is the
 rule that prevents tests and implementation from agreeing with each other while
 both are wrong.
 
+**State which hazards you weighed.** Every plan and every finding
+reconciliation under `docs/features/` carries a `**Hazards considered:**` line
+naming the `docs/hazards.md` entries it weighed — including `none`, with a
+reason, when that is the answer. Silence is the failure mode: an entry nobody
+consulted and an entry considered and found irrelevant look identical
+afterwards. `npm run check:docs` refuses a document without it.
+
 **Say what is unverified.** Severity is a claim about reachability. Do not label
 something critical without naming the configurations that reach it.
 
