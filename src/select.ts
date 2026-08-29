@@ -5,6 +5,13 @@ export type Risk = "low" | "standard" | "high";
 export const PANEL_SIZE: Record<Risk, number> = { low: 1, standard: 2, high: 3 };
 
 /**
+ * The risk values, owned here beside the type and the panel map so the store's
+ * validation and the migration CHECK cannot drift from what `computeRisk`
+ * can actually return — the same single-source rule `finding.ts` follows.
+ */
+export const RISKS: readonly string[] = ["low", "standard", "high"];
+
+/**
  * Deterministic risk (section 9): computed from the spec's declared
  * properties, never an agent's self-assessment. Score 0 -> low, 1-2 ->
  * standard, 3+ -> high.

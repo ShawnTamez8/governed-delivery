@@ -6,6 +6,10 @@ import { appendAudit, verifyAuditChain } from "./audit.ts";
 import { CLAUDE_CODE } from "./executor.ts";
 import { dispatchOnce } from "./dispatch.ts";
 import { runSpecStage } from "./spec-stage.ts";
+import { freezeProfile, resolveStartingCommit } from "./profile.ts";
+import { approvalPayload, validateExpiry } from "./approval.ts";
+import { approveRun, buildBinding } from "./approval-stage.ts";
+import { APPROVAL_MAX_LIFETIME_SECONDS } from "./policy.ts";
 
 const USAGE = `usage: bw <command>
 commands:
@@ -15,6 +19,10 @@ commands:
   stage-complete --id <id> --output <ref> --gate-result pass|block
   dispatch --stage <id> --agent <id> --role author|reviewer --model <name> --prompt-file <path>
   spec --run <id> --model <name>         run the spec and spec_review stages
+  approval-request --run <id> [--expires <iso>]
+                                         print the payload for the operator to sign
+  approve --run <id> --expires <iso> --signature <base64>
+                                         verify and record the authorization
   verify-audit                           recompute the audit chain`;
 
 class UsageError extends Error {}
@@ -71,7 +79,17 @@ function numericOptional(args: Map<string, string>, name: string): number | null
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const command = argv[0] ?? "";
-  const known = ["migrate", "new-run", "stage-add", "stage-complete", "dispatch", "spec", "verify-audit"];
+  const known = [
+    "migrate",
+    "new-run",
+    "stage-add",
+    "stage-complete",
+    "dispatch",
+    "spec",
+    "approval-request",
+    "approve",
+    "verify-audit",
+  ];
   if (!known.includes(command)) {
     console.error(USAGE);
     process.exitCode = 2;
@@ -109,6 +127,32 @@ async function main(): Promise<void> {
           action: "run.create",
           summary: `created run ${run.id} for ${run.slug}`,
         });
+        // Hard rule 6: config is frozen at run start. A run with no profile
+        // can never be approved, so a freeze failure blocks it here rather
+        // than surfacing three stages later at the gate.
+        try {
+          const frozen = freezeProfile(process.cwd(), run.id, resolveStartingCommit(process.cwd()));
+          store.setProfileRef(run.id, frozen.hash);
+          appendAudit(store, {
+            runId: run.id,
+            stageId: null,
+            actor: "system",
+            actorType: "cli",
+            action: "profile.freeze",
+            summary: `froze profile ${frozen.hash} for run ${run.id}`,
+          });
+        } catch (err) {
+          appendAudit(store, {
+            runId: run.id,
+            stageId: null,
+            actor: "system",
+            actorType: "cli",
+            action: "profile.freeze.failed",
+            summary: (err as Error).message,
+          });
+          store.setRunStatus(run.id, "blocked");
+          throw err;
+        }
         console.log(String(run.id));
         break;
       }
@@ -192,6 +236,51 @@ async function main(): Promise<void> {
         });
         if (result.ok) {
           console.log(result.specPath);
+        } else {
+          console.error(result.reason);
+          process.exitCode = 1;
+        }
+        break;
+      }
+      case "approval-request": {
+        const runId = numeric(args, "run");
+        // One hour by default, comfortably inside the policy ceiling so the
+        // command's own default can never trip its own check. `--expires`
+        // present but empty is a usage error, not a silent default: the
+        // parser records "" precisely so it can be reported by name.
+        const given = args.get("expires");
+        if (given === "") {
+          throw new UsageError("missing required option --expires");
+        }
+        const expires = given ?? new Date(Date.now() + 3600_000).toISOString();
+        const expiry = validateExpiry(expires, Date.now(), APPROVAL_MAX_LIFETIME_SECONDS);
+        if (!expiry.ok) {
+          console.error(expiry.reason);
+          process.exitCode = 1;
+          break;
+        }
+        const bound = buildBinding(store, process.cwd(), runId, expires);
+        if (!bound.ok) {
+          console.error(bound.reason);
+          process.exitCode = 1;
+          break;
+        }
+        // write, not console.log: the payload is signed byte for byte, and
+        // console.log's trailing newline is not part of what `approve`
+        // verifies. Redirecting stdout must capture exactly the signed bytes.
+        // The expiry goes to stderr as a reminder of what `approve` needs.
+        console.error(`expires: ${expires}`);
+        process.stdout.write(approvalPayload(bound.binding));
+        break;
+      }
+      case "approve": {
+        const result = approveRun(store, process.cwd(), {
+          runId: numeric(args, "run"),
+          expiresAt: required(args, "expires"),
+          signature: required(args, "signature"),
+        });
+        if (result.ok) {
+          console.log(String(result.approvalId));
         } else {
           console.error(result.reason);
           process.exitCode = 1;

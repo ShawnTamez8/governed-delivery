@@ -78,3 +78,16 @@ test("writeSpecDoc writes the file and refuses invalid content without touching 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a spec saved with a BOM or CRLF line endings still validates", () => {
+  // `normalizeText` exists so a checkout under `core.autocrlf=true` cannot
+  // change a spec hash. The same tolerance has to reach parsing: without it a
+  // BOM sits in front of `feature:`, the regex misses, and a BOM-saving editor
+  // blocks approval reporting a missing frontmatter field that is present.
+  const spec = validSpec();
+  const expected = validateSpecDoc(spec);
+  assert.equal(expected.ok, true);
+  assert.deepEqual(validateSpecDoc(`﻿${spec}`), expected);
+  assert.deepEqual(validateSpecDoc(spec.replace(/\n/g, "\r\n")), expected);
+  assert.deepEqual(validateSpecDoc(`﻿${spec.replace(/\n/g, "\r\n")}`), expected);
+});

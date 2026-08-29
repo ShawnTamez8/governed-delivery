@@ -1,11 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { acquireLock } from "../src/lock.ts";
 import { openStore } from "../src/store.ts";
+import { canonicalJson, sha256Hex } from "../src/canonical.ts";
+import { buildPolicy, policyHash } from "../src/policy.ts";
 
 // Absolute path: the CLI is spawned from temp directories, so relative
 // paths would resolve against the wrong cwd. Migrations anchor themselves
@@ -47,11 +49,12 @@ test("new-run, stage-add, stage-complete, and verify-audit walk a chain end to e
     assert.equal(done.status, 0, done.stderr);
 
     // The walk must have written one audit event per mutation, so the
-    // verified chain is not the empty chain.
+    // verified chain is not the empty chain. Five, not four: new-run also
+    // freezes the profile and audits `profile.freeze`.
     const store = openStore(cwd);
     const auditRows = store.query("SELECT * FROM audit");
     store.close();
-    assert.equal(auditRows.length, 4);
+    assert.equal(auditRows.length, 5);
 
     const verify = runCli(cwd, "verify-audit");
     assert.equal(verify.status, 0);
@@ -240,6 +243,174 @@ test("dispatch with a missing --role value exits 2 naming the option", () => {
     const r = runCli(cwd, "dispatch", "--stage", "1", "--agent", "a", "--role", "--model", "m", "--prompt-file", "f");
     assert.equal(r.status, 2);
     assert.match(r.stderr, /missing required option --role/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("new-run freezes a profile and records its hash on the run", () => {
+  const cwd = tempCwd();
+  try {
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature");
+    assert.equal(newRun.status, 0, newRun.stderr);
+    const runId = Number(newRun.stdout.trim());
+
+    const profilePath = join(cwd, ".governance", "profiles", String(runId), "profile.json");
+    assert.ok(existsSync(profilePath), "new-run must freeze a profile");
+    const raw = readFileSync(profilePath, "utf8");
+
+    const store = openStore(cwd);
+    const run = store.query<{ profile_ref: string | null }>("SELECT * FROM run WHERE id = ?", [runId])[0]!;
+    store.close();
+    // The run row carries the hash of exactly the bytes on disk.
+    assert.equal(run.profile_ref, sha256Hex(raw));
+
+    const profile = JSON.parse(raw);
+    assert.equal(profile.runId, runId);
+    assert.equal(profile.systemName, "BuildWorks");
+    // A temp directory is not a git repository, so there is no base commit.
+    assert.equal(profile.startingCommit, null);
+    assert.equal(profile.policyHash, policyHash(buildPolicy()));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("new-run records the git HEAD as the run's starting commit", () => {
+  const cwd = tempCwd();
+  try {
+    // Asserted, not assumed: a missing git must fail this test loudly rather
+    // than let it pass having proved nothing.
+    const init = spawnSync("git", ["init", "-q"], { cwd, encoding: "utf8" });
+    assert.equal(init.status, 0, `git init failed: ${init.stderr ?? init.error?.message}`);
+    const commit = spawnSync(
+      "git",
+      ["-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"],
+      { cwd, encoding: "utf8" }
+    );
+    assert.equal(commit.status, 0, `git commit failed: ${commit.stderr}`);
+    const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" });
+    assert.equal(head.status, 0);
+    const expected = head.stdout.trim();
+    assert.match(expected, /^[0-9a-f]{40}$/);
+
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature");
+    assert.equal(newRun.status, 0, newRun.stderr);
+    const runId = newRun.stdout.trim();
+    const profile = JSON.parse(
+      readFileSync(join(cwd, ".governance", "profiles", runId, "profile.json"), "utf8")
+    );
+    assert.equal(profile.startingCommit, expected);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approval-request with a nonexistent run exits 1 naming the run", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "approval-request", "--run", "9999");
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /run 9999 does not exist/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approve without --signature exits 2 naming the option", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "approve", "--run", "1", "--expires", "2099-01-01T00:00:00.000Z");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /missing required option --signature/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("request, sign, and approve walk end to end through the CLI", () => {
+  const cwd = tempCwd();
+  const keyDir = mkdtempSync(join(tmpdir(), "bw-cli-key-"));
+  try {
+    // Keys are generated outside the repository by the operator's own tool,
+    // spawned from the repository root so its containment guard applies.
+    const keygen = spawnSync(
+      process.execPath,
+      [resolve(process.cwd(), "scripts", "sign-approval.mjs"), "keygen", "--out", keyDir],
+      { cwd: process.cwd(), encoding: "utf8" }
+    );
+    assert.equal(keygen.status, 0, keygen.stderr);
+    const env = { ...process.env, BW_APPROVAL_PUBLIC_KEY: join(keyDir, "approval.pub") };
+    const cli = (...argv: string[]) =>
+      spawnSync(process.execPath, [CLI, ...argv], { cwd, encoding: "utf8", env });
+
+    const newRun = cli("new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature");
+    assert.equal(newRun.status, 0, newRun.stderr);
+    const runId = Number(newRun.stdout.trim());
+
+    // Park the run where the gate expects it, and give it a starting commit
+    // the same way a real run would have one.
+    const specPath = join(cwd, "docs", "features", "s", "spec.md");
+    mkdirSync(dirname(specPath), { recursive: true });
+    writeFileSync(
+      specPath,
+      "feature: Thing\nchange_kind: feature\n\n## Declared artifacts\n\n- src/thing.ts\n\n## Acceptance criteria\n\n- It works.\n"
+    );
+    const store = openStore(cwd);
+    const specStage = store.insertStage(runId, "spec", null);
+    store.completeStage(specStage.id, specPath, "pass");
+    const reviewStage = store.insertStage(runId, "spec_review", specStage.id);
+    store.completeStage(reviewStage.id, specPath, "pass");
+    const profilePath = join(cwd, ".governance", "profiles", String(runId), "profile.json");
+    const profile = JSON.parse(readFileSync(profilePath, "utf8"));
+    profile.startingCommit = "b".repeat(40);
+    const serialized = canonicalJson(profile);
+    writeFileSync(profilePath, serialized);
+    store.setProfileRef(runId, sha256Hex(serialized));
+    store.close();
+
+    // One expiry value, passed explicitly to both commands: never scraped
+    // from stderr, which also carries the node:sqlite ExperimentalWarning.
+    const expires = new Date(Date.now() + 3600_000).toISOString();
+    const request = cli("approval-request", "--run", String(runId), "--expires", expires);
+    assert.equal(request.status, 0, request.stderr);
+    // The raw bytes, unstripped: stripping here would hide exactly the
+    // defect where the printed payload is not the signed payload.
+    const payload = request.stdout;
+    assert.match(payload, /^buildworks-approval\n/);
+    assert.ok(!payload.endsWith("\n"), "the printed payload must be the signed payload, byte for byte");
+
+    const signed = spawnSync(
+      process.execPath,
+      [resolve(process.cwd(), "scripts", "sign-approval.mjs"), "sign", "--key", join(keyDir, "approval.key")],
+      { cwd: process.cwd(), encoding: "utf8", input: payload }
+    );
+    assert.equal(signed.status, 0, signed.stderr);
+
+    const approve = cli("approve", "--run", String(runId), "--expires", expires, "--signature", signed.stdout.trim());
+    assert.equal(approve.status, 0, approve.stderr);
+    assert.match(approve.stdout.trim(), /^\d+$/);
+
+    // A second attempt is refused: one authorization covers the run.
+    const again = cli("approve", "--run", String(runId), "--expires", expires, "--signature", signed.stdout.trim());
+    assert.equal(again.status, 1);
+    assert.match(again.stderr, /already has an awaiting_approval stage with status passed/);
+
+    const verify = cli("verify-audit");
+    assert.equal(verify.status, 0);
+    assert.equal(verify.stdout.trim(), "chain valid");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(keyDir, { recursive: true, force: true });
+  }
+});
+
+test("approval-request with an empty --expires value is a usage error, not a silent default", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "approval-request", "--run", "1", "--expires");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /missing required option --expires/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

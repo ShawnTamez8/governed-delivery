@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { normalizeText } from "./canonical.ts";
 
 export interface SpecDoc {
   feature: string;
@@ -18,18 +19,23 @@ const CHANGE_KINDS: readonly string[] = ["feature", "defect_fix"];
 export function validateSpecDoc(
   content: string
 ): { ok: true; value: SpecDoc } | { ok: false; reason: string } {
-  const featureMatch = /^feature:\s*(.+)$/m.exec(content);
+  // The same tolerance the spec hash already applies (`normalizeText`): an
+  // editor that saves a BOM, or a checkout under `core.autocrlf=true`, must
+  // not make a valid spec unparseable. Without this the BOM sits before
+  // `feature:` and the failure is reported as a missing frontmatter field.
+  const text = normalizeText(content);
+  const featureMatch = /^feature:\s*(.+)$/m.exec(text);
   if (!featureMatch || featureMatch[1].trim() === "") {
     return { ok: false, reason: "spec is missing the frontmatter field feature" };
   }
-  const changeMatch = /^change_kind:\s*(.+)$/m.exec(content);
+  const changeMatch = /^change_kind:\s*(.+)$/m.exec(text);
   if (!changeMatch || !CHANGE_KINDS.includes(changeMatch[1].trim())) {
     return {
       ok: false,
       reason: `invalid spec change_kind ${changeMatch?.[1]?.trim() ?? "missing"}: allowed values are ${CHANGE_KINDS.join(", ")}`,
     };
   }
-  const artifactsSection = section(content, "Declared artifacts");
+  const artifactsSection = section(text, "Declared artifacts");
   if (artifactsSection === null) {
     return { ok: false, reason: "spec is missing the ## Declared artifacts section" };
   }
@@ -45,7 +51,7 @@ export function validateSpecDoc(
       return { ok: false, reason: `declared artifact must be a repo-relative path: ${path}` };
     }
   }
-  const criteriaSection = section(content, "Acceptance criteria");
+  const criteriaSection = section(text, "Acceptance criteria");
   if (criteriaSection === null) {
     return { ok: false, reason: "spec is missing the ## Acceptance criteria section" };
   }

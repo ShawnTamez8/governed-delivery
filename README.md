@@ -11,12 +11,14 @@ validation.
 
 ## Status
 
-Build order steps 1-3 implemented: run store, stage chain, and audit chain
+Build order steps 1-4 implemented: run store, stage chain, and audit chain
 over SQLite; the concrete harness adapter (`bw dispatch` spawns `claude-code`,
-parses its envelope, retains raw output, and persists `agent_run` rows); and
-the spec and spec-review stages (`bw spec` runs the author, the review panel,
-and the deterministic gate with closure rounds). Plus the documentation
-checker. Commands: see [`CLAUDE.md`](CLAUDE.md).
+parses its envelope, retains raw output, and persists `agent_run` rows); the
+spec and spec-review stages (`bw spec` runs the author, the review panel,
+and the deterministic gate with closure rounds); and the human approval gate
+(`bw approval-request` prints the payload, `bw approve` verifies one Ed25519
+authorization against a public key held outside the repository). Plus the
+documentation checker. Commands: see [`CLAUDE.md`](CLAUDE.md).
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the design, and its binding
   constraints.

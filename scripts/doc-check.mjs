@@ -126,7 +126,7 @@ while ((m = tableRe.exec(migrationSql)) !== null) {
   }
   migrationColumns.set(name, cols);
 }
-for (const table of ["run", "stage", "agent_run", "finding", "audit"]) {
+for (const table of ["run", "stage", "agent_run", "finding", "approval", "audit"]) {
   const expected = archColumns.get(table);
   const found = migrationColumns.get(table);
   if (!found) {
@@ -148,6 +148,8 @@ const constraints = [
   "CHECK (severity IN ('low', 'medium', 'high', 'critical'))",
   "CHECK (disposition IN ('open', 'resolved', 'disputed', 'accepted'))",
   "UNIQUE (stage_id, intent_key, location)",
+  "CHECK (risk IN ('low', 'standard', 'high'))",
+  "UNIQUE (run_id)",
   "CREATE TRIGGER audit_no_update",
   "CREATE TRIGGER audit_no_delete",
 ];

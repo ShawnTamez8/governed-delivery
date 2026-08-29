@@ -251,3 +251,70 @@ test("setRunStatus blocks a run and refuses invalid values", () => {
     );
   });
 });
+
+function approvalInput(runId: number) {
+  return {
+    runId,
+    featureId: "f-1",
+    specHash: "a".repeat(64),
+    startingCommit: "b".repeat(40),
+    profileHash: "c".repeat(64),
+    risk: "standard",
+    scope: '["docs/features/s/spec.md"]',
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    signature: "AAAA",
+    signer: "d".repeat(64),
+  };
+}
+
+test("insertApproval persists every bound field and reads back by run", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const approval = store.insertApproval(approvalInput(run.id));
+    assert.equal(approval.run_id, run.id);
+    assert.equal(approval.feature_id, "f-1");
+    assert.equal(approval.spec_hash, "a".repeat(64));
+    assert.equal(approval.starting_commit, "b".repeat(40));
+    assert.equal(approval.profile_hash, "c".repeat(64));
+    assert.equal(approval.risk, "standard");
+    assert.equal(approval.scope, '["docs/features/s/spec.md"]');
+    assert.equal(approval.expires_at, "2099-01-01T00:00:00.000Z");
+    assert.equal(approval.signature, "AAAA");
+    assert.equal(approval.signer, "d".repeat(64));
+    assert.ok(!Number.isNaN(Date.parse(approval.created_at)));
+    assert.deepEqual(store.getApproval(run.id), approval);
+  });
+});
+
+test("insertApproval refuses an invalid risk naming the allowed values", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    assert.throws(
+      () => store.insertApproval({ ...approvalInput(run.id), risk: "extreme" }),
+      /invalid risk extreme: allowed values are low, standard, high/
+    );
+  });
+});
+
+test("one authorization covers the run: a second approval is refused", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    store.insertApproval(approvalInput(run.id));
+    assert.throws(() => store.insertApproval(approvalInput(run.id)), /UNIQUE|constraint/i);
+  });
+});
+
+test("an approval for a nonexistent run is refused by the foreign key", () => {
+  withStore((store) => {
+    assert.throws(() => store.insertApproval(approvalInput(9999)), /FOREIGN KEY|constraint/i);
+  });
+});
+
+test("setProfileRef records the frozen profile hash and names a missing run", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    store.setProfileRef(run.id, "e".repeat(64));
+    assert.equal(store.getRun(run.id)!.profile_ref, "e".repeat(64));
+    assert.throws(() => store.setProfileRef(9999, "e".repeat(64)), /run 9999 does not exist/);
+  });
+});

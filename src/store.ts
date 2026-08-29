@@ -65,6 +65,34 @@ export interface FindingRow {
   disposition: string;
 }
 
+export interface ApprovalRow {
+  id: number;
+  run_id: number;
+  feature_id: string;
+  spec_hash: string;
+  starting_commit: string;
+  profile_hash: string;
+  risk: string;
+  scope: string;
+  expires_at: string;
+  signature: string;
+  signer: string;
+  created_at: string;
+}
+
+export interface ApprovalInput {
+  runId: number;
+  featureId: string;
+  specHash: string;
+  startingCommit: string;
+  profileHash: string;
+  risk: string;
+  scope: string;
+  expiresAt: string;
+  signature: string;
+  signer: string;
+}
+
 export interface FindingInput {
   stageId: number;
   agentRunId: number | null;
@@ -104,6 +132,8 @@ const RUN_STATUSES: readonly string[] = ["in_progress", "blocked", "completed"];
 // Single source: finding.ts owns the finding enums; the store imports them
 // so the validation and the migration CHECK cannot drift apart.
 import { DISPOSITIONS as FINDING_DISPOSITIONS, SEVERITIES as FINDING_SEVERITIES } from "./finding.ts";
+// Same rule for risk: select.ts owns the values beside the Risk type.
+import { RISKS } from "./select.ts";
 
 // Anchored to this module, not the working directory: the CLI is spawned from
 // arbitrary directories in tests and in runs.
@@ -317,6 +347,58 @@ export class Store {
     );
     if (result.changes === 0) {
       throw new Error(`finding ${id} does not exist`);
+    }
+  }
+
+  /**
+   * The signed authorization (architecture section 12). `UNIQUE (run_id)` in
+   * the migration is what makes "one authorization covers the rest" a schema
+   * rule rather than a convention.
+   */
+  insertApproval(input: ApprovalInput): ApprovalRow {
+    if (!RISKS.includes(input.risk)) {
+      throw new Error(`invalid risk ${input.risk}: allowed values are ${RISKS.join(", ")}`);
+    }
+    const result = this.#withRetry(() =>
+      this.#db
+        .prepare(
+          `INSERT INTO approval (run_id, feature_id, spec_hash, starting_commit, profile_hash,
+             risk, scope, expires_at, signature, signer, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          input.runId,
+          input.featureId,
+          input.specHash,
+          input.startingCommit,
+          input.profileHash,
+          input.risk,
+          input.scope,
+          input.expiresAt,
+          input.signature,
+          input.signer,
+          new Date().toISOString()
+        )
+    );
+    return this.query<ApprovalRow>("SELECT * FROM approval WHERE id = ?", [
+      Number(result.lastInsertRowid),
+    ])[0]!;
+  }
+
+  getApproval(runId: number): ApprovalRow | undefined {
+    return this.query<ApprovalRow>("SELECT * FROM approval WHERE run_id = ?", [runId])[0];
+  }
+
+  setProfileRef(id: number, profileHash: string): void {
+    const result = this.#withRetry(() =>
+      this.#db.prepare("UPDATE run SET profile_ref = ?, updated_at = ? WHERE id = ?").run(
+        profileHash,
+        new Date().toISOString(),
+        id
+      )
+    );
+    if (result.changes === 0) {
+      throw new Error(`run ${id} does not exist`);
     }
   }
 

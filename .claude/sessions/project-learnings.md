@@ -1,5 +1,94 @@
 # Project learnings — BuildWorks (governed-delivery)
 
+## 2026-08-29 — Step 4 review reconciled: three Windows defects, all measured
+
+An independent code review of the approval gate produced 15 findings. The three
+fixed here were the ones that broke the documented workflow on the platform this
+machine runs. Each was confirmed by measurement before any edit, and each new
+test was run against the pre-fix code and seen to fail.
+
+- **The signing tool signed bytes the gate could never recompute.** Measured on
+  PowerShell 5.1: the documented pipe delivers the payload with a UTF-8 BOM
+  prepended and every LF rewritten to CRLF, plus one trailing CRLF; the redirect
+  route (`> payload.txt`, then `Get-Content -Raw |`) delivers two trailing CRLFs,
+  because the file keeps its own newline and PowerShell appends another handing
+  the string to a native command. `sign-approval.mjs` stripped one trailing
+  newline and nothing else. The human gate was unusable on the default shell of
+  a supported platform.
+- **The lesson from step 4 was right but scoped too narrowly.** That entry says
+  a test that normalizes its input hides the defect it exists to catch.
+  `test/sign-approval.test.ts` normalized nothing — and still missed this,
+  because feeding `spawnSync`'s `input` byte-exact *is* a normalization: it
+  bypasses the shell the operator actually types into. The general rule:
+  **where a documented workflow runs through a shell, an editor, or a
+  filesystem, that layer is part of the contract and belongs inside the test.**
+  Byte-exactness at the process boundary proves nothing about the boundary the
+  human crosses.
+- **A tolerance applied at one boundary and not its sibling is a defect.**
+  `normalizeText` was applied to the spec hash so a CRLF checkout could not
+  invalidate an authorization, but not to `validateSpecDoc`, which parses the
+  same file. A BOM-saving editor therefore blocked approval reporting a missing
+  `feature:` field that was plainly present. When a tolerance is added, find
+  every reader of the same bytes.
+- **A guard must compare the way the filesystem compares.** `touchesProtected`
+  matched protected prefixes case-exactly. On Windows and macOS
+  `Src/Agents/x.ts` and `src/agents/x.ts` are one file, so capitalization
+  evaded the guard and took the risk score from `standard` to `low` — a
+  two-reviewer panel down to one. The guard now folds case; `computeScope`
+  deliberately does not, because the operator signs the paths as declared.
+- **Breaking the guard caught my own mistake, not just the original one.** A
+  bulk `.exec(content)` → `.exec(text)` replacement also hit the private
+  `section()` helper, whose parameter is separately named `content`. The full
+  suite would have caught it, but the break-test caught it first and cheaper.
+  Confirms the standing rule: a test that passes on first write has shown only
+  that your reading matched the code.
+
+Gate after the change: 212 tests pass (was 207), `typecheck` clean,
+`check:docs` clean, and both documented signing workflows verified end to end
+through a real PowerShell 5.1 shell. Not committed.
+
+Twelve findings from the same review remain open — signed risk recomputed from
+disk after the panel was sized, `validateExpiry` accepting `2026-02-30`,
+unescaped payload header lines, `change_kind` never re-checked at the gate,
+lexical `isInside`, `sign --key` containment, sha256-object-format repos, and
+the zero-stage spend guard among them.
+
+
+## 2026-08-29 — Build order step 4 implemented (human approval gate)
+
+- `bw approval-request` prints the canonical payload; `bw approve` verifies one
+  Ed25519 signature and records the `approval` row, creating the
+  `awaiting_approval` stage only on success. The gate dispatches nothing, so a
+  refusal costs nothing and is *not* terminal — it audits `approval.refused`
+  and leaves no stage row, unlike step 3 where every failure was terminal
+  because money had already been spent. Plan:
+  `docs/features/approval-gate/plan.md` (Status: Implemented).
+- The profile (`.governance/profiles/<run>/profile.json`, hash on
+  `run.profile_ref`) is frozen at `new-run`. It carries the starting commit
+  because section 15's `run` table has no column for one and
+  `test/schema.test.ts` compares columns against ARCHITECTURE.md — adding a
+  column would have meant editing the design document.
+- **The lesson worth carrying: a test that normalizes its input can hide the
+  defect it exists to catch.** The CLI walk stripped the trailing newline from
+  `approval-request`'s stdout before signing, so it passed while the real
+  documented workflow (`> payload.txt`, then sign) would always have failed
+  verification. `console.log` appends a byte that is not in the signed payload.
+  Where bytes are signed or hashed, a test must consume them exactly as a user
+  would — any normalization in the test is a place the contract can be wrong.
+- Known gap, accepted by operator decision: the verification trust anchor is
+  `BW_APPROVAL_PUBLIC_KEY` at approve time and the recorded `signer` is never
+  compared to anything frozen, so whoever can set that variable can
+  self-approve. Agents cannot (no `BW_*` in `envPassthrough`, no CLI in the
+  allowlist — both now asserted in `test/executor.test.ts`). The hardening, if
+  ever wanted, is to freeze the signer fingerprint in the profile.
+- Also accepted: `approveRun`'s writes are not atomic; a crash mid-approval
+  wedges the run. Fixing it needs `Store`'s transaction handling restructured
+  (`insertStage` and `appendAudit` each open their own `BEGIN IMMEDIATE` and
+  cannot nest) — step-1 code, deliberately out of scope.
+- Next: build order step 5 — plan stage and gate. It is the first step that
+  needs a per-stage model, so the profile's deferred model map (section 10)
+  should land with it.
+
 ## 2026-08-29 — Design reconciled; ready for build order step 1
 
 ### Locked decisions

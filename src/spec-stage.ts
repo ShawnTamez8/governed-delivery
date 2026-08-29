@@ -8,13 +8,11 @@ import { validateAgentResult } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import { SEVERITIES, SEVERITY_ORDER, findingIdentity, normalizeLocation } from "./finding.ts";
 import { computeRisk, selectReviewers, PANEL_SIZE } from "./select.ts";
+import { touchesProtected } from "./scope.ts";
 import { buildSpecAuthorPrompt, buildSpecReviewPrompt } from "./prompts.ts";
 import { writeSpecDoc, type SpecDoc } from "./spec-doc.ts";
 import { appendAudit } from "./audit.ts";
-
-export const REMEDIATION_ROUNDS = 3;
-const MATERIAL_THRESHOLD = "high";
-const REQUIRED_SPECIALTIES = ["requirements-traceability"];
+import { MATERIAL_THRESHOLD, REMEDIATION_ROUNDS, REQUIRED_SPECIALTIES } from "./policy.ts";
 
 export type StageResult =
   | { ok: true; stageIds: { spec: number; specReview: number }; specPath: string }
@@ -33,19 +31,6 @@ export function specReviewGate(
   return openMaterial.length === 0
     ? { pass: true }
     : { pass: false, openMaterialIds: openMaterial.map((f) => f.id) };
-}
-
-function normalizePath(p: string): string {
-  return p.replace(/\\/g, "/").replace(/^\.\//, "");
-}
-
-function touchesProtected(artifacts: string[], slug: string): boolean {
-  const protectedPrefixes = ["src/agents/", "src/executor.ts", "governed.yaml", ".governance/"];
-  const designPath = `docs/features/${slug}/design.md`;
-  return artifacts.some((a) => {
-    const p = normalizePath(a);
-    return protectedPrefixes.some((prefix) => p.startsWith(prefix)) || p === designPath;
-  });
 }
 
 interface FindingShape {

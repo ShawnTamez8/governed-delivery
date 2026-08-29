@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
-import { runSpecStage, REMEDIATION_ROUNDS } from "../src/spec-stage.ts";
+import { runSpecStage } from "../src/spec-stage.ts";
+import { REMEDIATION_ROUNDS } from "../src/policy.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 
 const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-spec-stage.mjs");

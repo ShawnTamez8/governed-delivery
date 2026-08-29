@@ -87,10 +87,10 @@ test("architecture block has no handoff table", () => {
   assert.ok(!architectureTables().has("handoff"));
 });
 
-test("run, stage, agent_run, finding, and audit columns in the migrations match the architecture block", () => {
+test("run, stage, agent_run, finding, approval, and audit columns in the migrations match the architecture block", () => {
   const arch = architectureTables();
   const mig = migrationColumns(sql);
-  for (const table of ["run", "stage", "agent_run", "finding", "audit"]) {
+  for (const table of ["run", "stage", "agent_run", "finding", "approval", "audit"]) {
     assert.deepEqual(mig.get(table), arch.get(table), `columns of ${table}`);
   }
 });
@@ -113,6 +113,10 @@ test("enum CHECK constraints are present", () => {
   assert.ok(sql.includes("CHECK (severity IN ('low', 'medium', 'high', 'critical'))"));
   assert.ok(sql.includes("CHECK (disposition IN ('open', 'resolved', 'disputed', 'accepted'))"));
   assert.ok(sql.includes("UNIQUE (stage_id, intent_key, location)"));
+  assert.ok(sql.includes("CHECK (risk IN ('low', 'standard', 'high'))"));
+  // One authorization per run (section 12). Distinct from the stage table's
+  // UNIQUE (run_id, ordinal): the closing paren is what separates them.
+  assert.ok(sql.includes("UNIQUE (run_id)"));
 });
 
 test("audit is append-only by trigger", () => {
