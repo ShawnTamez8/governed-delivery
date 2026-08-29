@@ -52,6 +52,13 @@ something critical without naming the configurations that reach it.
   file; everything else is produced by a stage and `status.md` is a projection.
 - `.governance/` — machine-local state. Gitignored. Never hand-edited.
 
+## Session continuity
+
+At session start, read `.claude/sessions/project-learnings.md` — it carries
+decisions locked, running state, and open questions saved by the
+context-compaction skill. The most recent entry is the current state; treat
+it as the resume point for any work here.
+
 ## Commands
 
 Run from the repository root. These commands live here and nowhere else.
