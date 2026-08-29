@@ -1,5 +1,109 @@
 # Project learnings — BuildWorks (governed-delivery)
 
+## 2026-08-29 — Step 5 and the 12 findings planned; four planning lessons
+
+### State
+
+- Two plans written, both `Status: Proposed`, neither executed:
+  - `docs/features/approval-gate-hardening/plan.md` — 11 tasks, closes all 12
+    step-4 review findings (10 open plus the 2 accepted-deferred).
+  - `docs/features/plan-stage/plan.md` — 7 tasks, build order step 5 plus the
+    profile’s deferred model map.
+- Hardening runs first. The plan-stage plan states the dependency explicitly:
+  `Store.transaction` re-entrancy, the `spec.gate.pass` contract, and
+  `Profile.approvalSigner` would otherwise be written twice.
+- Nothing implemented this session. Tree clean at `b1ac09b` apart from this file.
+
+### Lessons
+
+- **A findings list is not a task list.** Findings 3 and 9 were filed
+  separately — "signed risk recomputed from disk" and "risk uses the raw
+  artifact count while scope is deduplicated" — but they are one miscount seen
+  at two boundaries. Planned as two tasks they would have been fixed on one
+  side and left inconsistent on the other, which *is* the defect. Group a
+  review’s findings by defect, not by where the reviewer happened to notice
+  them.
+- **A guard that reads ambient state can be silently un-exercised by fixture
+  ordering.** Task 9 freezes the approval key’s fingerprint by reading
+  `BW_APPROVAL_PUBLIC_KEY` inside `freezeProfile`.
+  `test/approval-stage.test.ts` sets that variable *after* it calls
+  `freezeProfile`, so every fixture would freeze `approvalSigner: null` — bound
+  path untested, suite green, guard proving nothing. This widens the step-4
+  lesson: it is not only *normalized* input that hides a defect, it is input
+  established at the wrong *time*. When a new guard reads an env var, the cwd,
+  or the clock, check when existing fixtures establish it.
+- **Blast-radius claims must be grepped at the moment they are written.** Two
+  claims in the first drafts came from memory: `test/agents.test.ts` "asserts
+  properties rather than length" (it asserts `reviewers.length >= 2`, so the
+  conclusion held for a different reason than the one stated), and
+  `freezeProfile`’s call sites (eight, six of them in one test file). A
+  remembered dependency claim is an unverified one — paste the grep with line
+  numbers or do not make the claim.
+- **A document describing control characters must not contain them, and an
+  edit that reports success is not evidence the bytes changed.** A character
+  class written with literal NUL and 0x1f went into a plan file: it first broke
+  a Bash heredoc, then made `grep` treat the plan as binary. The fix then
+  *appeared* to work — a string replace reported success and the surrounding
+  prose changed while the bytes stayed. Only re-reading the file caught it; a
+  character-level replacement was what actually worked. Verify an edit by
+  re-reading the artifact, never by trusting the tool’s own success report.
+
+### Process fix worth making
+
+- **Persist a review’s findings as a file, not in scrollback.** The step-4
+  review’s 12 findings survived only in the `step4-open-findings` memory and
+  prose here; 4 of 12 were nearly lost and recovering them cost a round trip.
+  `docs/features/<slug>/<date>-plan-review.md` already exists as precedent
+  (spec-stage, harness-adapter). Code reviews should follow it.
+
+### Next up
+
+- Execute `docs/features/approval-gate-hardening/plan.md`, then
+  `docs/features/plan-stage/plan.md`.
+- The plan-stage plan carries one real API spend (a manual smoke). Budget for
+  prompt iteration: step 3’s smoke found two prompt defects the fixtures could
+  not.
+
+## 2026-08-29 — Context compaction wired; steps 1-4 shipped
+
+### Decisions and assumptions
+
+- No hook can observe context capacity from outside the harness, so the
+  context-compaction skill stays judgment-driven (Claude runs it at
+  milestones and around half capacity — the operator does not invoke it).
+  The harness-side mechanism is the auto-compact window in
+  `.claude/settings.json`: 500000 tokens, 50% of the configured 1M.
+- The skill's "Session continuity" pointer in CLAUDE.md is a required part
+  of the setup; step-4 edits had dropped it and it was re-added (commit
+  `b1ac09b`). Keep it when editing CLAUDE.md.
+- Build progress: steps 1-4 committed (`f68347c`, `14a7ea5`, `d489847`,
+  `84dd23d`, `b1ac09b`); step 5 is next.
+
+### Deferred and open
+
+- Open: 12 step-4 review findings are the step-5 planning input — signed
+  risk recomputed from disk after the panel was sized, `validateExpiry`
+  accepting impossible dates, unescaped payload header lines, `change_kind`
+  not re-checked at the gate, lexical `isInside`, `sign --key` containment,
+  sha256-object-format repos, and the zero-stage spend guard. See the
+  step-4 review entry below for the full list.
+- Deferred: approval-write atomicity and the trust-anchor freeze (accepted
+  review findings 5/6) ride with step 5's profile model-map work.
+
+### Verification
+
+- `npm ci && npm run typecheck && npm test && npm run check:docs` — 212/212
+  green at commit `84dd23d`.
+
+### Next time
+
+- Read the step-4 entries below before planning step 5.
+
+### Next up
+
+- Build order step 5: plan stage and gate, carrying the profile's deferred
+  model map and the 12 open review findings.
+
 ## 2026-08-29 — Step 4 review reconciled: three Windows defects, all measured
 
 An independent code review of the approval gate produced 15 findings. The three
@@ -110,15 +214,6 @@ the zero-stage spend guard among them.
 - Patch validation: a patch binds to the head in effect when proposed;
   apply-time re-validation refuses only if head moved in paths it touches.
 - Harness language: TypeScript on Node, per operator decision 2026-08-29.
-
-### Open questions
-
-- None at this time.
-
-### Next steps
-
-- Build order step 2: one harness adapter, concrete, no interface above it.
-  Plan under `docs/features/` per the write-plan convention.
 
 ## 2026-08-29 — Build order step 3 implemented (spec stage)
 
