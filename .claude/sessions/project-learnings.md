@@ -7,9 +7,10 @@ disagree, Current state wins.
 
 ## Current state (2026-08-30)
 
-**Shipped:** build order steps 1-6. Step 6 — the implementation stage — is
-Implemented (`docs/features/implementation-stage/plan.md`), smoke-passed
-against the real harness, and independently reviewed
+**Shipped:** build order steps 1-6, committed as `32a714e` on master (working
+tree clean). Step 6 — the implementation stage — is Implemented
+(`docs/features/implementation-stage/plan.md`), smoke-passed against the real
+harness, and independently reviewed
 (`docs/features/implementation-stage/2026-08-30-code-review.md`, two low
 findings, both closed — the dangling-link guard was added and break-proven;
 this entry closes the record-keeping one). Suite 368 pass / 1 recorded skip,
@@ -99,9 +100,9 @@ Durable one-liners that recur. Each cost at least one wasted cycle to learn.
 
 ### Step 6: implementation stage — implemented, smoke-passed (2026-08-30)
 
-Nine tasks executed in order with every verification; the independent review
-filed two low findings, both closed (the dangling-link guard added and
-break-proven; the record-keeping this entry is).
+Nine tasks executed in order with every verification, committed as `32a714e`;
+the independent review filed two low findings, both closed (the dangling-link
+guard added and break-proven; the record-keeping this entry is).
 
 **Smoke (the one real spend):** one `claude-sonnet-5` dispatch, **$0.0673**,
 5.1s, 313 output tokens. Valid patch set on the first attempt — `add` patches
@@ -161,59 +162,32 @@ become so).
 
 ### Step-5 manual smoke: passed end to end, real binary (2026-08-30)
 
-The one real API spend for step 5, `claude` with `--model sonnet` (effective
-`claude-sonnet-5` throughout, proxy-routed). Low-risk two-artifact spec: three
-remediation rounds, six dispatches, **$0.63 total** (0.068-0.156 per dispatch,
-8s-91s each); cost escalates per round as prompts grow with injected findings.
-
-- **First stage whose prompts worked unmodified on the first real attempt** —
-  the step-3 lessons (state the full envelope, keep patch concepts out of
-  content-write prompts) held; the rounds were content-quality iteration.
-- **Hazard 13 enforced by the reviewer, live:** a round-2 finding caught the
-  plan author inventing a rejection requirement the spec never stated. The gate
-  passed in round 3 with two **open medium findings** (one genuinely correct)
-  because the threshold is `high` — passed by design, recorded as such.
-- Reviewer findings drove real plan improvement: the final plan derives its test
-  set from a single `DOCUMENTED_SHAPES` array with a non-emptiness guard, making
-  the flagged cross-reference drift structurally impossible.
-- Audit chain verified; all five stage rows passed; `configured_standalone`
-  throughout. Cost expectation for a step-6 smoke: one dispatch, no panel —
-  budget one step-5 single-dispatch cost (0.068-0.156).
+The one real API spend for step 5: `claude --model sonnet` (effective
+`claude-sonnet-5`), three remediation rounds, six dispatches, **$0.63 total**
+(8s-91s each). First stage whose prompts worked unmodified on the first real
+attempt; **hazard 13 enforced live** (a finding caught the plan author
+inventing a rejection requirement the spec never stated); the gate passed with
+two open medium findings below the `high` threshold — by design, recorded as
+such. The final plan derives its test set from one `DOCUMENTED_SHAPES` array
+with a non-emptiness guard, making cross-reference drift structurally
+impossible. Budgeted one single-dispatch cost (0.068-0.156) for the step-6
+smoke — actual $0.0673, see the record above.
 
 ### Skills: review-code added, doc-check rewritten (2026-08-29)
 
-- `review-code` is a **global** skill (`~/.claude/skills/review-code/`) that
-  reads a per-repository checklist at `.claude/review-code.md`. The split keeps
-  one skill name working in every repo while the repo-specific rules stay
-  versioned with the code they name. This repo's checklist carries the six hard
-  rules, the hazard-to-code map, and the suppression list.
-- `write-plan`, `implement-plan`, and `review-design` no longer hardcode
-  `.claude/skills/doc-consistency/`. They discover a project documentation skill
-  by what it does, so they find `doc-check` here.
+- `review-code` is a global skill (`~/.claude/skills/review-code/`) reading the
+  per-repo checklist `.claude/review-code.md` (six hard rules, hazard-to-code
+  map, suppression list). The doc skills discover the project documentation
+  skill by what it does, so they find `doc-check` here.
 - `scripts/doc-check.mjs` rewritten with tiers (current / reference /
   historical), `--json`, `--only=`, and **exit 2 when the checker itself cannot
-  read the source**. The defect that motivated it: renaming an `ARCHITECTURE.md`
-  section made the old checker report `governed.yaml is absent from the
-  protected paths list` — a documentation defect that did not exist, against a
-  document that was correct. **A checker that blames the wrong artifact is worse
-  than no checker.**
+  read the source** — the motivating defect: a renamed `ARCHITECTURE.md` section
+  made the old checker report a documentation defect that did not exist. **A
+  checker that blames the wrong artifact is worse than no checker.**
 - Historical-tier documents (`docs/features/**`, `.claude/sessions/**`) get
-  warnings, never errors, on stale paths. They are evidence of what was believed
-  when written; editing one to make it true destroys what the reconciliation
-  depends on.
-- Skill files load into context on every invocation, and `description` fields
-  load in *every session*. Cut anything the tool's own output or error messages
-  already say.
-
-### Break-it runs: the backup mechanism and the backslash transport (2026-08-29)
-
-Four break-it restores failed silently during the step-5 review reconciliation,
-leaving four deliberate breaks stacked in the tree at once; the suite caught it
-(306/311) and the tree was recovered by hand. Both causes were a step whose
-success was assumed rather than checked — the quoting produced no backup and
-said so; the restore failed and said so; neither was read because the command
-was written to look for something else. The rules live in the quick-reference
-above.
+  warnings, never errors — they are evidence of what was believed when written.
+- Skill files load into context on every invocation, `description` fields in
+  *every session*. Cut anything the tool's own output already says.
 
 ### Step-4 hardening: all twelve findings closed (2026-08-29)
 
@@ -352,70 +326,18 @@ findings applied (`f68347c`).
   records failures that have occurred in delivery, and entries 1 and 12 already
   cover the class. Latent fragilities do not earn an entry.
 
-### Step-6 plan: implementation stage (2026-08-30)
+### Step-6 plan: implementation stage (2026-08-30) — superseded, executed
 
-### Decisions and assumptions
+Plan Proposed → Implemented (see the step-6 implementation record above; its
+decisions and the three pre-planning dispositions are recorded there). Two
+draft-gap lessons survive from the planning session:
 
-- The step-6 plan is complete at `docs/features/implementation-stage/plan.md`
-  (write-plan, full path; one self-review pass, 5 findings; Status Proposed;
-  `check:docs` clean). The 6-9 scope review found the build order already lean —
-  no new human gates, no review panels, one new agent — and its three open
-  decisions are resolved as the plan's first three assumptions: (1) scope-fitness
-  proposal flow deferred past step 9 — an out-of-scope patch refuses with a
-  named message and a fresh run; (2) the run-duration ceiling lands with step 6
-  — `RUN_DURATION_LIMIT_SECONDS` = 7 days, frozen in `Policy` (policyHash moves;
-  pre-existing dev runs refuse at the approval gate by design); (3) `status.md`
-  deferred past step 9.
-- Architecture-open choices the plan locks: `ProposedPatchFile.content` is the
-  complete new file content (whole-file write — the shipped type has no diff
-  field); one commit per patch under a system git identity (`SYSTEM_NAME
-  <buildworks@buildworks.invalid>`); the projections (spec + plan) committed to
-  the run branch as its first commit (section 7's "commits everything it
-  writes"); scope matching is string-based exact-or-`s/`-prefix, case-preserving;
-  no remediation rounds (implementation is unreviewed — refusal is terminal, the
-  worktree is retained); harness `cwd` = worktree; `output_ref` = worktree path.
-
-### What failed
-
-- Draft gap 1 — spec drift: my "transitive binding" note claimed an unchanged
-  plan implies an unchanged spec. It does not: `spec.md` is a separate mutable
-  file the stage reads, commits to the run branch, and feeds the implementer.
-  The operator's review caught it; fix in the plan compares
-  `sha256Hex(normalizeText(specContent))` against `approval.spec_hash` **and**
-  the gate event's `planFor` before the stage row or worktree exists. Lesson: a
-  binding argument must name the file it covers.
-- Draft gap 2 — symlink redirect: lexical `touchesProtected` plus the
-  `isPathInside` containment check both pass for a junction `src/alias` →
-  `src/agents/`, and the write follows the link. Fix in the plan: re-run
-  `touchesProtected` on the `resolveExisting`-resolved target, ordered before
-  the existence checks. The repo already recorded this class twice —
-  `src/scope.ts`'s own comment and the review-code break-it note — and I had not
-  consulted them when writing the gate. Both findings have named tests in the
-  plan: a spec-edited no-spend case plus a forged-`planFor` variant, and
-  junction/file-symlink cases with a recorded skip when the OS refuses file
-  symlinks.
-
-### What worked
-
-- Grounding every cited line before writing paid off twice: the plan names
-  `test/profile.test.ts:157`/`:170` as the two pins that must move with the
-  model map (the four-entry `deepEqual` and the `"implementation"` unmapped
-  example), and `test/prompts.test.ts:20-22` as the comment reserving the patch
-  rules for this step. `dispatchOnce` already spreads `input.invocation`, so the
-  harness `cwd` extension needs no dispatch change.
-
-### Verification
-
-- `npm run check:docs` - exit 0 clean after reconciliation; historical-tier
-  path warnings only. No code changed — plan-only session, so typecheck/tests
-  were not run.
-
-### Deferred and open
-
-- Deferred: `status.md` projection and the scope-fitness proposal flow — past
-  step 9, per the plan's assumptions.
-- Open: whether the three orchestrators get a shared shape — the plan leaves
-  extraction to a later step that has all three in hand.
-
-*(This record's "next time" pointers were executed: the plan is implemented,
-smoke-passed, and reviewed — see the step-6 implementation record above.)*
+- **A binding argument must name the file it covers.** An unchanged plan does
+  not imply an unchanged spec — `spec.md` is a separate mutable file — so the
+  stage re-verifies the plan hash *and* the gate event's `planFor` against the
+  spec on disk before the stage row exists.
+- **Consult the repo's own records before writing a link-redirect gate.** The
+  symlink/junction redirect class was already recorded twice (`src/scope.ts`'s
+  comment, the review-code break-it note) and both were missed until the
+  operator's review. The step-6 review's finding 1 is the same class surfacing
+  a third time — see the dangling-link fix above.
