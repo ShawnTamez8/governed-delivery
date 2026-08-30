@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  buildImplementationAuthorPrompt,
   buildPlanAuthorPrompt,
   buildPlanReviewPrompt,
   buildSpecAuthorPrompt,
   buildSpecReviewPrompt,
 } from "../src/prompts.ts";
+import { IMPLEMENTER } from "../src/agents/implementer.ts";
 import { PLAN_AUTHOR } from "../src/agents/plan-author.ts";
 import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
 import { SPEC_REVIEWER_TRACEABILITY } from "../src/agents/spec-reviewer-traceability.ts";
@@ -17,9 +19,10 @@ import { SPEC_REVIEWER_TRACEABILITY } from "../src/agents/spec-reviewer-traceabi
 // generated strings — it guards the source.
 const source = readFileSync(join(process.cwd(), "src", "prompts.ts"), "utf8");
 
-// The patch rules (baseCommit, deletion) do not appear here: the spec
-// prompts request content writes, not patches. They return with the step
-// whose prompts request patches, and the scan gains them then.
+// The patch rules (baseCommit, the add/modify action enum, whole-file
+// content, the no-deletion rule) arrived with the implementation stage —
+// the step whose prompts request patches, exactly as this comment promised
+// they would.
 const CONSTRAINT_STRINGS = [
   "proposed",
   "blocked",
@@ -41,6 +44,13 @@ const CONSTRAINT_STRINGS = [
   "## Coverage",
   "not_applicable",
   "proposedContentChanges.plan",
+  // The patch rules the implementation prompt states.
+  "proposedPatches",
+  "baseCommit",
+  "add",
+  "modify",
+  "deletion",
+  "content",
 ];
 
 test("every constrained field's constraint appears in the prompt source", () => {
@@ -127,4 +137,31 @@ test("the generated plan reviewer prompt states the finding constraints and name
   // Both documents reach the reviewer: judging coverage needs the criteria.
   assert.ok(prompt.includes("# plan"));
   assert.ok(prompt.includes("# spec"));
+});
+
+test("the generated implementation author prompt states the patch contract", () => {
+  const baseCommit = "b".repeat(40);
+  const prompt = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", [
+    "src/a1.ts",
+    "test/a1.test.ts",
+  ], baseCommit);
+  for (const constraint of [
+    "proposed, blocked, failed",
+    "proposedPatches",
+    "action one of add, modify",
+    "deletion is refused by the system",
+    "complete new file content",
+    "Run no git commands",
+    "Patch only these paths:",
+    "Output the JSON object",
+  ]) {
+    assert.ok(prompt.includes(constraint), `implementation author prompt missing: ${constraint}`);
+  }
+  // The base commit is handed to the model, not left to it to compute: it is
+  // what the system verifies every proposed patch against.
+  assert.ok(prompt.includes(`baseCommit must be exactly: ${baseCommit}`));
+  // The signed scope is stated as the only paths a patch may touch, one
+  // `- <path>` line per entry.
+  assert.ok(prompt.includes("- src/a1.ts"));
+  assert.ok(prompt.includes("- test/a1.test.ts"));
 });

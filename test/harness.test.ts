@@ -152,3 +152,22 @@ test("stderr is captured alongside stdout", async () => {
   assert.equal(outcome.raw, "partial");
   assert.equal(outcome.stderr, "boom");
 });
+
+test("invokeHarness runs the child in a caller-chosen working directory", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bw-cwd-"));
+  try {
+    const executor = testExecutor(["node", join(FIXTURES, "echo-cwd.mjs")]);
+    const outcome = await invokeHarness(executor, { prompt: "", cwd: dir });
+    assert.equal(outcome.exitCode, 0);
+    assert.equal(outcome.raw.trim(), dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("invokeHarness defaults to the inherited working directory", async () => {
+  const executor = testExecutor(["node", join(FIXTURES, "echo-cwd.mjs")]);
+  const outcome = await invokeHarness(executor, { prompt: "" });
+  assert.equal(outcome.exitCode, 0);
+  assert.equal(outcome.raw.trim(), process.cwd());
+});

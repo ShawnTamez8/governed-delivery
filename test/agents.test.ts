@@ -52,3 +52,32 @@ test("the seeded reviewers can staff a standard-risk plan panel", () => {
   const reviewers = AGENTS.filter((a) => a.role === "reviewer" && a.outputs.includes("findings"));
   assert.ok(reviewers.length >= 2, "standard risk seats two reviewers");
 });
+
+test("the implementer allows patches output, nothing else, and never reviews", () => {
+  // Section 9: a dispatcher that derived the required output from the result
+  // kind rather than the performer would let another author satisfy the
+  // implementation stage. The refusal is asserted here before the stage that
+  // relies on it.
+  const author = agentById("implementer");
+  assert.ok(author, "the implementation stage needs a registered author");
+  assert.equal(author.role, "author");
+  assert.equal(author.specialty, null);
+  assert.ok(author.outputs.includes("patches"), "the implementer must allow patches output");
+  for (const forbidden of ["spec", "plan", "plan-revision", "findings"]) {
+    assert.ok(!author.outputs.includes(forbidden), `the implementer must not allow ${forbidden} output`);
+  }
+  // The implementer is an author, and selectReviewers filters to role
+  // "reviewer" — patch output can never enter a review panel. Assert the
+  // seed directly rather than through the filter, so a reviewer definition
+  // that gained patches output is caught at the registry.
+  for (const agent of AGENTS.filter((a) => a.role === "reviewer")) {
+    assert.ok(!agent.outputs.includes("patches"), `${agent.id} must not allow patches output`);
+  }
+  // Hazard 11: a default installation must be able to complete a run. The
+  // seeded registry staffs an implementation dispatch — an author whose
+  // outputs include patches.
+  assert.ok(
+    AGENTS.some((a) => a.role === "author" && a.outputs.includes("patches")),
+    "the seed must staff an implementation dispatch"
+  );
+});

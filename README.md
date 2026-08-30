@@ -11,7 +11,7 @@ validation.
 
 ## Status
 
-Build order steps 1-5 implemented: run store, stage chain, and audit chain
+Build order steps 1-6 implemented: run store, stage chain, and audit chain
 over SQLite; the concrete harness adapter (`bw dispatch` spawns `claude-code`,
 parses its envelope, retains raw output, and persists `agent_run` rows); the
 spec and spec-review stages (`bw spec` runs the author, the review panel,
@@ -21,7 +21,12 @@ authorization against a public key held outside the repository); and the plan
 and plan-review stages (`bw plan` builds the plan from the approved
 specification, re-verified against the hash the review gate recorded, and an
 unkeepable-promise gate refuses coverage naming any artifact outside the
-signed scope before a panel is convened). The model each stage uses is frozen
+signed scope before a panel is convened); and the implementation stage
+(`bw implement` creates the run's worktree on branch `gov/<slug>/<run-id>`,
+commits the projections, dispatches an implementer, and applies each proposed
+patch only when it binds to the recorded base commit and stays inside the
+signed scope — one commit per patch, the worktree retained when the gate
+blocks). The model each stage uses is frozen
 at `bw new-run --model` and every spend entry point checks it. Plus the
 documentation checker. Commands: see [`CLAUDE.md`](CLAUDE.md).
 

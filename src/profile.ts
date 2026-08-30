@@ -125,7 +125,7 @@ export function freezeProfile(
     // only point at which this can be resolved, which is what makes hard
     // rule 6 — config is frozen at run start — enforceable rather than
     // advisory.
-    modelMap: { spec: model, spec_review: model, plan: model, plan_review: model },
+    modelMap: { spec: model, spec_review: model, plan: model, plan_review: model, implementation: model },
     approvalSigner: key.ok ? key.signer : null,
     frozenAt: new Date().toISOString(),
     agents: [...AGENTS].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),

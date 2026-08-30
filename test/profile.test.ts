@@ -162,6 +162,7 @@ test("the profile freezes one model entry per stage kind", () => {
       spec_review: "chosen-model",
       plan: "chosen-model",
       plan_review: "chosen-model",
+      implementation: "chosen-model",
     });
     assert.deepEqual(resolveStageModel(profile, "plan"), { ok: true, model: "chosen-model" });
   });
@@ -170,12 +171,12 @@ test("the profile freezes one model entry per stage kind", () => {
 test("resolveStageModel refuses an unmapped stage kind naming the mapped ones", () => {
   withRoot((root) => {
     const { profile } = freezeProfile(root, 1, COMMIT, MODEL);
-    const result = resolveStageModel(profile, "implementation");
+    const result = resolveStageModel(profile, "verification");
     assert.equal(result.ok, false);
     if (result.ok) return;
     // Section 10: the failure is at configuration time and must name what the
     // frozen profile does map, so the operator can see what is missing.
-    assert.match(result.reason, /no model configured for stage implementation/);
-    assert.match(result.reason, /spec, spec_review, plan, plan_review/);
+    assert.match(result.reason, /no model configured for stage verification/);
+    assert.match(result.reason, /spec, spec_review, plan, plan_review, implementation/);
   });
 });

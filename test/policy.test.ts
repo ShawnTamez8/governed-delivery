@@ -5,6 +5,7 @@ import {
   MATERIAL_THRESHOLD,
   REMEDIATION_ROUNDS,
   REQUIRED_SPECIALTIES,
+  RUN_DURATION_LIMIT_SECONDS,
   buildPolicy,
   policyHash,
 } from "../src/policy.ts";
@@ -30,6 +31,7 @@ test("every policy value is the one the enforcing module actually uses", () => {
   assert.equal(p.promptMaxBytes, PROMPT_MAX_BYTES);
   assert.equal(p.resultMaxBytes, RESULT_MAX_BYTES);
   assert.equal(p.approvalMaxLifetimeSeconds, APPROVAL_MAX_LIFETIME_SECONDS);
+  assert.equal(p.runDurationLimitSeconds, RUN_DURATION_LIMIT_SECONDS);
 });
 
 test("the materiality threshold names a real severity", () => {

@@ -7,6 +7,7 @@ import { CLAUDE_CODE } from "./executor.ts";
 import { dispatchOnce } from "./dispatch.ts";
 import { runSpecStage } from "./spec-stage.ts";
 import { runPlanStage } from "./plan-stage.ts";
+import { runImplementationStage } from "./implementation-stage.ts";
 import { freezeProfile, loadVerifiedProfile, resolveStageModel, resolveStartingCommit, validateModelName } from "./profile.ts";
 import { approvalPayload, validateExpiry } from "./approval.ts";
 import { approveRun, buildBinding } from "./approval-stage.ts";
@@ -22,6 +23,7 @@ commands:
            [--model <name>]
   spec --run <id> [--model <name>]       run the spec and spec_review stages
   plan --run <id> [--model <name>]       run the plan and plan_review stages
+  implement --run <id> [--model <name>]   run the implementation stage
   approval-request --run <id> [--expires <iso>]
                                          print the payload for the operator to sign
   approve --run <id> --expires <iso> --signature <base64>
@@ -115,6 +117,7 @@ async function main(): Promise<void> {
     "dispatch",
     "spec",
     "plan",
+    "implement",
     "approval-request",
     "approve",
     "verify-audit",
@@ -335,6 +338,20 @@ async function main(): Promise<void> {
         });
         if (result.ok) {
           console.log(result.planPath);
+        } else {
+          console.error(result.reason);
+          process.exitCode = 1;
+        }
+        break;
+      }
+      case "implement": {
+        const result = await runImplementationStage(store, CLAUDE_CODE, {
+          runId: numeric(args, "run"),
+          requestedModel: optional(args, "model"),
+          rootDir: process.cwd(),
+        });
+        if (result.ok) {
+          console.log(result.worktreePath);
         } else {
           console.error(result.reason);
           process.exitCode = 1;

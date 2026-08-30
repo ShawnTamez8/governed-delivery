@@ -183,3 +183,60 @@ Specification:
 
 ${specContent}`;
 }
+
+/**
+ * The implementation author prompt: role, the approved plan and
+ * specification verbatim, the signed scope as the only paths a patch may
+ * touch, and the AgentResult contract with every constrained field stated.
+ *
+ * `baseCommit` is handed to the model rather than left to it to compute: it
+ * is the branch head the system will verify every proposed patch against,
+ * and a model recomputing it would be a second source of truth for the one
+ * value that binds the patch to what was authorized — the same reason the
+ * plan prompt hands `plan_for`.
+ *
+ * The scope block shape ("Patch only these paths:" followed by one `- <path>`
+ * line per entry) is a contract: the fixture executor in Task 7 scrapes it
+ * to build its patches, so changing the shape changes the fixture.
+ */
+export function buildImplementationAuthorPrompt(
+  agent: AgentDefinition,
+  planContent: string,
+  specContent: string,
+  scope: string[],
+  baseCommit: string
+): string {
+  return `you are the implementer ${agent.id}
+
+Propose the code changes that implement the approved plan below. Your
+working directory is the repository checkout those changes apply to — read
+it to see the code you are patching. Run no git commands: the system applies
+and commits the patches you propose.
+
+Return exactly a JSON AgentResult object with this shape:
+{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedPatches": [{"baseCommit": "...", "files": [{"path": "...", "action": "add", "content": "<complete new file content>"}]}]}
+
+status must be one of proposed, blocked, failed. Output the JSON object
+directly, with no surrounding prose, no markdown fences, and no commentary.
+
+Each patch has:
+- baseCommit must be exactly: ${baseCommit}
+- files: one entry per file the patch changes, each with path, action, and
+  content
+- path: a repo-relative path, one of the approved scope paths below
+- action one of add, modify — deletion is refused by the system and must not
+  be proposed
+- content is the complete new file content, not a diff
+
+Patch only these paths:
+
+${scope.map((p) => `- ${p}`).join("\n")}
+
+Approved plan:
+
+${planContent}
+
+Approved specification:
+
+${specContent}`;
+}

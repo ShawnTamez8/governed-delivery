@@ -38,6 +38,21 @@ export const APPROVAL_MAX_LIFETIME_SECONDS = 86400;
  */
 export const APPROVAL_DEFAULT_LIFETIME_SECONDS = 28800;
 
+/**
+ * The ceiling on how long a run may exist before the implementation stage
+ * refuses to start it. Section 20's rule that every limit defines its
+ * behaviour on breach is satisfied by the refusal, which names this limit.
+ * Seven days because the ceiling exists to stop an unattended run, and the
+ * human approval window (default eight hours) plus the remediating stages
+ * must fit comfortably.
+ *
+ * This is configuration, so its value is stated here and frozen per run
+ * through the profile — the stage reads `profile.policy.runDurationLimitSeconds`
+ * rather than this constant, which is how section 20's "record which values
+ * were in force" is satisfied.
+ */
+export const RUN_DURATION_LIMIT_SECONDS = 7 * 86400;
+
 export interface Policy {
   panelSizes: Record<string, number>;
   remediationRounds: number;
@@ -50,6 +65,7 @@ export interface Policy {
   resultMaxBytes: number;
   approvalMaxLifetimeSeconds: number;
   approvalDefaultLifetimeSeconds: number;
+  runDurationLimitSeconds: number;
 }
 
 /**
@@ -71,6 +87,7 @@ export function buildPolicy(): Policy {
     resultMaxBytes: RESULT_MAX_BYTES,
     approvalMaxLifetimeSeconds: APPROVAL_MAX_LIFETIME_SECONDS,
     approvalDefaultLifetimeSeconds: APPROVAL_DEFAULT_LIFETIME_SECONDS,
+    runDurationLimitSeconds: RUN_DURATION_LIMIT_SECONDS,
   };
 }
 

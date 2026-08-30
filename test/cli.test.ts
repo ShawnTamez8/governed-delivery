@@ -682,6 +682,119 @@ test("plan drives the real stage logic up to the dispatch boundary", () => {
   }
 });
 
+test("implement with a nonexistent run exits 1 naming the run and creates no worktree", () => {
+  const cwd = tempCwd();
+  try {
+    assert.equal(runCli(cwd, "migrate").status, 0);
+    const r = runCli(cwd, "implement", "--run", "9999");
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /run 9999 does not exist/);
+    assert.ok(!existsSync(join(cwd, ".governance", "worktrees")), "no worktree directory was created");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("implement without --run is a usage error naming the option", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "implement");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /missing required option --run/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("implement drives the real stage logic up to the dispatch boundary", () => {
+  // `bw implement` hardcodes CLAUDE_CODE, as `bw spec` and `bw plan` do, and
+  // there is no executor injection seam — adding one would be a test-only
+  // abstraction that hard rule 4 forbids. End-to-end stage behaviour is
+  // covered by test/implementation-stage.test.ts against a fixture executor;
+  // this asserts the command is wired to it: a run driven to a passed
+  // plan_review whose plan was edited afterwards must be refused by the
+  // deepest pre-dispatch check, which only runImplementationStage performs.
+  // The walk deliberately stops there — a walk that reached the dispatch
+  // would spend real money in the automated suite.
+  const cwd = tempCwd();
+  try {
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "demo", "--change-kind", "feature", "--model", "test-model");
+    assert.equal(newRun.status, 0, newRun.stderr);
+    const runId = Number(newRun.stdout.trim());
+
+    const spec = "feature: demo\nchange_kind: feature\n\n## Declared artifacts\n\n- src/a1.ts\n\n## Acceptance criteria\n\n- it works\n";
+    const specPath = join(cwd, "docs", "features", "demo", "spec.md");
+    mkdirSync(dirname(specPath), { recursive: true });
+    writeFileSync(specPath, spec);
+    const specHash = sha256Hex(normalizeText(spec));
+
+    const store = openStore(cwd);
+    const specStage = store.insertStage(runId, "spec", null);
+    store.completeStage(specStage.id, specPath, "pass");
+    const reviewStage = store.insertStage(runId, "spec_review", specStage.id);
+    store.completeStage(reviewStage.id, specPath, "pass");
+    appendAudit(store, {
+      runId,
+      stageId: reviewStage.id,
+      actor: "system",
+      actorType: "cli",
+      action: "spec.gate.pass",
+      summary: `spec_review gate passed in round 1; specHash=${specHash}; risk=low`,
+    });
+    const approvalStage = store.insertStage(runId, "awaiting_approval", reviewStage.id);
+    store.completeStage(approvalStage.id, specPath, "pass");
+    store.insertApproval({
+      runId,
+      featureId: "f-1",
+      specHash,
+      startingCommit: "b".repeat(40),
+      profileHash: store.getRun(runId)!.profile_ref!,
+      risk: "low",
+      scope: canonicalJson(["src/a1.ts"]),
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      signature: "sig",
+      signer: "signer",
+    });
+
+    const planPath = join(cwd, "docs", "features", "demo", "plan.md");
+    const plan = `feature: demo\nplan_for: ${specHash}\n\n## Tasks\n\n- Build it\n\n## Coverage\n\n- it works -> src/a1.ts\n`;
+    mkdirSync(dirname(planPath), { recursive: true });
+    writeFileSync(planPath, plan);
+    const planStage = store.insertStage(runId, "plan", approvalStage.id);
+    store.completeStage(planStage.id, planPath, "pass");
+    const planReviewStage = store.insertStage(runId, "plan_review", planStage.id);
+    store.completeStage(planReviewStage.id, planPath, "pass");
+    appendAudit(store, {
+      runId,
+      stageId: planReviewStage.id,
+      actor: "system",
+      actorType: "cli",
+      action: "plan.gate.pass",
+      summary: `plan_review gate passed in round 1; planHash=${sha256Hex(normalizeText(plan))}; planFor=${specHash}; risk=low`,
+    });
+    store.close();
+
+    // Edit the gated plan, then implement: the binding check must refuse.
+    writeFileSync(planPath, `${plan}- and something nobody approved\n`);
+    const r = runCli(cwd, "implement", "--run", String(runId));
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /the plan has changed since review: gated [0-9a-f]{64}, on disk [0-9a-f]{64}/);
+    assert.ok(!existsSync(join(cwd, ".governance", "worktrees")), "no worktree directory was created");
+    const after = openStore(cwd);
+    try {
+      const spent = after.query<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ?",
+        [runId]
+      )[0].n;
+      assert.equal(spent, 0, "the refusal precedes any spawn");
+    } finally {
+      after.close();
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 test("a --model flag with no value is a usage error, not an empty model", () => {
   // parse() records a valueless flag as "" so it can be reported by name.
   // Reading it with args.get alone turned `bw spec --run 1 --model` into the

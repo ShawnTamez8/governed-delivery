@@ -7,6 +7,14 @@ export interface InvocationInput {
   idleTimeoutSeconds?: number;
   absoluteTimeoutSeconds?: number;
   model?: string;
+  /**
+   * The working directory the harness process starts in. The implementation
+   * stage runs the harness inside the run's worktree so the implementer
+   * reads the repository it patches. Raw output retention is unaffected:
+   * `dispatchOnce`'s `rootDir` argument is unchanged — only the spawn's
+   * `cwd` moves.
+   */
+  cwd?: string;
 }
 
 export interface HarnessOutcome {
@@ -156,6 +164,7 @@ export function invokeHarness(executor: ExecutorDefinition, input: InvocationInp
     stdio: ["pipe", "pipe", "pipe"],
     env,
     detached: !WINDOWS,
+    ...(input.cwd !== undefined ? { cwd: input.cwd } : {}),
   });
   const stdoutChunks: Buffer[] = [];
   const stderrChunks: Buffer[] = [];
