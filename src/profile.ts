@@ -12,10 +12,10 @@ import { SYSTEM_NAME, buildPolicy, policyHash, type Policy } from "./policy.ts";
  * section 12), stored under `.governance/profiles/<run>/` with its hash on
  * the run row.
  *
- * The model map and the verification config are absent because neither
- * exists yet as configuration: the model is still a per-invocation flag and
- * `governed.yaml` is step 7's input. The profile records what was actually
- * resolved rather than pretending to a completeness it does not have.
+ * The model map exists and is frozen per run; the verification config is
+ * absent because `governed.yaml` is step 7's input and nothing has run
+ * verification yet. The profile records what was actually resolved rather
+ * than pretending to a completeness it does not have.
  *
  * `startingCommit` lives here rather than in a `run` column because section
  * 15's `run` table has none, and a base commit is exactly "what the run
@@ -25,6 +25,15 @@ export interface Profile {
   runId: number;
   systemName: string;
   startingCommit: string | null;
+  /**
+   * The model each stage kind resolves to, frozen at run start (section 10).
+   *
+   * A map because section 10 requires a stage to name what it needs and
+   * configuration to resolve it — not because the values differ today. There
+   * is one model to configure, so every entry currently holds it; the shape is
+   * what lets that stop being true without a schema change.
+   */
+  modelMap: Record<string, string>;
   /**
    * The fingerprint of the approval public key configured at run start, or
    * null when no usable key was configured then.
@@ -70,6 +79,26 @@ export function resolveStartingCommit(rootDir: string): string | null {
 }
 
 /**
+ * The model name is operator input that reaches a spawn, and on Windows the
+ * spawn builds its command line through a shell. A name containing a space or
+ * other shell metacharacter freezes fine and then corrupts the child's argv —
+ * the invocation runs a different command line than the audit records. The
+ * pattern mirrors the `feature_id` rule.
+ */
+const MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/**
+ * Return a named refusal for a model name that cannot be frozen, or null when
+ * the name is valid. Shared by `freezeProfile` and the CLI's `new-run` case so
+ * the rule is one string in one place.
+ */
+export function validateModelName(model: string): string | null {
+  return MODEL_NAME.test(model)
+    ? null
+    : `invalid model name ${JSON.stringify(model)}: must be 1-64 characters of letters, digits, dot, underscore, or hyphen, starting with a letter or digit`;
+}
+
+/**
  * Freeze the profile and return its hash. The file written is the canonical
  * serialization, so re-reading the bytes and hashing them reproduces this
  * hash exactly — which is what makes tampering detectable at the gate.
@@ -77,8 +106,13 @@ export function resolveStartingCommit(rootDir: string): string | null {
 export function freezeProfile(
   rootDir: string,
   runId: number,
-  startingCommit: string | null
+  startingCommit: string | null,
+  model: string
 ): { path: string; hash: string; profile: Profile } {
+  const modelError = validateModelName(model);
+  if (modelError !== null) {
+    throw new Error(modelError);
+  }
   const policy = buildPolicy();
   // A missing or unreadable key at run start is normal — most machines have
   // none — so this records null rather than failing run creation.
@@ -87,6 +121,11 @@ export function freezeProfile(
     runId,
     systemName: SYSTEM_NAME,
     startingCommit,
+    // One entry per stage kind that exists today. `new-run --model` is the
+    // only point at which this can be resolved, which is what makes hard
+    // rule 6 — config is frozen at run start — enforceable rather than
+    // advisory.
+    modelMap: { spec: model, spec_review: model, plan: model, plan_review: model },
     approvalSigner: key.ok ? key.signer : null,
     frozenAt: new Date().toISOString(),
     agents: [...AGENTS].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
@@ -115,4 +154,59 @@ export function loadProfile(rootDir: string, runId: number): { profile: Profile;
     throw new Error(`no frozen profile for run ${runId} at ${path}`);
   }
   return { profile: JSON.parse(raw) as Profile, hash: sha256Hex(raw) };
+}
+
+/**
+ * The model a stage kind resolves to, from the profile frozen at run start.
+ *
+ * Section 10 requires this to fail at configuration time — before any
+ * invocation — rather than at dispatch, so an unmapped stage kind is a
+ * refusal here and never a spawn that spends first and fails after.
+ */
+export function resolveStageModel(
+  profile: Profile,
+  stageKind: string
+): { ok: true; model: string } | { ok: false; reason: string } {
+  const model = profile.modelMap?.[stageKind];
+  if (typeof model !== "string" || model === "") {
+    return {
+      ok: false,
+      reason: `no model configured for stage ${stageKind}: the profile frozen at run start maps ${Object.keys(
+        profile.modelMap ?? {}
+      ).join(", ")}`,
+    };
+  }
+  return { ok: true, model };
+}
+
+/**
+ * Load the frozen profile and prove it is the one the run froze.
+ *
+ * `loadProfile` returns the hash but leaves the comparison to its caller, and
+ * a caller that reads `.profile` and drops `.hash` gets a profile that is
+ * enforced but not tamper-evident: editing `profile.json` on disk changes
+ * which model a stage may use, or what policy a gate applies, and nothing
+ * objects. Every consumer of the frozen profile goes through here so the
+ * comparison cannot be forgotten at one site and remembered at another.
+ */
+export function loadVerifiedProfile(
+  rootDir: string,
+  run: { id: number; profile_ref: string | null }
+): { ok: true; profile: Profile; hash: string } | { ok: false; reason: string } {
+  if (run.profile_ref === null) {
+    return { ok: false, reason: `run ${run.id} has no frozen profile` };
+  }
+  let loaded;
+  try {
+    loaded = loadProfile(rootDir, run.id);
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  }
+  if (loaded.hash !== run.profile_ref) {
+    return {
+      ok: false,
+      reason: `profile for run ${run.id} has been modified since intake: frozen ${run.profile_ref}, on disk ${loaded.hash}`,
+    };
+  }
+  return { ok: true, profile: loaded.profile, hash: loaded.hash };
 }

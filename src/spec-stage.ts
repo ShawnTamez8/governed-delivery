@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExecutorDefinition } from "./executor.ts";
 import { requireRunInProgress, type FindingRow, type Store } from "./store.ts";
+import { loadVerifiedProfile, resolveStageModel } from "./profile.ts";
 import { dispatchOnce } from "./dispatch.ts";
 import { agentById } from "./agents.ts";
 import { validateAgentResult } from "./agent-result.ts";
@@ -51,7 +52,7 @@ interface FindingShape {
 export async function runSpecStage(
   store: Store,
   executor: ExecutorDefinition,
-  input: { runId: number; requestedModel: string; rootDir: string }
+  input: { runId: number; requestedModel?: string; rootDir: string }
 ): Promise<StageResult> {
   const { runId, requestedModel, rootDir } = input;
   const run = store.getRun(runId);
@@ -66,6 +67,37 @@ export async function runSpecStage(
   if (blocked !== null) {
     return { ok: false, reason: blocked };
   }
+  // Section 10: the model is resolved from the profile frozen at run start,
+  // and an unmapped stage kind fails here — at configuration time, before any
+  // invocation — rather than after a spawn has already cost something.
+  const verified = loadVerifiedProfile(rootDir, run);
+  if (!verified.ok) {
+    return { ok: false, reason: verified.reason };
+  }
+  const profile = verified.profile;
+  const resolvedModel = resolveStageModel(profile, "spec");
+  if (!resolvedModel.ok) {
+    return { ok: false, reason: resolvedModel.reason };
+  }
+  // The review panel is a different stage kind and resolves its own entry.
+  // Reusing the author's model would leave the `spec_review` entry never
+  // consulted here while `bw dispatch` — which resolves by `stage.kind` —
+  // enforced it, so the two surfaces would disagree about one stage the
+  // moment the values stopped coinciding.
+  const resolvedReviewModel = resolveStageModel(profile, "spec_review");
+  if (!resolvedReviewModel.ok) {
+    return { ok: false, reason: resolvedReviewModel.reason };
+  }
+  // Hard rule 6: a flag that silently overrode the snapshot would make the
+  // frozen profile a decoration. Supplying it is allowed; disagreeing is not.
+  if (requestedModel !== undefined && requestedModel !== resolvedModel.model) {
+    return {
+      ok: false,
+      reason: `--model ${requestedModel} does not match the model frozen at run start (${resolvedModel.model}): config is frozen at run start`,
+    };
+  }
+  const model = resolvedModel.model;
+  const reviewModel = resolvedReviewModel.model;
   const existing = store.getStageChain(runId);
   if (existing.length > 0) {
     return {
@@ -111,7 +143,7 @@ export async function runSpecStage(
         stageId: specStage.id,
         agent: author.id,
         role: "author",
-        requestedModel,
+        requestedModel: model,
         prompt: buildSpecAuthorPrompt(author, design),
       },
       rootDir
@@ -183,7 +215,7 @@ export async function runSpecStage(
             stageId: reviewStage.id,
             agent: reviewer.id,
             role: "reviewer",
-            requestedModel,
+            requestedModel: reviewModel,
             prompt: buildSpecReviewPrompt(reviewer, specContent),
           },
           rootDir
@@ -295,7 +327,7 @@ export async function runSpecStage(
           stageId: specStage.id,
           agent: author.id,
           role: "author",
-          requestedModel,
+          requestedModel: model,
           prompt: buildSpecAuthorPrompt(author, design, { findingsSummary }),
         },
         rootDir

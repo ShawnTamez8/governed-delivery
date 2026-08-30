@@ -73,3 +73,113 @@ Specification:
 
 ${specContent}`;
 }
+
+/**
+ * The plan author prompt: role, the approved specification verbatim, the
+ * signed scope as the only paths the plan may name, the AgentResult contract
+ * with every constrained field stated, and the plan document schema.
+ *
+ * `plan_for` is handed to the model rather than left to it to compute: it is
+ * the hash of the specification the operator's signature bound, and a model
+ * recomputing it would be a second source of truth for the one value that
+ * ties the plan to what was authorized.
+ *
+ * No git operations are mentioned. The step-3 smoke recorded in
+ * `.claude/sessions/project-learnings.md` showed that naming patch concepts
+ * in a content-write prompt made the model refuse to produce a document at
+ * all; this stage is a content write for the same reason the spec stage is.
+ */
+export function buildPlanAuthorPrompt(
+  agent: AgentDefinition,
+  specContent: string,
+  specHash: string,
+  scope: string[],
+  context?: { findingsSummary?: string }
+): string {
+  const revision = context?.findingsSummary
+    ? `## Revision
+
+The previous plan was reviewed and these material findings remain open. Address
+or dispute each one in the revised plan:
+
+${context.findingsSummary}
+
+`
+    : "";
+  return `you are the plan author ${agent.id}
+
+Produce the implementation plan for the approved specification below.
+No git operations are involved: you are writing a plan document, not code
+changes.
+
+Return exactly a JSON AgentResult object with this shape; the plan document
+travels in the AgentResult's proposedContentChanges.plan:
+{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"plan": "<the full plan markdown>"}}
+
+status must be one of proposed, blocked, failed. Output the JSON object
+directly, with no surrounding prose, no markdown fences, and no commentary.
+
+The plan document schema is:
+- frontmatter with feature and plan_for
+- plan_for must be exactly: ${specHash}
+- a ## Tasks section: one task per list line
+- a ## Coverage section: one line per acceptance criterion, in one of two
+  forms:
+    <criterion> -> <artifact path>
+    <criterion> -> not_applicable: <rationale> / <alternative verification>
+  not_applicable requires both a rationale and an alternative verification.
+  An entry with only one of them is refused.
+
+Every artifact path you name in ## Coverage must be one of the approved scope
+paths below. A plan promising an artifact outside the approved scope is
+refused by the gate, so name only these:
+
+${scope.map((p) => `- ${p}`).join("\n")}
+
+${revision}Approved specification:
+
+${specContent}`;
+}
+
+/**
+ * The plan reviewer prompt: role, both documents, and the finding contract
+ * with every constrained field stated.
+ *
+ * The full envelope shape is spelled out because the step-3 smoke showed a
+ * reviewer returns a bare findings object until the prompt states the whole
+ * thing.
+ */
+export function buildPlanReviewPrompt(
+  agent: AgentDefinition,
+  planContent: string,
+  specContent: string
+): string {
+  return `you are the plan reviewer ${agent.id} with specialty ${agent.specialty ?? "general review"}
+
+Review the plan below against the specification it was written from, through
+your specialty lens. Judge whether the plan's tasks and coverage actually
+deliver the specification's acceptance criteria.
+
+Return exactly a JSON AgentResult object with this shape; your findings
+travel in the AgentResult's proposedContentChanges.findings:
+{"status": "proposed", "agent": "${agent.id}", "role": "reviewer", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"findings": [{"severity": "...", "location": "...", "intentKey": "...", "subject": "..."}]}}
+
+Each finding has:
+- severity one of low, medium, high, critical
+- location: a section heading, task, or artifact path from the plan
+- intentKey: lowercase kebab-case, at most 64 characters, describing the
+  concern type
+- subject: one sentence naming the concern
+
+Output the JSON object directly, with no surrounding prose, no markdown
+fences, and no commentary. Concerns you do not have are represented by an
+empty findings array, not by prose.
+
+Plan:
+
+${planContent}
+
+Specification:
+
+${specContent}`;
+}

@@ -25,6 +25,19 @@ export const REQUIRED_SPECIALTIES = ["requirements-traceability"];
  */
 export const APPROVAL_MAX_LIFETIME_SECONDS = 86400;
 
+/**
+ * The authorization window `bw approval-request` uses when the operator does
+ * not supply `--expires`.
+ *
+ * This is a *human* window: it spans printing the payload, the operator
+ * reading and signing it, and `bw approve` verifying the signature. Eight
+ * hours because a human gate that expires while the human is still reading
+ * is a gate that trains people to rubber-stamp — an approval that takes
+ * thirteen hours is a slow approval, not an invalid one, and the operator
+ * covers that case with `--expires` up to the ceiling above.
+ */
+export const APPROVAL_DEFAULT_LIFETIME_SECONDS = 28800;
+
 export interface Policy {
   panelSizes: Record<string, number>;
   remediationRounds: number;
@@ -36,6 +49,7 @@ export interface Policy {
   promptMaxBytes: number;
   resultMaxBytes: number;
   approvalMaxLifetimeSeconds: number;
+  approvalDefaultLifetimeSeconds: number;
 }
 
 /**
@@ -56,6 +70,7 @@ export function buildPolicy(): Policy {
     promptMaxBytes: PROMPT_MAX_BYTES,
     resultMaxBytes: RESULT_MAX_BYTES,
     approvalMaxLifetimeSeconds: APPROVAL_MAX_LIFETIME_SECONDS,
+    approvalDefaultLifetimeSeconds: APPROVAL_DEFAULT_LIFETIME_SECONDS,
   };
 }
 

@@ -9,7 +9,7 @@ import {
 } from "./approval.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "./canonical.ts";
 import { APPROVAL_MAX_LIFETIME_SECONDS, buildPolicy, policyHash } from "./policy.ts";
-import { loadProfile } from "./profile.ts";
+import { loadVerifiedProfile } from "./profile.ts";
 import { computeScope, touchesProtected } from "./scope.ts";
 import { computeRisk } from "./select.ts";
 import { validateSpecDoc } from "./spec-doc.ts";
@@ -67,20 +67,11 @@ export function buildBinding(
       `run ${runId}'s last stage is ${last.kind} (${last.status}), not a passed spec_review`
     );
   }
-  if (run.profile_ref === null) {
-    return no(`run ${runId} has no frozen profile`);
+  const verified = loadVerifiedProfile(rootDir, run);
+  if (!verified.ok) {
+    return no(verified.reason);
   }
-  let loaded;
-  try {
-    loaded = loadProfile(rootDir, runId);
-  } catch (err) {
-    return no((err as Error).message);
-  }
-  if (loaded.hash !== run.profile_ref) {
-    return no(
-      `profile for run ${runId} has been modified since intake: frozen ${run.profile_ref}, on disk ${loaded.hash}`
-    );
-  }
+  const loaded = { profile: verified.profile, hash: verified.hash };
   // Section 12: the gate re-checks that policy has not changed since intake.
   const inForce = policyHash(buildPolicy());
   if (loaded.profile.policyHash !== inForce) {
@@ -155,7 +146,9 @@ export function buildBinding(
       featureId: run.feature_id,
       specHash,
       startingCommit: loaded.profile.startingCommit,
-      profileHash: run.profile_ref,
+      // The verified hash, which loadVerifiedProfile has already proven equal
+      // to run.profile_ref — the same value, better typed.
+      profileHash: loaded.hash,
       risk,
       expiresAt,
       scope: computeScope(doc.value.declaredArtifacts),

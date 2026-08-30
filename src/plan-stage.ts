@@ -1,0 +1,506 @@
+import { readFileSync } from "node:fs";
+import type { ExecutorDefinition } from "./executor.ts";
+import { requireRunInProgress, type FindingRow, type Store } from "./store.ts";
+import { loadVerifiedProfile, resolveStageModel } from "./profile.ts";
+import { dispatchOnce } from "./dispatch.ts";
+import { agentById, type AgentDefinition } from "./agents.ts";
+import { validateAgentResult } from "./agent-result.ts";
+import { extractJsonBody } from "./parse-output.ts";
+import { SEVERITIES, findingIdentity, normalizeLocation } from "./finding.ts";
+import { computeRisk, selectReviewers, PANEL_SIZE, type Risk } from "./select.ts";
+import { computeScope, touchesProtected } from "./scope.ts";
+import { buildPlanAuthorPrompt, buildPlanReviewPrompt } from "./prompts.ts";
+import { validatePlanDoc, writePlanDoc, type PlanDoc } from "./plan-doc.ts";
+import { coverageFitsScope, coverageMeetsCriteria, planReviewGate } from "./plan-gate.ts";
+import { validateSpecDoc } from "./spec-doc.ts";
+import { appendAudit } from "./audit.ts";
+import { normalizeText, sha256Hex } from "./canonical.ts";
+import { REMEDIATION_ROUNDS, REQUIRED_SPECIALTIES } from "./policy.ts";
+
+export type PlanStageResult =
+  | { ok: true; stageIds: { plan: number; planReview: number }; planPath: string }
+  | { ok: false; reason: string };
+
+interface FindingShape {
+  location?: unknown;
+  intentKey?: unknown;
+  severity?: unknown;
+  subject?: unknown;
+}
+
+/**
+ * The plan and plan_review stages, as two rows continuing section 5's chain
+ * from the approved `awaiting_approval` row.
+ *
+ * **On the duplication with `src/spec-stage.ts`.** The two orchestrators have
+ * the same shape: author dispatch, envelope validation, content write, panel
+ * selection, findings, deterministic gate, bounded closure rounds. That is
+ * deliberate and is not an oversight to be filed in review. Hard rule 4
+ * forbids an abstraction before two real implementations exist, and this is
+ * the moment the second one appears. Extracting the shared shape is a
+ * decision for the step that has both in hand and can see which parts
+ * actually generalize — the differences (a coverage gate with no spec
+ * analogue, a different precondition chain, a document schema that binds to
+ * an upstream hash) are exactly what a premature interface would have had to
+ * guess at.
+ *
+ * Every failure path is terminal, matching `runSpecStage`: the affected stage
+ * completes blocked with no approved `output_ref`, the run blocks, an audit
+ * event names the reason, and `dispatchOnce` has already retained the raw
+ * output. An unexpected throw lands in the same terminal machinery, so no run
+ * is left wedged.
+ */
+export async function runPlanStage(
+  store: Store,
+  executor: ExecutorDefinition,
+  input: { runId: number; requestedModel?: string; rootDir: string },
+  // A test seam, and the only one: the seeded registry staffs every risk
+  // level, so the short-panel refusal is unreachable with real agents and the
+  // guard could otherwise never be proven by breaking it. Callers pass
+  // nothing; tests pass a panel of any size.
+  deps: { selectPanel?: (risk: Risk, specialties: string[]) => AgentDefinition[] } = {}
+): Promise<PlanStageResult> {
+  const { runId, requestedModel, rootDir } = input;
+  const selectPanel = deps.selectPanel ?? selectReviewers;
+  const run = store.getRun(runId);
+  if (!run) {
+    return { ok: false, reason: `run ${runId} does not exist` };
+  }
+  const blocked = requireRunInProgress(run);
+  if (blocked !== null) {
+    return { ok: false, reason: blocked };
+  }
+
+  const chain = store.getStageChain(runId);
+  if (chain.some((s) => s.kind === "plan")) {
+    const existing = chain.find((s) => s.kind === "plan")!;
+    return {
+      ok: false,
+      reason: `run ${runId} already has a plan stage with status ${existing.status}`,
+    };
+  }
+  const last = chain[chain.length - 1];
+  if (!last) {
+    return { ok: false, reason: `run ${runId} has no approved awaiting_approval stage to plan from` };
+  }
+  if (last.kind !== "awaiting_approval" || last.status !== "passed" || !last.output_ref) {
+    return {
+      ok: false,
+      reason: `run ${runId}'s last stage is ${last.kind} (${last.status}), not a passed awaiting_approval`,
+    };
+  }
+
+  // Section 10: the model comes from the profile frozen at run start, and an
+  // unmapped stage kind fails here rather than after a spawn has spent.
+  const verified = loadVerifiedProfile(rootDir, run);
+  if (!verified.ok) {
+    return { ok: false, reason: verified.reason };
+  }
+  const profile = verified.profile;
+  const resolvedModel = resolveStageModel(profile, "plan");
+  if (!resolvedModel.ok) {
+    return { ok: false, reason: resolvedModel.reason };
+  }
+  // The review panel is a different stage kind and resolves its own entry.
+  // Reusing the author's model would leave the `plan_review` entry never
+  // consulted here while `bw dispatch` — which resolves by `stage.kind` —
+  // enforced it, so the two surfaces would disagree about one stage the
+  // moment the values stopped coinciding.
+  const resolvedReviewModel = resolveStageModel(profile, "plan_review");
+  if (!resolvedReviewModel.ok) {
+    return { ok: false, reason: resolvedReviewModel.reason };
+  }
+  if (requestedModel !== undefined && requestedModel !== resolvedModel.model) {
+    return {
+      ok: false,
+      reason: `--model ${requestedModel} does not match the model frozen at run start (${resolvedModel.model}): config is frozen at run start`,
+    };
+  }
+  const model = resolvedModel.model;
+  const reviewModel = resolvedReviewModel.model;
+
+  const approval = store.getApproval(runId);
+  if (!approval) {
+    return { ok: false, reason: `run ${runId} has no recorded approval` };
+  }
+  let scope: string[];
+  try {
+    const parsed = JSON.parse(approval.scope) as unknown;
+    if (!Array.isArray(parsed) || parsed.some((p) => typeof p !== "string")) {
+      throw new Error("scope is not an array of strings");
+    }
+    scope = parsed as string[];
+  } catch (err) {
+    return { ok: false, reason: `run ${runId}'s approved scope is unreadable: ${(err as Error).message}` };
+  }
+
+  const specPath = last.output_ref;
+  let specContent: string;
+  try {
+    specContent = readFileSync(specPath, "utf8");
+  } catch (err) {
+    return { ok: false, reason: `cannot read approved spec ${specPath}: ${(err as Error).message}` };
+  }
+
+  // The binding chain's newest link. The panel gated a specification, the
+  // operator signed that specification, and this stage is the first consumer
+  // to read the file afterwards. Provenance is not enough: the file can be
+  // edited after approval, and a plan built from an edited spec would carry a
+  // signature that never authorized it. Re-verified before anything can be
+  // dispatched, with the approval gate's own wording so one defect reads the
+  // same wherever it surfaces.
+  const specHash = sha256Hex(normalizeText(specContent));
+  const gateEvent = store.query<{ summary: string }>(
+    "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.gate.pass' ORDER BY id DESC LIMIT 1",
+    [runId]
+  )[0];
+  if (!gateEvent) {
+    return {
+      ok: false,
+      reason: `run ${runId} has no spec.gate.pass audit event: the spec_review gate never recorded what it approved`,
+    };
+  }
+  const gated = /specHash=([0-9a-f]{64}); risk=(low|standard|high)/.exec(gateEvent.summary);
+  if (!gated) {
+    return { ok: false, reason: `run ${runId}'s spec.gate.pass event does not record a spec hash and risk` };
+  }
+  if (gated[1] !== specHash) {
+    return { ok: false, reason: `the spec has changed since review: gated ${gated[1]}, on disk ${specHash}` };
+  }
+
+  // The panel is sized from the same inputs the approval bound, so the plan
+  // panel and the spec panel are sized on the same basis.
+  const specDoc = validateSpecDoc(specContent);
+  if (!specDoc.ok) {
+    return { ok: false, reason: `the approved spec ${specPath} no longer validates: ${specDoc.reason}` };
+  }
+
+  const audit = (stageId: number | null, action: string, summary: string): void => {
+    appendAudit(store, { runId, stageId, actor: "system", actorType: "cli", action, summary });
+  };
+  const author = agentById("plan-author")!;
+
+  let planStageId: number | null = null;
+  let reviewStageId: number | null = null;
+
+  const abort = (stageId: number, action: string, reason: string): PlanStageResult => {
+    audit(stageId, action, reason);
+    store.completeStage(stageId, "", "block");
+    store.setRunStatus(runId, "blocked");
+    return { ok: false, reason };
+  };
+
+  try {
+    // --- plan stage: author, validation, content write, coverage gate ---
+    const planStage = store.insertStage(runId, "plan", last.id);
+    planStageId = planStage.id;
+    audit(planStage.id, "plan.stage.create", `created plan stage ${planStage.id}`);
+    if (!author.outputs.includes("plan")) {
+      return abort(planStage.id, "plan.author.failed", `configured agent ${author.id} does not allow plan output`);
+    }
+    const authorDispatch = await dispatchOnce(
+      store,
+      executor,
+      {
+        stageId: planStage.id,
+        agent: author.id,
+        role: "author",
+        requestedModel: model,
+        prompt: buildPlanAuthorPrompt(author, specContent, specHash, scope),
+      },
+      rootDir
+    );
+    if (!authorDispatch.ok) {
+      return abort(planStage.id, "plan.author.failed", authorDispatch.reason);
+    }
+    const authorBody = extractJsonBody(authorDispatch.envelope.resultText);
+    if (authorBody.kind === "refused") {
+      return abort(planStage.id, "plan.content.invalid", `plan author body refused: ${authorBody.reason}`);
+    }
+    const authorResult = validateAgentResult(author.id, authorBody.value);
+    if (!authorResult.ok) {
+      return abort(planStage.id, "plan.content.invalid", `plan author result refused: ${authorResult.reason}`);
+    }
+    if (authorResult.value.status !== "proposed") {
+      return abort(
+        planStage.id,
+        "plan.author.failed",
+        `plan author returned status ${authorResult.value.status}, not proposed`
+      );
+    }
+    const authorContent = authorResult.value.proposedContentChanges as { plan?: unknown } | undefined;
+    if (typeof authorContent?.plan !== "string") {
+      return abort(planStage.id, "plan.content.invalid", "plan author result is missing proposedContentChanges.plan");
+    }
+    let planContent = authorContent.plan;
+    let written: { path: string; doc: PlanDoc };
+    try {
+      written = writePlanDoc(rootDir, run.slug, planContent);
+    } catch (err) {
+      return abort(planStage.id, "plan.content.invalid", (err as Error).message);
+    }
+    let planPath = written.path;
+    const planForCheck = (doc: PlanDoc, stageId: number): PlanStageResult | null =>
+      doc.planFor === specHash
+        ? null
+        : abort(
+            stageId,
+            "plan.content.invalid",
+            `plan_for ${doc.planFor} does not match the approved spec hash ${specHash}: the plan was written from a different specification`
+          );
+    const mismatched = planForCheck(written.doc, planStage.id);
+    if (mismatched) return mismatched;
+    audit(planStage.id, "plan.content.write", `wrote ${planPath}`);
+
+    // The coverage gate runs here, before the panel: it is deterministic and
+    // free, so refusing a plan that promises out-of-scope artifacts saves a
+    // full panel's invocations on a plan that could never pass.
+    const coverage = coverageFitsScope(written.doc, scope);
+    if (!coverage.ok) {
+      // The audit event carries the criteria names, not just a count — the
+      // reason string is the operator's only diagnosable record of what the
+      // plan promised that nobody approved.
+      return abort(
+        planStage.id,
+        "plan.coverage.unkeepable",
+        `plan promises coverage outside the approved scope: ${coverage.unkeepable.join("; ")}`
+      );
+    }
+    const complete = coverageMeetsCriteria(written.doc, specDoc.value.acceptanceCriteria);
+    if (!complete.ok) {
+      return abort(
+        planStage.id,
+        "plan.coverage.incomplete",
+        `plan does not cover every acceptance criterion: ${complete.uncovered.join("; ")}`
+      );
+    }
+    store.completeStage(planStage.id, planPath, "pass");
+
+    // --- plan_review stage: panel, findings, gate, closure ---
+    const reviewStage = store.insertStage(runId, "plan_review", planStage.id);
+    reviewStageId = reviewStage.id;
+    audit(reviewStage.id, "plan_review.stage.create", `created plan_review stage ${reviewStage.id}`);
+    const risk = computeRisk(
+      run.change_kind,
+      computeScope(specDoc.value.declaredArtifacts).length,
+      touchesProtected(specDoc.value.declaredArtifacts, run.slug)
+    );
+    const panel = selectPanel(risk, REQUIRED_SPECIALTIES);
+    if (panel.length < PANEL_SIZE[risk]) {
+      return abort(
+        reviewStage.id,
+        "plan.panel.incomplete",
+        `plan panel incomplete: risk ${risk} needs ${PANEL_SIZE[risk]} reviewers, found ${panel.length}`
+      );
+    }
+
+    for (let round = 1; round <= REMEDIATION_ROUNDS; round++) {
+      const reportedIdentities = new Set<string>();
+      for (const reviewer of panel) {
+        if (!reviewer.outputs.includes("findings")) {
+          return abort(reviewStage.id, "plan.reviewer.failed", `configured agent ${reviewer.id} does not allow findings output`);
+        }
+        const dispatch = await dispatchOnce(
+          store,
+          executor,
+          {
+            stageId: reviewStage.id,
+            agent: reviewer.id,
+            role: "reviewer",
+            requestedModel: reviewModel,
+            prompt: buildPlanReviewPrompt(reviewer, planContent, specContent),
+          },
+          rootDir
+        );
+        if (!dispatch.ok) {
+          return abort(reviewStage.id, "plan.reviewer.failed", dispatch.reason);
+        }
+        const reviewerBody = extractJsonBody(dispatch.envelope.resultText);
+        if (reviewerBody.kind === "refused") {
+          return abort(reviewStage.id, "plan.reviewer.failed", `reviewer ${reviewer.id} body refused: ${reviewerBody.reason}`);
+        }
+        const reviewerResult = validateAgentResult(reviewer.id, reviewerBody.value);
+        if (!reviewerResult.ok) {
+          return abort(reviewStage.id, "plan.reviewer.failed", `reviewer ${reviewer.id} result refused: ${reviewerResult.reason}`);
+        }
+        if (reviewerResult.value.status !== "proposed") {
+          return abort(
+            reviewStage.id,
+            "plan.reviewer.failed",
+            `reviewer ${reviewer.id} returned status ${reviewerResult.value.status}, not proposed — a reviewer that cannot review must not pass the gate by absence`
+          );
+        }
+        const reviewerContent = reviewerResult.value.proposedContentChanges as { findings?: unknown } | undefined;
+        if (!Array.isArray(reviewerContent?.findings)) {
+          return abort(
+            reviewStage.id,
+            "plan.reviewer.failed",
+            `reviewer ${reviewer.id} result is missing proposedContentChanges.findings`
+          );
+        }
+        for (const entry of reviewerContent.findings as unknown[]) {
+          if (entry === null || typeof entry !== "object") {
+            return abort(reviewStage.id, "plan.reviewer.failed", `reviewer ${reviewer.id} finding entry is not an object`);
+          }
+          const f = entry as FindingShape;
+          if (typeof f.location !== "string" || f.location === "") {
+            return abort(reviewStage.id, "plan.reviewer.failed", `reviewer ${reviewer.id} finding is missing a non-empty location`);
+          }
+          if (typeof f.intentKey !== "string" || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(f.intentKey) || f.intentKey.length > 64) {
+            return abort(
+              reviewStage.id,
+              "plan.reviewer.failed",
+              `reviewer ${reviewer.id} finding intentKey ${String(f.intentKey)} is not lowercase kebab-case within 64 characters`
+            );
+          }
+          if (typeof f.severity !== "string" || !SEVERITIES.includes(f.severity)) {
+            return abort(
+              reviewStage.id,
+              "plan.reviewer.failed",
+              `reviewer ${reviewer.id} finding severity ${String(f.severity)} is not one of ${SEVERITIES.join(", ")}`
+            );
+          }
+          if (typeof f.subject !== "string" || f.subject === "") {
+            return abort(reviewStage.id, "plan.reviewer.failed", `reviewer ${reviewer.id} finding is missing a non-empty subject`);
+          }
+          const normalized = normalizeLocation(f.location);
+          store.insertFinding({
+            stageId: reviewStage.id,
+            agentRunId: dispatch.agentRunId,
+            severity: f.severity,
+            intentKey: f.intentKey,
+            subject: f.subject,
+            location: normalized,
+          });
+          audit(reviewStage.id, "plan.finding.record", `recorded finding at ${normalized} (${f.intentKey})`);
+          reportedIdentities.add(findingIdentity(f.location, f.intentKey));
+        }
+      }
+      // Resolution: the panel's re-review resolves a finding. The author's
+      // claim to have addressed it never does — a finding the panel stops
+      // reporting is resolved, and one it keeps reporting stays open.
+      for (const finding of store.getFindings(reviewStage.id)) {
+        if (finding.disposition === "open" && !reportedIdentities.has(findingIdentity(finding.location, finding.intent_key))) {
+          store.updateFindingDisposition(finding.id, "resolved");
+          audit(reviewStage.id, "plan.finding.resolved", `finding ${finding.id} resolved by re-review`);
+        }
+      }
+      const gate = planReviewGate(store.getFindings(reviewStage.id));
+      if (gate.pass) {
+        audit(
+          reviewStage.id,
+          "plan.gate.pass",
+          // `planFor` is recorded for the same reason the spec event carries
+          // `specHash`: a later stage must not have to trust an editable file
+          // to learn which specification the passed plan was written from.
+          `plan_review gate passed in round ${round}; planHash=${sha256Hex(normalizeText(planContent))}; planFor=${written.doc.planFor}; risk=${risk}`
+        );
+        store.completeStage(reviewStage.id, planPath, "pass");
+        return { ok: true, stageIds: { plan: planStage.id, planReview: reviewStage.id }, planPath };
+      }
+      if (round >= REMEDIATION_ROUNDS) {
+        return abort(
+          reviewStage.id,
+          "plan.gate.block",
+          `plan_review blocked: material findings remain open after ${REMEDIATION_ROUNDS} rounds: ${gate.openMaterialIds.join(", ")}`
+        );
+      }
+      // Revision round: the author addresses the open material findings, so
+      // the retry varies (hazard 7 — a retry that varies nothing is a slower
+      // failure with a larger bill).
+      const findingsSummary = store
+        .getFindings(reviewStage.id)
+        .filter((f) => gate.openMaterialIds.includes(f.id))
+        .map((f) => `finding ${f.id} (${f.severity}) ${f.subject}`)
+        .join("\n");
+      const revisionDispatch = await dispatchOnce(
+        store,
+        executor,
+        {
+          stageId: planStage.id,
+          agent: author.id,
+          role: "author",
+          requestedModel: model,
+          prompt: buildPlanAuthorPrompt(author, specContent, specHash, scope, { findingsSummary }),
+        },
+        rootDir
+      );
+      if (!revisionDispatch.ok) {
+        return abort(reviewStage.id, "plan.author.failed", revisionDispatch.reason);
+      }
+      const revisionBody = extractJsonBody(revisionDispatch.envelope.resultText);
+      if (revisionBody.kind === "refused") {
+        return abort(reviewStage.id, "plan.content.invalid", `revision body refused: ${revisionBody.reason}`);
+      }
+      const revisionResult = validateAgentResult(author.id, revisionBody.value);
+      if (!revisionResult.ok) {
+        return abort(reviewStage.id, "plan.content.invalid", `revision result refused: ${revisionResult.reason}`);
+      }
+      if (revisionResult.value.status !== "proposed") {
+        return abort(
+          reviewStage.id,
+          "plan.author.failed",
+          `plan author returned status ${revisionResult.value.status}, not proposed`
+        );
+      }
+      const revisionContent = revisionResult.value.proposedContentChanges as { plan?: unknown } | undefined;
+      if (typeof revisionContent?.plan !== "string") {
+        return abort(reviewStage.id, "plan.content.invalid", "revision result is missing proposedContentChanges.plan");
+      }
+      // Every revision is checked *before* it overwrites the gated document.
+      // A plan that fails any binding must never replace the one the gate
+      // approved on disk, and the checks run on the parsed candidate so a
+      // refused revision leaves the last approved plan untouched.
+      const revisionParsed = validatePlanDoc(revisionContent.plan);
+      if (!revisionParsed.ok) {
+        return abort(reviewStage.id, "plan.content.invalid", revisionParsed.reason);
+      }
+      const revisionDoc = revisionParsed.value;
+      const revisionMismatch = planForCheck(revisionDoc, reviewStage.id);
+      if (revisionMismatch) return revisionMismatch;
+      const revisionCoverage = coverageFitsScope(revisionDoc, scope);
+      if (!revisionCoverage.ok) {
+        return abort(
+          reviewStage.id,
+          "plan.coverage.unkeepable",
+          `plan promises coverage outside the approved scope: ${revisionCoverage.unkeepable.join("; ")}`
+        );
+      }
+      // The completeness gate runs on every revision exactly as on the first
+      // write: a revised plan that drops a criterion's coverage line must not
+      // pass the deterministic gate by covering only what it kept.
+      const revisionComplete = coverageMeetsCriteria(revisionDoc, specDoc.value.acceptanceCriteria);
+      if (!revisionComplete.ok) {
+        return abort(
+          reviewStage.id,
+          "plan.coverage.incomplete",
+          `plan does not cover every acceptance criterion: ${revisionComplete.uncovered.join("; ")}`
+        );
+      }
+      try {
+        written = writePlanDoc(rootDir, run.slug, revisionContent.plan);
+      } catch (err) {
+        return abort(reviewStage.id, "plan.content.invalid", (err as Error).message);
+      }
+      planContent = revisionContent.plan;
+      planPath = written.path;
+      audit(planStage.id, "plan.content.write", `wrote revision ${planPath}`);
+    }
+    return { ok: false, reason: "plan_review did not reach a terminal state" };
+  } catch (err) {
+    // The wedge guard: an unexpected throw must produce the same terminal
+    // state as any other failure.
+    const reason = `plan stage failed: ${(err as Error).message}`;
+    for (const id of [planStageId, reviewStageId]) {
+      if (id !== null) {
+        const stage = store.getStage(id);
+        if (stage && (stage.status === "pending" || stage.status === "in_progress")) {
+          store.completeStage(id, "", "block");
+        }
+      }
+    }
+    audit(reviewStageId ?? planStageId, "plan.stage.failed", reason);
+    store.setRunStatus(runId, "blocked");
+    return { ok: false, reason };
+  }
+}

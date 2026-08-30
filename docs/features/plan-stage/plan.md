@@ -1,8 +1,8 @@
 # Plan Stage Implementation Plan
 
-**Status:** Proposed
+**Status:** Implemented except the manual smoke (Task 7 Step 3) and its learnings entry (Step 5)
 
-**Goal:** Build order step 5: the `plan` and `plan_review` stages, chained from the approved `awaiting_approval` row — a plan author turns the approved specification into `plan.md` under a content write, a selected review panel raises findings, and a deterministic gate decides completion, refusing at the gate any coverage the plan promises for artifacts only a later stage can produce.
+**Goal:** Build order step 5: the `plan` and `plan_review` stages, chained from the approved `awaiting_approval` row — a plan author turns the approved specification — re-verified against the hash the review gate recorded before anything is dispatched — into `plan.md` under a content write, a selected review panel raises findings, and a deterministic gate decides completion, refusing at the gate any coverage the plan promises for artifacts only a later stage can produce.
 
 **Source:** `ARCHITECTURE.md` sections 4 (the stage chain and handoffs), 5 (stage sequence: `awaiting_approval -> plan -> plan_review`), 8 (contracts — AgentResult, write modes, finding identity), 9 (agents, role separation, selection), 10 (model configuration), 12 (gates — "Refuse promises that cannot be kept"), 13 (conflict resolution), 20 (limits), 23 (build order step 5); `docs/hazards.md` entries 1, 3, 4, 6, 7, 11, 13; `CLAUDE.md`; the shipped spec stage as the direct precedent (`src/spec-stage.ts`, `docs/features/spec-stage/plan.md`).
 
@@ -12,9 +12,13 @@
 
 - **This plan is executed after `docs/features/approval-gate-hardening/plan.md`.** That plan changes `Store.transaction` to be re-entrant, adds a `spec.gate.pass` contract the approval gate reads, and adds `Profile.approvalSigner`. Building the plan stage first would mean writing the same gate-event and transaction code twice. If the hardening plan has not landed, stop and say so rather than duplicating its changes.
 - **The model map lands here, because this is the first step that needs one.** Section 10 requires a stage to name what it needs and configuration to resolve it, resolved once at run start and snapshotted. Until now the model was a single `--model` flag on `bw spec`. The profile gains `modelMap: Record<string, string>` keyed by stage kind, frozen at `new-run`, and a stage whose kind has no entry **fails at configuration time** — before any invocation, as section 10 requires.
+  **Deferred obligation for step 6** (`2026-08-29-code-review.md`, finding 6):
+  the map freezes four of section 5's eight stage kinds. Step 6 must extend it
+  with `implementation` — a run created before that cannot dispatch the stage,
+  and fails at configuration time when it tries.
 - **`bw new-run` gains `--model <name>`, required.** It is the only point at which the map can be frozen. Every existing test that calls `new-run` must pass it, which is a mechanical but wide edit — counted in the blast radius below rather than discovered during execution.
 - **`bw spec --model` becomes optional and is checked, not trusted.** When omitted the stage reads the frozen map; when supplied it must equal the frozen value, refused otherwise with a named message. Hard rule 6 says config is frozen at run start, so a flag that silently overrides the snapshot would make the profile a decoration.
-- **The plan document schema is minimal and mirrors the spec's.** Frontmatter `feature:` and `plan_for:` (the spec's content hash, which is what binds a plan to the specification it was written from), a `## Tasks` section with one task per list line, and a `## Coverage` section whose entries are `<acceptance criterion> -> <artifact path>` or `<acceptance criterion> -> not_applicable: <rationale> / <alternative verification>`. Hazard 13 warns against inventing obligations, so validation checks presence and shape only.
+- **The plan document schema is minimal and mirrors the spec's.** Frontmatter `feature:` and `plan_for:` (the spec's content hash, computed as `sha256Hex(normalizeText(specContent))` — the same pair the `spec.gate.pass` event and the approval payload use, which is what binds a plan to the specification it was written from), a `## Tasks` section with one task per list line, and a `## Coverage` section whose entries are `<acceptance criterion> -> <artifact path>` or `<acceptance criterion> -> not_applicable: <rationale> / <alternative verification>`. Hazard 13 warns against inventing obligations, so validation checks presence and shape only.
 - **`not_applicable` requires both a rationale and an alternative verification**, per section 8's coverage-decisions rule. A coverage entry naming neither is refused by the schema, not by a reviewer.
 - **The unkeepable-promise gate is deterministic and needs no agent.** A criterion's coverage names an artifact; if that artifact is not in the run's signed scope, the plan is promising something the approved scope does not cover and the gate blocks. This is the mechanically checkable half of hazard 6. The half that needs stage ordering — "produced by a stage that runs after the stage being planned" — is not checkable until stages declare which artifacts they produce, which nothing does yet; the plan states this limit rather than implying full coverage.
 - **Reviewers are reused; the author is new.** `selectReviewers` is already stage-agnostic and selects on `role: "reviewer"` plus `outputs: ["findings"]`, so the three seeded reviewers serve both stages. Only a `plan-author` agent is added.
@@ -22,7 +26,7 @@
 
 **Approach:** Mirror `src/spec-stage.ts` structurally — it is the proven shape for author dispatch, content write, panel, findings, deterministic gate, and bounded closure rounds — but do not extract a shared abstraction. Hard rule 4 forbids an interface before two real implementations exist, and this is the moment the second appears; the plan calls out the duplication explicitly and defers extraction to a later step with the evidence in hand. The gate and every validator are pure functions taking injected inputs, so the whole suite runs against fixture executors with no network.
 
-**Affected areas:** New `src/plan-doc.ts`, `src/plan-stage.ts`, `src/agents/plan-author.ts`; modify `src/prompts.ts` (plan author and plan reviewer prompts), `src/agents.ts` (register the author), `src/profile.ts` (the model map), `src/policy.ts` (the plan stage's remediation budget if it differs), `src/cli.ts` (`bw plan`, `new-run --model`, `spec --model` optional), `src/spec-stage.ts` (read the model from the profile); tests for each; `test/prompts.test.ts` (hazard 3's constrained-field scan gains the plan prompts); `README.md` and `CLAUDE.md` (the new command).
+**Affected areas:** New `src/plan-doc.ts`, `src/plan-stage.ts`, `src/agents/plan-author.ts`; modify `src/prompts.ts` (plan author and plan reviewer prompts), `src/agents.ts` (register the author), `src/profile.ts` (the model map), `src/policy.ts` (the plan stage's remediation budget if it differs), `src/cli.ts` (`bw plan`, `new-run --model`, `spec --model` optional, `dispatch --model` checked against the frozen map, run-status guards on `dispatch` and `stage-add`), `src/spec-stage.ts` (read the model from the profile); tests for each; `test/prompts.test.ts` (hazard 3's constrained-field scan gains the plan prompts); `README.md` and `CLAUDE.md` (the new command).
 
 **Known blockers:**
 
@@ -36,8 +40,8 @@
 **Blast radius** (verified by import search across `src/**` and `test/**`):
 
 - `src/profile.ts` — imported by `src/cli.ts`, `src/approval-stage.ts`, `test/profile.test.ts`, `test/cli.test.ts`. Adding `modelMap` changes every frozen profile's hash; no fixture pins a literal profile hash (both tests compute it in-test from the bytes they read), so nothing else moves.
-- **`freezeProfile` gains a required `model` argument, which breaks all eight call sites** (verified by grep): `src/cli.ts:134`, `test/approval-stage.test.ts:61`, and six calls in `test/profile.test.ts` (lines 24, 33, 41, 54, 62, 63). Every one needs the new argument. This is mechanical but must be done in the same step as the signature change or the tree stays red — `tsconfig.json` includes `test`.
-- `src/cli.ts` — no importers; `test/cli.test.ts` spawns it. Making `--model` required on `new-run` touches **every** `new-run` invocation in the suite: `test/cli.test.ts` (several), and any test that shells out to it. `test/store.test.ts`, `test/spec-stage.test.ts`, and `test/approval-stage.test.ts` call `store.insertRun` directly and are unaffected — verified by grep for `new-run` across `test/`.
+- **`freezeProfile` gains a required `model` argument, which breaks all ten call sites** (verified by grep against the post-hardening tree): `src/cli.ts:134`, `test/approval-stage.test.ts:126`, and eight calls in `test/profile.test.ts` (lines 27, 36, 44, 57, 65, 66, 124, 134). Every one needs the new argument. This is mechanical but must be done in the same step as the signature change or the tree stays red — `tsconfig.json` includes `test`.
+- `src/cli.ts` — no importers; `test/cli.test.ts` spawns it. Making `--model` required on `new-run` touches **every** `new-run` invocation in the suite: `test/cli.test.ts` (several), and any test that shells out to it. The `dispatch` case gains a profile read for the frozen model and a run-status guard, and `stage-add` gains the same guard — both covered by new `test/cli.test.ts` cases. `test/store.test.ts`, `test/spec-stage.test.ts`, and `test/approval-stage.test.ts` call `store.insertRun` directly and are unaffected — verified by grep for `new-run` across `test/`.
 - `src/spec-stage.ts` — imported by `src/cli.ts` and `test/spec-stage.test.ts`. It gains a profile read for the model; `runSpecStage`'s `requestedModel` input becomes optional, so the direct callers in `test/spec-stage.test.ts` that pass it explicitly keep working.
 - `src/prompts.ts` — imported by `src/spec-stage.ts` and `test/prompts.test.ts`. Adding two builders affects neither existing consumer.
 - `src/agents.ts` — imported by `src/select.ts`, `src/spec-stage.ts`, `src/profile.ts`, `test/agents.test.ts`. Registering `plan-author` lengthens `AGENTS`. Verified by reading `test/agents.test.ts`: its only count assertion is `reviewers.length >= 2` over agents filtered to `role: "reviewer"`, so adding an **author** cannot affect it; its "no reviewer allows spec output" loop is likewise filtered to reviewers. `selectReviewers` also filters to `role: "reviewer"`, so an added author can never enter a panel.
@@ -60,30 +64,35 @@
 
 **Steps:**
 
-- [ ] **Step 1: the map in the profile**
+- [x] **Step 1: the map in the profile**
   - Change: `Profile` gains `modelMap: Record<string, string>`. `freezeProfile` takes a `model: string` argument and records `{ spec: model, spec_review: model, plan: model, plan_review: model }` — one entry per stage kind that exists today, all resolving to the same configured model because there is one model to configure. The shape is a map because section 10 requires a stage to name what it needs; the values coincide until there is a reason for them not to.
   - Change: Export `resolveStageModel(profile: Profile, stageKind: string): { ok: true; model: string } | { ok: false; reason: string }`, refusing with `no model configured for stage ${stageKind}: the profile frozen at run start maps ${Object.keys(profile.modelMap).join(", ")}`.
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 2: `new-run --model`, required**
+- [x] **Step 2: `new-run --model`, required**
   - Change: `src/cli.ts`'s `new-run` case reads `required(args, "model")` and passes it to `freezeProfile`. Update `USAGE` to `new-run --project <p> --feature <f> --slug <s> --change-kind <k> --model <name>`.
   - Change: Update every `new-run` invocation in `test/cli.test.ts` to pass `--model`. Add a case asserting `new-run` without `--model` exits 2 naming the option.
   - Verify: `node --test test/cli.test.ts`
   - Expected: all pass, including the new missing-option case.
 
-- [ ] **Step 3: the stage reads the frozen model**
+- [x] **Step 3: the stage reads the frozen model**
   - Change: `runSpecStage`'s input `requestedModel` becomes `requestedModel?: string`. After loading the run, load the profile and call `resolveStageModel(profile, "spec")`. When `requestedModel` is supplied and differs from the frozen value, abort with `--model ${requestedModel} does not match the model frozen at run start (${frozen}): config is frozen at run start`. When omitted, use the frozen value.
   - Change: `src/cli.ts`'s `spec` case passes `args.get("model")` rather than `required(args, "model")`, and `USAGE` shows `--model` as optional.
   - Verify: `node --test test/spec-stage.test.ts test/cli.test.ts`
   - Expected: all pass. Add a case asserting the mismatch is refused by name, and one asserting the omitted flag resolves from the profile.
 
-- [ ] **Step 4: a stage with no model fails at configuration time**
+- [x] **Step 4: a stage with no model fails at configuration time**
   - Change: Add a `test/profile.test.ts` case asserting `resolveStageModel` refuses an unmapped stage kind naming the mapped ones. Add a `test/spec-stage.test.ts` case that freezes a profile whose `modelMap` omits `spec` (write the profile directly, as the hardening plan's policy-drift test does, so the profile hash stays self-consistent) and asserts `runSpecStage` refuses **before** any dispatch — no `agent_run` row exists afterwards.
   - Verify: `node --test test/profile.test.ts test/spec-stage.test.ts`
   - Expected: all pass. Section 10's requirement is that this failure precedes the invocation, and the absent `agent_run` row is the proof.
 
-**Task completion evidence:** the model is frozen at `new-run`, a mismatched `--model` is refused by name, and an unmapped stage fails before spending anything.
+- [x] **Step 5: the dispatch surface reads the frozen model**
+  - Change: `src/cli.ts`'s `dispatch` case loads the run's profile and calls `resolveStageModel(profile, stage.kind)`; `--model` becomes optional. A supplied value that differs from the frozen one is refused with the Step 3 message before any spawn. The stage's run comes from the stage row the case already reads.
+  - Verify: `node --test test/cli.test.ts`
+  - Expected: all pass. Add a case asserting the mismatch is refused by name and that no `agent_run` row exists afterwards.
+
+**Task completion evidence:** the model is frozen at `new-run`, a mismatched `--model` is refused by name at `spec`, `plan`, and `dispatch`, and an unmapped stage fails before spending anything.
 
 ### Task 2: The plan document schema
 
@@ -95,23 +104,23 @@
 
 **Steps:**
 
-- [ ] **Step 1: the types and the validator**
+- [x] **Step 1: the types and the validator**
   - Change: `src/plan-doc.ts` exports `interface CoverageEntry { criterion: string; artifact: string | null; rationale: string | null; alternativeVerification: string | null }` and `interface PlanDoc { feature: string; planFor: string; tasks: string[]; coverage: CoverageEntry[] }`, plus `validatePlanDoc(content: string): { ok: true; value: PlanDoc } | { ok: false; reason: string }`. It mirrors `src/spec-doc.ts`'s structure, reusing its private `section()` approach.
   - Change: Refusals, each naming its cause: missing `feature:` frontmatter; missing or non-64-hex `plan_for:`; missing `## Tasks` section; empty task list; missing `## Coverage` section; empty coverage list; a coverage line matching neither `<criterion> -> <path>` nor the `not_applicable` form; a `not_applicable` entry missing its rationale or its alternative verification (message: `coverage entry for ${criterion} says not_applicable without both a rationale and an alternative verification`).
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 2: the writer**
+- [x] **Step 2: the writer**
   - Change: `writePlanDoc(rootDir, slug, content): { path: string; doc: PlanDoc }`, validating then writing to `docs/features/<slug>/plan.md`, exactly as `writeSpecDoc` does for `spec.md`. Note in a comment that this path is also where a human-authored implementation plan would live for this repository's own work; the system owns the file for a governed run, and the two never share a slug.
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 3: one test per refusal**
+- [x] **Step 3: one test per refusal**
   - Change: `test/plan-doc.test.ts` covers a valid document and every refusal above, asserting the exact reason string. Include a `not_applicable` entry that is well formed and one missing each half.
   - Verify: `node --test test/plan-doc.test.ts`
   - Expected: all pass.
 
-- [ ] **Step 4: prove a guard by breaking it**
+- [x] **Step 4: prove a guard by breaking it**
   - Change: Temporarily accept a `not_applicable` entry with no alternative verification; confirm that test fails; restore.
   - Verify: `node --test test/plan-doc.test.ts`
   - Expected: the named test fails on the break and passes on restore.
@@ -130,24 +139,24 @@
 
 **Steps:**
 
-- [ ] **Step 1: the agent, and the disallowed-output test first**
+- [x] **Step 1: the agent, and the disallowed-output test first**
   - Change: `src/agents/plan-author.ts` defines `PLAN_AUTHOR` with `id: "plan-author"`, `role: "author"`, `specialty: null`, `executor: "claude-code"`, `outputs: ["plan", "plan-revision"]`, `tools: []`. Register it in `src/agents.ts`.
   - Change: `test/agents.test.ts` asserts `agentById("plan-author").outputs` does not include `"spec"`, that no reviewer's `outputs` includes `"plan"`, and that the seeded reviewers can staff a standard-risk plan panel (hazard 11). Section 9 says a dispatcher that derives the required output from the result kind rather than the performer fails with "configured agent does not allow plan output" and that the test asserting refusal should be written first — this is that test.
   - Verify: `node --test test/agents.test.ts`
   - Expected: passes.
 
-- [ ] **Step 2: the author prompt**
+- [x] **Step 2: the author prompt**
   - Change: `buildPlanAuthorPrompt(agent, specContent, specHash, scope, context?)` in `src/prompts.ts`, following `buildSpecAuthorPrompt`'s shape: the role line, the approved specification verbatim, the signed scope as the paths the plan may name, the AgentResult envelope with every field stated, and the plan document schema with `plan_for` set to the given `specHash`. It states, in the prompt text: the `status` enum; that output goes in `proposedContentChanges.plan`; the `## Tasks` and `## Coverage` section headings; the two coverage forms including that `not_applicable` requires both a rationale and an alternative verification; and that no git operations are involved, because this is a content write and the step-3 smoke showed that mentioning patch concepts makes the model refuse to produce a document.
   - Change: The revision variant opens with a `## Revision` heading carrying the open material findings, exactly as the spec author's does — hazard 7 requires the retry to vary.
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 3: the reviewer prompt**
+- [x] **Step 3: the reviewer prompt**
   - Change: `buildPlanReviewPrompt(agent, planContent, specContent)` following `buildSpecReviewPrompt`: it names the reviewing agent, gives both documents, and states the finding constraints — severity `low, medium, high, critical`; `intentKey` lowercase kebab-case within 64 characters; findings returned in `proposedContentChanges.findings`; the full envelope shape with every field, because the step-3 smoke showed a reviewer returns a bare findings object until the prompt states the whole envelope.
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 4: the constrained-field scan covers the new prompts**
+- [x] **Step 4: the constrained-field scan covers the new prompts**
   - Change: `test/prompts.test.ts`'s `CONSTRAINT_STRINGS` gains the plan schema's constrained values (`## Tasks`, `## Coverage`, `not_applicable`, `proposedContentChanges.plan`). Add generated-prompt assertions for both builders mirroring the existing spec ones. Do **not** add patch-rule strings: the plan stage is a content write, and the array's own comment reserves those for the step whose prompts request patches.
   - Verify: `node --test test/prompts.test.ts`
   - Expected: all pass.
@@ -164,18 +173,18 @@
 
 **Steps:**
 
-- [ ] **Step 1: the two gate functions**
-  - Change: `src/plan-gate.ts` exports `planReviewGate(findings: FindingRow[])`, identical in contract to `specReviewGate` — passes iff no material finding remains open — and `coverageFitsScope(doc: PlanDoc, scope: string[]): { ok: true } | { ok: false; unkeepable: string[] }`, which returns the criteria whose coverage names an artifact outside the run's signed scope.
+- [x] **Step 1: the three gate functions**
+  - Change: `src/plan-gate.ts` exports `planReviewGate(findings: FindingRow[])`, identical in contract to `specReviewGate` — passes iff no material finding remains open — and `coverageFitsScope(doc: PlanDoc, scope: string[]): { ok: true } | { ok: false; unkeepable: string[] }`, which returns the criteria whose coverage names an artifact outside the run's signed scope. The comparison is exact-string against the signed scope entries as declared, case-preserving — the operator signs the paths exactly as declared, which is why `computeScope` preserves spelling, and folding case would widen what was signed. `coverageMeetsCriteria(doc, acceptanceCriteria)` is the third: it returns the acceptance criteria the coverage names nothing for, holding the author to the plan's one-line-per-criterion contract. Its comparison normalizes case and collapses whitespace, deliberately unlike `coverageFitsScope`'s exact-string test — a criterion is prose restated by a model and nobody signs it, while a scope entry is a path the operator signed. **Added during the code review, not the original plan:** `coverageFitsScope` answers "may the plan promise this artifact" and nothing answered "did the plan promise anything for this criterion at all" — a plan covering one of five criteria satisfied scope perfectly.
   - Change: Comment precisely what this does and does not check: it is the mechanically decidable half of hazard 6 and section 12's "refuse promises that cannot be kept". The other half — a criterion whose artifacts are produced by a stage that runs *after* the one being planned — is not decidable until stages declare the artifacts they produce, which nothing does yet. Stating the limit is the point; a comment claiming full hazard-6 coverage would be false.
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 2: tests including the `not_applicable` interaction**
-  - Change: `test/plan-gate.test.ts` covers: coverage entirely inside the scope passes; an artifact outside the scope is returned as unkeepable and named; a `not_applicable` entry is **never** unkeepable, because it promises no artifact — it carries a rationale and an alternative verification instead, which section 8 says is preferable to a fabricated test; a mix returns only the offending criteria. `planReviewGate` gets the same open/resolved/severity cases `specReviewGate` has.
+- [x] **Step 2: tests including the `not_applicable` interaction**
+  - Change: `test/plan-gate.test.ts` covers: coverage entirely inside the scope passes; an artifact outside the scope is returned as unkeepable and named; a coverage path differing from a signed entry only in case is returned as unkeepable on every platform; a `not_applicable` entry is **never** unkeepable, because it promises no artifact — it carries a rationale and an alternative verification instead, which section 8 says is preferable to a fabricated test; a mix returns only the offending criteria. `planReviewGate` gets the same open/resolved/severity cases `specReviewGate` has.
   - Verify: `node --test test/plan-gate.test.ts`
   - Expected: all pass.
 
-- [ ] **Step 3: prove the guard by breaking it**
+- [x] **Step 3: prove the guard by breaking it**
   - Change: Temporarily treat an out-of-scope artifact as acceptable; confirm the unkeepable test fails; restore.
   - Verify: `node --test test/plan-gate.test.ts`
   - Expected: the named test fails on the break and passes on restore.
@@ -193,39 +202,49 @@
 
 **Steps:**
 
-- [ ] **Step 1: preconditions and the chain**
-  - Change: `runPlanStage(store, executor, { runId, requestedModel?, rootDir })` in `src/plan-stage.ts`. It refuses, each by name: a nonexistent run; a run whose status is not `in_progress`; a run whose last stage is not a **passed** `awaiting_approval`; a run that already has a `plan` stage. It reads the approved spec from that stage's `output_ref`, the signed scope from the run's `approval` row (`JSON.parse` of the `scope` column), and the model from the frozen profile via `resolveStageModel(profile, "plan")`. It creates the `plan` stage chained from the `awaiting_approval` row, so `stage.input_stage_id` carries the handoff section 4 requires.
+- [x] **Step 1: preconditions and the chain**
+  - Change: `runPlanStage(store, executor, { runId, requestedModel?, rootDir })` in `src/plan-stage.ts`. It refuses, each by name: a nonexistent run; a run whose status is not `in_progress`; a run whose last stage is not a **passed** `awaiting_approval`; a run that already has a `plan` stage. It reads the approved spec from that stage's `output_ref` — if the file is missing or unreadable it refuses with `cannot read approved spec ${path}` before any dispatch, mirroring `runSpecStage`'s design-document refusal — the signed scope from the run's `approval` row (`JSON.parse` of the `scope` column), and the model from the frozen profile via `resolveStageModel(profile, "plan")`. A supplied `requestedModel` that differs from the frozen value is refused with the spec stage's own message: `--model ${requestedModel} does not match the model frozen at run start (${frozen}): config is frozen at run start`. It creates the `plan` stage chained from the `awaiting_approval` row, so `stage.input_stage_id` carries the handoff section 4 requires.
+  - Change: Before anything is dispatched, re-verify the spec against what the approval bound. Read the run's most recent `spec.gate.pass` event (the same query the approval gate uses), hash the spec file with `sha256Hex(normalizeText(specContent))`, and refuse on difference with the approval gate's own wording: `the spec has changed since review: gated ${gatedHash}, on disk ${specHash}`. When no event row matches, refuse with the approval gate's `no spec.gate.pass audit event` refusal. The `plan_for` check in Step 2 binds the plan to the spec as read here; this check binds that read to the record the operator signed.
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 2: author, validate, content write**
+- [x] **Step 2: author, validate, content write**
   - Change: Dispatch `plan-author` through `dispatchOnce`, refusing before dispatch if `outputs` does not include `"plan"`. Parse with `extractJsonBody`, validate with `validateAgentResult`, require `status === "proposed"`, require `proposedContentChanges.plan` to be a string, then `writePlanDoc`. Refuse when the written document's `plan_for` does not equal the spec hash the stage computed — the plan must declare which specification it was written from, and a mismatch means it was written from another one.
   - Change: Every failure path is terminal, matching `runSpecStage`: the stage completes blocked with no approved `output_ref`, the run blocks, an audit event names the reason, and raw output is already retained by `dispatchOnce`. Wrap the whole body in the same try/catch wedge guard `runSpecStage` uses.
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 3: the coverage gate, before the panel**
-  - Change: Run `coverageFitsScope` immediately after the content write. On failure, block the `plan` stage naming the unkeepable criteria. It runs before the panel because it is deterministic and free: refusing here saves a full panel's invocations on a plan that cannot pass.
+- [x] **Step 3: the coverage gate, before the panel**
+  - Change: Run `coverageFitsScope` immediately after the content write. On failure, block the `plan` stage with a reason naming the unkeepable criteria, and the audit event must carry the same names — the reason string is the operator's only diagnosable record. Then run `coverageMeetsCriteria` against the spec's parsed acceptance criteria, blocking with `plan.coverage.incomplete` naming the uncovered criteria in the reason and the audit event. Both run before the panel because they are deterministic and free: refusing here saves a full panel's invocations on a plan that cannot pass. Every revision round re-runs all three checks — `plan_for`, scope, completeness — on the parsed candidate **before** it overwrites the gated document, so a revision that drops a criterion's coverage line cannot pass by covering only what it kept, and a refused revision leaves the last approved plan untouched on disk.
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 4: the panel, findings, and closure rounds**
-  - Change: Create the `plan_review` stage chained from `plan`. Size the panel with `computeRisk` over the same inputs the approval bound — `run.change_kind`, `computeScope(spec declared artifacts).length`, and `touchesProtected(...)` — so the plan panel and the spec panel are sized on the same basis. Select with `selectReviewers`, refuse if the panel is short, then run bounded rounds: dispatch each reviewer, validate the envelope, validate every finding field (location, `intentKey` shape, severity enum, subject), insert findings with the normalized location, resolve by re-review, and decide with `planReviewGate`. On budget exhaustion, block naming the still-open finding ids. Between rounds, re-dispatch the author with the open material findings so the retry varies (hazard 7).
+- [x] **Step 4: the panel, findings, and closure rounds**
+  - Change: Create the `plan_review` stage chained from `plan`. Size the panel with `computeRisk` (from `src/select.ts`, the same import the spec stage uses) over the same inputs the approval bound — `run.change_kind`, `computeScope(spec declared artifacts).length`, and `touchesProtected(...)` — so the plan panel and the spec panel are sized on the same basis. Select with `selectReviewers`, refuse if the panel is short, then run bounded rounds: dispatch each reviewer, validate the envelope, validate every finding field (location, `intentKey` shape, severity enum, subject), insert findings with the normalized location, resolve by re-review, and decide with `planReviewGate`. The panel's re-review resolves findings; the author's claim never does, as in the shipped spec stage. On budget exhaustion, block naming the still-open finding ids. Between rounds, re-dispatch the author with the open material findings so the retry varies (hazard 7).
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 5: the fixture executor and the stage tests**
+- [x] **Step 5: the fixture executor and the stage tests**
   - Change: `test/fixtures/harness/emit-plan-stage.mjs` mirrors `emit-spec-stage.mjs`, emitting an `AgentResult`-shaped envelope driven by an environment variable so one fixture serves the author, the reviewers, and the revision rounds.
-  - Change: `test/plan-stage.test.ts` covers the success path end to end (both stage rows, `output_ref` set to the plan path, gate `pass`, audit chain valid); each precondition refusal; a plan whose `plan_for` does not match; an out-of-scope coverage promise blocking before any reviewer is dispatched (assert the reviewer `agent_run` count is zero — the proof that the free gate ran first); budget exhaustion blocking and naming finding ids; and a reviewer returning a non-`proposed` status blocking rather than passing by absence.
+  - Change: `test/plan-stage.test.ts` covers the success path end to end (both stage rows, `output_ref` set to the plan path, gate `pass`, audit chain valid); each precondition refusal; a spec edited after approval refused by name before any dispatch (the Step 1 re-verification); a plan whose `plan_for` does not match; an out-of-scope coverage promise blocking before any reviewer is dispatched (assert the reviewer `agent_run` count is zero — the proof that the free gate ran first, and that the audit event names the unkeepable criteria); budget exhaustion blocking and naming finding ids; and a reviewer returning a non-`proposed` status blocking rather than passing by absence.
   - Verify: `node --test test/plan-stage.test.ts`
   - Expected: all pass.
 
-- [ ] **Step 6: prove the terminal paths by breaking them**
-  - Change: For each of — the coverage gate, the `plan_for` check, the panel-size check, and the closure budget — break the guard, confirm the named test fails, restore.
+- [x] **Step 6: prove the terminal paths by breaking them**
+  - Change: For each of — the spec re-verification, the coverage gate, the criterion-completeness gate, the `plan_for` check, the panel-size check, and the closure budget — break the guard, confirm the named test fails, restore.
   - Verify: `node --test test/plan-stage.test.ts` after each
   - Expected: exactly the named test fails on each break; green after each restore.
 
-**Task completion evidence:** the two stage rows chain from `awaiting_approval`, every failure path is terminal, and four break-it runs are recorded.
+**Deviation, recorded as built:** the first panel-size break-it failed four
+unrelated tests rather than one, because the seeded registry staffs every risk
+level and the guard had no test of its own. Superseded by the independent
+review pass: `runPlanStage` now carries one test seam, `deps.selectPanel`,
+through which the refusal is proven — a high-risk run with an empty panel
+blocks by name. Seen failing when the seam is ignored: exactly the named test
+and no other. The seam is the only test-only parameter in the stage functions
+and is documented as such at its declaration.
+
+**Task completion evidence:** the two stage rows chain from `awaiting_approval`, every failure path is terminal, and six break-it runs are recorded.
 
 ### Task 6: The CLI surface
 
@@ -237,17 +256,36 @@
 
 **Steps:**
 
-- [ ] **Step 1: the command**
+- [x] **Step 1: the command**
   - Change: Add `plan` to `known` and to `USAGE` as `plan --run <id> [--model <name>]    run the plan and plan_review stages`. The case calls `runPlanStage` with `runId: numeric(args, "run")`, `requestedModel: args.get("model")`, and `rootDir: process.cwd()`, printing the plan path on success and the reason to stderr with exit 1 on failure — the same shape as the `spec` case.
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 2: CLI tests**
+- [x] **Step 2: CLI tests**
   - Change: `test/cli.test.ts` adds: `plan --run 9999` exits 1 naming the run and creates no `.governance/raw` directory (no spawn); `plan` without `--run` exits 2 naming the option; and a walk that creates a run, drives it to a passed `awaiting_approval` through the store, then runs `plan` against the fixture executor and asserts exit 0 with the plan path on stdout.
   - Verify: `node --test test/cli.test.ts`
   - Expected: all pass.
 
-**Task completion evidence:** `bw plan` refuses bad input before spending and completes a fixture-backed run end to end.
+- [x] **Step 3: `dispatch` and `stage-add` refuse blocked runs**
+  - Change: `src/cli.ts`'s `dispatch` and `stage-add` cases reuse `requireRunInProgress` from `src/store.ts` — the guard `runSpecStage` already carries: a run whose status is not `in_progress` is refused by name before any spawn or insert. `dispatch` must not reach `dispatchOnce`; `stage-add` must not reach `insertStage`.
+  - Verify: `node --test test/cli.test.ts`
+  - Expected: all pass. The new cases assert the refusals name the run and its status, and that no `agent_run` row and no new stage row exist afterwards.
+
+**Deviation, recorded as built:** Step 2's third case — "a walk that ... runs
+`plan` against the fixture executor and asserts exit 0" — is not implementable
+as written. `bw plan` hardcodes `CLAUDE_CODE` exactly as `bw spec` does, and
+there is no executor injection seam; adding one would be a test-only
+abstraction that hard rule 4 forbids, and running the walk without one would
+spend real money in the automated suite, which this plan's verification line
+forbids. Verified that no existing CLI test reaches a dispatch either — every
+`bw spec` CLI case is a refusal path that stops first, which is the
+established precedent. Built instead: end-to-end stage behaviour is covered by
+`test/plan-stage.test.ts` against the fixture executor, and a CLI test drives
+a fully approved run to the deepest pre-dispatch check (the spec
+re-verification, which only `runPlanStage` performs) to prove the command is
+wired to the stage with the right `rootDir`.
+
+**Task completion evidence:** `bw plan` refuses bad input before spending, is proven wired to the stage logic up to the dispatch boundary, and no documented command spends or records state on a blocked run.
 
 ### Task 7: Documentation, the smoke, and the gate
 
@@ -260,12 +298,12 @@
 
 **Steps:**
 
-- [ ] **Step 1: the commands line**
+- [x] **Step 1: the commands line**
   - Change: `CLAUDE.md`'s `node src/cli.ts ...` line gains `plan`. Verify by comparing the documented list against `src/cli.ts`'s `known` array — the two must agree exactly, as they were made to at the end of step 4.
   - Verify: read both back and compare
   - Expected: no command in one and absent from the other.
 
-- [ ] **Step 2: the status paragraph**
+- [x] **Step 2: the status paragraph**
   - Change: `README.md`'s Status section extends to steps 1-5, naming the plan stage and its unkeepable-promise gate in one clause.
   - Verify: `npm run check:docs`
   - Expected: `OK: documentation facts verified`. The checker reads `ARCHITECTURE.md`, so this confirms the README edit broke no documented fact; the stage sequence assertion already covers `plan` and `plan_review`.
@@ -275,12 +313,12 @@
   - Verify: `node src/cli.ts plan --run <id>` against a real run
   - Expected: either a passed `plan_review` or a designed terminal block. A block is an acceptable outcome and must be reported as one, not retried until it passes.
 
-- [ ] **Step 4: the completion gate**
+- [x] **Step 4: the completion gate**
   - Verify: `npm ci && npm run typecheck && npm test && npm run check:docs`
   - Expected: all four exit 0 from a clean install, with every automated test using fixture executors only.
 
 - [ ] **Step 5: record the learnings**
-  - Change: Append an entry to `.claude/sessions/project-learnings.md` covering what the smoke exposed, the enum and schema choices this plan made that the architecture left open, and the state of the spec/plan stage duplication with a recommendation for whether step 6 should extract the shared shape.
+  - Change: Append an entry to `.claude/sessions/project-learnings.md` covering what the smoke exposed, the enum and schema choices this plan made that the architecture left open, and the state of the spec/plan stage duplication with a recommendation for whether step 6 should extract the shared shape. Name the three post-review guards — the dispatch model check, the `dispatch`/`stage-add` run-status guard, and the spec re-verification — and record which were broken and restored during implementation.
   - Verify: read the entry back
   - Expected: it names the smoke's real output, not a summary of intent.
 

@@ -5,13 +5,14 @@ import { generateKeyPairSync } from "node:crypto";
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { freezeProfile, loadProfile, resolveStartingCommit } from "../src/profile.ts";
+import { freezeProfile, loadProfile, resolveStageModel, resolveStartingCommit } from "../src/profile.ts";
 import { AGENTS } from "../src/agents.ts";
 import { CLAUDE_CODE } from "../src/executor.ts";
 import { buildPolicy, policyHash } from "../src/policy.ts";
 import { sha256Hex } from "../src/canonical.ts";
 
 const COMMIT = "b".repeat(40);
+const MODEL = "test-model";
 
 function withRoot(fn: (root: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), "bw-profile-"));
@@ -24,16 +25,29 @@ function withRoot(fn: (root: string) => void): void {
 
 test("freezeProfile then loadProfile round-trips with an identical hash", () => {
   withRoot((root) => {
-    const frozen = freezeProfile(root, 1, COMMIT);
+    const frozen = freezeProfile(root, 1, COMMIT, MODEL);
     const loaded = loadProfile(root, 1);
     assert.equal(loaded.hash, frozen.hash);
     assert.deepEqual(loaded.profile, frozen.profile);
   });
 });
 
+test("freezeProfile refuses a model name the spawn cannot carry", () => {
+  // The model name is operator input that reaches a spawn, and on Windows a
+  // space in the name corrupts the child's argv — the audit would record one
+  // invocation and the shell would run another.
+  withRoot((root) => {
+    assert.throws(
+      () => freezeProfile(root, 1, COMMIT, "gpt-4 mini"),
+      /invalid model name "gpt-4 mini": must be 1-64 characters of letters, digits, dot, underscore, or hyphen, starting with a letter or digit/
+    );
+    assert.throws(() => freezeProfile(root, 1, COMMIT, " "), /invalid model name/);
+  });
+});
+
 test("altering the profile file changes its hash", () => {
   withRoot((root) => {
-    const frozen = freezeProfile(root, 1, COMMIT);
+    const frozen = freezeProfile(root, 1, COMMIT, MODEL);
     appendFileSync(frozen.path, " ");
     assert.notEqual(loadProfile(root, 1).hash, frozen.hash);
   });
@@ -41,7 +55,7 @@ test("altering the profile file changes its hash", () => {
 
 test("the profile records every seeded agent and the executor", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL);
     assert.deepEqual(
       profile.agents.map((a) => a.id).sort(),
       [...AGENTS].map((a) => a.id).sort()
@@ -54,7 +68,7 @@ test("the profile records every seeded agent and the executor", () => {
 
 test("the profile's policy hash is the live policy's hash", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL);
     assert.equal(profile.policyHash, policyHash(buildPolicy()));
     assert.equal(profile.policyHash, policyHash(profile.policy));
   });
@@ -62,8 +76,8 @@ test("the profile's policy hash is the live policy's hash", () => {
 
 test("two freezes differ by their timestamp but agree on policy", () => {
   withRoot((root) => {
-    const a = freezeProfile(root, 1, COMMIT);
-    const b = freezeProfile(root, 2, COMMIT);
+    const a = freezeProfile(root, 1, COMMIT, MODEL);
+    const b = freezeProfile(root, 2, COMMIT, MODEL);
     assert.notEqual(a.hash, b.hash);
     assert.equal(a.profile.policyHash, b.profile.policyHash);
   });
@@ -121,7 +135,7 @@ test("the profile freezes the approval key fingerprint, or null when none is con
       process.env.BW_APPROVAL_PUBLIC_KEY = join(keyDir, "no-such-key.pub");
       // No key at intake is the normal case on a fresh machine and must not
       // fail run creation — it records null and the gate says so in the audit.
-      assert.equal(freezeProfile(root, 1, COMMIT).profile.approvalSigner, null);
+      assert.equal(freezeProfile(root, 1, COMMIT, MODEL).profile.approvalSigner, null);
 
       const { publicKey } = generateKeyPairSync("ed25519");
       const der = publicKey.export({ format: "der", type: "spki" });
@@ -131,11 +145,37 @@ test("the profile freezes the approval key fingerprint, or null when none is con
       // The expected value comes from the key's own DER encoding, not from
       // anything this test invented: it is the same identifier the gate
       // recomputes at approve time.
-      assert.equal(freezeProfile(root, 2, COMMIT).profile.approvalSigner, sha256Hex(der));
+      assert.equal(freezeProfile(root, 2, COMMIT, MODEL).profile.approvalSigner, sha256Hex(der));
     });
   } finally {
     if (before === undefined) delete process.env.BW_APPROVAL_PUBLIC_KEY;
     else process.env.BW_APPROVAL_PUBLIC_KEY = before;
     rmSync(keyDir, { recursive: true, force: true });
   }
+});
+
+test("the profile freezes one model entry per stage kind", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model");
+    assert.deepEqual(profile.modelMap, {
+      spec: "chosen-model",
+      spec_review: "chosen-model",
+      plan: "chosen-model",
+      plan_review: "chosen-model",
+    });
+    assert.deepEqual(resolveStageModel(profile, "plan"), { ok: true, model: "chosen-model" });
+  });
+});
+
+test("resolveStageModel refuses an unmapped stage kind naming the mapped ones", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL);
+    const result = resolveStageModel(profile, "implementation");
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    // Section 10: the failure is at configuration time and must name what the
+    // frozen profile does map, so the operator can see what is missing.
+    assert.match(result.reason, /no model configured for stage implementation/);
+    assert.match(result.reason, /spec, spec_review, plan, plan_review/);
+  });
 });

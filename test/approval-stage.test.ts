@@ -123,7 +123,7 @@ function withFixture(fn: (f: Fixture) => void, opts: {
     if (opts.bindSigner === false) process.env.BW_APPROVAL_PUBLIC_KEY = join(keyDir, "no-such-key.pub");
     else process.env.BW_APPROVAL_PUBLIC_KEY = pubPath;
 
-    const frozen = freezeProfile(root, run.id, opts.commit === undefined ? COMMIT : opts.commit);
+    const frozen = freezeProfile(root, run.id, opts.commit === undefined ? COMMIT : opts.commit, "test-model");
     store.setProfileRef(run.id, frozen.hash);
     // A bound-path fixture that froze null proves nothing about the trust
     // anchor: the ordering or the key setup broke, silently. One assertion

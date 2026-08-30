@@ -1,5 +1,82 @@
 # Project learnings — BuildWorks (governed-delivery)
 
+## Break-it runs: the backup mechanism and the backslash transport (2026-08-29)
+
+Four break-it restores failed silently during the step-5 code-review
+reconciliation, leaving four deliberate breaks stacked in the working tree at
+once. The suite caught it (306/311) and the tree was recovered by hand. Two
+independent causes, both worth fixing permanently.
+
+### Cause 1: backslashes never survive the Bash tool
+
+**Measured, not assumed.** A doubled backslash written in a Bash tool command
+reaches the shell as a single backslash under **every** quoting form —
+`python -c "..."`, a heredoc with an unquoted delimiter, and a heredoc with a
+**quoted** delimiter (`<<PY` in single quotes), which POSIX says passes bytes
+through verbatim. Probe: `"""A\\nB"""` arrives as 3 characters
+`[65, 10, 66]` (A, newline, B) rather than 4 `[65, 92, 110, 66]`. The
+collapsing happens above the shell, so no quoting choice defends against it.
+
+The `Write` tool does **not** collapse them: the same literal written to a file
+and executed arrives as 4 characters. Verified both ways.
+
+This corrects the earlier entry that blamed "Python heredocs through Git Bash".
+The mechanism is the tool transport, not Git Bash, and quoting the heredoc
+delimiter does not help.
+
+**The rule: never put a backslash in a Bash tool command.** Three ways out, in
+order of preference:
+
+1. Anchor string edits on text containing no backslash at all.
+2. Build the backslash with `chr(92)` — it worked every time it was used here.
+3. When a script genuinely needs backslashes, write it with the `Write` tool
+   and run the file.
+
+Every occasion this bit — twice on `\\n` test anchors, once on a
+`shutil.copy2` path join — was a backslash written directly into a Bash command.
+
+### Cause 2: a hand-rolled backup with no verification gate
+
+The restore step was `shutil.copy2` from a scratchpad copy that the failed
+quoting had never created. Each restore raised `FileNotFoundError`, printed a
+traceback, and was ignored — because the whole break/restore/break/restore
+sequence ran as one chained command, and the output was filtered with
+`grep "^✖"` to find failing tests. The tracebacks were visible and scrolled
+past unread.
+
+`git checkout` looked unusable because the work was uncommitted, so the
+mechanism was hand-rolled. That was the wrong conclusion: **staging the work
+makes `git checkout -- <path>` a safe, exact restore**, because it restores
+from the index rather than from HEAD.
+
+**The rule for break-it runs, from now on:**
+
+1. `git add -A` before the first break. Staging creates no commit, is
+   reversible, and also protects uncommitted work from exactly this kind of
+   accident.
+2. Break the guard.
+3. Run the test.
+4. `git checkout -- <path>` to restore.
+5. **Verify:** `git diff --quiet -- <path>` — non-zero means halt, do not
+   proceed to the next break.
+6. One break-it cycle per tool call. Never chain several, because a chained
+   sequence has no place to put step 5 and hides a failure inside a filtered
+   grep.
+
+Verified end to end: staged the tree, broke `src/plan-gate.ts`, restored,
+`git diff --quiet` confirmed the restore, and the symbol was back.
+
+### The general pattern
+
+Both causes are the same shape: **a step whose success was assumed rather than
+checked.** The quoting produced no backup and said so; the restore failed and
+said so. Neither was read, because the command was written to look for
+something else. This is the standing repo rule — verify an edit by re-reading
+the artifact, never by trusting the tool's success report — applied to the
+scaffolding around a change rather than to the change itself. Scaffolding that
+silently no-ops is more dangerous than a broken edit, because the test results
+it produces still look plausible.
+
 ## Hardening completed: all twelve step-4 findings closed (2026-08-29)
 
 ### State
@@ -155,6 +232,11 @@ Every fix was observed failing against the unfixed code before the fix landed.
   string-substitution test fails for no visible reason.
 - Python heredocs through Git Bash collapse doubled backslashes. Build regex
   and escape text with `chr(92)` rather than `BSLASH`-style literals.
+  **Superseded 2026-08-29 — see the entry at the top of this file.** The cause
+  is the Bash tool transport, not Git Bash, and it collapses backslashes under
+  every quoting form including a quoted heredoc delimiter. The `chr(92)`
+  advice stands; the explanation was wrong, and "use a quoted heredoc" is not
+  a fix.
 - `npm test` runs test files in parallel; a single-file pass is not evidence
   the suite passes.
 

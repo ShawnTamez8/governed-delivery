@@ -8,7 +8,7 @@ import { acquireLock } from "../src/lock.ts";
 import { openStore } from "../src/store.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { appendAudit } from "../src/audit.ts";
-import { buildPolicy, policyHash } from "../src/policy.ts";
+import { APPROVAL_DEFAULT_LIFETIME_SECONDS, buildPolicy, policyHash } from "../src/policy.ts";
 
 // Absolute path: the CLI is spawned from temp directories, so relative
 // paths would resolve against the wrong cwd. Migrations anchor themselves
@@ -37,7 +37,7 @@ test("migrate creates .governance/state.db and exits 0", () => {
 test("new-run, stage-add, stage-complete, and verify-audit walk a chain end to end", () => {
   const cwd = tempCwd();
   try {
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature");
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     const runId = newRun.stdout.trim();
 
@@ -215,7 +215,7 @@ test("dispatch with an unreadable prompt file exits 2 naming the option", () => 
   try {
     // A real stage must exist so the stage check passes and the prompt-file
     // read is what fails.
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f", "--slug", "s", "--change-kind", "feature");
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     const stage = runCli(cwd, "stage-add", "--run", newRun.stdout.trim(), "--kind", "spec");
     const r = runCli(
       cwd,
@@ -226,8 +226,10 @@ test("dispatch with an unreadable prompt file exits 2 naming the option", () => 
       "a",
       "--role",
       "author",
+      // Must match the model frozen at run start, or the frozen-map check
+      // refuses first and the prompt-file read is never reached.
       "--model",
-      "m",
+      "test-model",
       "--prompt-file",
       "missing.txt"
     );
@@ -252,7 +254,7 @@ test("dispatch with a missing --role value exits 2 naming the option", () => {
 test("new-run freezes a profile and records its hash on the run", () => {
   const cwd = tempCwd();
   try {
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature");
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     const runId = Number(newRun.stdout.trim());
 
@@ -295,7 +297,7 @@ test("new-run records the git HEAD as the run's starting commit", () => {
     const expected = head.stdout.trim();
     assert.match(expected, /^[0-9a-f]{40}$/);
 
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature");
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     const runId = newRun.stdout.trim();
     const profile = JSON.parse(
@@ -345,7 +347,7 @@ test("request, sign, and approve walk end to end through the CLI", () => {
     const cli = (...argv: string[]) =>
       spawnSync(process.execPath, [CLI, ...argv], { cwd, encoding: "utf8", env });
 
-    const newRun = cli("new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature");
+    const newRun = cli("new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     const runId = Number(newRun.stdout.trim());
 
@@ -435,13 +437,13 @@ test("a profile-freeze failure blocks the run and names it on stderr", () => {
     // Create one run so the next id is known, then occupy that run's profile
     // directory with a *file* — `mkdirSync` then throws and the freeze fails
     // for a real filesystem reason rather than a stubbed one.
-    const first = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature");
+    const first = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     assert.equal(first.status, 0, first.stderr);
     const nextId = String(Number(first.stdout.trim()) + 1);
     mkdirSync(join(cwd, ".governance", "profiles"), { recursive: true });
     writeFileSync(join(cwd, ".governance", "profiles", nextId), "not a directory\n");
 
-    const blocked = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s2", "--change-kind", "feature");
+    const blocked = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s2", "--change-kind", "feature", "--model", "test-model");
     assert.equal(blocked.status, 1, "a freeze failure is an error, not a usage error");
     assert.equal(blocked.stdout.trim(), "", "no run id is printed, so the id must come from stderr");
     assert.match(
@@ -463,6 +465,308 @@ test("a profile-freeze failure blocks the run and names it on stderr", () => {
     } finally {
       store.close();
     }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("new-run without --model exits 2 naming the option", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /missing required option --model/);
+    // The model is the only point at which the map can be frozen, so a run
+    // must not exist at all without one.
+    const store = openStore(cwd);
+    try {
+      assert.equal(store.query("SELECT * FROM run").length, 0, "no run row may be created");
+    } finally {
+      store.close();
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("spec --model disagreeing with the frozen model is refused before any dispatch", () => {
+  const cwd = tempCwd();
+  try {
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "frozen-model");
+    assert.equal(newRun.status, 0, newRun.stderr);
+    const r = runCli(cwd, "spec", "--run", newRun.stdout.trim(), "--model", "some-other-model");
+    assert.equal(r.status, 1);
+    assert.match(
+      r.stderr,
+      /--model some-other-model does not match the model frozen at run start \(frozen-model\): config is frozen at run start/
+    );
+    const store = openStore(cwd);
+    try {
+      assert.equal(store.query("SELECT * FROM agent_run").length, 0, "nothing was spent");
+    } finally {
+      store.close();
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("dispatch --model disagreeing with the frozen model is refused before any spawn", () => {
+  const cwd = tempCwd();
+  try {
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "frozen-model");
+    assert.equal(newRun.status, 0, newRun.stderr);
+    const stage = runCli(cwd, "stage-add", "--run", newRun.stdout.trim(), "--kind", "spec");
+    assert.equal(stage.status, 0, stage.stderr);
+    const r = runCli(
+      cwd, "dispatch", "--stage", stage.stdout.trim(), "--agent", "a", "--role", "author",
+      "--model", "some-other-model", "--prompt-file", "whatever.txt"
+    );
+    assert.equal(r.status, 1);
+    assert.match(
+      r.stderr,
+      /--model some-other-model does not match the model frozen at run start \(frozen-model\): config is frozen at run start/
+    );
+    // The raw dispatch surface is the escape hatch beside `bw spec`; if hard
+    // rule 6 did not hold here it would not hold at all.
+    const store = openStore(cwd);
+    try {
+      assert.equal(store.query("SELECT * FROM agent_run").length, 0, "nothing was spent");
+    } finally {
+      store.close();
+    }
+    assert.ok(!existsSync(join(cwd, ".governance", "raw")), "no raw output means no spawn");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("stage-add refuses a blocked run before inserting a stage", () => {
+  const cwd = tempCwd();
+  try {
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    const runId = newRun.stdout.trim();
+    const store = openStore(cwd);
+    store.setRunStatus(Number(runId), "blocked");
+    const before = store.query("SELECT * FROM stage").length;
+    store.close();
+
+    const r = runCli(cwd, "stage-add", "--run", runId, "--kind", "spec");
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, new RegExp(`run ${runId} is blocked, not in_progress`));
+
+    const after = openStore(cwd);
+    try {
+      assert.equal(after.query("SELECT * FROM stage").length, before, "no stage row may be created");
+    } finally {
+      after.close();
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("dispatch refuses a blocked run before any spawn", () => {
+  const cwd = tempCwd();
+  try {
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    const runId = newRun.stdout.trim();
+    const stage = runCli(cwd, "stage-add", "--run", runId, "--kind", "spec");
+    assert.equal(stage.status, 0, stage.stderr);
+
+    const store = openStore(cwd);
+    store.setRunStatus(Number(runId), "blocked");
+    store.close();
+
+    const r = runCli(
+      cwd, "dispatch", "--stage", stage.stdout.trim(), "--agent", "a", "--role", "author",
+      "--model", "test-model", "--prompt-file", "whatever.txt"
+    );
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, new RegExp(`run ${runId} is blocked, not in_progress`));
+
+    // Real spend recorded against a run no stage could ever consume is the
+    // failure this guard exists to prevent.
+    const after = openStore(cwd);
+    try {
+      assert.equal(after.query("SELECT * FROM agent_run").length, 0, "nothing was spent");
+    } finally {
+      after.close();
+    }
+    assert.ok(!existsSync(join(cwd, ".governance", "raw")), "no raw output means no spawn");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("plan with a nonexistent run exits 1 naming the run and spawns nothing", () => {
+  const cwd = tempCwd();
+  try {
+    assert.equal(runCli(cwd, "migrate").status, 0);
+    const r = runCli(cwd, "plan", "--run", "9999");
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /run 9999 does not exist/);
+    assert.ok(!existsSync(join(cwd, ".governance", "raw")), "no raw output means no spawn");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("plan without --run is a usage error naming the option", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "plan");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /missing required option --run/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("plan drives the real stage logic up to the dispatch boundary", () => {
+  // `bw plan` hardcodes CLAUDE_CODE, as `bw spec` does, and there is no
+  // executor injection seam — adding one would be a test-only abstraction
+  // that hard rule 4 forbids. So the end-to-end stage behaviour is covered by
+  // test/plan-stage.test.ts against a fixture executor, and this asserts the
+  // command is wired to it: a run driven to a passed awaiting_approval whose
+  // spec was edited afterwards must be refused by the deepest pre-dispatch
+  // check, which only runPlanStage performs.
+  const cwd = tempCwd();
+  try {
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "demo", "--change-kind", "feature", "--model", "test-model");
+    assert.equal(newRun.status, 0, newRun.stderr);
+    const runId = Number(newRun.stdout.trim());
+
+    const spec = "feature: demo\nchange_kind: feature\n\n## Declared artifacts\n\n- src/a1.ts\n\n## Acceptance criteria\n\n- it works\n";
+    const specPath = join(cwd, "docs", "features", "demo", "spec.md");
+    mkdirSync(dirname(specPath), { recursive: true });
+    writeFileSync(specPath, spec);
+
+    const store = openStore(cwd);
+    const specStage = store.insertStage(runId, "spec", null);
+    store.completeStage(specStage.id, specPath, "pass");
+    const reviewStage = store.insertStage(runId, "spec_review", specStage.id);
+    store.completeStage(reviewStage.id, specPath, "pass");
+    appendAudit(store, {
+      runId,
+      stageId: reviewStage.id,
+      actor: "system",
+      actorType: "cli",
+      action: "spec.gate.pass",
+      summary: `spec_review gate passed in round 1; specHash=${sha256Hex(normalizeText(spec))}; risk=low`,
+    });
+    const approvalStage = store.insertStage(runId, "awaiting_approval", reviewStage.id);
+    store.completeStage(approvalStage.id, specPath, "pass");
+    store.insertApproval({
+      runId,
+      featureId: "f-1",
+      specHash: sha256Hex(normalizeText(spec)),
+      startingCommit: "b".repeat(40),
+      profileHash: store.getRun(runId)!.profile_ref!,
+      risk: "low",
+      scope: canonicalJson(["src/a1.ts"]),
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      signature: "sig",
+      signer: "signer",
+    });
+    store.close();
+
+    // Edit the approved spec, then plan: the binding check must refuse.
+    writeFileSync(specPath, `${spec}- and something nobody approved\n`);
+    const r = runCli(cwd, "plan", "--run", String(runId));
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /the spec has changed since review: gated [0-9a-f]{64}, on disk [0-9a-f]{64}/);
+    assert.ok(!existsSync(join(cwd, ".governance", "raw")), "the refusal precedes any spawn");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a --model flag with no value is a usage error, not an empty model", () => {
+  // parse() records a valueless flag as "" so it can be reported by name.
+  // Reading it with args.get alone turned `bw spec --run 1 --model` into the
+  // empty-string model, which then failed downstream as a mismatch against
+  // the frozen value rather than as the typo it is.
+  const cwd = tempCwd();
+  try {
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    assert.equal(newRun.status, 0, newRun.stderr);
+    for (const command of ["spec", "plan"]) {
+      const r = runCli(cwd, command, "--run", newRun.stdout.trim(), "--model");
+      assert.equal(r.status, 2, `${command} must exit 2, got: ${r.stderr}`);
+      assert.match(r.stderr, /option --model was given without a value/);
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("the approval default window comes from policy, not a literal", () => {
+  const cwd = tempCwd();
+  try {
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    assert.equal(newRun.status, 0, newRun.stderr);
+    const store = openStore(cwd);
+    try {
+      // The frozen profile records the value a run actually used, so an
+      // operator can read back the window their approval was granted under.
+      const profile = JSON.parse(
+        readFileSync(join(cwd, ".governance", "profiles", newRun.stdout.trim(), "profile.json"), "utf8")
+      ) as { policy: { approvalDefaultLifetimeSeconds: number; approvalMaxLifetimeSeconds: number } };
+      assert.equal(profile.policy.approvalDefaultLifetimeSeconds, APPROVAL_DEFAULT_LIFETIME_SECONDS);
+    } finally {
+      store.close();
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("new-run refuses a model name the spawn cannot carry, before creating the run", () => {
+  // A model name containing a space freezes fine and then corrupts the
+  // child's argv on Windows, where the spawn builds its command line through
+  // a shell. The refusal is a usage error: no run row may exist for a typo.
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "gpt-4 mini");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /invalid model name "gpt-4 mini"/);
+    const store = openStore(cwd);
+    try {
+      assert.equal(store.query("SELECT * FROM run").length, 0, "no run row may be created");
+    } finally {
+      store.close();
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("stage-add refuses a valueless --input as a usage error", () => {
+  // numericOptional must hold the same convention optional() holds: a flag
+  // supplied with no value is the typo parse() records "" for, not a silent
+  // null that chains the stage from nothing.
+  const cwd = tempCwd();
+  try {
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    assert.equal(newRun.status, 0, newRun.stderr);
+    const r = runCli(cwd, "stage-add", "--run", newRun.stdout.trim(), "--kind", "spec", "--input");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /option --input was given without a value/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("stage-add reports a usage error before run state, whatever the run is", () => {
+  // The argument check precedes the store guard: a malformed command line is
+  // a usage error even against a nonexistent run, so a script keying on exit
+  // code 2 can classify it without querying run state.
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "stage-add", "--run", "9999", "--kind");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /missing required option --kind/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

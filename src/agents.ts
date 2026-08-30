@@ -1,3 +1,4 @@
+import { PLAN_AUTHOR } from "./agents/plan-author.ts";
 import { SPEC_AUTHOR } from "./agents/spec-author.ts";
 import { SPEC_REVIEWER_CONSISTENCY } from "./agents/spec-reviewer-consistency.ts";
 import { SPEC_REVIEWER_SECURITY } from "./agents/spec-reviewer-security.ts";
@@ -20,6 +21,7 @@ export interface AgentDefinition {
  */
 export const AGENTS: readonly AgentDefinition[] = [
   SPEC_AUTHOR,
+  PLAN_AUTHOR,
   SPEC_REVIEWER_TRACEABILITY,
   SPEC_REVIEWER_SECURITY,
   SPEC_REVIEWER_CONSISTENCY,

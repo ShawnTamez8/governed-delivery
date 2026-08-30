@@ -4,10 +4,11 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
+import { freezeProfile } from "../src/profile.ts";
 import { runSpecStage } from "../src/spec-stage.ts";
 import { REMEDIATION_ROUNDS } from "../src/policy.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
-import { normalizeText, sha256Hex } from "../src/canonical.ts";
+import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 
 const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-spec-stage.mjs");
 
@@ -57,6 +58,10 @@ function withRun(fn: (ctx: Ctx) => Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "bw-spec-stage-"));
   const store = openStore(root);
   const run = store.insertRun("p", "f-1", "demo", "feature");
+  // The stage resolves its model from the frozen profile now, so a run
+  // without one cannot reach a dispatch at all.
+  const frozen = freezeProfile(root, run.id, "b".repeat(40), "m");
+  store.setProfileRef(run.id, frozen.hash);
   mkdirSync(join(root, "docs", "features", "demo"), { recursive: true });
   writeFileSync(join(root, "docs", "features", "demo", "design.md"), "# design\n");
   return Promise.resolve(fn({ store, root, runId: run.id })).finally(() => {
@@ -234,6 +239,8 @@ test("a missing design document is refused before any dispatch", async () => {
   const root = mkdtempSync(join(tmpdir(), "bw-spec-stage-"));
   const store = openStore(root);
   const run = store.insertRun("p", "f-1", "no-design", "feature");
+  const frozen = freezeProfile(root, run.id, "b".repeat(40), "m");
+  store.setProfileRef(run.id, frozen.hash);
   try {
     const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId: run.id, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, false);
@@ -314,5 +321,31 @@ test("a blocked run is refused before anything can be dispatched", async () => {
     assert.match(result.reason, /run \d+ is blocked, not in_progress/);
     assert.equal(store.query("SELECT * FROM agent_run").length, 0, "nothing was spent");
     assert.equal(store.getStageChain(runId).length, 0, "no stage row was created");
+  });
+});
+
+test("a stage with no model in the frozen map fails before any dispatch", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // Rewrite the frozen profile with `spec` removed from the map, and re-point
+    // run.profile_ref at the new bytes so the profile stays self-consistent —
+    // the refusal under test is the missing model, not a tampered profile.
+    const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+    const profile = JSON.parse(readFileSync(path, "utf8")) as { modelMap: Record<string, string> };
+    delete profile.modelMap.spec;
+    const serialized = canonicalJson(profile);
+    writeFileSync(path, serialized);
+    store.setProfileRef(runId, sha256Hex(serialized));
+
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), {
+      runId,
+      requestedModel: "m",
+      rootDir: root,
+    });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /no model configured for stage spec/);
+    // Section 10 requires this failure to precede the invocation; the absent
+    // agent_run row is the proof that it did.
+    assert.equal(store.query("SELECT * FROM agent_run").length, 0, "nothing was spent");
   });
 });

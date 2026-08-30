@@ -2,7 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildSpecAuthorPrompt, buildSpecReviewPrompt } from "../src/prompts.ts";
+import {
+  buildPlanAuthorPrompt,
+  buildPlanReviewPrompt,
+  buildSpecAuthorPrompt,
+  buildSpecReviewPrompt,
+} from "../src/prompts.ts";
+import { PLAN_AUTHOR } from "../src/agents/plan-author.ts";
 import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
 import { SPEC_REVIEWER_TRACEABILITY } from "../src/agents/spec-reviewer-traceability.ts";
 
@@ -29,6 +35,12 @@ const CONSTRAINT_STRINGS = [
   "lowercase kebab-case",
   "64",
   "proposedContentChanges.findings",
+  // The plan document schema's constrained values. Still no patch rules: the
+  // plan stage is a content write like the spec stage.
+  "## Tasks",
+  "## Coverage",
+  "not_applicable",
+  "proposedContentChanges.plan",
 ];
 
 test("every constrained field's constraint appears in the prompt source", () => {
@@ -61,4 +73,58 @@ test("the generated reviewer prompt states the finding constraints and names the
   ]) {
     assert.ok(prompt.includes(constraint), `reviewer prompt missing: ${constraint}`);
   }
+});
+
+test("the generated plan author prompt states the schema, the hash, and the scope", () => {
+  const specHash = "a".repeat(64);
+  const prompt = buildPlanAuthorPrompt(PLAN_AUTHOR, "# spec", specHash, [
+    "src/thing.ts",
+    "test/thing.test.ts",
+  ]);
+  for (const constraint of [
+    "proposed, blocked, failed",
+    "## Tasks",
+    "## Coverage",
+    "not_applicable requires both a rationale and an alternative verification",
+    "proposedContentChanges",
+    "No git operations",
+    "Output the JSON object",
+  ]) {
+    assert.ok(prompt.includes(constraint), `plan author prompt missing: ${constraint}`);
+  }
+  // The hash is handed to the model, not left to it to compute: it is what
+  // binds the plan to the specification the operator signed.
+  assert.ok(prompt.includes(`plan_for must be exactly: ${specHash}`));
+  // The signed scope is stated as the only paths the plan may promise.
+  assert.ok(prompt.includes("- src/thing.ts"));
+  assert.ok(prompt.includes("- test/thing.test.ts"));
+});
+
+test("the plan author revision prompt varies by carrying the open findings", () => {
+  // Hazard 7: a retry that varies nothing is a slower failure with a larger
+  // bill. The revision must differ from the first attempt.
+  const specHash = "a".repeat(64);
+  const first = buildPlanAuthorPrompt(PLAN_AUTHOR, "# spec", specHash, ["src/a.ts"]);
+  const revised = buildPlanAuthorPrompt(PLAN_AUTHOR, "# spec", specHash, ["src/a.ts"], {
+    findingsSummary: "- coverage-gap: criterion 2 names no artifact",
+  });
+  assert.notEqual(first, revised);
+  assert.ok(revised.includes("## Revision"));
+  assert.ok(revised.includes("coverage-gap: criterion 2 names no artifact"));
+});
+
+test("the generated plan reviewer prompt states the finding constraints and names the agent", () => {
+  const prompt = buildPlanReviewPrompt(SPEC_REVIEWER_TRACEABILITY, "# plan", "# spec");
+  for (const constraint of [
+    "plan reviewer spec-reviewer-traceability",
+    "low, medium, high, critical",
+    "lowercase kebab-case",
+    "64",
+    "proposedContentChanges.findings",
+  ]) {
+    assert.ok(prompt.includes(constraint), `plan reviewer prompt missing: ${constraint}`);
+  }
+  // Both documents reach the reviewer: judging coverage needs the criteria.
+  assert.ok(prompt.includes("# plan"));
+  assert.ok(prompt.includes("# spec"));
 });
