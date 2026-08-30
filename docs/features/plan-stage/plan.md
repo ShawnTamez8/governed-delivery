@@ -1,6 +1,6 @@
 # Plan Stage Implementation Plan
 
-**Status:** Implemented except the manual smoke (Task 7 Step 3) and its learnings entry (Step 5)
+**Status:** Implemented
 
 **Goal:** Build order step 5: the `plan` and `plan_review` stages, chained from the approved `awaiting_approval` row — a plan author turns the approved specification — re-verified against the hash the review gate recorded before anything is dispatched — into `plan.md` under a content write, a selected review panel raises findings, and a deterministic gate decides completion, refusing at the gate any coverage the plan promises for artifacts only a later stage can produce.
 
@@ -308,16 +308,18 @@ wired to the stage with the right `rootDir`.
   - Verify: `npm run check:docs`
   - Expected: `OK: documentation facts verified`. The checker reads `ARCHITECTURE.md`, so this confirms the README edit broke no documented fact; the stage sequence assertion already covers `plan` and `plan_review`.
 
-- [ ] **Step 3: the manual smoke**
+- [x] **Step 3: the manual smoke**
   - Change: Run one real end-to-end plan stage against the `claude` binary on a small design, and record in this plan's evidence: the model requested and effective, the cost from the envelope, whether the author returned a valid plan document on the first attempt, and every prompt defect the smoke exposed. Iterate the prompts against the real output — the step-3 entry in `.claude/sessions/project-learnings.md` records that fixtures could not have found its two prompt defects, and there is no reason to expect otherwise here.
   - Verify: `node src/cli.ts plan --run <id>` against a real run
   - Expected: either a passed `plan_review` or a designed terminal block. A block is an acceptable outcome and must be reported as one, not retried until it passes.
+
+**Smoke evidence (2026-08-30).** Run in a temp checkout with a real git commit; the spec, stage chain, `spec.gate.pass` event, and approval were constructed through the store, so the plan stage's dispatches were the only spend. Requested model `sonnet`, effective `claude-sonnet-5` on all six dispatches. The author returned a well-formed plan document on the first attempt — **no prompt defect surfaced at all**; the step-3 prompt lessons held. The panel's high findings drove three revision rounds of genuine improvement (single source of truth for documented shapes, a derived test set, a non-emptiness guard), and the reviewer enforced hazard 13 live: a round-2 finding caught the plan inventing a rejection requirement the spec never stated, and the revision removed it. The gate passed in round 3 with two **open medium findings** — below the `high` materiality threshold, exactly as designed; one of them (an untested `require.main` branch in the plan's own tasks) was a correct catch. Cost: **$0.63 total** across six dispatches — 0.068 / 0.069 / 0.109 / 0.098 / 0.129 / 0.156 — escalating per round as the prompts and documents under review grow (8s to 91s per invocation). Audit chain verified; `independence` recorded as `configured_standalone` throughout.
 
 - [x] **Step 4: the completion gate**
   - Verify: `npm ci && npm run typecheck && npm test && npm run check:docs`
   - Expected: all four exit 0 from a clean install, with every automated test using fixture executors only.
 
-- [ ] **Step 5: record the learnings**
+- [x] **Step 5: record the learnings**
   - Change: Append an entry to `.claude/sessions/project-learnings.md` covering what the smoke exposed, the enum and schema choices this plan made that the architecture left open, and the state of the spec/plan stage duplication with a recommendation for whether step 6 should extract the shared shape. Name the three post-review guards — the dispatch model check, the `dispatch`/`stage-add` run-status guard, and the spec re-verification — and record which were broken and restored during implementation.
   - Verify: read the entry back
   - Expected: it names the smoke's real output, not a summary of intent.

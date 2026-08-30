@@ -5,15 +5,12 @@ resume point. Everything under **Session records** is history, ordered newest
 first, and may name state that has since been superseded — when the two
 disagree, Current state wins.
 
-## Current state (2026-08-29)
+## Current state (2026-08-30)
 
 **Shipped:** build order steps 1-5, all committed. Latest `83d88c0` (step 5:
-plan stage and gate). Suite 322 pass, `typecheck` clean, `check:docs` clean.
-
-**In flight:** `docs/features/plan-stage/plan.md` is *Implemented except the
-manual smoke* (Task 7 Step 3) and its learnings entry. Every prior step's smoke
-found prompt defects the fixtures could not, so the smoke is not optional
-ceremony.
+plan stage and gate). The step-5 manual smoke is complete and recorded in
+Session records — `docs/features/plan-stage/plan.md` is *Implemented*. Suite 322
+pass, `typecheck` clean, `check:docs` clean.
 
 **Open and deferred:**
 
@@ -29,8 +26,8 @@ ceremony.
 - The build order stops at step 9 — one complete run with queryable cost. Do not
   build past it without an explicit decision.
 
-**Next up:** the step-5 manual smoke, then build order step 6 (implementation
-stage), which also extends `modelMap`.
+**Next up:** build order step 6 (implementation on a branch, patch bound to base
+commit, scope enforced), which also extends `modelMap`.
 
 ## Diagnostics quick-reference
 
@@ -69,6 +66,36 @@ Durable one-liners that recur. Each cost at least one wasted cycle to learn.
   `test/harness.test.ts` exist to catch that.
 
 ## Session records
+
+### Step-5 manual smoke: passed end to end, real binary (2026-08-30)
+
+The one real API spend for step 5, run per the plan against `claude` with
+`--model sonnet` (effective `claude-sonnet-5` on every dispatch, proxy-routed).
+A low-risk two-artifact spec: **three remediation rounds, six dispatches, $0.63
+total** — 0.068 / 0.069 / 0.109 / 0.098 / 0.129 / 0.156 per dispatch. Cost
+escalates per round: prompts grow with the injected findings and the documents
+under review (8s to 91s per invocation, 542 to 8634 output tokens).
+
+- **First stage whose prompts worked unmodified on the first real attempt.** No
+  prompt-shape defect at all — the step-3 lessons (state the full envelope, keep
+  patch concepts out of content-write prompts) held. The three rounds were
+  content-quality iteration, not shape repair.
+- **Hazard 13 enforced against the plan by the reviewer, live.** A round-2
+  finding caught the plan author inventing a rejection requirement the spec
+  never stated; the revision removed it. The materiality threshold also showed
+  its designed shape: the gate passed in round 3 with two **open medium
+  findings** (one — an untested `require.main` branch in the plan's own tasks —
+  genuinely correct) because the threshold is `high`. Passed by design,
+  recorded as such.
+- Reviewer findings drove real plan improvement: the final plan derives its test
+  set from a single `DOCUMENTED_SHAPES` array with a non-emptiness guard, so the
+  cross-reference drift the reviewer flagged is structurally impossible.
+- Audit chain verified; all five stage rows passed; `independence` recorded as
+  `configured_standalone` on every dispatch. `DEP0190` (shell argv
+  concatenation) appeared once — the known Windows spawn behaviour, now
+  input-guarded by model-name validation.
+- Cost expectation for step 6 planning: a low-risk plan stage is ~$0.60 with
+  closure rounds; each extra round costs more than the last.
 
 ### Skills: review-code added, doc-check rewritten (2026-08-29)
 
