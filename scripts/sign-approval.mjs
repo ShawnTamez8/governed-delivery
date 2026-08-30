@@ -8,8 +8,9 @@
 
 import { generateKeyPairSync, sign } from "node:crypto";
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { normalizeText } from "../src/canonical.ts";
+import { isPathInside, resolveExisting } from "../src/scope.ts";
 
 const USAGE = `usage: node scripts/sign-approval.mjs <command>
 commands:
@@ -36,11 +37,6 @@ function parse(argv) {
     }
   }
   return args;
-}
-
-function isInside(parent, child) {
-  const rel = relative(resolve(parent), resolve(child));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 /**
@@ -74,8 +70,13 @@ const args = parse(rest);
 if (command === "keygen") {
   const out = args.get("out");
   if (!out) fail("missing required option --out");
-  const repo = enclosingRepo(out);
-  if (repo !== null || isInside(process.cwd(), out)) {
+  // The repository check runs on the *resolved* path as well as the lexical
+  // one: `--out` reached through a junction or symlink writes through the
+  // link, so a link whose lexical location is outside every repository can
+  // still land the private key inside a tracked tree. Resolving first makes
+  // the repo test answer where the bytes will land, not what the string says.
+  const repo = enclosingRepo(out) ?? enclosingRepo(resolveExisting(out));
+  if (repo !== null || isPathInside(process.cwd(), out)) {
     fail(`refusing to write signing material inside the repository: ${resolve(out)}`);
   }
   const keyPath = join(out, "approval.key");
@@ -91,6 +92,17 @@ if (command === "keygen") {
 } else if (command === "sign") {
   const keyPath = args.get("key");
   if (!keyPath) fail("missing required option --key");
+  // The same rule keygen enforces, applied to the key actually being used.
+  // keygen only governs keys this tool created; a key copied into a tracked
+  // tree, or generated before that guard existed, signed without objection.
+  // The repository is identified on the *resolved* path so a junction or
+  // symlink cannot make an in-tree key read as an outside one, and there is
+  // no cwd fallback: a key that lives in no repository is outside the rule,
+  // wherever the script is run from, and falling back to the cwd would refuse
+  // legitimate keys merely for being under the operator's current directory.
+  if (enclosingRepo(resolveExisting(keyPath)) !== null) {
+    fail(`refusing to read signing material from inside the repository: ${resolve(keyPath)}`);
+  }
   let privateKey;
   try {
     privateKey = readFileSync(keyPath, "utf8");

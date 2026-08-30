@@ -295,3 +295,24 @@ test("the passing gate records the spec hash and risk it gated", async () => {
     assert.match(gate.summary, new RegExp(`specHash=${onDisk}; risk=(low|standard|high)`));
   });
 });
+
+test("a blocked run is refused before anything can be dispatched", async () => {
+  // A run can be blocked with no stage rows at all: `new-run` blocks the run
+  // when the profile freeze fails. The zero-stage guard below does not see
+  // that case, so `bw spec` would author and review a specification against a
+  // run that can never complete — real spend on a dead run.
+  await withRun(async ({ store, root, runId }) => {
+    store.setRunStatus(runId, "blocked");
+    assert.equal(store.getStageChain(runId).length, 0, "the guard under test is the zero-stage case");
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), {
+      runId,
+      requestedModel: "m",
+      rootDir: root,
+    });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /run \d+ is blocked, not in_progress/);
+    assert.equal(store.query("SELECT * FROM agent_run").length, 0, "nothing was spent");
+    assert.equal(store.getStageChain(runId).length, 0, "no stage row was created");
+  });
+});

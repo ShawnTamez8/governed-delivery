@@ -58,6 +58,8 @@ interface Fixture {
   keyDir: string;
   privateKey: string;
   expiresAt: string;
+  /** The fingerprint frozen at intake, or null when `bindSigner: false`. */
+  frozenSigner: string | null;
 }
 
 /**
@@ -65,7 +67,13 @@ interface Fixture {
  * spec and spec_review stages passed, profile frozen. No dispatch anywhere —
  * the gate must be reachable without spending anything.
  */
-function withFixture(fn: (f: Fixture) => void, opts: { spec?: string; commit?: string | null; risk?: string; gateSummary?: string | null } = {}): void {
+function withFixture(fn: (f: Fixture) => void, opts: {
+    spec?: string;
+    commit?: string | null;
+    risk?: string;
+    gateSummary?: string | null;
+    bindSigner?: boolean;
+  } = {}): void {
   const root = mkdtempSync(join(tmpdir(), "bw-approve-"));
   const keyDir = mkdtempSync(join(tmpdir(), "bw-approve-key-"));
   const before = process.env.BW_APPROVAL_PUBLIC_KEY;
@@ -98,12 +106,33 @@ function withFixture(fn: (f: Fixture) => void, opts: { spec?: string; commit?: s
       });
     }
 
-    const frozen = freezeProfile(root, run.id, opts.commit === undefined ? COMMIT : opts.commit);
-    store.setProfileRef(run.id, frozen.hash);
-
+    // The key is generated and BW_APPROVAL_PUBLIC_KEY is set **before**
+    // `freezeProfile`, and the order is load-bearing. `freezeProfile` reads
+    // that variable to freeze the approving key's fingerprint, so a fixture
+    // that sets it afterwards freezes `approvalSigner: null` and every test
+    // silently exercises only the unbound path — a green suite proving
+    // nothing about the guard. `bindSigner: false` takes that path
+    // deliberately instead of by accident: the variable is pointed at a
+    // path that cannot exist, never deleted, because deleting it falls back
+    // to the default ~/.buildworks/approval.pub — which is exactly the file
+    // the operator's real machine may have, and then the freeze would bind
+    // that key and the unbound tests would fail for an environment reason.
     const { publicKey, privateKey } = generateKeyPairSync("ed25519");
     const pubPath = join(keyDir, "approval.pub");
     writeFileSync(pubPath, publicKey.export({ format: "pem", type: "spki" }) as string);
+    if (opts.bindSigner === false) process.env.BW_APPROVAL_PUBLIC_KEY = join(keyDir, "no-such-key.pub");
+    else process.env.BW_APPROVAL_PUBLIC_KEY = pubPath;
+
+    const frozen = freezeProfile(root, run.id, opts.commit === undefined ? COMMIT : opts.commit);
+    store.setProfileRef(run.id, frozen.hash);
+    // A bound-path fixture that froze null proves nothing about the trust
+    // anchor: the ordering or the key setup broke, silently. One assertion
+    // here, in the fixture, makes it impossible for a test to miss.
+    if (opts.bindSigner !== false) {
+      assert.ok(frozen.profile.approvalSigner, "the fixture must freeze a real fingerprint or this proves nothing");
+    }
+
+    // Whatever the freeze saw, the gate must be able to read the key.
     process.env.BW_APPROVAL_PUBLIC_KEY = pubPath;
 
     fn({
@@ -115,6 +144,7 @@ function withFixture(fn: (f: Fixture) => void, opts: { spec?: string; commit?: s
       keyDir,
       privateKey: privateKey.export({ format: "pem", type: "pkcs8" }) as string,
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      frozenSigner: frozen.profile.approvalSigner,
     });
   } finally {
     store.close();
@@ -125,11 +155,11 @@ function withFixture(fn: (f: Fixture) => void, opts: { spec?: string; commit?: s
   }
 }
 
-function signFor(f: Fixture): string {
+function signFor(f: Fixture, privateKey: string = f.privateKey): string {
   const bound = buildBinding(f.store, f.root, f.runId, f.expiresAt);
   assert.equal(bound.ok, true, (bound as { reason?: string }).reason);
   const payload = approvalPayload((bound as { binding: Parameters<typeof approvalPayload>[0] }).binding);
-  return sign(null, Buffer.from(payload, "utf8"), f.privateKey).toString("base64");
+  return sign(null, Buffer.from(payload, "utf8"), privateKey).toString("base64");
 }
 
 function auditActions(store: Store): string[] {
@@ -560,5 +590,105 @@ test("a granted approval records no agent run: the gate spends nothing", () => {
       [f.runId]
     );
     assert.equal(rows[0]!.n, 0);
+  });
+});
+
+test("an approval signed by a key other than the one frozen at intake is refused", () => {
+  withFixture((f) => {
+    // Sign with a second keypair and point the gate at its public key. Every
+    // other binding — spec hash, risk, profile, commit — is untouched and
+    // still valid, so the frozen signer is the only thing that can refuse it.
+    const substitute = generateKeyPairSync("ed25519");
+    writeFileSync(
+      join(f.keyDir, "approval.pub"),
+      substitute.publicKey.export({ format: "pem", type: "spki" }) as string
+    );
+
+    const result = approveRun(f.store, f.root, {
+      runId: f.runId,
+      expiresAt: f.expiresAt,
+      signature: signFor(f, substitute.privateKey.export({ format: "pem", type: "pkcs8" }) as string),
+    });
+    assert.equal(result.ok, false, "whoever can set BW_APPROVAL_PUBLIC_KEY must not be able to self-approve");
+    if (result.ok) return;
+    assert.match(result.reason, /is not the key frozen at run start/);
+    assert.ok(result.reason.includes(f.frozenSigner!), "the refusal names the frozen key");
+    assertNothingWritten(f);
+  });
+});
+
+test("an approval by the frozen key succeeds and is not marked unbound", () => {
+  withFixture((f) => {
+    const result = approveRun(f.store, f.root, {
+      runId: f.runId,
+      expiresAt: f.expiresAt,
+      signature: signFor(f),
+    });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const granted = f.store.query<{ summary: string }>(
+      "SELECT summary FROM audit WHERE run_id = ? AND action = 'approval.granted'",
+      [f.runId]
+    )[0]!;
+    assert.ok(granted.summary.includes(f.frozenSigner!));
+    assert.doesNotMatch(granted.summary, /signer not bound at intake/);
+  });
+});
+
+test("a run created with no key configured still approves, and the audit says it was unbound", () => {
+  withFixture(
+    (f) => {
+      // The guarantee is partial by construction: a machine with no key at
+      // intake cannot bind one. What must never happen is that case being
+      // indistinguishable afterwards from a genuinely bound approval.
+      assert.equal(f.frozenSigner, null, "this fixture must freeze no signer");
+      const result = approveRun(f.store, f.root, {
+        runId: f.runId,
+        expiresAt: f.expiresAt,
+        signature: signFor(f),
+      });
+      assert.equal(result.ok, true, (result as { reason?: string }).reason);
+      const granted = f.store.query<{ summary: string }>(
+        "SELECT summary FROM audit WHERE run_id = ? AND action = 'approval.granted'",
+        [f.runId]
+      )[0]!;
+      assert.match(granted.summary, /signer not bound at intake/);
+    },
+    { bindSigner: false }
+  );
+});
+
+test("a failure mid-approval leaves the run retryable, not wedged", () => {
+  withFixture((f) => {
+    const signature = signFor(f);
+    // Fail after the stage row and its audit event, before the approval row —
+    // the exact window that used to leave a pending `awaiting_approval` stage
+    // behind. `buildBinding` refuses any run that already has one, so the run
+    // could never be approved again.
+    const real = f.store.insertApproval.bind(f.store);
+    (f.store as { insertApproval: unknown }).insertApproval = () => {
+      throw new Error("simulated crash mid-approval");
+    };
+    assert.throws(
+      () => approveRun(f.store, f.root, { runId: f.runId, expiresAt: f.expiresAt, signature }),
+      /simulated crash mid-approval/
+    );
+    (f.store as { insertApproval: unknown }).insertApproval = real;
+
+    assert.equal(
+      f.store.getStageChain(f.runId).filter((s) => s.kind === "awaiting_approval").length,
+      0,
+      "the half-written stage must have rolled back"
+    );
+    assert.equal(f.store.getApproval(f.runId), undefined, "no approval row");
+
+    // The point of the whole task: the operator can simply try again.
+    const retry = approveRun(f.store, f.root, { runId: f.runId, expiresAt: f.expiresAt, signature });
+    assert.equal(retry.ok, true, (retry as { reason?: string }).reason);
+    assert.equal(
+      f.store.getStageChain(f.runId).filter((s) => s.kind === "awaiting_approval").length,
+      1
+    );
+    // The rolled-back audit inserts left no gap: the chain recomputes clean.
+    assert.equal(verifyAuditChain(f.store), null);
   });
 });

@@ -163,6 +163,16 @@ export class Store {
     this.#db.exec("PRAGMA busy_timeout = 5000");
   }
 
+  /** Nesting depth of `transaction`; 0 means no transaction is open. */
+  #txDepth = 0;
+  /**
+   * Set when a nested unit fails. The outermost frame must not COMMIT a unit
+   * a nested failure aborted, even when a caller swallowed the thrown error:
+   * without this flag, a swallowed nested throw would commit the writes that
+   * preceded it — a silent partial unit.
+   */
+  #txAborted = false;
+
   close(): void {
     this.#db.close();
   }
@@ -179,16 +189,56 @@ export class Store {
    * Run `fn` inside BEGIN IMMEDIATE, retried on `SQLITE_BUSY`. Audit appends
    * and chain writes use this so read-then-write sequences serialize under
    * the database's single-writer lock (architecture section 19).
+   *
+   * Re-entrant. `insertStage` and `appendAudit` each open their own
+   * transaction, so an operation that must commit several of them as one unit
+   * — the approval gate is the first — could not previously wrap them:
+   * SQLite refuses a nested BEGIN. A nested call joins the outer transaction
+   * instead, and only the outermost frame issues BEGIN, COMMIT, or ROLLBACK.
+   *
+   * A throw at any depth aborts the whole unit rather than half of it. If the
+   * error propagates, the outermost frame rolls back once; if a caller
+   * swallows it, the abort flag still forces the outermost frame to roll back
+   * rather than commit the partial unit. Only the outermost frame retries on
+   * SQLITE_BUSY: a nested retry would re-run part of a unit whose earlier
+   * writes already happened.
    */
   transaction<T>(fn: () => T): T {
-    return this.#withRetry(() => {
-      this.#db.exec("BEGIN IMMEDIATE");
+    if (this.#txDepth > 0) {
+      this.#txDepth++;
       try {
         const result = fn();
+        this.#txDepth--;
+        return result;
+      } catch (err) {
+        // Restore the depth and flag the unit aborted. A swallowed error must
+        // not commit the writes that preceded it, so the outermost frame
+        // checks the flag before COMMIT instead of trusting the return.
+        this.#txDepth--;
+        this.#txAborted = true;
+        throw err;
+      }
+    }
+    return this.#withRetry(() => {
+      this.#db.exec("BEGIN IMMEDIATE");
+      this.#txDepth = 1;
+      let rolledBack = false;
+      try {
+        const result = fn();
+        if (this.#txAborted) {
+          this.#txAborted = false;
+          this.#txDepth = 0;
+          rolledBack = true;
+          this.#db.exec("ROLLBACK");
+          throw new Error("transaction aborted by a nested failure");
+        }
+        this.#txDepth = 0;
         this.#db.exec("COMMIT");
         return result;
       } catch (err) {
-        this.#db.exec("ROLLBACK");
+        this.#txAborted = false;
+        this.#txDepth = 0;
+        if (!rolledBack) this.#db.exec("ROLLBACK");
         throw err;
       }
     });
@@ -474,4 +524,15 @@ export class Store {
 
 export function openStore(rootDir: string = process.cwd()): Store {
   return new Store(rootDir);
+}
+
+/**
+ * The one "may this run do work" check, shared by every entry point that
+ * spends against a run. A blocked or completed run can never finish, so work
+ * against it is spend with no possible outcome; `buildBinding` and
+ * `runSpecStage` both refuse it, and one message keeps the two from drifting.
+ * Returns null when work may proceed.
+ */
+export function requireRunInProgress(run: RunRow): string | null {
+  return run.status === "in_progress" ? null : `run ${run.id} is ${run.status}, not in_progress`;
 }

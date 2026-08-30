@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENTS, type AgentDefinition } from "./agents.ts";
+import { loadPublicKey } from "./approval.ts";
 import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { CLAUDE_CODE, type ExecutorDefinition } from "./executor.ts";
 import { SYSTEM_NAME, buildPolicy, policyHash, type Policy } from "./policy.ts";
@@ -24,6 +25,17 @@ export interface Profile {
   runId: number;
   systemName: string;
   startingCommit: string | null;
+  /**
+   * The fingerprint of the approval public key configured at run start, or
+   * null when no usable key was configured then.
+   *
+   * `null` means "no key was configured at intake" — it does **not** mean
+   * "any key is acceptable by policy". The gate treats a null as today's
+   * unbound behaviour and records on the granted approval that the signer was
+   * never bound, so a partial guarantee is never mistaken for a whole one
+   * (section 6: record when a guarantee is asserted rather than proven).
+   */
+  approvalSigner: string | null;
   frozenAt: string;
   agents: AgentDefinition[];
   executor: ExecutorDefinition;
@@ -39,6 +51,11 @@ function profilePath(rootDir: string, runId: number): string {
  * `HEAD` at run start, or null when there is no git repository to read it
  * from. Never throws: a run created outside a repository is still a run, it
  * simply can never be approved, and the gate says so by name.
+ *
+ * Both object formats are accepted: 40 hex characters for a sha1 repository,
+ * 64 for a sha256 one. Matching only sha1 made a real sha256 repository
+ * freeze `startingCommit: null`, and the gate then refused the run for not
+ * being in a git repository at all — the wrong reason.
  */
 export function resolveStartingCommit(rootDir: string): string | null {
   let result;
@@ -49,7 +66,7 @@ export function resolveStartingCommit(rootDir: string): string | null {
   }
   if (result.status !== 0 || typeof result.stdout !== "string") return null;
   const commit = result.stdout.trim();
-  return /^[0-9a-f]{40}$/.test(commit) ? commit : null;
+  return /^([0-9a-f]{40}|[0-9a-f]{64})$/.test(commit) ? commit : null;
 }
 
 /**
@@ -63,10 +80,14 @@ export function freezeProfile(
   startingCommit: string | null
 ): { path: string; hash: string; profile: Profile } {
   const policy = buildPolicy();
+  // A missing or unreadable key at run start is normal — most machines have
+  // none — so this records null rather than failing run creation.
+  const key = loadPublicKey(rootDir);
   const profile: Profile = {
     runId,
     systemName: SYSTEM_NAME,
     startingCommit,
+    approvalSigner: key.ok ? key.signer : null,
     frozenAt: new Date().toISOString(),
     agents: [...AGENTS].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     executor: CLAUDE_CODE,

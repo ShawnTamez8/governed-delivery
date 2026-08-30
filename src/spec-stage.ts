@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExecutorDefinition } from "./executor.ts";
-import type { FindingRow, Store } from "./store.ts";
+import { requireRunInProgress, type FindingRow, type Store } from "./store.ts";
 import { dispatchOnce } from "./dispatch.ts";
 import { agentById } from "./agents.ts";
 import { validateAgentResult } from "./agent-result.ts";
@@ -57,6 +57,14 @@ export async function runSpecStage(
   const run = store.getRun(runId);
   if (!run) {
     return { ok: false, reason: `run ${runId} does not exist` };
+  }
+  // Before the design document is read, and well before anything can spawn: a
+  // run that is blocked or completed can never finish, so authoring against it
+  // is spend with no possible outcome. This mirrors the ordering in `src/cli.ts`'s
+  // dispatch case, where the state check precedes the prompt-file read.
+  const blocked = requireRunInProgress(run);
+  if (blocked !== null) {
+    return { ok: false, reason: blocked };
   }
   const existing = store.getStageChain(runId);
   if (existing.length > 0) {

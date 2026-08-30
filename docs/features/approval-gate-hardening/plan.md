@@ -1,6 +1,6 @@
 # Approval Gate Hardening Implementation Plan
 
-**Status:** Proposed
+**Status:** Implemented
 
 **Goal:** Close all twelve findings the step-4 code review left unfixed, so the human approval gate binds the specification a panel actually reviewed, refuses malformed and impossible inputs by name, keeps signing material outside the repository under symlink and junction attack, and commits an approval atomically.
 
@@ -178,12 +178,12 @@ This task closes findings 3 and 9 together: they are the same miscount seen at t
 
 **Steps:**
 
-- [ ] **Step 1: the failing test first**
+- [x] **Step 1: the failing test first**
   - Change: In `test/spec-stage.test.ts`, create a run, set its status to `blocked` **without** adding any stage, and call `runSpecStage` with the fixture executor. The existing guard only refuses when `existing.length > 0`, so a blocked zero-stage run proceeds to dispatch — real spend against a run that can never complete.
   - Verify: `node --test test/spec-stage.test.ts`
   - Expected: **fails** — the stage runs. Record this. The fixture executor means the failing run costs nothing.
 
-- [ ] **Step 2: the guard, before anything can spawn**
+- [x] **Step 2: the guard, before anything can spawn**
   - Change: In `runSpecStage`, immediately after the `run` lookup and **before** the design document is read, refuse with `run ${runId} is ${run.status}, not in_progress`. Placing it before the file read matches the ordering discipline in `src/cli.ts`'s `dispatch` case, where the stage check precedes the prompt-file read so a bad input cannot reach a spawn.
   - Verify: `node --test test/spec-stage.test.ts`
   - Expected: all pass. The new test additionally asserts no `agent_run` row exists for the run afterwards — the absence-of-spend proof `test/cli.test.ts` already uses in its dispatch cases.
@@ -200,12 +200,12 @@ This task closes findings 3 and 9 together: they are the same miscount seen at t
 
 **Steps:**
 
-- [ ] **Step 1: force a real freeze failure**
+- [x] **Step 1: force a real freeze failure**
   - Change: Add a `test/cli.test.ts` case that creates one run (so the next id is known), then pre-creates `.governance/profiles/<next-id>` as a **file** rather than a directory so `mkdirSync` throws, then runs `new-run` again. Assert: exit code 1, the run row exists with status `blocked`, a `profile.freeze.failed` audit event exists, and **stdout is empty** — the current code throws before `console.log`, so a caller scripting `bw new-run` receives no id and no explanation of which run was created.
   - Verify: `node --test test/cli.test.ts`
   - Expected: run it and record which assertions hold against the current code. The stdout-empty and blocked-status assertions describe the behaviour being fixed and asserted respectively.
 
-- [ ] **Step 2: make the failure legible to a caller**
+- [x] **Step 2: make the failure legible to a caller**
   - Change: In the `catch` block, before rethrowing, write `run ${run.id} created but blocked: profile freeze failed` to stderr so the operator can find and inspect the wedged run. Keep the rethrow — the command must still exit non-zero, and the run must stay blocked.
   - Verify: `node --test test/cli.test.ts`
   - Expected: all pass; the test asserts the stderr line names the run id.
@@ -222,12 +222,12 @@ This task closes findings 3 and 9 together: they are the same miscount seen at t
 
 **Steps:**
 
-- [ ] **Step 1: the failing test first**
+- [x] **Step 1: the failing test first**
   - Change: In `test/profile.test.ts`, initialize a repository with `git init -q --object-format=sha256`, make an empty commit, and assert `resolveStartingCommit` returns the 64-character OID. Today the `/^[0-9a-f]{40}$/` test rejects it and returns `null`, so the run freezes `startingCommit: null` and the gate later refuses with "it was not created in a git repository" — a wrong reason for a real repository. Assert the `git init` exited 0 so an older git fails the test loudly instead of passing vacuously.
   - Verify: `node --test test/profile.test.ts`
   - Expected: **fails**, returning `null`. Record this. If the installed git rejects `--object-format=sha256`, stop and report: the fix is still correct, but this environment cannot prove it, and that must be stated rather than worked around.
 
-- [ ] **Step 2: accept both object formats**
+- [x] **Step 2: accept both object formats**
   - Change: The pattern becomes `/^([0-9a-f]{40}|[0-9a-f]{64})$/`. Update the doc comment to say both sha1 and sha256 object formats are accepted.
   - Verify: `node --test test/profile.test.ts`
   - Expected: both the sha1 and sha256 cases pass.
@@ -246,23 +246,33 @@ This task closes findings 3 and 9 together: they are the same miscount seen at t
 
 **Steps:**
 
-- [ ] **Step 1: the failing tests first**
+- [x] **Step 1: the failing tests first**
   - Change: In `test/approval.test.ts`, create a temporary repository root and a key directory outside it, then create a link **inside** the root pointing at that outside directory — a junction on Windows via `spawnSync("cmd", ["/c", "mklink", "/J", link, target])`, a directory symlink elsewhere via `symlinkSync(target, link, "dir")`. Point `BW_APPROVAL_PUBLIC_KEY` at the key through the link and assert `resolvePublicKeyPath` refuses it: the path is reachable from inside the repository, which is what section 17 forbids, and the lexical test today decides on the string alone.
   - Change: In `test/sign-approval.test.ts`, assert `sign --key <path inside the repository>` is refused. Today `sign` applies no containment at all, so a private key may sit in the tracked tree and nothing objects.
   - Verify: `node --test test/approval.test.ts test/sign-approval.test.ts`
   - Expected: both **fail**. Record them. If neither a junction nor a symlink can be created here, stop and report rather than dropping the case — an unexercised containment guard is the one most likely to be wrong.
 
-- [ ] **Step 2: resolve before comparing**
+- [x] **Step 2: resolve before comparing**
   - Change: Add to `src/scope.ts`: `isPathInside(parent: string, child: string): boolean`, which `realpathSync`-resolves both sides before the `relative` test. Because a `keygen --out` target usually does not exist yet, resolve the child by walking up with `dirname` until `existsSync` is true, `realpathSync` that ancestor, and rejoin the unresolved tail. `src/scope.ts` is the right home: it already owns the path predicates, and both `src/approval.ts` and the signing script import from `src/`.
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 3: one containment rule, both tools**
+- [x] **Step 3: one containment rule, both tools**
   - Change: `src/approval.ts`'s `resolvePublicKeyPath` calls `isPathInside` and its local lexical `isInside` is deleted. `scripts/sign-approval.mjs` imports `isPathInside` from `../src/scope.ts` — it already imports `normalizeText` from `../src/canonical.ts`, so importing from `src/` is established — and uses it in `keygen` in place of the local `isInside` (keeping the existing `enclosingRepo` check, which catches a repository the cwd is not inside). Add it to `sign`, refusing with `refusing to read signing material from inside the repository: ${resolve(keyPath)}`, checked against `enclosingRepo(keyPath) ?? process.cwd()` so the rule holds wherever the script is run from.
   - Verify: `node --test test/approval.test.ts test/sign-approval.test.ts`
   - Expected: all pass, including the existing keygen containment cases.
 
-**Task completion evidence:** a key reachable through a junction is refused, `sign` refuses an in-repository key, and one helper implements the rule for both tools.
+**Deviation, recorded as built:** this plan specified the link the wrong way
+round. A link *inside* the repository pointing at an outside key directory
+produces a path that is already lexically inside the root, so `isInside`
+refuses it today and that test would have passed against the unfixed code —
+proving nothing. Measured at the shell before writing the test: the direction
+that actually defeats the lexical check is a link *outside* the repository
+pointing back *into* it. The path string reads as outside, `relative()` agrees,
+and the key is in the tracked tree all the same. The test builds that
+direction, and it was seen failing (`resolved.ok === true`) before the fix.
+
+**Task completion evidence:** a key reachable through a link is refused, `sign` refuses an in-repository key, and one helper implements the rule for both tools.
 
 ### Task 9: the approving key is bound at run start
 
@@ -277,18 +287,18 @@ This closes accepted-deferred finding 1. It is a **partial** guarantee by constr
 
 **Steps:**
 
-- [ ] **Step 1: freeze the fingerprint when one is available**
+- [x] **Step 1: freeze the fingerprint when one is available**
   - Change: `Profile` gains `approvalSigner: string | null`. `freezeProfile` calls `loadPublicKey(rootDir)` and records `signer` on success, `null` on any failure — a missing key at run start is normal and must not fail run creation. Document on the field that `null` means "no key was configured at intake", not "any key is acceptable by policy". `src/profile.ts` importing `src/approval.ts` introduces no cycle: `approval.ts` imports only node builtins and `./canonical.ts` (verified).
   - Change: **Test-ordering consequence, and it will bite silently.** `loadPublicKey` reads `BW_APPROVAL_PUBLIC_KEY` at the moment `freezeProfile` runs. `test/approval-stage.test.ts`'s fixture currently calls `freezeProfile` *before* it generates the keypair and sets that variable ([approval-stage.test.ts:61](test/approval-stage.test.ts#L61)), so every existing fixture would freeze `approvalSigner: null` and quietly exercise only the unbound path. Reorder the fixture to generate the key and set the variable **before** `freezeProfile`, and give the fixture a switch so the unbound path can still be exercised deliberately.
   - Verify: `npm run typecheck`
   - Expected: exit 0. Every frozen profile's hash changes; no fixture pins a literal hash, so nothing else moves.
 
-- [ ] **Step 2: the gate requires a match when one was frozen**
+- [x] **Step 2: the gate requires a match when one was frozen**
   - Change: In `approveRun`, after `loadPublicKey` succeeds, refuse with `approval key ${key.signer} is not the key frozen at run start (${profile.approvalSigner})` when `profile.approvalSigner` is non-null and differs. When it is null, proceed and append `; signer not bound at intake` to the `approval.granted` summary so the audit distinguishes a bound approval from an unbound one. This is section 6's rule — record when a guarantee is asserted rather than proven — applied to the approval itself.
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 3: cover both paths**
+- [x] **Step 3: cover both paths**
   - Change: `test/approval-stage.test.ts` gains: a run frozen with a key and approved with that same key succeeds, and its `approval.granted` summary does **not** carry the unbound note; the same run approved with a second keypair is refused naming both fingerprints; a run frozen with no key configured is approved and its granted summary **does** carry the note. `test/profile.test.ts` asserts `approvalSigner` is null when no key is configured and equals the loaded key's fingerprint when one is.
   - Verify: `node --test test/profile.test.ts test/approval-stage.test.ts`
   - Expected: all pass.
@@ -308,22 +318,22 @@ This closes accepted-deferred finding 2. It lands last because it wraps the writ
 
 **Steps:**
 
-- [ ] **Step 1: make `transaction` re-entrant**
+- [x] **Step 1: make `transaction` re-entrant**
   - Change: `Store` gains a private `#txDepth = 0`. `transaction(fn)` issues `BEGIN IMMEDIATE` only at depth 0 and `COMMIT` only on returning to 0; nested calls increment, run `fn`, and decrement. On a throw at any depth, unwind to 0 and `ROLLBACK` once, then rethrow — a nested failure must abort the whole unit, never half of it. This is what lets `insertStage` and `appendAudit`, each of which opens its own transaction today, compose inside one outer transaction.
   - Verify: `npm run typecheck`
   - Expected: exit 0.
 
-- [ ] **Step 2: prove the nesting**
+- [x] **Step 2: prove the nesting**
   - Change: `test/store.test.ts` gains: a nested `transaction` inside an outer one commits once and both writes are visible afterwards; a throw inside the inner transaction rolls back the outer one's writes as well; single-level behaviour is unchanged. Assert by reading rows back, never by inspecting the depth counter — the counter is the mechanism, the visible rows are the contract.
   - Verify: `node --test test/store.test.ts`
   - Expected: all pass.
 
-- [ ] **Step 3: one unit of work for the approval**
+- [x] **Step 3: one unit of work for the approval**
   - Change: In `approveRun`, wrap the success path — `insertStage`, the `approval.stage.create` audit, `insertApproval`, `completeStage`, and the `approval.granted` audit — in a single `store.transaction(() => { ... })` returning the ids from the callback. A throw anywhere inside now leaves no stage row at all, which is a state a retry can proceed from, rather than a pending `awaiting_approval` row that permanently refuses one.
   - Verify: `node --test test/approval-stage.test.ts`
   - Expected: all pass unchanged — atomicity must not alter observable success or refusal behaviour.
 
-- [ ] **Step 4: prove the wedge is gone**
+- [x] **Step 4: prove the wedge is gone**
   - Change: Add a test that forces a throw between the stage insert and the completion by replacing `insertApproval` on the store instance with a function that throws. Assert afterwards that no `awaiting_approval` stage exists, no approval row exists, and that a subsequent well-formed `approveRun` on the same run **succeeds**. That last assertion is the point: the run is retryable, not wedged.
   - Verify: `node --test test/approval-stage.test.ts`
   - Expected: passes. Revert the re-entrancy change, confirm this test fails because the old code leaves a pending stage and the retry is refused, then restore.
@@ -341,11 +351,11 @@ This closes accepted-deferred finding 2. It lands last because it wraps the writ
 
 **Steps:**
 
-- [ ] **Step 1: the completion gate**
+- [x] **Step 1: the completion gate**
   - Verify: `npm ci && npm run typecheck && npm test && npm run check:docs`
   - Expected: all four exit 0 from a clean install. The suite must exceed its current 212 tests; no test spawns the `claude` binary and none makes a network call.
 
-- [ ] **Step 2: record what the break-it runs showed**
+- [x] **Step 2: record what the break-it runs showed**
   - Change: Append an entry to `.claude/sessions/project-learnings.md` naming, for each of the twelve findings, the test that was seen failing before its fix. Where a break-it run failed a **different** test than expected, record that — the step-4 entries show two occasions where the prediction was wrong and the guard was still sound, and that pattern is worth keeping visible.
   - Change: Update the `step4-open-findings` memory to record that the list is closed, or delete the memory if nothing remains open. Leaving a memory that says twelve findings are open after they are fixed is worse than having no memory.
   - Verify: read the entry back against this plan's task list

@@ -1,8 +1,9 @@
 import { createPublicKey, verify, type KeyObject } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, relative, resolve, isAbsolute } from "node:path";
+import { join, resolve } from "node:path";
 import { sha256Hex } from "./canonical.ts";
+import { isPathInside } from "./scope.ts";
 
 /** What the operator signs (architecture section 12). */
 export interface ApprovalBinding {
@@ -101,15 +102,14 @@ export function validateExpiry(
   return { ok: true };
 }
 
-function isInside(parent: string, child: string): boolean {
-  const rel = relative(resolve(parent), resolve(child));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
 /**
  * Signing material lives outside the repository (section 17): never in the
  * repo, never in a projection, never in run state. `.governance/` is inside
  * the repository, so the one containment check covers all three.
+ *
+ * The check resolves links: a junction or symlink outside the repository
+ * pointing back into it reads as "outside" to a string comparison, and the
+ * key it names is inside the tracked tree all the same.
  */
 export function resolvePublicKeyPath(
   rootDir: string
@@ -119,7 +119,7 @@ export function resolvePublicKeyPath(
     configured !== undefined && configured !== ""
       ? resolve(configured)
       : join(homedir(), ".buildworks", "approval.pub");
-  if (isInside(rootDir, path)) {
+  if (isPathInside(rootDir, path)) {
     return { ok: false, reason: `approval public key must not live inside the repository: ${path}` };
   }
   if (!existsSync(path)) {

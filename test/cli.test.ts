@@ -428,3 +428,42 @@ test("approval-request with an empty --expires value is a usage error, not a sil
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test("a profile-freeze failure blocks the run and names it on stderr", () => {
+  const cwd = tempCwd();
+  try {
+    // Create one run so the next id is known, then occupy that run's profile
+    // directory with a *file* — `mkdirSync` then throws and the freeze fails
+    // for a real filesystem reason rather than a stubbed one.
+    const first = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature");
+    assert.equal(first.status, 0, first.stderr);
+    const nextId = String(Number(first.stdout.trim()) + 1);
+    mkdirSync(join(cwd, ".governance", "profiles"), { recursive: true });
+    writeFileSync(join(cwd, ".governance", "profiles", nextId), "not a directory\n");
+
+    const blocked = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s2", "--change-kind", "feature");
+    assert.equal(blocked.status, 1, "a freeze failure is an error, not a usage error");
+    assert.equal(blocked.stdout.trim(), "", "no run id is printed, so the id must come from stderr");
+    assert.match(
+      blocked.stderr,
+      new RegExp(`run ${nextId} created but blocked: profile freeze failed`),
+      "the operator must be able to find the wedged run"
+    );
+
+    const store = openStore(cwd);
+    try {
+      const run = store.getRun(Number(nextId));
+      assert.ok(run, "the run row survives the freeze failure");
+      assert.equal(run.status, "blocked");
+      const failed = store.query<{ summary: string }>(
+        "SELECT summary FROM audit WHERE run_id = ? AND action = 'profile.freeze.failed'",
+        [Number(nextId)]
+      );
+      assert.equal(failed.length, 1, "the failure is audited");
+    } finally {
+      store.close();
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});

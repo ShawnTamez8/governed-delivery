@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -267,4 +268,52 @@ test("a scope entry carrying a newline is refused too", () => {
     () => approvalPayload({ ...BINDING, scope: ["src/a.ts", "src/b.ts\nsrc/evil.ts"] }),
     /approval payload field scope\[1\] contains a line break or control character/
   );
+});
+
+/**
+ * A directory link inside `dir` named `name`, pointing at `target`.
+ *
+ * A junction on Windows, a directory symlink elsewhere. `symlinkSync` needs
+ * Developer Mode or elevation for a directory link on Windows and fails with
+ * EPERM without it; `mklink /J` does not. This throws rather than skipping:
+ * a containment guard that is never exercised is the one most likely to be
+ * wrong (hazard 4).
+ */
+function makeDirLink(dir: string, name: string, target: string): string {
+  const link = join(dir, name);
+  if (process.platform === "win32") {
+    const r = spawnSync("cmd", ["/c", "mklink", "/J", link, target], { encoding: "utf8" });
+    assert.equal(r.status, 0, `mklink /J failed: ${r.stdout}${r.stderr}`);
+  } else {
+    symlinkSync(target, link, "dir");
+  }
+  assert.ok(existsSync(link), "the link must exist for the test to prove anything");
+  return link;
+}
+
+test("a public key reached through a link into the repository is refused", () => {
+  withKeyDir((outside) => {
+    const root = mkdtempSync(join(tmpdir(), "bw-repo-"));
+    try {
+      // The key really is inside the repository; only the *string* used to
+      // reach it points outside. A lexical `relative()` test decides on the
+      // string, so this is accepted today — signing material sitting in a
+      // tracked tree, which section 17 forbids.
+      const secrets = join(root, "secrets");
+      mkdirSync(secrets, { recursive: true });
+      const { publicKey } = keypair();
+      writeFileSync(join(secrets, "approval.pub"), publicKey.export({ format: "pem", type: "spki" }) as string);
+      const link = makeDirLink(outside, "link-into-repo", secrets);
+
+      process.env.BW_APPROVAL_PUBLIC_KEY = join(link, "approval.pub");
+      const resolved = resolvePublicKeyPath(root);
+      assert.equal(resolved.ok, false, "a key reachable inside the repository must be refused");
+      assert.match(
+        (resolved as { reason: string }).reason,
+        /approval public key must not live inside the repository/
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

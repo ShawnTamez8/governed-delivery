@@ -2,7 +2,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createPublicKey } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { verifyApproval } from "../src/approval.ts";
@@ -169,5 +179,126 @@ test("a payload mangled by the shell signs the bytes the gate recomputes", () =>
     }
   } finally {
     rmSync(out, { recursive: true, force: true });
+  }
+});
+
+/**
+ * A directory link inside `dir` named `name`, pointing at `target`. Junction
+ * on Windows, directory symlink elsewhere; throws rather than skips so the
+ * containment guard is never silently unexercised (hazard 4).
+ */
+function makeDirLink(dir: string, name: string, target: string): string {
+  const link = join(dir, name);
+  if (process.platform === "win32") {
+    const r = spawnSync("cmd", ["/c", "mklink", "/J", link, target], { encoding: "utf8" });
+    assert.equal(r.status, 0, `mklink /J failed: ${r.stdout}${r.stderr}`);
+  } else {
+    symlinkSync(target, link, "dir");
+  }
+  assert.ok(existsSync(link), "the link must exist for the test to prove anything");
+  return link;
+}
+
+test("keygen refuses to write through a link into the repository", () => {
+  // The junction is lexically outside every repository and its target inside
+  // one: the write lands in the tracked tree. The repo test must run on the
+  // *resolved* path, or the private key lands inside the repository.
+  const base = tempDir();
+  const repo = join(base, "repo");
+  const elsewhere = join(base, "elsewhere");
+  try {
+    assert.equal(spawnSync("git", ["init", "-q", repo], { encoding: "utf8" }).status, 0);
+    const keys = join(repo, "keys");
+    mkdirSync(keys, { recursive: true });
+    mkdirSync(elsewhere, { recursive: true });
+    const link = makeDirLink(elsewhere, "keys-link", keys);
+    const r = runScript(["keygen", "--out", link]);
+    assert.equal(r.status, 2, `expected a refusal, got stdout: ${r.stdout}`);
+    assert.match(r.stderr, /refusing to write signing material inside the repository/);
+    assert.ok(!existsSync(join(keys, "approval.key")), "no private key may land in the repository");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("sign refuses a private key reached through a link into the repository", () => {
+  // The same rule as the direct path, with the path spelled through a link:
+  // resolving only the child while identifying the repository lexically would
+  // read the in-tree key as outside and sign it.
+  const base = tempDir();
+  const repo = join(base, "repo");
+  const elsewhere = join(base, "elsewhere");
+  try {
+    assert.equal(spawnSync("git", ["init", "-q", repo], { encoding: "utf8" }).status, 0);
+    const keys = join(repo, "keys");
+    mkdirSync(keys, { recursive: true });
+    mkdirSync(elsewhere, { recursive: true });
+    const planted = join(keys, "approval.key");
+    writeFileSync(planted, "dummy private key material");
+    const link = makeDirLink(elsewhere, "keys-link", keys);
+    const r = runScript(["sign", "--key", join(link, "approval.key")], "buildworks-approval\nfeatureId: f-1\nscope: 0");
+    assert.equal(r.status, 2, `expected a refusal, got stdout: ${r.stdout}`);
+    assert.match(r.stderr, /refusing to read signing material from inside the repository/);
+    assert.equal(r.stdout.trim(), "", "a refusal must not also emit a signature");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("sign accepts a key in the working directory when neither is in a repository", () => {
+  // The containment rule is about repositories, not about where the operator
+  // happens to stand: a key in a directory that is in no repository is
+  // outside the rule even when it is inside the cwd.
+  const keys = tempDir();
+  try {
+    const out = tempDir();
+    try {
+      assert.equal(runScript(["keygen", "--out", out]).status, 0);
+      writeFileSync(join(keys, "approval.key"), readFileSync(join(out, "approval.key"), "utf8"));
+    } finally {
+      rmSync(out, { recursive: true, force: true });
+    }
+    const r = spawnSync(process.execPath, [SCRIPT, "sign", "--key", "./approval.key"], {
+      cwd: keys,
+      encoding: "utf8",
+      input: "buildworks-approval\nfeatureId: f-1\nscope: 0",
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout.trim(), /^[A-Za-z0-9+/]+={0,2}$/);
+  } finally {
+    rmSync(keys, { recursive: true, force: true });
+  }
+});
+
+test("sign refuses a private key that lives inside a repository", () => {
+  // keygen has refused this since step 4, but `sign` applied no containment
+  // at all: a private key already sitting in a tracked tree — copied there,
+  // or generated before the keygen guard existed — signed without objection.
+  const out = tempDir();
+  const repo = tempDir();
+  try {
+    assert.equal(runScript(["keygen", "--out", out]).status, 0);
+    assert.equal(spawnSync("git", ["init", "-q", repo], { encoding: "utf8" }).status, 0);
+    const planted = join(repo, "approval.key");
+    writeFileSync(planted, readFileSync(join(out, "approval.key"), "utf8"));
+
+    // Run from a third directory so the cwd check cannot be what refuses:
+    // the guard has to look at --key itself.
+    const elsewhere = tempDir();
+    try {
+      const r = spawnSync(process.execPath, [SCRIPT, "sign", "--key", planted], {
+        cwd: elsewhere,
+        encoding: "utf8",
+        input: "buildworks-approval\nfeatureId: f-1\nscope: 0",
+      });
+      assert.equal(r.status, 2, `expected a refusal, got stdout: ${r.stdout}`);
+      assert.match(r.stderr, /refusing to read signing material from inside the repository/);
+      assert.equal(r.stdout.trim(), "", "a refusal must not also emit a signature");
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
   }
 });

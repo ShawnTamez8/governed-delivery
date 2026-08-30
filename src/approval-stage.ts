@@ -13,10 +13,17 @@ import { loadProfile } from "./profile.ts";
 import { computeScope, touchesProtected } from "./scope.ts";
 import { computeRisk } from "./select.ts";
 import { validateSpecDoc } from "./spec-doc.ts";
-import type { Store } from "./store.ts";
+import { requireRunInProgress, type Store } from "./store.ts";
 
 export type BindingResult =
-  | { ok: true; binding: ApprovalBinding; specPath: string; reviewStageId: number }
+  | {
+      ok: true;
+      binding: ApprovalBinding;
+      specPath: string;
+      reviewStageId: number;
+      /** The key fingerprint frozen at intake; null when none was configured then. */
+      approvalSigner: string | null;
+    }
   | { ok: false; reason: string; runExists: boolean };
 
 export type ApprovalResult =
@@ -42,8 +49,9 @@ export function buildBinding(
   }
   const no = (reason: string): BindingResult => ({ ok: false, reason, runExists: true });
 
-  if (run.status !== "in_progress") {
-    return no(`run ${runId} is ${run.status}, not in_progress`);
+  const blocked = requireRunInProgress(run);
+  if (blocked !== null) {
+    return no(blocked);
   }
   const chain = store.getStageChain(runId);
   if (chain.some((s) => s.kind === "awaiting_approval")) {
@@ -139,6 +147,7 @@ export function buildBinding(
     ok: true,
     specPath: last.output_ref,
     reviewStageId: last.id,
+    approvalSigner: loaded.profile.approvalSigner,
     // The binding carries the recomputed values, not the gated ones: the
     // comparison above is the guard, recomputation stays the source, so the
     // two cannot silently diverge again.
@@ -196,40 +205,71 @@ export function approveRun(
   const key = loadPublicKey(rootDir);
   if (!key.ok) return refuse(key.reason, true);
 
+  // The trust anchor is the key frozen at intake, not whatever
+  // BW_APPROVAL_PUBLIC_KEY happens to name now. Without this, anyone able to
+  // set that variable could point the gate at a key they hold and approve
+  // their own run.
+  //
+  // The guarantee is **partial**: a run created on a machine with no key
+  // configured freezes null, and this cannot bind what was never there. That
+  // case proceeds on the previous behaviour and says so in the audit below,
+  // so an unbound approval is never mistaken afterwards for a bound one.
+  //
+  // `!= null` rather than `!== null`: a profile frozen before this field
+  // existed parses without it (`undefined`), which means "no key was bound at
+  // intake" exactly like null — treating it as a mismatched fingerprint would
+  // refuse every pre-existing run and name `undefined` as the frozen key.
+  if (bound.approvalSigner != null && bound.approvalSigner !== key.signer) {
+    return refuse(
+      `approval key ${key.signer} is not the key frozen at run start (${bound.approvalSigner})`,
+      true
+    );
+  }
+
   const verified = verifyApproval(approvalPayload(bound.binding), signature, key.key);
   if (!verified.ok) return refuse(verified.reason, true);
 
-  const stage = store.insertStage(runId, "awaiting_approval", bound.reviewStageId);
-  appendAudit(store, {
-    runId,
-    stageId: stage.id,
-    actor: "operator",
-    actorType: "human",
-    action: "approval.stage.create",
-    summary: `created awaiting_approval stage ${stage.id}`,
+  // One unit of work. A crash between the stage insert and the completion
+  // used to leave a pending `awaiting_approval` row, and `buildBinding`
+  // refuses any run that already has one — the run was wedged permanently
+  // with no way to retry. Committing all five writes together means a failure
+  // leaves no stage row at all, which is a state a retry can proceed from.
+  const committed = store.transaction(() => {
+    const stage = store.insertStage(runId, "awaiting_approval", bound.reviewStageId);
+    appendAudit(store, {
+      runId,
+      stageId: stage.id,
+      actor: "operator",
+      actorType: "human",
+      action: "approval.stage.create",
+      summary: `created awaiting_approval stage ${stage.id}`,
+    });
+    const approval = store.insertApproval({
+      runId,
+      featureId: bound.binding.featureId,
+      specHash: bound.binding.specHash,
+      startingCommit: bound.binding.startingCommit,
+      profileHash: bound.binding.profileHash,
+      risk: bound.binding.risk,
+      scope: canonicalJson(bound.binding.scope),
+      expiresAt: bound.binding.expiresAt,
+      signature,
+      signer: key.signer,
+    });
+    // output_ref is the spec path because that is literally what the plan
+    // stage is handed (section 4).
+    store.completeStage(stage.id, bound.specPath, "pass");
+    appendAudit(store, {
+      runId,
+      stageId: stage.id,
+      actor: "operator",
+      actorType: "human",
+      action: "approval.granted",
+      summary: `approval ${approval.id} verified for run ${runId}, signer ${key.signer}${
+        bound.approvalSigner == null ? "; signer not bound at intake" : ""
+      }`,
+    });
+    return { approvalId: approval.id, stageId: stage.id };
   });
-  const approval = store.insertApproval({
-    runId,
-    featureId: bound.binding.featureId,
-    specHash: bound.binding.specHash,
-    startingCommit: bound.binding.startingCommit,
-    profileHash: bound.binding.profileHash,
-    risk: bound.binding.risk,
-    scope: canonicalJson(bound.binding.scope),
-    expiresAt: bound.binding.expiresAt,
-    signature,
-    signer: key.signer,
-  });
-  // output_ref is the spec path because that is literally what the plan
-  // stage is handed (section 4).
-  store.completeStage(stage.id, bound.specPath, "pass");
-  appendAudit(store, {
-    runId,
-    stageId: stage.id,
-    actor: "operator",
-    actorType: "human",
-    action: "approval.granted",
-    summary: `approval ${approval.id} verified for run ${runId}, signer ${key.signer}`,
-  });
-  return { ok: true, approvalId: approval.id, stageId: stage.id };
+  return { ok: true, approvalId: committed.approvalId, stageId: committed.stageId };
 }

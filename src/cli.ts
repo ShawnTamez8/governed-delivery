@@ -151,6 +151,11 @@ async function main(): Promise<void> {
             summary: (err as Error).message,
           });
           store.setRunStatus(run.id, "blocked");
+          // The rethrow below exits non-zero and prints the filesystem error,
+          // which never names the run. Without this line a caller scripting
+          // `bw new-run` gets no id at all — the run exists and is blocked,
+          // and nothing in the command's output says which one.
+          console.error(`run ${run.id} created but blocked: profile freeze failed`);
           throw err;
         }
         console.log(String(run.id));

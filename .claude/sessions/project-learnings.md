@@ -1,5 +1,91 @@
 # Project learnings — BuildWorks (governed-delivery)
 
+## Hardening completed: all twelve step-4 findings closed (2026-08-29)
+
+### State
+
+- `docs/features/approval-gate-hardening/plan.md` is **Implemented**; all 11
+  tasks and 18 steps checked off. Suite 238/238, typecheck clean, check:docs
+  clean. Tasks 1-4 landed earlier (`617c42e`); tasks 5-11 in this session.
+- **Step 5 is unblocked.** Both of its dependencies now exist:
+  `Profile.approvalSigner` (task 9) and re-entrant `Store.transaction`
+  (task 10). `spec.gate.pass` (task 3) already had.
+
+### The twelve findings and the test seen failing for each
+
+Every fix was observed failing against the unfixed code before the fix landed.
+
+- 1 impossible expiry dates — `test/approval.test.ts` (task 1, earlier commit)
+- 2 payload line forgery — `test/approval.test.ts` (task 2, earlier commit)
+- 3 + 9 risk miscount / signed risk recomputed — `test/spec-stage.test.ts`
+  "the panel is sized from distinct artifacts" (task 3, earlier commit)
+- 4 `change_kind` never re-checked — `test/approval-stage.test.ts` (task 4)
+- 5 `bw spec` spends on a blocked zero-stage run — `test/spec-stage.test.ts`
+  "a blocked run is refused before anything can be dispatched". Failed with
+  `ok: true`: the stage authored and reviewed to completion against a dead
+  run. Timing is the clearest evidence — 795ms failing, 48ms once refused.
+- 6 freeze-failure path unproven — `test/cli.test.ts` "a profile-freeze
+  failure blocks the run and names it on stderr"
+- 7 sha256 object-format repos — `test/profile.test.ts` "resolveStartingCommit
+  reads HEAD in a sha256 object-format repository". Returned `null`.
+- 10 lexical `isInside` — `test/approval.test.ts` "a public key reached through
+  a link into the repository is refused". Accepted the key (`ok === true`).
+- 11 `sign --key` containment — `test/sign-approval.test.ts` "sign refuses a
+  private key that lives inside a repository". It printed a valid signature.
+- 12 trust-anchor freeze (accepted-deferred) — `test/approval-stage.test.ts`
+  "an approval signed by a key other than the one frozen at intake is refused"
+- 13 approval write atomicity (accepted-deferred) — `test/store.test.ts`
+  nesting cases failed with "cannot start a transaction within a transaction";
+  `test/approval-stage.test.ts` "a failure mid-approval leaves the run
+  retryable, not wedged" failed on "the half-written stage must have rolled
+  back" with the wrapper removed.
+
+### Lessons
+
+- **A plan can specify a break-it test that cannot break.** Task 8 said to
+  point a link *inside* the repository at an outside key directory. That path
+  is already lexically inside the root, so the existing guard refuses it and
+  the test would have passed against the unfixed code — a green test proving
+  nothing, which is the exact failure mode hazard 4 exists to prevent. The
+  direction that actually defeats a lexical `relative()` check is the reverse:
+  a link *outside* the repository pointing *into* it. Measured at the shell
+  first, both directions, before writing either test. **A break-it test named
+  in a plan is still a hypothesis; verify the direction of the attack before
+  writing the test, not after it passes.**
+- **The fixture-ordering trap was real and the guard against it works.**
+  `freezeProfile` reads `BW_APPROVAL_PUBLIC_KEY`, and the fixture set that
+  variable *after* calling it. Reordering was not enough on its own: the two
+  bound-path tests now open with `assert.ok(f.frozenSigner)`, and restoring
+  the original ordering makes both fail on that line instead of passing
+  vacuously. **When a new guard reads ambient state, assert in the test that
+  the fixture actually established it** — the reorder is invisible six months
+  later, the assertion is not.
+- **Two of my own assertions were wrong, and the test caught me, not the
+  code.** `store.execute` does not exist (it is `exec`), and
+  `verifyAuditChain` returns `null` for a valid chain, not `{ok: true}`. Both
+  surfaced as test failures that looked like product defects for a moment.
+  Read the callee's signature rather than assuming its shape from its name —
+  the same rule as "trace before asserting", applied to test code.
+- **A rolled-back audit insert does not break the hash chain.**
+  `verifyAuditChain` recomputes from the rows that survived, so the rows that
+  vanished leave no gap. Worth knowing before wrapping any other audit-writing
+  operation in a transaction.
+
+### Deferred and open
+
+- Nothing open from the step-4 review. The `step4-open-findings` memory is
+  now stale and should be closed out.
+- `Store.transaction` re-entrancy: a swallowed exception thrown inside a
+  nested transaction used to zero the depth counter and silently commit the
+  partial unit at the outer COMMIT. Since the step-5 review, a nested failure
+  sets an abort flag instead; the outermost frame then rolls back and throws
+  "transaction aborted by a nested failure", so loudness is preserved and
+  silent partial commits are not possible.
+
+### Next up
+
+- Build order step 5: `docs/features/plan-stage/plan.md`, now unblocked.
+
 ## Hardening execution, CRLF fix, and hazard enforcement (2026-08-29)
 
 ### Decisions and assumptions

@@ -347,3 +347,53 @@ test("insertRun accepts the feature_id forms the fixtures use", () => {
     }
   });
 });
+
+test("a nested transaction commits once and both writes are visible", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    // `insertStage` opens its own transaction. Composing it inside an outer
+    // one is what an atomic multi-write operation needs, and it is exactly
+    // what SQLite refuses when BEGIN nests.
+    const ids = store.transaction(() => {
+      const spec = store.insertStage(run.id, "spec", null);
+      const review = store.insertStage(run.id, "spec_review", spec.id);
+      return [spec.id, review.id];
+    });
+    // Asserted by reading rows back: the depth counter is the mechanism, the
+    // visible rows are the contract.
+    assert.deepEqual(store.getStageChain(run.id).map((s) => s.id), ids);
+  });
+});
+
+test("a throw inside a nested transaction rolls back the outer one's writes", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    assert.throws(
+      () =>
+        store.transaction(() => {
+          store.insertStage(run.id, "spec", null);
+          // A nested failure must abort the whole unit, never half of it.
+          store.insertStage(run.id, "spec_review", 99999);
+        }),
+      /stage 99999 does not exist/
+    );
+    assert.equal(store.getStageChain(run.id).length, 0, "the outer write must not survive");
+  });
+});
+
+test("a single-level transaction still commits and still rolls back", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    store.transaction(() => {
+      store.exec("UPDATE run SET status = ? WHERE id = ?", ["blocked", run.id]);
+    });
+    assert.equal(store.getRun(run.id)!.status, "blocked");
+    assert.throws(() =>
+      store.transaction(() => {
+        store.exec("UPDATE run SET status = ? WHERE id = ?", ["completed", run.id]);
+        throw new Error("boom");
+      })
+    );
+    assert.equal(store.getRun(run.id)!.status, "blocked", "the rolled-back update must not stick");
+  });
+});
