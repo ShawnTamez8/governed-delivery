@@ -7,14 +7,14 @@ disagree, Current state wins.
 
 ## Current state (2026-08-31)
 
-**Shipped:** build order steps 1-7. The step-6 trust-boundary correction
+**Shipped:** build order steps 1-7 on `master` (`5b93ddb`, step7 merged by
+fast-forward, linear history). The step-6 trust-boundary correction
 (read-only executor invocation, worktree cleanliness gate, literal git paths,
-link fail-closed, frozen executor binding) is on `master` (`1d73eac`), review
-reconciled. Step 7 (verification) is fully done on branch **`step7`**, unmerged:
-all twelve tasks of `docs/features/verification-stage/plan.md` complete,
-including the manual smoke, and the plan is `Implemented`. The combined tree
-(correction + verification) is green: 446 tests / 445 pass / 1 recorded skip /
-0 fail, `typecheck` clean, `check:docs` clean.
+link fail-closed, frozen executor binding) and step 7 (verification) are both
+complete: all twelve tasks of `docs/features/verification-stage/plan.md` done
+including the manual smoke, both plans `Implemented`. The full tree is green:
+446 tests / 445 pass / 1 recorded skip / 0 fail, `typecheck` clean,
+`check:docs` clean.
 
 **The smoke is complete, with real model spend** (scratch repos, `claude-sonnet-5`,
 keypair in `~/.buildworks`): a passing run (smoke1 run 1, 5 dispatches,
@@ -40,13 +40,12 @@ run is refused by name.
 - Filesystem and network containment for verification commands is unbuilt and
   stated as a limitation in `ARCHITECTURE.md` section 17, with
   `docs/proposals/verification-containment.md` filed.
-- Branch `step7` is unmerged and `master` is untouched.
 - The build order stops at step 9. Do not build past it without an explicit
   decision.
 
 **Next up:** step 8 (delivery check) is the next build-order step; it consumes
-the structured record the verification stage writes. Nothing on either branch
-blocks it.
+the structured record the verification stage writes. Nothing blocks it, and
+the deliberate stop at step 9 means it must be an explicit decision.
 
 ## Diagnostics quick-reference
 
