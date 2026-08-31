@@ -29,6 +29,13 @@ you nothing about which branch is live. Find the callers and the construction
 sites before describing behaviour. Confident inference from plausible names was
 the single largest source of wasted effort in work of this kind.
 
+**Read the whole file before editing it.** The Read tool returns a bounded
+window — repeat with `offset` until every line of the file you will change
+has been seen. A token-minimal read that unlocks an edit is not reading the
+file. Never edit on the basis of `head`/`tail`/`sed` slices, and a
+programmatic patch (`read()` + `replace()`) is only legitimate after you
+have viewed the full contents.
+
 **Prove a guard by breaking what it guards.** A test that passes on first write
 has shown only that your reading matched the code. Change the behaviour, confirm
 the test fails, restore. Until then, report assertions as written, not verified.
