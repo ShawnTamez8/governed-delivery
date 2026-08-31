@@ -206,6 +206,10 @@ export function buildImplementationAuthorPrompt(
   scope: string[],
   baseCommit: string
 ): string {
+  // The read-only sentence is UX, not a guard: enforcement is the
+  // invocation boundary (the read-only executor command) and the stage's
+  // clean-tree assertions. It must not tell the model about the backstop —
+  // that would invite "they'll discard it anyway" readings.
   return `you are the implementer ${agent.id}
 
 Propose the code changes that implement the approved plan below. Your
@@ -213,8 +217,7 @@ working directory is the repository checkout those changes apply to — read
 it to see the code you are patching. Run no git commands: the system applies
 and commits the patches you propose. This checkout is read-only for you: do
 not create, modify, or delete any file. Only the patch content you return
-is considered. (This sentence is UX, not a guard: the session runs without
-write tools and the system checks the worktree before and after dispatch.)
+is considered.
 
 Return exactly a JSON AgentResult object with this shape:
 {"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedPatches": [{"baseCommit": "...", "files": [{"path": "...", "action": "add", "content": "<complete new file content>"}]}]}
