@@ -33,3 +33,16 @@ The implementation matches the governing plan closely: every guard the plan spec
 - `npm test` — 384 tests, 383 pass, 1 recorded skip, 0 fail (on master's tree before the review file).
 - `npm run check:docs` — clean (the pre-existing historical path warnings remain).
 - The rebased `step7` tree (correction + verification stage): 446 tests, typecheck and doc-check clean.
+
+---
+
+## Reconciliation
+
+**Date:** 2026-08-31
+**Disposition:** 2 accepted, 0 rejected, 0 deferred, 0 open
+**Status:** reconciled
+
+### Verdicts
+
+- **Accepted — Finding 1: the implementer prompt delivers a meta-comment about the system's enforcement:** `src/prompts.ts` now carries the comment above the `return` statement and the delivered prompt holds exactly the plan's sentence; the prompts suite passes and the fix is committed on master (`f55dbd4`).
+- **Accepted — Finding 2: the fixture-freeze mechanism deviates from the plan's specified option:** no code change — the contract (every test freezes exactly the executor it hands) is proven by the binding regressions and the green suite; the deviation is recorded in the plan's implementation note.
