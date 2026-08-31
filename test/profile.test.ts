@@ -16,10 +16,13 @@ import {
 import { AGENTS } from "../src/agents.ts";
 import { CLAUDE_CODE } from "../src/executor.ts";
 import { buildPolicy, policyHash } from "../src/policy.ts";
+import type { VerificationConfig } from "../src/governed-config.ts";
 import { sha256Hex } from "../src/canonical.ts";
 
 const COMMIT = "b".repeat(40);
 const MODEL = "test-model";
+/** One minimal frozen configuration, shared by every call site in this file. */
+const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
 
 function withRoot(fn: (root: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), "bw-profile-"));
@@ -32,7 +35,7 @@ function withRoot(fn: (root: string) => void): void {
 
 test("freezeProfile then loadProfile round-trips with an identical hash", () => {
   withRoot((root) => {
-    const frozen = freezeProfile(root, 1, COMMIT, MODEL);
+    const frozen = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
     const loaded = loadProfile(root, 1);
     assert.equal(loaded.hash, frozen.hash);
     assert.deepEqual(loaded.profile, frozen.profile);
@@ -45,16 +48,16 @@ test("freezeProfile refuses a model name the spawn cannot carry", () => {
   // invocation and the shell would run another.
   withRoot((root) => {
     assert.throws(
-      () => freezeProfile(root, 1, COMMIT, "gpt-4 mini"),
+      () => freezeProfile(root, 1, COMMIT, "gpt-4 mini", VERIFICATION),
       /invalid model name "gpt-4 mini": must be 1-64 characters of letters, digits, dot, underscore, or hyphen, starting with a letter or digit/
     );
-    assert.throws(() => freezeProfile(root, 1, COMMIT, " "), /invalid model name/);
+    assert.throws(() => freezeProfile(root, 1, COMMIT, " ", VERIFICATION), /invalid model name/);
   });
 });
 
 test("altering the profile file changes its hash", () => {
   withRoot((root) => {
-    const frozen = freezeProfile(root, 1, COMMIT, MODEL);
+    const frozen = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
     appendFileSync(frozen.path, " ");
     assert.notEqual(loadProfile(root, 1).hash, frozen.hash);
   });
@@ -62,7 +65,7 @@ test("altering the profile file changes its hash", () => {
 
 test("the profile records every seeded agent and the executor", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
     assert.deepEqual(
       profile.agents.map((a) => a.id).sort(),
       [...AGENTS].map((a) => a.id).sort()
@@ -75,7 +78,7 @@ test("the profile records every seeded agent and the executor", () => {
 
 test("the profile's policy hash is the live policy's hash", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
     assert.equal(profile.policyHash, policyHash(buildPolicy()));
     assert.equal(profile.policyHash, policyHash(profile.policy));
   });
@@ -83,8 +86,8 @@ test("the profile's policy hash is the live policy's hash", () => {
 
 test("two freezes differ by their timestamp but agree on policy", () => {
   withRoot((root) => {
-    const a = freezeProfile(root, 1, COMMIT, MODEL);
-    const b = freezeProfile(root, 2, COMMIT, MODEL);
+    const a = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const b = freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION);
     assert.notEqual(a.hash, b.hash);
     assert.equal(a.profile.policyHash, b.profile.policyHash);
   });
@@ -142,7 +145,7 @@ test("the profile freezes the approval key fingerprint, or null when none is con
       process.env.BW_APPROVAL_PUBLIC_KEY = join(keyDir, "no-such-key.pub");
       // No key at intake is the normal case on a fresh machine and must not
       // fail run creation — it records null and the gate says so in the audit.
-      assert.equal(freezeProfile(root, 1, COMMIT, MODEL).profile.approvalSigner, null);
+      assert.equal(freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION).profile.approvalSigner, null);
 
       const { publicKey } = generateKeyPairSync("ed25519");
       const der = publicKey.export({ format: "der", type: "spki" });
@@ -152,7 +155,7 @@ test("the profile freezes the approval key fingerprint, or null when none is con
       // The expected value comes from the key's own DER encoding, not from
       // anything this test invented: it is the same identifier the gate
       // recomputes at approve time.
-      assert.equal(freezeProfile(root, 2, COMMIT, MODEL).profile.approvalSigner, sha256Hex(der));
+      assert.equal(freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION).profile.approvalSigner, sha256Hex(der));
     });
   } finally {
     if (before === undefined) delete process.env.BW_APPROVAL_PUBLIC_KEY;
@@ -163,7 +166,7 @@ test("the profile freezes the approval key fingerprint, or null when none is con
 
 test("the profile freezes one model entry per stage kind", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model");
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION);
     assert.deepEqual(profile.modelMap, {
       spec: "chosen-model",
       spec_review: "chosen-model",
@@ -177,7 +180,7 @@ test("the profile freezes one model entry per stage kind", () => {
 
 test("resolveStageModel refuses an unmapped stage kind naming the mapped ones", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
     const result = resolveStageModel(profile, "verification");
     assert.equal(result.ok, false);
     if (result.ok) return;

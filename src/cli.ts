@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { acquireLock } from "./lock.ts";
 import { requireRunInProgress, CHANGE_KINDS, GATE_RESULTS, ROLES, openStore, type Store } from "./store.ts";
@@ -7,10 +8,12 @@ import { dispatchOnce } from "./dispatch.ts";
 import { runSpecStage } from "./spec-stage.ts";
 import { runPlanStage } from "./plan-stage.ts";
 import { runImplementationStage } from "./implementation-stage.ts";
+import { runVerificationStage } from "./verification-stage.ts";
 import { freezeProfile, loadVerifiedProfile, requireFrozenBinding, resolveStageModel, resolveStartingCommit, validateModelName } from "./profile.ts";
 import { approvalPayload, validateExpiry } from "./approval.ts";
 import { approveRun, buildBinding } from "./approval-stage.ts";
 import { APPROVAL_DEFAULT_LIFETIME_SECONDS, APPROVAL_MAX_LIFETIME_SECONDS } from "./policy.ts";
+import { loadGovernedConfigAtCommit } from "./governed-config.ts";
 
 const USAGE = `usage: bw <command>
 commands:
@@ -23,11 +26,13 @@ commands:
   spec --run <id> [--model <name>]       run the spec and spec_review stages
   plan --run <id> [--model <name>]       run the plan and plan_review stages
   implement --run <id> [--model <name>]   run the implementation stage
+  verify --run <id>                      run the verification stage
   approval-request --run <id> [--expires <iso>]
                                          print the payload for the operator to sign
   approve --run <id> --expires <iso> --signature <base64>
                                          verify and record the authorization
-  verify-audit                           recompute the audit chain`;
+  verify-audit                           recompute the whole audit chain
+                                         (unrelated to verify above)`;
 
 class UsageError extends Error {}
 
@@ -117,6 +122,7 @@ async function main(): Promise<void> {
     "spec",
     "plan",
     "implement",
+    "verify",
     "approval-request",
     "approve",
     "verify-audit",
@@ -154,6 +160,61 @@ async function main(): Promise<void> {
         if (modelError !== null) {
           throw new UsageError(modelError);
         }
+        // Everything below runs *before* the insert, and that ordering is the
+        // point: a repository that cannot verify must not get a run row that
+        // is guaranteed to block after every expensive stage has already
+        // spent. These are refusals about the repository, not the command
+        // line, so they exit 1 rather than as usage errors.
+        const startingCommit = resolveStartingCommit(process.cwd());
+        if (startingCommit === null) {
+          console.error(
+            "not a git repository (or HEAD cannot be read): a run needs a starting commit to verify against"
+          );
+          process.exitCode = 1;
+          break;
+        }
+        // Section 7's repository contract: a clean working tree at run start.
+        // A dirty tree means the starting commit does not describe what is on
+        // disk, so the configuration frozen from that commit and the code the
+        // run will verify are two different things.
+        const status = spawnSync("git", ["status", "--porcelain"], {
+          cwd: process.cwd(),
+          encoding: "utf8",
+        });
+        if (status.status !== 0) {
+          console.error(`cannot read the working tree state: ${(status.stderr ?? "").trim()}`);
+          process.exitCode = 1;
+          break;
+        }
+        // `.governance/` is excluded, and it has to be: `openStore()` above
+        // has already created `.governance/state.db`, so a repository that has
+        // not gitignored it would be reported dirty by the very invocation
+        // doing the reporting, and no run could ever be created there
+        // (hazard 11). The system's own machine-local state is not part of
+        // what a run verifies, so it is not what this precondition is about.
+        const dirty = (status.stdout ?? "")
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter((l) => l !== "")
+          // Porcelain lines are `XY <path>`; the status letters are never a
+          // path, so dropping the first token is enough to test the path.
+          .filter((l) => !/^..\s+"?\.governance\//.test(l));
+        if (dirty.length > 0) {
+          console.error(
+            `the working tree is not clean: a run starts from a committed state (section 7). ${dirty.length} path(s), first: ${dirty.slice(0, 3).join(", ")}`
+          );
+          process.exitCode = 1;
+          break;
+        }
+        // Hazard 11: a fresh checkout either completes a run or refuses
+        // before spending. Read from the starting commit, never the working
+        // copy — the run branch is created from that commit.
+        const verification = loadGovernedConfigAtCommit(process.cwd(), startingCommit);
+        if (!verification.ok) {
+          console.error(verification.reason);
+          process.exitCode = 1;
+          break;
+        }
         const run = store.insertRun(
           required(args, "project"),
           required(args, "feature"),
@@ -172,7 +233,7 @@ async function main(): Promise<void> {
         // can never be approved, so a freeze failure blocks it here rather
         // than surfacing three stages later at the gate.
         try {
-          const frozen = freezeProfile(process.cwd(), run.id, resolveStartingCommit(process.cwd()), model);
+          const frozen = freezeProfile(process.cwd(), run.id, startingCommit, model, verification.config);
           store.setProfileRef(run.id, frozen.hash);
           appendAudit(store, {
             runId: run.id,
@@ -398,6 +459,23 @@ async function main(): Promise<void> {
         });
         if (result.ok) {
           console.log(result.worktreePath);
+        } else {
+          console.error(result.reason);
+          process.exitCode = 1;
+        }
+        break;
+      }
+      case "verify": {
+        // No --model: this stage dispatches nothing, so there is no model to
+        // request and accepting one would suggest otherwise. Per-command
+        // progress comes from the stage, so nothing is printed here but the
+        // result path.
+        const result = await runVerificationStage(store, {
+          runId: numeric(args, "run"),
+          rootDir: process.cwd(),
+        });
+        if (result.ok) {
+          console.log(result.resultRef);
         } else {
           console.error(result.reason);
           process.exitCode = 1;

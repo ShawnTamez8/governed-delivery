@@ -9,7 +9,10 @@ import { runSpecStage } from "../src/spec-stage.ts";
 import { REMEDIATION_ROUNDS } from "../src/policy.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
+import type { VerificationConfig } from "../src/governed-config.ts";
 
+/** One minimal frozen configuration; this stage does not read it. */
+const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
 const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-spec-stage.mjs");
 
 function fixtureExecutor(scriptPath: string): ExecutorDefinition {
@@ -86,7 +89,7 @@ function withRun(fn: (ctx: Ctx) => Promise<void>): Promise<void> {
   const run = store.insertRun("p", "f-1", "demo", "feature");
   // The stage resolves its model from the frozen profile now, so a run
   // without one cannot reach a dispatch at all.
-  const frozen = freezeProfile(root, run.id, "b".repeat(40), "m");
+  const frozen = freezeProfile(root, run.id, "b".repeat(40), "m", VERIFICATION);
   store.setProfileRef(run.id, frozen.hash);
   // The run's frozen executor *is* the fixture the tests hand by default;
   // scratch-executor tests freeze their own right before the stage call.
@@ -275,7 +278,7 @@ test("a missing design document is refused before any dispatch", async () => {
   const root = mkdtempSync(join(tmpdir(), "bw-spec-stage-"));
   const store = openStore(root);
   const run = store.insertRun("p", "f-1", "no-design", "feature");
-  const frozen = freezeProfile(root, run.id, "b".repeat(40), "m");
+  const frozen = freezeProfile(root, run.id, "b".repeat(40), "m", VERIFICATION);
   store.setProfileRef(run.id, frozen.hash);
   // This test builds its own run (no design.md exists); like withRun, the
   // frozen executor must be the fixture the test hands.

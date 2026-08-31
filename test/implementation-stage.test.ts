@@ -19,7 +19,10 @@ import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { validateAgentResult } from "../src/agent-result.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
+import type { VerificationConfig } from "../src/governed-config.ts";
 
+/** One minimal frozen configuration; this stage does not read it. */
+const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
 const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-implementation-stage.mjs");
 const MODEL = "m";
 const SLUG = "demo";
@@ -171,7 +174,7 @@ function withApprovedRun(
 
     const spec = opts.spec ?? SPEC;
     const run = store.insertRun("p", "f-1", SLUG, "feature");
-    const frozen = freezeProfile(root, run.id, head, MODEL);
+    const frozen = freezeProfile(root, run.id, head, MODEL, VERIFICATION);
     store.setProfileRef(run.id, frozen.hash);
     // The run's frozen executor *is* the fixture: the stage refuses an
     // executor the profile never froze, and a test run is not exempt from

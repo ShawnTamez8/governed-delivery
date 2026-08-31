@@ -6,16 +6,18 @@ import { loadPublicKey } from "./approval.ts";
 import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { CLAUDE_CODE, type ExecutorDefinition } from "./executor.ts";
 import { SYSTEM_NAME, buildPolicy, policyHash, type Policy } from "./policy.ts";
+import type { VerificationConfig } from "./governed-config.ts";
 
 /**
  * The frozen record of everything the run resolved at start (architecture
  * section 12), stored under `.governance/profiles/<run>/` with its hash on
  * the run row.
  *
- * The model map exists and is frozen per run; the verification config is
- * absent because `governed.yaml` is step 7's input and nothing has run
- * verification yet. The profile records what was actually resolved rather
- * than pretending to a completeness it does not have.
+ * The model map and the verification configuration are both frozen per run.
+ * The verification commands are read from `governed.yaml` **as committed at
+ * the starting commit** and validated by the caller before they reach here,
+ * so the profile records what the run will actually verify against rather
+ * than what the working copy happened to say.
  *
  * `startingCommit` lives here rather than in a `run` column because section
  * 15's `run` table has none, and a base commit is exactly "what the run
@@ -45,6 +47,23 @@ export interface Profile {
    * (section 6: record when a guarantee is asserted rather than proven).
    */
   approvalSigner: string | null;
+  /**
+   * The verification commands frozen at run start (section 12 names the
+   * verification config among what the profile freezes).
+   *
+   * Not nullable: `new-run` refuses a repository with no committed,
+   * parseable `governed.yaml` before the run row exists. The public-key
+   * precedent above does not transfer — a null `approvalSigner` still lets a
+   * run complete, recorded as unbound, whereas a run frozen without
+   * verification commands could only ever block after every expensive stage
+   * had spent.
+   *
+   * `freezeProfile` does not read `governed.yaml` itself. The caller has
+   * already validated it against the starting commit, and re-reading here
+   * would open a window between validation and freeze in which the file
+   * could change.
+   */
+  verification: VerificationConfig;
   frozenAt: string;
   agents: AgentDefinition[];
   executor: ExecutorDefinition;
@@ -107,7 +126,8 @@ export function freezeProfile(
   rootDir: string,
   runId: number,
   startingCommit: string | null,
-  model: string
+  model: string,
+  verification: VerificationConfig
 ): { path: string; hash: string; profile: Profile } {
   const modelError = validateModelName(model);
   if (modelError !== null) {
@@ -127,6 +147,7 @@ export function freezeProfile(
     // advisory.
     modelMap: { spec: model, spec_review: model, plan: model, plan_review: model, implementation: model },
     approvalSigner: key.ok ? key.signer : null,
+    verification,
     frozenAt: new Date().toISOString(),
     agents: [...AGENTS].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     executor: CLAUDE_CODE,

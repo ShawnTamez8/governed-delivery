@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyMigrations } from "./migrate.ts";
+import type { AuditRow } from "./audit.ts";
 
 export type ChangeKind = "feature" | "defect_fix";
 export type RunStatus = "in_progress" | "blocked" | "completed";
@@ -480,6 +481,22 @@ export class Store {
 
   getStageChain(runId: number): StageRow[] {
     return this.query<StageRow>("SELECT * FROM stage WHERE run_id = ? ORDER BY ordinal", [runId]);
+  }
+
+  /**
+   * Every audit event for one run, oldest first.
+   *
+   * `appendAudit` and `verifyAuditChain` write and check the chain; until now
+   * nothing handed rows back to a caller. The verification stage needs one
+   * fact that lives nowhere else: the head the implementation stage committed,
+   * which that stage recorded in its own `implementation.gate.pass` event. A
+   * reader here is how it gets that without step 6 changing.
+   *
+   * Insertion order is `id` order — the chain is append-only and the triggers
+   * refuse an update or a delete, so ids never reorder.
+   */
+  getAuditEvents(runId: number): AuditRow[] {
+    return this.query<AuditRow>("SELECT * FROM audit WHERE run_id = ? ORDER BY id", [runId]);
   }
 
   setStageStatus(id: number, status: string, gateResult?: string): void {

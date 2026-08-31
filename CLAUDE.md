@@ -77,7 +77,7 @@ Run from the repository root. These commands live here and nowhere else.
   explicit `.ts` extensions).
 - `npm run check:docs` — the documentation checker (`scripts/doc-check.mjs`);
   run before claiming a documentation change is consistent.
-- `node src/cli.ts migrate|new-run|stage-add|stage-complete|dispatch|spec|plan|implement|approval-request|approve|verify-audit`
+- `node src/cli.ts migrate|new-run|stage-add|stage-complete|dispatch|spec|plan|implement|verify|approval-request|approve|verify-audit`
   — the CLI; `bw` works once `npm install` links the bin.
 - `node scripts/sign-approval.mjs keygen|sign` — the operator's signing tool.
   It holds the only private key path in the repository and the system never

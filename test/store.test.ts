@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
+import { appendAudit } from "../src/audit.ts";
 
 function withStore(fn: (store: Store) => void): void {
   const root = mkdtempSync(join(tmpdir(), "bw-store-"));
@@ -395,5 +396,29 @@ test("a single-level transaction still commits and still rolls back", () => {
       })
     );
     assert.equal(store.getRun(run.id)!.status, "blocked", "the rolled-back update must not stick");
+  });
+});
+
+test("getAuditEvents returns one run's events in insertion order and excludes another run's", () => {
+  withStore((store) => {
+    const a = store.insertRun("p", "f-1", "a", "feature");
+    const b = store.insertRun("p", "f-2", "b", "feature");
+    appendAudit(store, { runId: a.id, stageId: null, actor: "system", actorType: "cli", action: "one", summary: "first" });
+    appendAudit(store, { runId: b.id, stageId: null, actor: "system", actorType: "cli", action: "other", summary: "other run" });
+    appendAudit(store, { runId: a.id, stageId: null, actor: "system", actorType: "cli", action: "two", summary: "second" });
+
+    const events = store.getAuditEvents(a.id);
+    assert.deepEqual(events.map((e) => e.action), ["one", "two"]);
+    assert.deepEqual(events.map((e) => e.summary), ["first", "second"]);
+  });
+});
+
+test("getAuditEvents returns an empty array for a run with no events", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    assert.deepEqual(store.getAuditEvents(run.id), []);
+    // An unknown run is the empty case too, not a throw: the caller decides
+    // what a missing event means.
+    assert.deepEqual(store.getAuditEvents(9999), []);
   });
 });

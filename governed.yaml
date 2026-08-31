@@ -1,0 +1,19 @@
+# The verification commands a run must pass (architecture section 21).
+#
+# This file is operator-authored and committed before the first run. It is
+# never part of any run's scope — `PROTECTED_PATH_PREFIXES` refuses an
+# agent-proposed patch that touches it — so no run can rewrite the commands
+# that judge it. Each run reads it from its own starting commit and freezes
+# the result in the profile, so two checkouts cannot silently verify
+# different things.
+#
+# Order is cheapest-failure-to-diagnose first: a type error is a shorter read
+# than a test failure, and a test failure is a shorter read than a
+# documentation drift report.
+verify:
+  - name: typecheck
+    command: ["npm", "run", "typecheck"]
+  - name: test
+    command: ["npm", "test"]
+  - name: docs
+    command: ["npm", "run", "check:docs"]

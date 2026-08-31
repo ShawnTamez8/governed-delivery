@@ -472,6 +472,28 @@ at the gate instead.
 cover, do not fail and do not silently widen. Propose an addition with a delta
 hash and policy snapshot, and let that be part of what is approved.
 
+### Deferred before the step 9 milestone
+
+Three behaviours this section describes are deliberately not built yet. They
+are recorded here rather than only in a plan, because this document is
+binding and a deferral nobody can find in it is indistinguishable from an
+omission. Each one blocks terminally with the cause named, and **a fresh run
+is the repair for all three** — there is no in-place resume.
+
+- **Verification remediation rounds.** `verification` fails closed on the
+  first command that does not pass; the remediation budget above is not spent
+  because no round loop exists. Step 9's milestone is one complete run, and a
+  complete run passes verification, so a round loop is off that path.
+- **Scope-fitness proposals.** A spec artifact outside the signed scope
+  blocks at the gate. The delta-hash proposal above is unbuilt; widening the
+  scope means a fresh approval on a fresh run.
+- **The `status.md` projection.** Section 14 describes it as a projection of
+  the run row. Nothing writes it, and the database is the only place a run's
+  state can be read today.
+
+These stay deferred until the deliberate stop at step 9 is lifted by an
+explicit decision. Building past it is not a matter of finding time.
+
 ## 13. Conflict resolution
 
 Reviewers produce findings. They do not vote, and the system does not need them
@@ -562,6 +584,8 @@ report lives there.
   raw/<run>/...     retained raw model output, one file per invocation
   content/<hash>    content-addressed overflow for oversized prompts and results
   profiles/<run>/   the frozen profile snapshot for a run
+  verification/<run>/  retained command output, one file per command, plus the
+                       structured result record handed to delivery_check
 ```
 
 **What is git-tracked and what is not.** The database and raw output are
@@ -643,7 +667,18 @@ approval has defeated the only human gate in the pipeline.
 
 **Pass named environment variables, never the whole environment.** Inheriting
 the parent environment puts credentials and machine state into a model context
-and into any transcript it produces.
+and into any transcript it produces. This applies to verification commands as
+well as to agent sessions: a verification command is code the implementer
+wrote, and full inheritance would put the approval public key inside its
+reach.
+
+**Verification commands are not otherwise contained, and that is a stated
+limitation rather than a claim.** They run with the run's worktree as their
+working directory, but nothing stops one from reading or writing elsewhere on
+the filesystem — `.governance/` is reachable by relative path — or from
+reaching the network, which is `inherit` for the executor too. The system has
+no sandboxing mechanism to apply here. Treat the named passthrough as the only
+containment that exists today, and see `docs/proposals/` for the options.
 
 **Treat retained raw output as sensitive.** It is model text produced from
 repository content and prompts, so it may contain anything either contained. It
@@ -709,7 +744,14 @@ price.
   invocation references — rather than being cut. If it cannot be delivered
   intact, refuse the invocation.
 - **Result size.** Cap it, refuse above the cap, and retain the raw bytes anyway
-  so the refusal is diagnosable.
+  so the refusal is diagnosable. **Retention is bounded too, by a separate and
+  much larger ceiling.** "Retain the bytes anyway" is a rule about a bounded
+  result; against a stream that never ends it is a full disk, and a full disk
+  takes the run store and the audit chain with it. A verification command
+  writing to a pipe was measured at roughly a gigabyte a second, which is
+  hundreds of gigabytes inside its own time ceiling. On breach the command is
+  killed; the result was already refused by the result cap, so nothing is lost
+  but the flood.
 - **Concurrency.** One writer per repository, enforced by a lock. A second
   invocation fails fast with a clear diagnostic rather than interleaving writes.
 - **Remediation rounds.** A bounded budget per reviewed stage, set in

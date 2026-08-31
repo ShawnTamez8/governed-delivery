@@ -10,7 +10,10 @@ import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { REMEDIATION_ROUNDS } from "../src/policy.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
+import type { VerificationConfig } from "../src/governed-config.ts";
 
+/** One minimal frozen configuration; this stage does not read it. */
+const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
 const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-plan-stage.mjs");
 const COMMIT = "b".repeat(40);
 const MODEL = "m";
@@ -125,7 +128,7 @@ function withApprovedRun(
   const spec = opts.spec ?? SPEC;
   try {
     const run = store.insertRun("p", "f-1", SLUG, opts.changeKind ?? "feature");
-    const frozen = freezeProfile(root, run.id, COMMIT, MODEL);
+    const frozen = freezeProfile(root, run.id, COMMIT, MODEL, VERIFICATION);
     store.setProfileRef(run.id, frozen.hash);
     // The run's frozen executor *is* the fixture the tests hand by default;
     // scratch-executor tests freeze their own right before the stage call.

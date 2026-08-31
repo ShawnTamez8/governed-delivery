@@ -7,304 +7,294 @@ disagree, Current state wins.
 
 ## Current state (2026-08-30)
 
-**Shipped:** build order steps 1-6, committed as `32a714e` on master (working
-tree clean). Step 6 — the implementation stage — is Implemented
-(`docs/features/implementation-stage/plan.md`), smoke-passed against the real
-harness, and independently reviewed
-(`docs/features/implementation-stage/2026-08-30-code-review.md`, two low
-findings, both closed — the dangling-link guard was added and break-proven;
-this entry closes the record-keeping one). Suite 368 pass / 1 recorded skip,
-`typecheck` clean, `check:docs` clean.
+**Shipped:** build order steps 1-6, committed as `32a714e` on master. Suite 368
+pass / 1 recorded skip, `typecheck` clean, `check:docs` clean.
 
-**The step-6 smoke:** one `claude-sonnet-5` dispatch, **$0.0673** (budgeted
-0.068-0.156), 5.1s, valid patch set on the first attempt — the third stage
-whose prompts worked unmodified on the first real attempt. Gate passed;
-`gov/demo/1` carries the projections commit and the apply commit, both
-authored `BuildWorks <buildworks@buildworks.invalid>`; the implementer's own
-test passes in the worktree. Evidence at `%TEMP%\bw-smoke-6`.
+**In flight:** step 7 (verification) is **planned but not implemented**.
+`docs/features/verification-stage/` is untracked — `plan.md` (Proposed, 12
+tasks), `tasks.md`, and `2026-08-30-plan-review.md` (7 findings, all accepted
+and reconciled). No source file has been touched; nothing is committed.
 
-**In flight:** nothing. Step 7 (verification) is the next build-order step
-and has no plan yet.
+**What step 7 will build:** a strict-subset `governed.yaml` parser, a bounded
+command runner, an audit reader on `Store`, and the stage orchestrator, plus
+three policy values, a non-nullable `Profile.verification`, `new-run`
+preconditions, `bw verify`, this repository's own `governed.yaml`, and two
+`ARCHITECTURE.md` amendments. No schema change, no migration, no dispatch —
+the stage resolves no model.
 
 **Open and deferred:**
 
-- The verification trust anchor is `BW_APPROVAL_PUBLIC_KEY` at approve time and
-  the recorded `signer` is compared to the fingerprint frozen at intake. Whoever
-  can set that variable can still self-approve. Agents cannot: no `BW_*` in
+- The clean-tree precondition at `new-run` is an **extension past step 7**,
+  flagged in the plan's Assumptions so it can be struck. Nothing in `src/`
+  enforces section 7's clean-tree requirement today (verified by grep).
+- Verification runs implementer-authored code with no filesystem or network
+  containment. The plan records this as a stated limitation plus a
+  `docs/proposals/` entry; the repository has no sandbox mechanism to reuse
+  and `sandbox.network` is `"inherit"` for the executor too.
+- The verification trust anchor is `BW_APPROVAL_PUBLIC_KEY` at approve time.
+  Whoever can set it can still self-approve. Agents cannot: no `BW_*` in
   `envPassthrough`, no CLI in the allowlist, both asserted in
-  `test/executor.test.ts`.
-- The build order stops at step 9 — one complete run with queryable cost. Do not
-  build past it without an explicit decision.
-- `check:docs` warnings, pre-existing: the learnings file references the removed
-  doc-consistency skill directory and the approval-gate plan references a
-  placeholder src path. Offered to fix; not yet taken up.
-- Whether the three stage orchestrators (spec/plan/implementation) should be
-  extracted into a shared shape — the step-6 review's recommendation is to
-  defer: the three differ in exactly the places a premature interface would
-  guess at (panel vs none, rounds vs terminal refusal, document writes vs a
-  worktree), and step 7's consumer is the evidence that would show what
-  actually generalizes (hard rule 4 is satisfied either way; the duplication
-  is named in code).
+  `test/executor.test.ts`. Step 7 extends the same guarantee to verification
+  commands via `VERIFY_ENV_PASSTHROUGH`.
+- `check:docs` warnings, pre-existing: the learnings file references a removed
+  skill directory and the approval-gate plan references a placeholder src path.
+  Offered to fix; not taken up.
+- The build order stops at step 9. Do not build past it without an explicit
+  decision.
 
-**Next up:** plan step 7 (verification).
+**Closed this session:** the three-orchestrator extraction question that step 6
+deferred to step 7. Verification has no author, panel, rounds, model, prompt, or
+`agent_run` row, so the shape the three dispatching stages share is absent; an
+interface spanning all four would have to make every one of those optional. The
+plan recommends closing rather than carrying it to step 8.
+
+**Next up:** execute `docs/features/verification-stage/plan.md` with
+`implement-plan` in a fresh window.
 
 ## Diagnostics quick-reference
 
 Durable one-liners that recur. Each cost at least one wasted cycle to learn.
+Most are also mirrored into auto memory, which loads automatically.
 
-- **Never write a backslash in a Bash tool command.** A doubled backslash
-  arrives as a single one under *every* quoting form, including a heredoc with a
-  quoted delimiter — the transport collapses it above the shell. Anchor edits on
-  backslash-free text, build one with `chr(92)`, or write the script with the
-  `Write` tool and run the file. `Write` preserves them exactly.
-- **Break-it cycle:** `git add -A` (no commit, reversible) → break → run the
-  test → `git checkout -- <path>` → `git diff --quiet -- <path>` to confirm.
-  Non-zero means halt. **One cycle per tool call**; a chained sequence has
-  nowhere to put the verify step. Prefer a scratchpad mirror when the code under
-  test can run against a copy — nothing needs restoring.
+- **Citing a file is not reading it.** A blast-radius line naming
+  `test/harness.test.ts` sat in the same plan as an assertion that file's
+  comments explicitly contradict. When a claim concerns behaviour, open the
+  test that records it.
+- **A neighbouring plan's claims look pre-verified and are not.** Three
+  blast-radius claims copied from the step-6 plan were wrong. Grep at the
+  moment of writing, even when a sibling document already states it.
+- **Before quoting a cost in test files, look for a shared helper.** "Six test
+  files need fixtures" was really one shared temp-root factory in
+  `test/cli.test.ts`. The inflated number drove an operator decision that had
+  to be reversed a turn later.
+- **Never write a backslash in a Bash tool command,** and prefer the `Write`
+  tool for any long document. A doubled backslash arrives as a single one under
+  every quoting form, and a quoted-delimiter heredoc still failed on a
+  multi-paragraph document with apostrophes. `Write` preserves bytes exactly.
+- **Break-it cycle:** `git add -A` (no commit) → break → run the test →
+  `git checkout -- <path>` → `git diff --quiet -- <path>`. Non-zero means halt.
+  **One cycle per tool call.** Prefer a scratchpad mirror when the code under
+  test can run against a copy.
 - **A break-it test named in a plan is still a hypothesis.** Verify the
-  direction of the attack at the shell before writing the test. A test written
-  to fail that passes on first run is a defect in the test.
-- **Verify an edit by re-reading the artifact, never by trusting the tool's
-  success report.** A string replace can report success while the bytes it
-  targeted survive.
+  direction of the attack at the shell first. A test written to fail that
+  passes on first run is a defect in the test.
+- **A precondition needs a test that does not seed its own satisfaction.**
+  `new-run`'s clean-tree check shipped unconditionally broken — `openStore()`
+  creates `.governance/` before the check runs, so no repository lacking that
+  ignore rule could ever create a run. Every test passed, because the shared
+  temp-root helper wrote the `.gitignore` first. A helper that constructs a
+  passing environment proves the check fires; only a default environment proves
+  the product works. Ask what the helper is quietly providing.
+- **Relaxing a limit for one resource means naming what still bounds it.**
+  "Retain the bytes anyway" was applied to the evidence file with the in-memory
+  cap left in place — and nothing bounded disk but the 900-second command
+  ceiling. Measured: 5.97 GB in 5.2 seconds. When a rule written for a bounded
+  thing is applied to an unbounded stream, the rule needs its own ceiling.
+- **A stage that has never been smoked is unproven however green its tests.**
+  Step 6 shipped on fixture coverage with no recorded manual run; the first real
+  `bw implement` blocked immediately, because the fixture executor returns a
+  canned result and never touches the worktree, so no test could observe the
+  implementer writing the files it also proposes. Before depending on an
+  upstream stage, check whether a smoke was ever recorded for it.
+- **Verify an edit by re-reading the artifact,** never by trusting the tool's
+  success report.
 - **`core.autocrlf=true` on this machine.** CRLF silently breaks
   substitution-based fixture assertions and the failure never names line
-  endings. Check `git ls-files --eol` when a string test fails for no visible
-  reason. `.gitattributes` pins ts/mjs/sql/json/md to `eol=lf`.
+  endings. `.gitattributes` pins ts/mjs/sql/json/md to `eol=lf`.
 - **`npm test` runs files in parallel; a single-file pass is not evidence the
   suite passes.**
-- **`open(p,"wb")` truncates before the read is evaluated** —
-  `open(p,"wb").write(open(p,"rb").read())` zeroed a fixture.
 - **Read the callee's signature rather than inferring it from its name.**
   `store.exec` (not `execute`); `verifyAuditChain` returns `null` for a valid
-  chain, not `{ok: true}`.
-- **Windows:** `taskkill` must run by full path (`SystemRoot\System32`) or the
-  tree-kill is a silent no-op. A GNU `timeout`-killed run can look green because
-  Node's exit teardown kills the hung child — the duration assertions in
-  `test/harness.test.ts` exist to catch that.
+  chain.
+- **Windows:** `taskkill` must run by full path or the tree-kill is a silent
+  no-op. `spawnSync`'s `timeout` kills only the direct child, which under
+  `shell: true` is the `cmd.exe` wrapper — use async `spawn` plus `killTree`.
 - **Never commit a sweep without reading the full, untruncated inventory
-  first.** `git add -A` swept a stray byte-identical duplicate of
-  `ARCHITECTURE.md` (a restore-saga leftover) into a commit; only the commit
-  output exposed it, and it had to be amended out. Inspect every staged file
-  name; do not pipe `git status` through `head`.
-- **PowerShell inline `node -e` quoting is unreliable under every form.**
-  Escaped quotes inside the `-e` string get mangled by PowerShell before Node
-  sees them. Write one-off query scripts with the `Write` tool and run the
-  file.
+  first.** `git add -A` once swept a stray duplicate of `ARCHITECTURE.md` into
+  a commit.
+- **PowerShell inline `node -e` quoting is unreliable under every form.** Write
+  one-off query scripts with the `Write` tool and run the file.
 - **Scaffolding that silently no-ops is more dangerous than a broken edit** —
-  its results still look plausible. Check each step's own output for the thing
-  it was supposed to do.
+  its results still look plausible.
 
 ## Session records
 
-### Step 6: implementation stage — implemented, smoke-passed (2026-08-30)
+### Step 7: verification plan written and reconciled (2026-08-30)
 
-Nine tasks executed in order with every verification, committed as `32a714e`;
-the independent review filed two low findings, both closed (the dangling-link
-guard added and break-proven; the record-keeping this entry is).
+Planning only — no source touched. `write-plan` full path produced a 10-task
+plan; a self-review pass found 7 material issues; the operator then supplied 7
+external review findings, all of which were verified against the repository and
+accepted, taking the plan to 12 tasks and 24 break-it targets.
 
-**Smoke (the one real spend):** one `claude-sonnet-5` dispatch, **$0.0673**,
-5.1s, 313 output tokens. Valid patch set on the first attempt — `add` patches
-for both scope files with the handed `baseCommit` and whole-file content; the
-gate applied and committed both; the worktree's own test passes. No prompt
-defects — steps 3 and 5 recorded that fixtures cannot find prompt defects;
-there was nothing to find here.
+**Decisions locked** (operator, this session):
 
-**Decisions this plan locked** (architecture-open choices):
-`ProposedPatchFile.content` is the complete new file content (whole-file
-write, no diff field added); scope matching is exact-or-`s/`-prefix string
-comparison, case-preserving, with trailing slashes dropped on the entry (the
-operator signs paths as declared — `touchesProtected` folds case, scope does
-not); one commit per patch under the system identity (`BuildWorks
-<buildworks@buildworks.invalid>` via `-c` flags); the projections (spec +
-plan) are the run branch's first commit; one patch per file per dispatch —
-enforced by the head-moved re-validation, not a separate counter.
+- **Remediation rounds deferred past step 9**, and — reversing the initial
+  disposition — `ARCHITECTURE.md` section 12 gains a subsection recording this
+  deferral *and* the two already in force unrecorded (scope fitness,
+  `status.md`) with their repair semantics. A plan-level assumption does not
+  amend a document `CLAUDE.md` calls binding.
+- **`new-run` refuses a repository that cannot verify** — absent, malformed,
+  uncommitted, or dirty configuration is refused before the run row exists.
+  This reversed an earlier call of mine; see the cost-estimate lesson below.
+- **`governed.yaml` is read from the resolved starting commit** via `git show`,
+  with no working-copy fallback, and the validated config is passed into
+  `freezeProfile` rather than re-read. `Profile.verification` is non-nullable.
+- **Named environment passthrough** (`VERIFY_ENV_PASSTHROUGH` in policy, frozen
+  per run, asserted to hold no `BW_` name).
+- **`output_ref` is a structured JSON record** carrying the worktree path, the
+  verified commit, per-command outcomes, and evidence refs — not a text report.
+- **Overflow blocks**, the budget is `profile.policy.resultMaxBytes` and is
+  combined across both streams, and complete output is streamed to the evidence
+  file independently of the in-memory cap.
 
-**The three pre-planning decisions:** (1) the scope-fitness proposal flow is
-deferred past step 9 — an out-of-scope patch refuses at apply time naming the
-path, fresh run is the repair; (2) the run-duration ceiling landed with this
-step (`RUN_DURATION_LIMIT_SECONDS` = 7 days, frozen in `Policy`, enforced at
-stage entry; pre-existing dev runs refuse at the approval gate's policy
-re-check by design); (3) `status.md` deferred past step 9.
+**Architecture facts that settled questions I nearly asked as open:**
 
-**Three-orchestrator duplication:** still deliberate and named in code (hard
-rule 4). Recommendation for step 7: do not extract yet — the three differ in
-the places a premature interface would guess at, and step 7's consumer is the
-evidence that shows what actually generalizes.
+- Section 12 names **"verification config"** among what the profile freezes, so
+  hard rule 6 puts the read at run start — not an open choice.
+- Section 12 names **bounded remediation rounds for `verification`** by name,
+  unlike implementation, where section 20's "per reviewed stage" wording let
+  step 6 decline them without contradiction.
+- Section 17: **"Pass named environment variables, never the whole
+  environment."** `invokeHarness` implements it; a plain `spawn` with no `env`
+  inherits everything.
+- Section 4: **stage N's `output_ref` is literally what stage N+1 was handed.**
+- `Policy` already carries `resultMaxBytes`; reading the live `RESULT_MAX_BYTES`
+  in a stage discards a value the run had already frozen.
+- `Store` has **no audit reader** — only `appendAudit` and `verifyAuditChain`.
+- `ARCHITECTURE.md` has not changed since `14a7ea5` (step 2), so steps 3-6 all
+  deferred section-12 requirements with plan-level assumptions alone.
 
-**Guards broken and restored (nine breaks, each observed failing exactly its
-named test):** scope (`pathFitsScope` always-true, unit and stage level),
-protected-path (unit and stage level), base-commit equality, head-moved
-re-validation, empty-delivery, duration comparison, `isPathInside` backstop,
-resolved-protected re-check, and — after the review's finding 1 — the
-dangling-link guard.
+**What failed in my own work:**
 
-**Deviations, each verified by the reviewer as sound:** break-it item (f)
-targets the junction `escape-link` case because the lexical gate refuses
-`../evil.ts` first (the backstop would never be exercised otherwise); the
-planFor-variant test forges the approval's `spec_hash` rather than the gate
-event's `planFor` — the plan's literal wording would have made the comparison
-pass, and only the inversion reaches its stated goal; worktree log assertions
-use a `base..HEAD` range because the branch history includes the base commit;
-the file-symlink test skips on Windows without Developer Mode with a recorded
-reason (the junction case is the always-run proof).
+- The plan asserted a nonexistent executable yields `spawnError` with a null
+  exit code. `test/harness.test.ts` records the opposite in a comment written
+  for exactly this reason: under `shell: true` the shell starts, names the
+  command on stderr, and exits 1. The plan cited that file in its blast radius
+  while contradicting it.
+- Three blast-radius claims were carried from the step-6 plan rather than
+  grepped: `src/plan-gate.ts` imports policy and was missing, `test/cli.test.ts`
+  does **not** import profile, and `src/harness.ts` is also imported by
+  `src/policy.ts`.
+- A "four block paths" count enumerated three — the miscount was the symptom of
+  overflow having been designed as a flag that never blocked.
 
-**Review finding 1 — the lesson:** a documented guarantee ("the refusal does
-not depend on the target's existence") was false at a boundary the plan never
-tested: `resolveExisting` walks with `existsSync` (stat semantics), so a
-dangling link is invisible to it and resolves lexically. The fix refuses any
-link component whose target cannot be resolved — refuse what cannot be
-verified, rather than claim a resolution the filesystem cannot provide.
-Constructible and break-proven on Windows via a junction whose target is
-deleted after creation (junctions cannot be created dangling, but they can
-become so).
+**Deferred:** filesystem and network containment for verification commands
+(stated limitation plus a proposal, not built). The clean-tree precondition is
+in the plan but marked strikeable.
 
-### Step-5 manual smoke: passed end to end, real binary (2026-08-30)
+**Next up:** run `implement-plan` against
+`docs/features/verification-stage/plan.md` in a fresh window.
 
-The one real API spend for step 5: `claude --model sonnet` (effective
-`claude-sonnet-5`), three remediation rounds, six dispatches, **$0.63 total**
-(8s-91s each). First stage whose prompts worked unmodified on the first real
-attempt; **hazard 13 enforced live** (a finding caught the plan author
-inventing a rejection requirement the spec never stated); the gate passed with
-two open medium findings below the `high` threshold — by design, recorded as
-such. The final plan derives its test set from one `DOCUMENTED_SHAPES` array
-with a non-emptiness guard, making cross-reference drift structurally
-impossible. Budgeted one single-dispatch cost (0.068-0.156) for the step-6
-smoke — actual $0.0673, see the record above.
+### Step 6: implementation stage — shipped (2026-08-30)
 
-### Skills: review-code added, doc-check rewritten (2026-08-29)
+Nine tasks, committed as `32a714e`; independent review filed two low findings,
+both closed. Smoke: one `claude-sonnet-5` dispatch, **$0.0673**, 5.1s, valid
+patch set on the first attempt — the third stage whose prompts worked unmodified
+on the first real attempt. Nine guards broken and restored.
 
-- `review-code` is a global skill (`~/.claude/skills/review-code/`) reading the
-  per-repo checklist `.claude/review-code.md` (six hard rules, hazard-to-code
-  map, suppression list). The doc skills discover the project documentation
-  skill by what it does, so they find `doc-check` here.
-- `scripts/doc-check.mjs` rewritten with tiers (current / reference /
-  historical), `--json`, `--only=`, and **exit 2 when the checker itself cannot
-  read the source** — the motivating defect: a renamed `ARCHITECTURE.md` section
-  made the old checker report a documentation defect that did not exist. **A
-  checker that blames the wrong artifact is worse than no checker.**
-- Historical-tier documents (`docs/features/**`, `.claude/sessions/**`) get
-  warnings, never errors — they are evidence of what was believed when written.
-- Skill files load into context on every invocation, `description` fields in
-  *every session*. Cut anything the tool's own output already says.
+**Decisions locked:** `ProposedPatchFile.content` is the complete new file
+content (no diff field); scope matching is exact-or-`s/`-prefix, case-preserving
+(`touchesProtected` folds case, scope does not); one commit per patch under
+`BuildWorks <buildworks@buildworks.invalid>` via `-c` flags; the projections are
+the run branch's first commit; one patch per file per dispatch, enforced by the
+head-moved re-validation. Scope fitness and `status.md` deferred past step 9;
+`RUN_DURATION_LIMIT_SECONDS` (7 days) landed here.
 
-### Step-4 hardening: all twelve findings closed (2026-08-29)
+**The review's lesson:** a documented guarantee ("the refusal does not depend on
+the target's existence") was false at a boundary the plan never tested —
+`resolveExisting` walks with `existsSync`, so a dangling link resolves
+lexically. The fix refuses any link component whose target cannot be resolved.
+**Refuse what cannot be verified rather than claim a resolution the filesystem
+cannot provide.** Constructible on Windows via a junction whose target is
+deleted after creation.
 
-`docs/features/approval-gate-hardening/plan.md` Implemented; 11 tasks, 18 steps.
-Every fix was observed failing against the unfixed code first. The tests are in
-the repo and searchable by name; the durable lessons:
+**Two draft-gap lessons that survived planning:** a binding argument must name
+the file it covers (an unchanged plan does not imply an unchanged spec, so the
+stage re-verifies both); and consult the repo's own records before writing a
+link-redirect gate — the symlink class was already recorded twice and missed
+both times.
+
+### Step-4 hardening and review: twelve findings closed (2026-08-29)
+
+`docs/features/approval-gate-hardening/plan.md` Implemented; every fix observed
+failing against the unfixed code first. Durable lessons:
 
 - **A guard that reads ambient state can be silently un-exercised by fixture
-  ordering.** `freezeProfile` reads `BW_APPROVAL_PUBLIC_KEY`, and the fixture
-  set it *after* the call — every fixture froze `approvalSigner: null`, bound
-  path untested, suite green, guard proving nothing. Reordering was not enough:
-  the two bound-path tests now open with `assert.ok(f.frozenSigner)`, so
-  restoring the original ordering fails on that line instead of passing
-  vacuously. **When a new guard reads an env var, the cwd, or the clock, assert
-  in the test that the fixture actually established it** — the reorder is
-  invisible six months later, the assertion is not.
-- **A findings list is not a task list.** Findings 3 and 9 were filed separately
-  — "signed risk recomputed from disk" and "risk uses the raw artifact count
-  while scope is deduplicated" — but they are one miscount seen at two
-  boundaries. Planned as two tasks they would have been fixed on one side and
-  left inconsistent on the other, which *is* the defect. Group by defect, not by
-  where the reviewer noticed it.
-- **Blast-radius claims must be grepped at the moment they are written.** Two
-  first-draft claims came from memory and were wrong in their reasoning. Paste
-  the grep with line numbers or do not make the claim.
-- **A rolled-back audit insert does not break the hash chain.**
-  `verifyAuditChain` recomputes from the surviving rows, so the vanished ones
-  leave no gap. Worth knowing before wrapping another audit-writing operation in
-  a transaction.
-- `Store.transaction` re-entrancy: a nested failure sets an abort flag; the
-  outermost frame rolls back and throws "transaction aborted by a nested
-  failure". Silent partial commits are not possible.
-- **A document describing control characters must not contain them.** A
-  character class with literal NUL and 0x1f broke a Bash heredoc, then made
-  `grep` treat the plan as binary.
-
-### Step-4 review: three Windows defects, all measured (2026-08-29)
-
-- **The signing tool signed bytes the gate could never recompute.** Measured on
-  PowerShell 5.1: the documented pipe delivers the payload with a UTF-8 BOM and
-  every LF rewritten to CRLF plus one trailing CRLF; the redirect route delivers
-  two trailing CRLFs. `sign-approval.mjs` stripped one trailing newline and
-  nothing else — the human gate was unusable on the default shell of a supported
-  platform.
-- **Where a documented workflow runs through a shell, an editor, or a
+  ordering.** `freezeProfile` reads `BW_APPROVAL_PUBLIC_KEY` and the fixture set
+  it *after* the call, so every fixture froze `approvalSigner: null` and the
+  bound path was untested while the suite stayed green. Reordering was not
+  enough — the tests now open with `assert.ok(f.frozenSigner)`. **When a new
+  guard reads an env var, the cwd, or the clock, assert in the test that the
+  fixture actually established it.**
+- **A findings list is not a task list.** Two findings were one miscount seen at
+  two boundaries; planned separately they would have been fixed on one side and
+  left inconsistent on the other, which *is* the defect. Group by defect.
+- **The signing tool signed bytes the gate could never recompute.** On
+  PowerShell 5.1 the documented pipe adds a UTF-8 BOM and rewrites every LF to
+  CRLF. **Where a documented workflow runs through a shell, an editor, or a
   filesystem, that layer is part of the contract and belongs inside the test.**
-  Feeding `spawnSync`'s `input` byte-exact is a normalization: it bypasses the
-  shell the operator types into.
-- **A tolerance applied at one boundary and not its sibling is a defect.**
-  `normalizeText` was applied to the spec hash but not to `validateSpecDoc`,
-  which parses the same file. When a tolerance is added, find every reader of
-  the same bytes.
+- **A tolerance applied at one boundary and not its sibling is a defect** —
+  `normalizeText` reached the spec hash but not `validateSpecDoc`, which parses
+  the same file.
 - **A guard must compare the way the filesystem compares.** Case-exact
-  `touchesProtected` let a capitalized path evade it on Windows/macOS; the guard
-  now folds case, `computeScope` deliberately does not (the operator signs the
-  paths as declared). Also in `.claude/review-code.md`.
-- **Breaking the guard caught my own mistake, not just the original one.** A
-  bulk `.exec(content)` → `.exec(text)` replacement also hit a private helper
-  whose parameter is separately named `content`; the break-test caught it first
-  and cheaper.
+  `touchesProtected` let a capitalized path evade it on Windows.
+- **A rolled-back audit insert does not break the hash chain** —
+  `verifyAuditChain` recomputes from surviving rows. `Store.transaction`
+  re-entrancy: a nested failure aborts the outermost frame; silent partial
+  commits are not possible.
 
 ### Build order steps 1-5 (2026-08-29)
 
-**Step 5 — plan stage and gate** (`83d88c0`). `plan` / `plan_review` mirrors the
-spec stage structurally without extracting a shared abstraction; hard rule 4
-forbids the interface until two real implementations exist, and the duplication
-is named and deferred rather than silent. The review found six defects, four
-accepted: an unverified profile hash at three call sites, review-panel models
-never resolved from their own map entry, a coverage gate that never checked
-every acceptance criterion was covered, and `--model` with no value becoming a
-frozen-map mismatch instead of a usage error. **The approval's `expires_at` is a
-human signing window, not an authorization lifetime** — it bounds
-`approval-request` → sign → `approve`, and re-checking it at a later stage would
-strand a run with no in-place repair. Default lifetime is now
-`APPROVAL_DEFAULT_LIFETIME_SECONDS` (8h) in `src/policy.ts`, frozen per run.
+- **Step 5 — plan stage and gate** (`83d88c0`). Mirrors the spec stage
+  structurally without extracting a shared abstraction (hard rule 4). Six
+  defects found, four accepted. **The approval's `expires_at` is a human signing
+  window, not an authorization lifetime** — it bounds `approval-request` → sign
+  → `approve`, and re-checking it later would strand a run with no in-place
+  repair. Smoke: six dispatches, **$0.63**, three remediation rounds; hazard 13
+  enforced live when a finding caught the plan author inventing a rejection
+  requirement the spec never stated.
+- **Step 4 — human approval gate.** `bw approve` verifies one Ed25519 signature
+  and creates `awaiting_approval` only on success. The gate dispatches nothing,
+  so a refusal costs nothing and is not terminal — unlike step 3, where every
+  failure was terminal because money had already been spent. The profile carries
+  `startingCommit` because section 15's `run` table has no column for one and
+  `test/schema.test.ts` compares columns against ARCHITECTURE.md.
+- **Step 3 — spec stage.** Enums the architecture left open: severity
+  low/medium/high/critical with threshold `high`; disposition
+  open/resolved/disputed/accepted; risk low/standard/high with panel sizes
+  1/2/3. **The manual smoke was the highest-value spend yet** — it exposed two
+  prompt defects fixtures could not: naming `baseCommit` in the author prompt
+  made the model refuse to produce a spec without a git repo, and the reviewer
+  returned a bare findings object until the prompt stated the full envelope
+  shape. **Real smoke output must drive prompt iteration; fixtures cannot.**
+- **Step 2 — harness adapter.** From the one recorded real envelope:
+  `claude -p --output-format json` **does** report `total_cost_usd` (the
+  architecture's `sessionCost: false` example was wrong); `modelUsage` can carry
+  auxiliary queries, so the effective model is the unique entry whose
+  `inputTokens` match `usage.input_tokens`, and no unique match records `null`.
+  `invokeHarness` is async by necessity — timeout timers starve under any
+  synchronous wait.
+- **Step 1 — run store.** SQLite via `node:sqlite`, no runtime dependencies.
+  Rules to preserve: fail-closed `--gate-result`, transactional audit appends,
+  lock ownership tokens. Migrations anchor to the module location, not cwd. The
+  pid-reuse wedge is mitigated with a held-since diagnostic only — age-based
+  takeover was rejected as unsafe.
 
-**Step 4 — human approval gate.** `bw approval-request` prints the canonical
-payload; `bw approve` verifies one Ed25519 signature and records the `approval`
-row, creating `awaiting_approval` only on success. The gate dispatches nothing,
-so a refusal costs nothing and is *not* terminal — unlike step 3, where every
-failure was terminal because money had already been spent. The profile is frozen
-at `new-run` and carries the starting commit, because section 15's `run` table
-has no column for one and `test/schema.test.ts` compares columns against
-ARCHITECTURE.md — a column would have meant editing the design.
+### Skills and tooling (2026-08-29)
 
-**Step 3 — spec stage.** Two chained rows: author → AgentResult validation →
-content write, then panel → findings → deterministic gate → closure rounds.
-Every failure path is terminal. The panel's re-review resolves findings; the
-author's claim never does. Enums (architecture left them open): severity
-low/medium/high/critical with materiality threshold `high`; disposition
-open/resolved/disputed/accepted; risk low/standard/high with panel sizes 1/2/3.
-**The manual smoke was the highest-value spend yet** — it exposed two prompt
-defects fixtures could not: mentioning `baseCommit` in the author prompt made
-the model refuse to produce a spec without a git repo (patch rules do not belong
-in a content-write prompt), and the reviewer returned a bare findings object
-until the prompt stated the full envelope shape with every field. **Real smoke
-output must drive prompt iteration; fixtures cannot.** The smoke also produced
-the designed terminal state: blocked after 3 rounds, naming the open finding
-ids. Fail closed, as designed.
-
-**Step 2 — harness adapter.** `bw dispatch` end to end against the real `claude`
-binary. Failure paths retain raw output and audit the attempt but insert no
-`agent_run` row. From the one recorded real envelope
-(`test/fixtures/harness/claude-code-envelope.json`): `claude -p --output-format
-json` **does** report `total_cost_usd` (the architecture's `sessionCost: false`
-example was wrong); `modelUsage` can carry auxiliary queries alongside the real
-turn, so the effective model is the unique entry whose `inputTokens` match
-`usage.input_tokens`, and no unique match records `null`. `invokeHarness` is
-async by necessity — timeout timers starve under any synchronous wait.
-
-**Step 1 — run store.** Stage chain and audit chain over SQLite (`node:sqlite`,
-no runtime dependencies), the `bw` CLI, the repository lock, and the
-documentation checker. One review reconciled, 15 findings. Rules to preserve:
-fail-closed `--gate-result`, transactional audit appends, lock ownership tokens.
-Migrations anchor to the module location, not cwd. The pid-reuse wedge is
-mitigated with a held-since diagnostic only — age-based takeover was rejected as
-unsafe.
+- `review-code` is a global skill reading the per-repo checklist
+  `.claude/review-code.md`. The doc skills discover the project documentation
+  skill by what it does, so they find `doc-check` here.
+- `scripts/doc-check.mjs` has tiers (current / reference / historical),
+  `--json`, `--only=`, and **exit 2 when the checker itself cannot read the
+  source** — the motivating defect was a renamed `ARCHITECTURE.md` section
+  making the old checker report a documentation defect that did not exist. **A
+  checker that blames the wrong artifact is worse than no checker.**
+- Historical-tier documents (`docs/features/**`, `.claude/sessions/**`) get
+  warnings, never errors. Path warnings for files a plan is about to create are
+  expected; do not chase them to zero.
+- Skill files load into context on every invocation, `description` fields in
+  *every session*. Cut anything the tool's own output already says.
 
 ### Locked design decisions (2026-08-29)
 
@@ -313,31 +303,14 @@ findings applied (`f68347c`).
 
 - System name is a configuration value, default **BuildWorks**.
 - Internal paths stay fixed and non-configurable: `.governance/`,
-  `gov/<slug>/<run-id>`, `governed.yaml`. Configurability was rejected on the
-  `.gitignore` pairing, state references, findability, and hard rule 4.
+  `gov/<slug>/<run-id>`, `governed.yaml`.
 - Remediation rounds default 3 (counting closure passes), frozen in the profile.
 - Panel size is configuration per risk level; defaults 2 at standard, 1 at low.
-- Approval is an Ed25519 signature by the operator, verified against a public
-  key in machine-local configuration.
+- Approval is an Ed25519 signature verified against a public key in
+  machine-local configuration.
 - A patch binds to the head in effect when proposed; apply-time re-validation
   refuses only if head moved in paths it touches.
 - Harness language: TypeScript on Node, per operator decision.
 - No `docs/hazards.md` entry for the CRLF fixture breakage: that document
   records failures that have occurred in delivery, and entries 1 and 12 already
   cover the class. Latent fragilities do not earn an entry.
-
-### Step-6 plan: implementation stage (2026-08-30) — superseded, executed
-
-Plan Proposed → Implemented (see the step-6 implementation record above; its
-decisions and the three pre-planning dispositions are recorded there). Two
-draft-gap lessons survive from the planning session:
-
-- **A binding argument must name the file it covers.** An unchanged plan does
-  not imply an unchanged spec — `spec.md` is a separate mutable file — so the
-  stage re-verifies the plan hash *and* the gate event's `planFor` against the
-  spec on disk before the stage row exists.
-- **Consult the repo's own records before writing a link-redirect gate.** The
-  symlink/junction redirect class was already recorded twice (`src/scope.ts`'s
-  comment, the review-code break-it note) and both were missed until the
-  operator's review. The step-6 review's finding 1 is the same class surfacing
-  a third time — see the dangling-link fix above.

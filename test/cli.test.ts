@@ -19,8 +19,46 @@ function runCli(cwd: string, ...argv: string[]) {
   return spawnSync(process.execPath, [CLI, ...argv], { cwd, encoding: "utf8" });
 }
 
+/** The seeded verification configuration every temp root is created with. */
+const GOVERNED = `verify:
+  - name: unit
+    command: ["node", "--version"]
+`;
+
+function git(cwd: string, args: string[]): { status: number; stdout: string; stderr: string } {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  return { status: result.status ?? -1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
+function commitAll(cwd: string, message: string): void {
+  assert.equal(git(cwd, ["add", "-A"]).status, 0);
+  const commit = git(cwd, [
+    "-c",
+    "user.email=t@example.invalid",
+    "-c",
+    "user.name=t",
+    "commit",
+    "-q",
+    "-m",
+    message,
+  ]);
+  assert.equal(commit.status, 0, `git commit failed: ${commit.stderr}`);
+}
+
+/**
+ * A temp root `new-run` will accept: a git repository with a clean tree and a
+ * committed `governed.yaml`. `.governance/` is gitignored here for the same
+ * reason it is in the real repository — the CLI writes its state there, and
+ * an untracked state directory would make the next `new-run` refuse a tree
+ * the operator never dirtied.
+ */
 function tempCwd(): string {
-  return mkdtempSync(join(tmpdir(), "bw-cli-"));
+  const cwd = mkdtempSync(join(tmpdir(), "bw-cli-"));
+  assert.equal(git(cwd, ["init", "-q"]).status, 0);
+  writeFileSync(join(cwd, ".gitignore"), ".governance/\n");
+  writeFileSync(join(cwd, "governed.yaml"), GOVERNED);
+  commitAll(cwd, "base");
+  return cwd;
 }
 
 test("migrate creates .governance/state.db and exits 0", () => {
@@ -273,9 +311,126 @@ test("new-run freezes a profile and records its hash on the run", () => {
     const profile = JSON.parse(raw);
     assert.equal(profile.runId, runId);
     assert.equal(profile.systemName, "BuildWorks");
-    // A temp directory is not a git repository, so there is no base commit.
-    assert.equal(profile.startingCommit, null);
+    // `new-run` refuses a repository it cannot resolve a starting commit in,
+    // so a frozen profile always names one. The next test proves it is HEAD.
+    assert.match(profile.startingCommit, /^[0-9a-f]{40}([0-9a-f]{24})?$/);
+    // The verification commands are frozen from the committed configuration,
+    // not re-read later (hard rule 6).
+    assert.deepEqual(profile.verification, {
+      commands: [{ name: "unit", command: ["node", "--version"] }],
+    });
     assert.equal(profile.policyHash, policyHash(buildPolicy()));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The `new-run` preconditions all sit before the insert, and that is what
+ * these assert: not merely that the command refuses, but that no run row
+ * survives it. A row created and then refused is a run guaranteed to block
+ * after every expensive stage has already spent.
+ */
+function assertNoRunRow(cwd: string, r: { status: number | null; stderr: string }, pattern: RegExp): void {
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, pattern);
+  const store = openStore(cwd);
+  const runs = store.query<{ id: number }>("SELECT * FROM run");
+  store.close();
+  assert.equal(runs.length, 0, `refused but left ${runs.length} run row(s)`);
+}
+
+const NEW_RUN_ARGS = [
+  "new-run",
+  "--project",
+  "p",
+  "--feature",
+  "f-1",
+  "--slug",
+  "s",
+  "--change-kind",
+  "feature",
+  "--model",
+  "test-model",
+];
+
+test("new-run refuses a repository with no committed governed.yaml and creates no run", () => {
+  const cwd = tempCwd();
+  try {
+    rmSync(join(cwd, "governed.yaml"));
+    commitAll(cwd, "remove the configuration");
+    assertNoRunRow(cwd, runCli(cwd, ...NEW_RUN_ARGS), /governed\.yaml is not committed at/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("new-run refuses a malformed governed.yaml and creates no run", () => {
+  const cwd = tempCwd();
+  try {
+    writeFileSync(join(cwd, "governed.yaml"), "checks:\n  - name: a\n");
+    commitAll(cwd, "break the configuration");
+    assertNoRunRow(cwd, runCli(cwd, ...NEW_RUN_ARGS), /must be exactly "verify:"/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("new-run refuses a governed.yaml present on disk but never committed, and creates no run", () => {
+  const cwd = tempCwd();
+  try {
+    // Removed from the commit, restored on disk, and the removal committed so
+    // the tree is clean: the file exists, and the commit the run would branch
+    // from does not contain it.
+    rmSync(join(cwd, "governed.yaml"));
+    commitAll(cwd, "remove the configuration");
+    writeFileSync(join(cwd, "governed.yaml"), GOVERNED);
+    writeFileSync(join(cwd, ".gitignore"), ".governance/\ngoverned.yaml\n");
+    commitAll(cwd, "ignore the uncommitted configuration");
+    assertNoRunRow(cwd, runCli(cwd, ...NEW_RUN_ARGS), /governed\.yaml is not committed at/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a default repository with no .gitignore can still create a run (hazard 11)", () => {
+  // The shared helper writes a `.gitignore` covering `.governance/`, which is
+  // the right thing for a repository to have and the wrong thing for this
+  // assertion to assume. A fresh checkout that satisfies section 7 exactly —
+  // clean tree, `governed.yaml` committed, nothing else — must be able to
+  // start a run, because `bw new-run` creates `.governance/state.db` itself
+  // and would otherwise report as dirty a tree only it had dirtied.
+  const cwd = mkdtempSync(join(tmpdir(), "bw-cli-default-"));
+  try {
+    assert.equal(git(cwd, ["init", "-q"]).status, 0);
+    writeFileSync(join(cwd, "governed.yaml"), GOVERNED);
+    commitAll(cwd, "base");
+    assert.equal(git(cwd, ["status", "--porcelain"]).stdout.trim(), "");
+    const r = runCli(cwd, ...NEW_RUN_ARGS);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout.trim(), /^\d+$/);
+    // The state directory it just created is present and untracked, which is
+    // exactly the condition the check must not treat as operator dirt.
+    assert.match(git(cwd, ["status", "--porcelain"]).stdout, /\.governance\//);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("new-run refuses a dirty working tree and creates no run", () => {
+  const cwd = tempCwd();
+  try {
+    writeFileSync(join(cwd, "uncommitted.txt"), "work in progress\n");
+    assertNoRunRow(cwd, runCli(cwd, ...NEW_RUN_ARGS), /the working tree is not clean/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("new-run outside a git repository refuses and creates no run", () => {
+  const cwd = mkdtempSync(join(tmpdir(), "bw-cli-norepo-"));
+  try {
+    assertNoRunRow(cwd, runCli(cwd, ...NEW_RUN_ARGS), /not a git repository/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -920,6 +1075,46 @@ test("dispatch refuses a stage kind the frozen executor lacks capability for, be
     assert.equal(r.status, 1);
     assert.match(r.stderr, /lacks the required capability "implementation" for stage kind implementation/);
     assert.ok(!existsSync(join(cwd, ".governance", "raw")), "no spawn happened");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("verify without --run is a usage error", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "verify");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /missing required option --run/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("verify with a nonexistent run exits 1 with the stage's refusal", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "verify", "--run", "9999");
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /run 9999 does not exist/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("the usage text distinguishes verify from verify-audit", () => {
+  const cwd = tempCwd();
+  try {
+    // Two commands whose names share a prefix and do unrelated things: the
+    // usage text is the only place an operator sees which is which.
+    const r = runCli(cwd, "not-a-command");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /verify --run <id> +run the verification stage/);
+    assert.match(r.stderr, /verify-audit +recompute the whole audit chain/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
