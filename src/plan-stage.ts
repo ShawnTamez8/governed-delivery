@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import type { ExecutorDefinition } from "./executor.ts";
 import { requireRunInProgress, type FindingRow, type Store } from "./store.ts";
-import { loadVerifiedProfile, resolveStageModel } from "./profile.ts";
+import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
 import { dispatchOnce } from "./dispatch.ts";
-import { agentById, type AgentDefinition } from "./agents.ts";
+import type { AgentDefinition } from "./agents.ts";
 import { validateAgentResult } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import { SEVERITIES, findingIdentity, normalizeLocation } from "./finding.ts";
@@ -57,8 +57,11 @@ export async function runPlanStage(
   // A test seam, and the only one: the seeded registry staffs every risk
   // level, so the short-panel refusal is unreachable with real agents and the
   // guard could otherwise never be proven by breaking it. Callers pass
-  // nothing; tests pass a panel of any size.
-  deps: { selectPanel?: (risk: Risk, specialties: string[]) => AgentDefinition[] } = {}
+  // nothing; tests pass a panel of any size. Candidates travel in because
+  // the panel must come from the frozen profile's agents (hard rule 6).
+  deps: {
+    selectPanel?: (candidates: readonly AgentDefinition[], risk: Risk, specialties: string[]) => AgentDefinition[];
+  } = {}
 ): Promise<PlanStageResult> {
   const { runId, requestedModel, rootDir } = input;
   const selectPanel = deps.selectPanel ?? selectReviewers;
@@ -118,6 +121,19 @@ export async function runPlanStage(
   }
   const model = resolvedModel.model;
   const reviewModel = resolvedReviewModel.model;
+  // Hard rule 6 and section 11: the run executes against the executor it
+  // froze, and a stage requiring a capability no frozen executor declares
+  // fails at configuration time — before any stage row or paid invocation.
+  // This stage dispatches under two stage kinds, so both required
+  // capabilities are checked here, mirroring the two model resolutions.
+  const binding = requireFrozenBinding(profile, executor, "plan");
+  if (!binding.ok) {
+    return { ok: false, reason: binding.reason };
+  }
+  const reviewBinding = requireFrozenBinding(profile, executor, "plan_review");
+  if (!reviewBinding.ok) {
+    return { ok: false, reason: reviewBinding.reason };
+  }
 
   const approval = store.getApproval(runId);
   if (!approval) {
@@ -178,7 +194,19 @@ export async function runPlanStage(
   const audit = (stageId: number | null, action: string, summary: string): void => {
     appendAudit(store, { runId, stageId, actor: "system", actorType: "cli", action, summary });
   };
-  const author = agentById("plan-author")!;
+  // The author comes from the frozen profile, not the live registry, and is
+  // bound to the executor the run froze (section 9: a field that nothing
+  // enforces does not belong here).
+  const author = profile.agents.find((a) => a.id === "plan-author");
+  if (!author) {
+    return { ok: false, reason: "configured agent plan-author is not in the frozen profile" };
+  }
+  if (author.executor !== executor.id) {
+    return {
+      ok: false,
+      reason: `agent ${author.id} is bound to executor ${author.executor}, not the frozen executor ${executor.id}`,
+    };
+  }
 
   let planStageId: number | null = null;
   let reviewStageId: number | null = null;
@@ -285,13 +313,22 @@ export async function runPlanStage(
       computeScope(specDoc.value.declaredArtifacts).length,
       touchesProtected(specDoc.value.declaredArtifacts, run.slug)
     );
-    const panel = selectPanel(risk, REQUIRED_SPECIALTIES);
+    const panel = selectPanel(profile.agents, risk, REQUIRED_SPECIALTIES);
     if (panel.length < PANEL_SIZE[risk]) {
       return abort(
         reviewStage.id,
         "plan.panel.incomplete",
         `plan panel incomplete: risk ${risk} needs ${PANEL_SIZE[risk]} reviewers, found ${panel.length}`
       );
+    }
+    for (const reviewer of panel) {
+      if (reviewer.executor !== executor.id) {
+        return abort(
+          reviewStage.id,
+          "plan.reviewer.failed",
+          `agent ${reviewer.id} is bound to executor ${reviewer.executor}, not the frozen executor ${executor.id}`
+        );
+      }
     }
 
     for (let round = 1; round <= REMEDIATION_ROUNDS; round++) {

@@ -48,10 +48,13 @@ const SCOPE = ["src/a1.ts", "test/a1.test.ts"];
 
 function fixtureExecutor(): ExecutorDefinition {
   return {
-    id: "test-implementation-stage",
+    // The fixture simulates the claude-code executor: the run's frozen
+    // profile freezes this fixture (see withApprovedRun), so the stage's
+    // binding checks see the fixture as the executor the run froze.
+    id: "claude-code",
     command: ["node", FIXTURE],
     probe: ["node", "--version"],
-    capabilities: [],
+    capabilities: ["spec", "plan", "review", "implementation"],
     telemetry: { perInvocationModel: true, effectiveModel: true, tokenUsage: true, sessionCost: true },
     sandbox: {
       allowedPaths: [],
@@ -75,6 +78,32 @@ function git(cwd: string, args: string[]): { status: number; stdout: string; std
  * indistinguishable from the default mode. Tests that drive a mode set it
  * before the run and restore the previous value after.
  */
+/** The fixture executor minus one capability — the capability regressions' setup. */
+function fixtureExecutorWithout(capability: string): ExecutorDefinition {
+  const executor = fixtureExecutor();
+  return { ...executor, capabilities: executor.capabilities.filter((c) => c !== capability) };
+}
+
+/**
+ * Freeze a profile whose executor is the fixture the tests hand. The
+ * stage's binding checks compare the handed executor against the frozen
+ * one canonically, so a test run must freeze exactly what it hands (the
+ * profile-rewrite pattern of the config-time model test below).
+ */
+function freezeExecutorIntoProfile(
+  store: Store,
+  root: string,
+  runId: number,
+  executor: ExecutorDefinition
+): void {
+  const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+  const profile = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  profile.executor = executor;
+  const serialized = canonicalJson(profile);
+  writeFileSync(path, serialized);
+  store.setProfileRef(runId, sha256Hex(serialized));
+}
+
 async function withMode(fn: () => Promise<void>, mode: string, emitPath?: string): Promise<void> {
   const beforeMode = process.env.EMIT_MODE;
   const beforePath = process.env.EMIT_PATH;
@@ -111,7 +140,7 @@ interface Ctx {
  */
 function withApprovedRun(
   fn: (ctx: Ctx) => Promise<void>,
-  opts: { scope?: string[]; approval?: boolean; spec?: string } = {}
+  opts: { scope?: string[]; approval?: boolean; spec?: string; gitignore?: string } = {}
 ): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "bw-implementation-"));
   const store = openStore(root);
@@ -119,7 +148,10 @@ function withApprovedRun(
     const init = git(root, ["init", "-q"]);
     assert.equal(init.status, 0, `git init failed: ${init.stderr}`);
     writeFileSync(join(root, "base.txt"), BASE_MARKER);
-    const addBase = git(root, ["add", "base.txt"]);
+    if (opts.gitignore !== undefined) {
+      writeFileSync(join(root, ".gitignore"), opts.gitignore);
+    }
+    const addBase = git(root, ["add", "base.txt", ...(opts.gitignore !== undefined ? [".gitignore"] : [])]);
     assert.equal(addBase.status, 0, `git add failed: ${addBase.stderr}`);
     const commit = git(root, [
       "-c",
@@ -141,6 +173,10 @@ function withApprovedRun(
     const run = store.insertRun("p", "f-1", SLUG, "feature");
     const frozen = freezeProfile(root, run.id, head, MODEL);
     store.setProfileRef(run.id, frozen.hash);
+    // The run's frozen executor *is* the fixture: the stage refuses an
+    // executor the profile never froze, and a test run is not exempt from
+    // that contract — freeze exactly what the tests hand.
+    freezeExecutorIntoProfile(store, root, run.id, fixtureExecutor());
 
     const specPath = join(root, "docs", "features", SLUG, "spec.md");
     mkdirSync(dirname(specPath), { recursive: true });
@@ -498,22 +534,28 @@ test("a patch path that escapes the repository is refused naming the escape", ()
 test("a non-proposed implementer result is refused naming the status", () =>
   expectGateRefusal({ mode: "non-proposed" }, /implementer returned status failed, not proposed/));
 
-test("a junction redirecting the write into a protected path is refused on the resolved path", () =>
+test("a junction redirecting the write into a protected path is refused for the link, not the target", () =>
   expectGateRefusal(
     { mode: "symlink-dir", scope: ["src/alias/x.ts"] },
-    /resolves to protected path src\/agents\/x\.ts/
+    /contains a link component: src\/alias/
   ));
 
-test("a junction redirecting the write outside the worktree is refused by the containment backstop", () =>
+test("a junction redirecting the write outside the worktree is refused for the link, not the escape", () =>
   expectGateRefusal(
     { mode: "escape-link", scope: ["src/escape/x.ts"] },
-    /escapes the worktree/
+    /contains a link component: src\/escape/
   ));
 
 test("a dangling link is refused by name because its target cannot be resolved", () =>
   expectGateRefusal(
     { mode: "dangling-link", scope: ["src/alias/x.ts"] },
-    /is a dangling link: its target cannot be resolved/
+    /contains a link component: src\/alias/
+  ));
+
+test("a link redirecting the write to an ordinary out-of-scope target is refused for the link, not the target", () =>
+  expectGateRefusal(
+    { mode: "link-ordinary", scope: ["src/alias/x.ts"] },
+    /patch path src\/alias\/x\.ts contains a link component: src\/alias/
   ));
 
 test("a file symlink redirecting the write into the run's design document is refused", async (t) => {
@@ -535,8 +577,113 @@ test("a file symlink redirecting the write into the run's design document is ref
   }
   await expectGateRefusal(
     { mode: "symlink-design", scope: ["src/alias.md"] },
-    /resolves to protected path docs\/features\/demo\/design\.md/
+    /contains a link component: src\/alias\.md/
   );
+});
+
+test("an executor that mutates the worktree before returning a proposal is refused naming every path", async () => {
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId, worktreePath, head }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+        assert.match(result.reason, /worktree is not clean after dispatch/);
+        // All three residue classes are named: untracked, tracked, ignored
+        // (asserted individually — git's entry order is not pinned).
+        for (const entry of ["unreported.txt", "base.txt", "ignored-residue.txt"]) {
+          assert.ok(result.reason.includes(entry), `the refusal must name ${entry}: ${result.reason}`);
+        }
+        const stage = store.getStageChain(runId).find((s) => s.kind === "implementation")!;
+        assert.equal(stage.status, "blocked");
+        assert.equal(stage.gate_result, "block");
+        assert.equal(store.getRun(runId)!.status, "blocked");
+        assert.equal(existsSync(worktreePath), true, "the worktree survives the block");
+        assert.ok(existsSync(join(worktreePath, "unreported.txt")), "the untracked write is retained");
+        assert.ok(existsSync(join(worktreePath, "ignored-residue.txt")), "the ignored write is retained");
+        // Nothing was applied: only the projections commit exists, and no
+        // patch-apply audit event was written.
+        const applied = store.query<{ n: number }>(
+          "SELECT COUNT(*) AS n FROM audit WHERE run_id = ? AND action = 'implementation.patch.apply'",
+          [runId]
+        )[0].n;
+        assert.equal(applied, 0, "no patch was applied");
+        const log = git(worktreePath, ["log", "--format=%s", `${head}..HEAD`]);
+        assert.equal(log.status, 0);
+        assert.equal(
+          log.stdout.trim().split("\n").filter((l) => l !== "").length,
+          1,
+          "the branch holds only the projections commit"
+        );
+      },
+      { gitignore: "ignored-residue.txt" }
+    );
+  }, "mutate-then-propose");
+});
+
+test("an option-like patch path is refused alongside a dirty worktree before any git add", async () => {
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId, worktreePath }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+        // The cleanliness gate fires before any git add can see the "-A"
+        // argument: the block is the ordering proof, and against the old
+        // code `git add -A` committed the dirty file alongside "-A".
+        assert.match(result.reason, /worktree is not clean after dispatch/);
+        assert.ok(!existsSync(join(worktreePath, "-A")), "the patch was never applied");
+        const stage = store.getStageChain(runId).find((s) => s.kind === "implementation")!;
+        assert.equal(stage.status, "blocked");
+      },
+      { scope: ["-A"] }
+    );
+  }, "mutate-then-propose");
+});
+
+test("an option-like patch path is committed as a literal path", async () => {
+  await withApprovedRun(async ({ store, root, runId, worktreePath }) => {
+    const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    if (!result.ok) return;
+    assert.ok(existsSync(join(worktreePath, "-A")), "the literal file exists");
+    const changed = git(worktreePath, ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "HEAD"]);
+    assert.equal(changed.status, 0, changed.stderr);
+    assert.deepEqual(
+      changed.stdout.split("\0").filter((l) => l !== ""),
+      ["-A"],
+      "the commit holds exactly the literal path"
+    );
+  }, { scope: ["-A"] });
+});
+
+test("the stage's git add invocation stages exactly the literal paths", () => {
+  // A contract pin for the git semantics the stage relies on: a bare "-A"
+  // argument is the --all option and stages everything, while the literal
+  // invocation — the global `--literal-pathspecs`, the `--` terminator, and
+  // the paths — stages exactly what it names. The stage-level ordering guard
+  // is the dirty-worktree test above; this pins the invocation itself.
+  const scratch = mkdtempSync(join(tmpdir(), "bw-literal-paths-"));
+  try {
+    const init = git(scratch, ["init", "-q"]);
+    assert.equal(init.status, 0, init.stderr);
+    const base = git(scratch, ["-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"]);
+    assert.equal(base.status, 0, base.stderr);
+    writeFileSync(join(scratch, "-A"), "a");
+    writeFileSync(join(scratch, "other.txt"), "b");
+    writeFileSync(join(scratch, "unreported.txt"), "c");
+    const add = git(scratch, ["--literal-pathspecs", "add", "--", "-A", "other.txt"]);
+    assert.equal(add.status, 0, add.stderr);
+    const staged = git(scratch, ["diff", "--cached", "--name-only", "-z"]);
+    assert.equal(staged.status, 0, staged.stderr);
+    assert.deepEqual(
+      staged.stdout.split("\0").filter((l) => l !== "").sort(),
+      ["-A", "other.txt"],
+      "exactly the literal paths are staged, nothing else"
+    );
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 });
 
 test("a second patch touching a path the first applied is refused by the head-moved re-validation", async () => {
@@ -577,6 +724,40 @@ test("a profile with no implementation model fails at configuration time, before
     if (result.ok) return;
     assert.match(result.reason, /no model configured for stage implementation/);
     assert.equal(agentRunCount(store, runId), 0, "the failure precedes the invocation");
+  });
+});
+
+test("a handed executor that differs from the frozen profile executor is refused before the stage row", async () => {
+  await withApprovedRun(async ({ store, root, runId, worktreePath }) => {
+    // Same id, deep-different definition: id equality alone must not bind.
+    const different = fixtureExecutor();
+    different.sandbox.idleTimeoutSeconds = 999;
+    const result = await runImplementationStage(store, different, { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /does not match the executor frozen at run start/);
+    assert.equal(agentRunCount(store, runId), 0, "nothing was spent");
+    assert.equal(existsSync(worktreePath), false, "no worktree was created");
+    assert.ok(
+      !store.getStageChain(runId).some((s) => s.kind === "implementation"),
+      "no stage row was created"
+    );
+  });
+});
+
+test("an executor without the implementation capability is refused before the stage row", async () => {
+  await withApprovedRun(async ({ store, root, runId, worktreePath }) => {
+    const noImplementation = fixtureExecutorWithout("implementation");
+    freezeExecutorIntoProfile(store, root, runId, noImplementation);
+    const result = await runImplementationStage(store, noImplementation, { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(
+      result.reason,
+      /lacks the required capability "implementation" for stage kind implementation/
+    );
+    assert.equal(agentRunCount(store, runId), 0, "nothing was spent");
+    assert.equal(existsSync(worktreePath), false, "no worktree was created");
   });
 });
 

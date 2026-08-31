@@ -5,7 +5,14 @@ import { generateKeyPairSync } from "node:crypto";
 import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { freezeProfile, loadProfile, resolveStageModel, resolveStartingCommit } from "../src/profile.ts";
+import {
+  freezeProfile,
+  loadProfile,
+  requireFrozenBinding,
+  requiredCapability,
+  resolveStageModel,
+  resolveStartingCommit,
+} from "../src/profile.ts";
 import { AGENTS } from "../src/agents.ts";
 import { CLAUDE_CODE } from "../src/executor.ts";
 import { buildPolicy, policyHash } from "../src/policy.ts";
@@ -178,5 +185,63 @@ test("resolveStageModel refuses an unmapped stage kind naming the mapped ones", 
     // frozen profile does map, so the operator can see what is missing.
     assert.match(result.reason, /no model configured for stage verification/);
     assert.match(result.reason, /spec, spec_review, plan, plan_review, implementation/);
+  });
+});
+
+test("requiredCapability maps the five dispatchable stage kinds", () => {
+  assert.equal(requiredCapability("spec"), "spec");
+  assert.equal(requiredCapability("spec_review"), "review");
+  assert.equal(requiredCapability("plan"), "plan");
+  assert.equal(requiredCapability("plan_review"), "review");
+  assert.equal(requiredCapability("implementation"), "implementation");
+  assert.equal(requiredCapability("verification"), null);
+});
+
+test("requireFrozenBinding accepts the frozen executor with the required capability", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL);
+    assert.deepEqual(requireFrozenBinding(profile, CLAUDE_CODE, "implementation"), { ok: true });
+    assert.deepEqual(requireFrozenBinding(profile, CLAUDE_CODE, "spec_review"), { ok: true });
+  });
+});
+
+test("requireFrozenBinding refuses an executor that differs from the frozen one, even with the same id", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL);
+    const different = {
+      ...CLAUDE_CODE,
+      sandbox: { ...CLAUDE_CODE.sandbox, idleTimeoutSeconds: 999 },
+    };
+    const verdict = requireFrozenBinding(profile, different, "implementation");
+    assert.equal(verdict.ok, false);
+    if (verdict.ok) return;
+    assert.match(verdict.reason, /does not match the executor frozen at run start/);
+  });
+});
+
+test("requireFrozenBinding refuses a missing capability naming capability and kind", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL);
+    const without = {
+      ...profile,
+      executor: {
+        ...CLAUDE_CODE,
+        capabilities: CLAUDE_CODE.capabilities.filter((c) => c !== "implementation"),
+      },
+    };
+    const verdict = requireFrozenBinding(without, without.executor, "implementation");
+    assert.equal(verdict.ok, false);
+    if (verdict.ok) return;
+    assert.match(verdict.reason, /lacks the required capability "implementation" for stage kind implementation/);
+  });
+});
+
+test("requireFrozenBinding refuses an unknown stage kind by name", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL);
+    const verdict = requireFrozenBinding(profile, CLAUDE_CODE, "delivery_check");
+    assert.equal(verdict.ok, false);
+    if (verdict.ok) return;
+    assert.match(verdict.reason, /no executor capability defined for stage kind delivery_check/);
   });
 });

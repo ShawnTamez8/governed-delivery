@@ -2,9 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExecutorDefinition } from "./executor.ts";
 import { requireRunInProgress, type FindingRow, type Store } from "./store.ts";
-import { loadVerifiedProfile, resolveStageModel } from "./profile.ts";
+import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
 import { dispatchOnce } from "./dispatch.ts";
-import { agentById } from "./agents.ts";
 import { validateAgentResult } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import { SEVERITIES, SEVERITY_ORDER, findingIdentity, normalizeLocation } from "./finding.ts";
@@ -98,6 +97,19 @@ export async function runSpecStage(
   }
   const model = resolvedModel.model;
   const reviewModel = resolvedReviewModel.model;
+  // Hard rule 6 and section 11: the run executes against the executor it
+  // froze, and a stage requiring a capability no frozen executor declares
+  // fails at configuration time — before any stage row or paid invocation.
+  // This stage dispatches under two stage kinds, so both required
+  // capabilities are checked here, mirroring the two model resolutions.
+  const binding = requireFrozenBinding(profile, executor, "spec");
+  if (!binding.ok) {
+    return { ok: false, reason: binding.reason };
+  }
+  const reviewBinding = requireFrozenBinding(profile, executor, "spec_review");
+  if (!reviewBinding.ok) {
+    return { ok: false, reason: reviewBinding.reason };
+  }
   const existing = store.getStageChain(runId);
   if (existing.length > 0) {
     return {
@@ -116,7 +128,19 @@ export async function runSpecStage(
   const audit = (stageId: number | null, action: string, summary: string): void => {
     appendAudit(store, { runId, stageId, actor: "system", actorType: "cli", action, summary });
   };
-  const author = agentById("spec-author")!;
+  // The author comes from the frozen profile, not the live registry, and is
+  // bound to the executor the run froze (section 9: a field that nothing
+  // enforces does not belong here).
+  const author = profile.agents.find((a) => a.id === "spec-author");
+  if (!author) {
+    return { ok: false, reason: "configured agent spec-author is not in the frozen profile" };
+  }
+  if (author.executor !== executor.id) {
+    return {
+      ok: false,
+      reason: `agent ${author.id} is bound to executor ${author.executor}, not the frozen executor ${executor.id}`,
+    };
+  }
 
   let specStageId: number | null = null;
   let reviewStageId: number | null = null;
@@ -193,13 +217,22 @@ export async function runSpecStage(
       computeScope(written.doc.declaredArtifacts).length,
       touchesProtected(written.doc.declaredArtifacts, run.slug)
     );
-    const panel = selectReviewers(risk, REQUIRED_SPECIALTIES);
+    const panel = selectReviewers(profile.agents, risk, REQUIRED_SPECIALTIES);
     if (panel.length < PANEL_SIZE[risk]) {
       return abort(
         reviewStage.id,
         "spec.panel.incomplete",
         `spec panel incomplete: risk ${risk} needs ${PANEL_SIZE[risk]} reviewers, found ${panel.length}`
       );
+    }
+    for (const reviewer of panel) {
+      if (reviewer.executor !== executor.id) {
+        return abort(
+          reviewStage.id,
+          "spec.reviewer.failed",
+          `agent ${reviewer.id} is bound to executor ${reviewer.executor}, not the frozen executor ${executor.id}`
+        );
+      }
     }
 
     for (let round = 1; round <= REMEDIATION_ROUNDS; round++) {

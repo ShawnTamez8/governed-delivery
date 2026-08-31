@@ -49,10 +49,14 @@ const HIGH_SCOPE = ["src/agents/evil.ts", "test/a1.test.ts"];
 
 function fixtureExecutor(scriptPath: string): ExecutorDefinition {
   return {
-    id: "test-plan-stage",
+    // The fixture simulates the claude-code executor: the run's frozen
+    // profile freezes the fixture each test hands (see withApprovedRun and
+    // the per-scratch freeze calls), so the stage's binding checks see the
+    // fixture as the executor the run froze.
+    id: "claude-code",
     command: ["node", scriptPath],
     probe: ["node", "--version"],
-    capabilities: [],
+    capabilities: ["spec", "plan", "review", "implementation"],
     telemetry: { perInvocationModel: true, effectiveModel: true, tokenUsage: true, sessionCost: true },
     sandbox: {
       allowedPaths: [],
@@ -69,6 +73,28 @@ function fixtureExecutor(scriptPath: string): ExecutorDefinition {
 /** The fixture source, normalized at the read boundary (hazard 12). */
 function fixtureSource(): string {
   return normalizeText(readFileSync(FIXTURE, "utf8"));
+}
+
+/**
+ * Freeze a profile whose executor is the fixture the tests hand. The
+ * stage's binding checks compare the handed executor against the frozen
+ * one canonically, so a test run must freeze exactly what it hands — the
+ * fixture-blindness answer: a run that hands an executor its profile never
+ * froze must be refused, and fixture tests are not exempt from that
+ * contract.
+ */
+function freezeExecutorIntoProfile(
+  store: Store,
+  root: string,
+  runId: number,
+  executor: ExecutorDefinition
+): void {
+  const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+  const profile = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  profile.executor = executor;
+  const serialized = canonicalJson(profile);
+  writeFileSync(path, serialized);
+  store.setProfileRef(runId, sha256Hex(serialized));
 }
 
 interface Ctx {
@@ -101,6 +127,9 @@ function withApprovedRun(
     const run = store.insertRun("p", "f-1", SLUG, opts.changeKind ?? "feature");
     const frozen = freezeProfile(root, run.id, COMMIT, MODEL);
     store.setProfileRef(run.id, frozen.hash);
+    // The run's frozen executor *is* the fixture the tests hand by default;
+    // scratch-executor tests freeze their own right before the stage call.
+    freezeExecutorIntoProfile(store, root, run.id, fixtureExecutor(FIXTURE));
 
     const specPath = join(root, "docs", "features", SLUG, "spec.md");
     mkdirSync(dirname(specPath), { recursive: true });
@@ -377,6 +406,7 @@ test("a plan whose plan_for names another specification is refused", async () =>
         'planFor = "c".repeat(64) } = {}'
       )
     );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -400,6 +430,7 @@ test("coverage outside the approved scope blocks before any reviewer is dispatch
         "proposedContentChanges: { plan: planDoc({ outOfScope: true }) },"
       )
     );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -432,6 +463,7 @@ test("budget exhaustion blocks naming the still-open finding ids", async () => {
     // finding and the closure budget runs out.
     const scratch = join(root, "emit-never-satisfied.mjs");
     writeFileSync(scratch, fixtureSource().replace('stdin.includes("REVISED-plan")', "false"));
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -455,6 +487,7 @@ test("a reviewer returning a non-proposed status blocks rather than passing by a
         'summary: "fixture plan review", status: "blocked",'
       )
     );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -472,6 +505,7 @@ test("an author returning an invalid plan document blocks terminally and writes 
       // Drop the arrow so the coverage line matches neither documented form.
       fixtureSource().replace("- the thing works -> ${artifact}", "- the thing works ${artifact}")
     );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -530,6 +564,7 @@ test("a revision that drops a criterion's coverage blocks and leaves the gated p
         '${stdin.includes("## Revision") ? "" : "- it stays working -> " + second}'
       )
     );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -613,6 +648,21 @@ test("a profile with no plan_review model fails at configuration time", async ()
   });
 });
 
+test("an executor without the plan capability is refused before the stage row", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    const noPlan = {
+      ...fixtureExecutor(FIXTURE),
+      capabilities: fixtureExecutor(FIXTURE).capabilities.filter((c) => c !== "plan"),
+    };
+    freezeExecutorIntoProfile(store, root, runId, noPlan);
+    const result = await runPlanStage(store, noPlan, { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /lacks the required capability "plan" for stage kind plan/);
+    assert.equal(agentRunCounts(store, runId).author, 0, "the failure precedes the invocation");
+  });
+});
+
 test("a plan covering only some acceptance criteria blocks before the panel", async () => {
   await withApprovedRun(async ({ store, root, runId }) => {
     // The scope gate answers "may the plan promise this artifact". It does
@@ -625,6 +675,7 @@ test("a plan covering only some acceptance criteria blocks before the panel", as
         .replace("- it is observable -> not_applicable: observed at runtime, not asserted / checked in the smoke run's recorded output\n", "")
         .replace("- it stays working -> ${second}\n", "")
     );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;

@@ -222,8 +222,10 @@ test("dispatch with an unreadable prompt file exits 2 naming the option", () => 
       "dispatch",
       "--stage",
       stage.stdout.trim(),
+      // A real frozen agent: the raw surface refuses an agent the run's
+      // frozen profile does not declare, before the prompt-file read.
       "--agent",
-      "a",
+      "spec-author",
       "--role",
       "author",
       // Must match the model frozen at run start, or the frozen-map check
@@ -880,6 +882,44 @@ test("stage-add reports a usage error before run state, whatever the run is", ()
     const r = runCli(cwd, "stage-add", "--run", "9999", "--kind");
     assert.equal(r.status, 2);
     assert.match(r.stderr, /missing required option --kind/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("dispatch refuses a stage kind the frozen executor lacks capability for, before any spawn", () => {
+  const cwd = tempCwd();
+  try {
+    assert.equal(runCli(cwd, "migrate").status, 0);
+    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "demo", "--change-kind", "feature", "--model", "test-model");
+    assert.equal(newRun.status, 0, newRun.stderr);
+    const runId = Number(newRun.stdout.trim());
+
+    // Strip the implementation capability from the frozen profile and
+    // re-point profile_ref at the new bytes, so the profile stays
+    // self-consistent — the refusal under test is the capability, not a
+    // tampered profile.
+    const profilePath = join(cwd, ".governance", "profiles", String(runId), "profile.json");
+    const profile = JSON.parse(readFileSync(profilePath, "utf8")) as {
+      executor: { capabilities: string[] };
+    };
+    profile.executor.capabilities = profile.executor.capabilities.filter(
+      (c) => c !== "implementation"
+    );
+    const serialized = canonicalJson(profile);
+    writeFileSync(profilePath, serialized);
+
+    const store = openStore(cwd);
+    store.setProfileRef(runId, sha256Hex(serialized));
+    const stageId = store.insertStage(runId, "implementation", null).id;
+    store.close();
+
+    const promptPath = join(cwd, "prompt.txt");
+    writeFileSync(promptPath, "probe");
+    const r = runCli(cwd, "dispatch", "--stage", String(stageId), "--agent", "implementer", "--role", "author", "--prompt-file", promptPath);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /lacks the required capability "implementation" for stage kind implementation/);
+    assert.ok(!existsSync(join(cwd, ".governance", "raw")), "no spawn happened");
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

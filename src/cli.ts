@@ -3,12 +3,11 @@ import { readFileSync } from "node:fs";
 import { acquireLock } from "./lock.ts";
 import { requireRunInProgress, CHANGE_KINDS, GATE_RESULTS, ROLES, openStore, type Store } from "./store.ts";
 import { appendAudit, verifyAuditChain } from "./audit.ts";
-import { CLAUDE_CODE } from "./executor.ts";
 import { dispatchOnce } from "./dispatch.ts";
 import { runSpecStage } from "./spec-stage.ts";
 import { runPlanStage } from "./plan-stage.ts";
 import { runImplementationStage } from "./implementation-stage.ts";
-import { freezeProfile, loadVerifiedProfile, resolveStageModel, resolveStartingCommit, validateModelName } from "./profile.ts";
+import { freezeProfile, loadVerifiedProfile, requireFrozenBinding, resolveStageModel, resolveStartingCommit, validateModelName } from "./profile.ts";
 import { approvalPayload, validateExpiry } from "./approval.ts";
 import { approveRun, buildBinding } from "./approval-stage.ts";
 import { APPROVAL_DEFAULT_LIFETIME_SECONDS, APPROVAL_MAX_LIFETIME_SECONDS } from "./policy.ts";
@@ -296,6 +295,21 @@ async function main(): Promise<void> {
             `--model ${requestedModel} does not match the model frozen at run start (${frozenModel.model}): config is frozen at run start`
           );
         }
+        // The raw surface gets the same frozen-binding rule the stages get:
+        // a capability the stages refuse must not be spendable through the
+        // documented escape hatch, and the dispatched agent must be one the
+        // run froze.
+        const dispatchBinding = requireFrozenBinding(
+          dispatchProfile.profile,
+          dispatchProfile.profile.executor,
+          stage.kind
+        );
+        if (!dispatchBinding.ok) {
+          throw new Error(dispatchBinding.reason);
+        }
+        if (!dispatchProfile.profile.agents.some((a) => a.id === agent)) {
+          throw new Error(`configured agent ${agent} is not in the frozen profile`);
+        }
         let prompt: string;
         try {
           prompt = readFileSync(promptFile, "utf8");
@@ -304,7 +318,7 @@ async function main(): Promise<void> {
         }
         const result = await dispatchOnce(
           store,
-          CLAUDE_CODE,
+          dispatchProfile.profile.executor,
           { stageId, agent, role, requestedModel: frozenModel.model, prompt },
           process.cwd()
         );
@@ -317,8 +331,20 @@ async function main(): Promise<void> {
         break;
       }
       case "spec": {
-        const result = await runSpecStage(store, CLAUDE_CODE, {
-          runId: numeric(args, "run"),
+        // Hard rule 6: the stage runs against the executor the run froze.
+        // The profile is loaded here so the frozen definition is handed in;
+        // the stage re-verifies the same binding at its own boundary.
+        const specRunId = numeric(args, "run");
+        const specRun = store.getRun(specRunId);
+        if (!specRun) {
+          throw new Error(`run ${specRunId} does not exist`);
+        }
+        const specVerified = loadVerifiedProfile(process.cwd(), specRun);
+        if (!specVerified.ok) {
+          throw new Error(specVerified.reason);
+        }
+        const result = await runSpecStage(store, specVerified.profile.executor, {
+          runId: specRun.id,
           requestedModel: optional(args, "model"),
           rootDir: process.cwd(),
         });
@@ -331,8 +357,18 @@ async function main(): Promise<void> {
         break;
       }
       case "plan": {
-        const result = await runPlanStage(store, CLAUDE_CODE, {
-          runId: numeric(args, "run"),
+        // Hard rule 6: the stage runs against the executor the run froze.
+        const planRunId = numeric(args, "run");
+        const planRun = store.getRun(planRunId);
+        if (!planRun) {
+          throw new Error(`run ${planRunId} does not exist`);
+        }
+        const planVerified = loadVerifiedProfile(process.cwd(), planRun);
+        if (!planVerified.ok) {
+          throw new Error(planVerified.reason);
+        }
+        const result = await runPlanStage(store, planVerified.profile.executor, {
+          runId: planRun.id,
           requestedModel: optional(args, "model"),
           rootDir: process.cwd(),
         });
@@ -345,8 +381,18 @@ async function main(): Promise<void> {
         break;
       }
       case "implement": {
-        const result = await runImplementationStage(store, CLAUDE_CODE, {
-          runId: numeric(args, "run"),
+        // Hard rule 6: the stage runs against the executor the run froze.
+        const implementRunId = numeric(args, "run");
+        const implementRun = store.getRun(implementRunId);
+        if (!implementRun) {
+          throw new Error(`run ${implementRunId} does not exist`);
+        }
+        const implementVerified = loadVerifiedProfile(process.cwd(), implementRun);
+        if (!implementVerified.ok) {
+          throw new Error(implementVerified.reason);
+        }
+        const result = await runImplementationStage(store, implementVerified.profile.executor, {
+          runId: implementRun.id,
           requestedModel: optional(args, "model"),
           rootDir: process.cwd(),
         });

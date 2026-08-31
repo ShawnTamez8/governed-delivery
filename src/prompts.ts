@@ -211,7 +211,10 @@ export function buildImplementationAuthorPrompt(
 Propose the code changes that implement the approved plan below. Your
 working directory is the repository checkout those changes apply to — read
 it to see the code you are patching. Run no git commands: the system applies
-and commits the patches you propose.
+and commits the patches you propose. This checkout is read-only for you: do
+not create, modify, or delete any file. Only the patch content you return
+is considered. (This sentence is UX, not a guard: the session runs without
+write tools and the system checks the worktree before and after dispatch.)
 
 Return exactly a JSON AgentResult object with this shape:
 {"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedPatches": [{"baseCommit": "...", "files": [{"path": "...", "action": "add", "content": "<complete new file content>"}]}]}

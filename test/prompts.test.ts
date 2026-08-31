@@ -51,6 +51,11 @@ const CONSTRAINT_STRINGS = [
   "modify",
   "deletion",
   "content",
+  // The read-only constraint: hazard 3 applied to a constrained behaviour,
+  // per docs/proposals/implementer-writes-files-it-also-proposes.md. The
+  // sentence is UX, not a guard — enforcement is the invocation boundary
+  // and the cleanliness gate.
+  "read-only",
 ];
 
 test("every constrained field's constraint appears in the prompt source", () => {
@@ -152,6 +157,7 @@ test("the generated implementation author prompt states the patch contract", () 
     "deletion is refused by the system",
     "complete new file content",
     "Run no git commands",
+    "This checkout is read-only for you",
     "Patch only these paths:",
     "Output the JSON object",
   ]) {

@@ -341,9 +341,9 @@ above it until a second harness exists.
 
 ```yaml
 id: claude-code
-command: [claude, -p, --output-format, json]
+command: [claude, -p, --output-format, json, --restricted, --safe-mode, --tools, "Read,Glob,Grep", --disallowedTools, "Write,Edit,NotebookEdit,Bash,mcp__*", --permission-mode, dontAsk, --strict-mcp-config, --no-session-persistence]
 probe: [claude, --version]
-capabilities: [plan, review]
+capabilities: [spec, plan, review, implementation]
 telemetry:                  # what this harness can actually report
   perInvocationModel: true
   effectiveModel: true
@@ -389,6 +389,12 @@ kill.
 and denied paths, the command allowlist, and an explicit environment passthrough
 list. Pass named variables through; never inherit the whole environment, which
 leaks credentials and machine state into a model context.
+
+Enforcement starts at the invocation: proposal subprocesses run read-only
+(restricted mode, an explicit read-only tool inventory, no session
+persistence), and the stage asserts a clean worktree before and after the
+dispatch, because a prompt-level instruction is a request and the tree is
+checked, not trusted.
 
 ### Reading the result
 
@@ -745,7 +751,7 @@ block.
 
 ## 22. Known hazards
 
-`docs/hazards.md` states fourteen failure modes this kind of system is subject
+`docs/hazards.md` states fifteen failure modes this kind of system is subject
 to and what each requires. They are requirements, not an appendix: model output
 in shapes the schema refuses, discarded output being undiagnosable, constrained
 fields whose constraint the prompt never states, fixtures and code agreeing
@@ -753,7 +759,8 @@ while both are wrong, completion without delivery, promises a later stage cannot
 keep, retries that vary nothing, executable resolution, unverified hook
 interpreters, exact-match model acceptance against moving aliases, a default
 install that cannot complete a run, configuration divergence between targets,
-specifications inventing obligations, and independence that cannot be proven.
+specifications inventing obligations, independence that cannot be proven, and
+proposal subprocesses that are requested rather than enforced to be read-only.
 
 When a new failure mode is found, add it there rather than here. Two lists drift
 apart, and the one that drifts is the one people stop trusting.

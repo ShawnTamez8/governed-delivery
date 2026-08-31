@@ -3,9 +3,8 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, type Sta
 import { dirname, join, relative } from "node:path";
 import type { ExecutorDefinition } from "./executor.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
-import { loadVerifiedProfile, resolveStageModel } from "./profile.ts";
+import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
 import { dispatchOnce } from "./dispatch.ts";
-import { agentById } from "./agents.ts";
 import { validateAgentResult, type ProposedPatch, type ProposedPatchFile } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import { isPathInside, normalizePath, resolveExisting, touchesProtected } from "./scope.ts";
@@ -101,6 +100,14 @@ export async function runImplementationStage(
     };
   }
   const model = resolvedModel.model;
+  // Hard rule 6 and section 11: the run executes against the executor it
+  // froze, and a stage requiring a capability no frozen executor declares
+  // fails at configuration time — before the stage row, the worktree, or any
+  // paid invocation exists.
+  const binding = requireFrozenBinding(profile, executor, "implementation");
+  if (!binding.ok) {
+    return { ok: false, reason: binding.reason };
+  }
 
   const approval = store.getApproval(runId);
   if (!approval) {
@@ -234,6 +241,44 @@ export async function runImplementationStage(
     return { ok: true, stdout: result.stdout ?? "" };
   };
 
+  /**
+   * Assert the worktree and index hold nothing the stage did not commit:
+   * tracked, staged, untracked, and ignored entries all count (the
+   * invocation verified at plan time — `--ignored=matching` is what makes a
+   * write into an ignored path visible). This is the core's backstop if CLI
+   * controls, hooks, or executor configuration drift: the stage refuses and
+   * names the paths, never resetting and continuing, because that would hide
+   * the evidence that the executor boundary failed. A git failure is treated
+   * as dirty, and the refusal names the git detail.
+   */
+  const worktreeClean = (
+    cwd: string
+  ): { ok: true } | { ok: false; entries: string[]; detail?: string } => {
+    const status = runGit(
+      ["status", "--porcelain", "-z", "--untracked-files=all", "--ignored=matching"],
+      cwd
+    );
+    if (!status.ok) {
+      return { ok: false, entries: [], detail: status.detail };
+    }
+    const entries = status.stdout.split("\0").filter((e) => e !== "");
+    return entries.length === 0 ? { ok: true } : { ok: false, entries };
+  };
+
+  /** The cleanliness refusals share one shape: name what is dirty. */
+  const refuseDirty = (
+    sid: number,
+    when: "before dispatch" | "after dispatch" | "after applying patches",
+    check: { ok: false; entries: string[]; detail?: string }
+  ): ImplementationStageResult =>
+    abort(
+      sid,
+      "implementation.worktree.dirty",
+      check.detail !== undefined
+        ? `cannot check worktree cleanliness ${when}: ${check.detail}`
+        : `worktree is not clean ${when}: ${check.entries.join(", ")}`
+    );
+
   try {
     // --- the stage row and the worktree ---
     const stage = store.insertStage(runId, "implementation", last.id);
@@ -306,8 +351,30 @@ export async function runImplementationStage(
       `committed projections ${repoSpec} (${specHash}) and ${repoPlan} (${planHash})`
     );
 
+    // The proposal base must be clean before the subprocess ever runs: the
+    // gate later treats this tree as the base every patch is validated
+    // against, and a dirty start would inherit residue the implementer never
+    // caused.
+    const cleanBeforeDispatch = worktreeClean(worktreePath);
+    if (!cleanBeforeDispatch.ok) {
+      return refuseDirty(stage.id, "before dispatch", cleanBeforeDispatch);
+    }
+
     // --- the dispatch ---
-    const author = agentById("implementer")!;
+    // The author comes from the frozen profile, not the live registry, and
+    // is bound to the executor the run froze (section 9: a field that
+    // nothing enforces does not belong here).
+    const author = profile.agents.find((a) => a.id === "implementer");
+    if (!author) {
+      return abort(stage.id, "implementation.author.failed", "configured agent implementer is not in the frozen profile");
+    }
+    if (author.executor !== executor.id) {
+      return abort(
+        stage.id,
+        "implementation.author.failed",
+        `agent ${author.id} is bound to executor ${author.executor}, not the frozen executor ${executor.id}`
+      );
+    }
     if (!author.outputs.includes("patches")) {
       return abort(stage.id, "implementation.author.failed", `configured agent ${author.id} does not allow patches output`);
     }
@@ -336,6 +403,15 @@ export async function runImplementationStage(
     );
     if (!authorDispatch.ok) {
       return abort(stage.id, "implementation.author.failed", authorDispatch.reason);
+    }
+
+    // The subprocess boundary backstop: the model may have mutated the tree
+    // it was invited to read. Any change — tracked, staged, untracked, or
+    // ignored — blocks the run and names the paths before anything is
+    // parsed or applied. A prompt is a request; this is the check.
+    const cleanAfterDispatch = worktreeClean(worktreePath);
+    if (!cleanAfterDispatch.ok) {
+      return refuseDirty(stage.id, "after dispatch", cleanAfterDispatch);
     }
 
     // --- parse, validate, and refuse an empty delivery ---
@@ -417,9 +493,38 @@ export async function runImplementationStage(
 
       for (const file of patch.files as ProposedPatchFile[]) {
         const target = join(worktreePath, file.path);
-        // (d) the escape backstop: the lexical checks above cannot see a
-        // symlink or junction redirecting the write. `isPathInside` proves
-        // the resolved target is still somewhere inside the worktree.
+        // (d) the fail-closed link rule, first: the write follows the link,
+        // so a symlinked or junctioned ancestor redirects bytes the gate
+        // checked only lexically. Refusing every link component is smaller
+        // and safer than modelling another "safe" target category — the
+        // redirect class has already required multiple corrections, and the
+        // design does not require linked patch paths. A dangling link is
+        // refused by this same walk: lstat sees the link itself, whose
+        // target need not exist. Each component is lstat'ed because the
+        // link may sit above the file itself. (On Windows, junctions are
+        // symbolic links as far as lstat is concerned.)
+        {
+          let current = worktreePath;
+          for (const segment of normalizePath(relative(worktreePath, target)).split("/")) {
+            current = join(current, segment);
+            let st: Stats | null = null;
+            try {
+              st = lstatSync(current);
+            } catch {
+              // No node at this component; a later one may still be a link.
+            }
+            if (st?.isSymbolicLink()) {
+              return abort(
+                stage.id,
+                "implementation.patch.refused",
+                `patch path ${file.path} contains a link component: ${normalizePath(relative(worktreePath, current))}`
+              );
+            }
+          }
+        }
+        // The resolved-target backstops remain as defence in depth for a
+        // link appearing between the walk and the write: `isPathInside`
+        // proves the resolved target is still somewhere inside the worktree.
         const resolvedTarget = resolveExisting(target);
         if (!isPathInside(worktreePath, resolvedTarget)) {
           return abort(stage.id, "implementation.patch.refused", `patch path ${file.path} escapes the worktree`);
@@ -433,37 +538,6 @@ export async function runImplementationStage(
         const relResolved = normalizePath(relative(worktreePath, resolvedTarget));
         if (touchesProtected([relResolved], run.slug)) {
           return abort(stage.id, "implementation.patch.refused", `resolves to protected path ${relResolved}`);
-        }
-        // A link anywhere in the path whose target does not exist cannot be
-        // resolved through the filesystem: `resolveExisting` sees only its
-        // lexical path, and the write would either fail (a dangling
-        // directory link) or create the file at the link's target (a
-        // dangling file link under `add` — possibly a protected path).
-        // Refused by name rather than guessed at. Each component is lstat'ed
-        // because the dangling link may sit above the file itself.
-        let danglingLink: string | null = null;
-        {
-          let current = worktreePath;
-          for (const segment of normalizePath(relative(worktreePath, target)).split("/")) {
-            current = join(current, segment);
-            let st: Stats | null = null;
-            try {
-              st = lstatSync(current);
-            } catch {
-              // No node at this component; a later one may still be a link.
-            }
-            if (st?.isSymbolicLink() && !existsSync(current)) {
-              danglingLink = current;
-              break;
-            }
-          }
-        }
-        if (danglingLink !== null) {
-          return abort(
-            stage.id,
-            "implementation.patch.refused",
-            `patch path ${file.path} is a dangling link: its target cannot be resolved`
-          );
         }
         // (e) existence semantics, after the security checks: a symlinked
         // target is refused for what it resolves to, never for what happens
@@ -488,9 +562,35 @@ export async function runImplementationStage(
       } catch (err) {
         return abort(stage.id, "implementation.patch.refused", `patch write failed: ${(err as Error).message}`);
       }
-      const addedPatch = runGit(["add", ...patchPaths], worktreePath);
+      // Every untrusted path travels literally: the global
+      // `--literal-pathspecs` disables pathspec magic and `--` terminates
+      // options, so a path named `-A` is a path, never `--all`. (The global
+      // form is required — `git add --literal-pathspecs` is refused; the
+      // invocation was verified at plan time.)
+      const addedPatch = runGit(["--literal-pathspecs", "add", "--", ...patchPaths], worktreePath);
       if (!addedPatch.ok) {
         return abort(stage.id, "implementation.patch.refused", `git add failed: ${addedPatch.detail}`);
+      }
+      // The staged set must be exactly the proposed set. This is the layered
+      // backstop behind the cleanliness gate: if anything else ever enters
+      // the index — a path expanded by magic, an option consumed as --all, a
+      // concurrent write — the run blocks on the observed difference.
+      const stagedResult = runGit(["diff", "--cached", "--name-only", "-z"], worktreePath);
+      if (!stagedResult.ok) {
+        return abort(
+          stage.id,
+          "implementation.patch.refused",
+          `cannot read the staged set: ${stagedResult.detail}`
+        );
+      }
+      const stagedSet = [...new Set(stagedResult.stdout.split("\0").filter((l) => l !== "").map(normalizePath))].sort();
+      const proposedSet = [...new Set(patchPaths.map(normalizePath))].sort();
+      if (JSON.stringify(stagedSet) !== JSON.stringify(proposedSet)) {
+        return abort(
+          stage.id,
+          "implementation.patch.refused",
+          `staged set differs from the proposed patch: staged ${stagedSet.join(", ")}, proposed ${proposedSet.join(", ")}`
+        );
       }
       const committedPatch = runGit(
         [
@@ -507,8 +607,39 @@ export async function runImplementationStage(
       if (!committedPatch.ok) {
         return abort(stage.id, "implementation.patch.refused", `git commit failed: ${committedPatch.detail}`);
       }
-      // (h) the audit names the files and the base commit, not just a count.
-      audit(stage.id, "implementation.patch.apply", `applied patch to ${patchPaths.join(", ")} (base ${headAtProposal})`);
+      // The commit's changed paths are compared again — the record on the
+      // branch is the final word, and a mismatch here means the commit
+      // carried content the patch never proposed.
+      const committedResult = runGit(
+        ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "HEAD"],
+        worktreePath
+      );
+      if (!committedResult.ok) {
+        return abort(
+          stage.id,
+          "implementation.patch.refused",
+          `cannot read the committed set: ${committedResult.detail}`
+        );
+      }
+      const committedSet = [...new Set(committedResult.stdout.split("\0").filter((l) => l !== "").map(normalizePath))].sort();
+      if (JSON.stringify(committedSet) !== JSON.stringify(proposedSet)) {
+        return abort(
+          stage.id,
+          "implementation.patch.refused",
+          `committed set differs from the proposed patch: committed ${committedSet.join(", ")}, proposed ${proposedSet.join(", ")}`
+        );
+      }
+      // (h) the audit names the observed committed set and the base commit,
+      // never the proposal — what git actually committed is the record.
+      audit(stage.id, "implementation.patch.apply", `applied patch to ${committedSet.join(", ")} (base ${headAtProposal})`);
+    }
+
+    // The pass hands verification a clean worktree and an exact final commit:
+    // anything left behind — by the implementer, a hook, or the stage itself
+    // — is evidence the boundary failed, and the run blocks on it.
+    const cleanBeforePass = worktreeClean(worktreePath);
+    if (!cleanBeforePass.ok) {
+      return refuseDirty(stage.id, "after applying patches", cleanBeforePass);
     }
 
     // --- the pass ---

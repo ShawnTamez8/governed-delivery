@@ -1,4 +1,4 @@
-import { AGENTS, type AgentDefinition } from "./agents.ts";
+import type { AgentDefinition } from "./agents.ts";
 
 export type Risk = "low" | "standard" | "high";
 
@@ -34,19 +34,25 @@ export function computeRisk(
  * A pure, deterministic panel selection (section 9). Candidates are
  * reviewers only, so an author can never appear in its own stage's panel;
  * required specialties fill first, remaining slots go by ranked relevance.
+ * The candidate list is passed in so the panel comes from the frozen
+ * profile's agents, never the live registry (hard rule 6).
  */
-export function selectReviewers(risk: Risk, requiredSpecialties: string[]): AgentDefinition[] {
-  const candidates = AGENTS.filter((a) => a.role === "reviewer" && a.outputs.includes("findings"));
+export function selectReviewers(
+  candidates: readonly AgentDefinition[],
+  risk: Risk,
+  requiredSpecialties: string[]
+): AgentDefinition[] {
+  const reviewers = candidates.filter((a) => a.role === "reviewer" && a.outputs.includes("findings"));
   const selected: AgentDefinition[] = [];
   const used = new Set<string>();
   for (const specialty of requiredSpecialties) {
-    const match = candidates.find((c) => c.specialty === specialty && !used.has(c.id));
+    const match = reviewers.find((c) => c.specialty === specialty && !used.has(c.id));
     if (match) {
       selected.push(match);
       used.add(match.id);
     }
   }
-  const ranked = [...candidates].sort((a, b) => {
+  const ranked = [...reviewers].sort((a, b) => {
     const aSpecial = a.specialty !== null ? 1 : 0;
     const bSpecial = b.specialty !== null ? 1 : 0;
     if (aSpecial !== bSpecial) return bSpecial - aSpecial;

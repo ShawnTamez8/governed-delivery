@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // One fixture serves the implementation stage's single dispatch, dispatching
@@ -111,6 +111,18 @@ if (mode === "ok") {
   symlinkSync(join(process.cwd(), "src", "agents"), alias, process.platform === "win32" ? "junction" : "dir");
   rmSync(join(process.cwd(), "src", "agents"), { recursive: true, force: true });
   agentResult = proposed([file("src/alias/x.ts")]);
+} else if (mode === "link-ordinary") {
+  // A junction redirecting the write to an ordinary, unprotected directory
+  // *inside* the worktree but outside any signed scope: nothing in the
+  // resolved-target checks can refuse it (inside the worktree, not
+  // protected, not dangling). Only the fail-closed link-component rule can.
+  mkdirSync(join(process.cwd(), "src", "ordinary-target"), { recursive: true });
+  symlinkSync(
+    join(process.cwd(), "src", "ordinary-target"),
+    join(process.cwd(), "src", "alias"),
+    process.platform === "win32" ? "junction" : "dir"
+  );
+  agentResult = proposed([file("src/alias/x.ts")]);
 } else if (mode === "escape-link") {
   // A directory junction inside the worktree pointing *outside* it: the
   // lexical checks cannot see the redirect, and only the isPathInside
@@ -146,6 +158,15 @@ if (mode === "ok") {
       { baseCommit, files: [{ path: paths[0], action: "modify", content: markerContent() }] },
     ],
   };
+} else if (mode === "mutate-then-propose") {
+  // The recorded smoke's implementer wrote the files it then proposed. This
+  // mode simulates that exactly: an untracked file, a modification to the
+  // tracked base.txt, and a file the test's .gitignore makes ignored — then
+  // the ok proposal. The stage must refuse before applying anything.
+  writeFileSync("unreported.txt", "fixture wrote this\n");
+  appendFileSync("base.txt", "\nfixture mutation\n");
+  writeFileSync("ignored-residue.txt", "fixture wrote this\n");
+  agentResult = proposed(paths.map((p) => file(p)));
 } else if (mode === "add-existing") {
   agentResult = proposed([file(paths[0])]);
 } else if (mode === "modify-missing") {

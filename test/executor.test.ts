@@ -7,7 +7,60 @@ test("the executor identity is claude-code", () => {
 });
 
 test("the command matches section 11's YAML", () => {
-  assert.deepEqual(CLAUDE_CODE.command, ["claude", "-p", "--output-format", "json"]);
+  assert.deepEqual(CLAUDE_CODE.command, [
+    "claude",
+    "-p",
+    "--output-format",
+    "json",
+    "--restricted",
+    "--safe-mode",
+    "--tools",
+    "Read,Glob,Grep",
+    "--disallowedTools",
+    "Write,Edit,NotebookEdit,Bash,mcp__*",
+    "--permission-mode",
+    "dontAsk",
+    "--strict-mcp-config",
+    "--no-session-persistence",
+  ]);
+});
+
+test("claude_executor_exposes_only_read_tools_in_restricted_safe_mode", () => {
+  // The exact array is the probe input Task 9 Step 1 runs against the real
+  // binary — the unit pin and the real-harness evidence name one command.
+  // Semantics from the installed CLI's help (verified at plan time):
+  // `--restricted` removes the command/code tools and WebFetch unless
+  // `--tools` names them, confines file tools to the working directories,
+  // and refuses bypassPermissions; `--safe-mode` disables customizations
+  // (CLAUDE.md, skills, hooks, MCP, plugins, custom agents) while auth,
+  // model selection, built-in tools, and permissions work normally;
+  // `--tools Read,Glob,Grep` fixes the inventory; `--disallowedTools`
+  // denies Write, Edit, NotebookEdit, Bash, and mcp__*; `--permission-mode
+  // dontAsk` makes the session non-interactive; `--strict-mcp-config` with
+  // no `--mcp-config` means no MCP servers; `--no-session-persistence`
+  // works with `-p`. `--bare` is deliberately absent: the installed CLI
+  // makes it API-key-only, and a default OAuth installation must keep
+  // completing runs (hazard 11).
+  assert.deepEqual(CLAUDE_CODE.command, [
+    "claude",
+    "-p",
+    "--output-format",
+    "json",
+    "--restricted",
+    "--safe-mode",
+    "--tools",
+    "Read,Glob,Grep",
+    "--disallowedTools",
+    "Write,Edit,NotebookEdit,Bash,mcp__*",
+    "--permission-mode",
+    "dontAsk",
+    "--strict-mcp-config",
+    "--no-session-persistence",
+  ]);
+  for (const capability of ["spec", "plan", "review", "implementation"]) {
+    assert.ok(CLAUDE_CODE.capabilities.includes(capability), `missing capability ${capability}`);
+  }
+  assert.deepEqual(CLAUDE_CODE.probe, ["claude", "--version"]);
 });
 
 test("session cost is declared reported, matching the recorded envelope", () => {

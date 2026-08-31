@@ -26,12 +26,33 @@ export interface ExecutorDefinition {
  * no second consumer yet (hard rule 4). The shape matches section 11's YAML
  * exactly, plus the absolute ceiling the same section requires as "a
  * multiple of the idle budget."
+ *
+ * The invocation is read-only: proposal subprocesses run in restricted/safe
+ * mode with the inventory fixed to Read, Glob, and Grep (see
+ * test/executor.test.ts for the flag semantics and hazard 11 for why
+ * `--bare` is absent). A prompt is a request; enforcement is this command
+ * plus the stage's clean-tree assertions.
  */
 export const CLAUDE_CODE: ExecutorDefinition = {
   id: "claude-code",
-  command: ["claude", "-p", "--output-format", "json"],
+  command: [
+    "claude",
+    "-p",
+    "--output-format",
+    "json",
+    "--restricted",
+    "--safe-mode",
+    "--tools",
+    "Read,Glob,Grep",
+    "--disallowedTools",
+    "Write,Edit,NotebookEdit,Bash,mcp__*",
+    "--permission-mode",
+    "dontAsk",
+    "--strict-mcp-config",
+    "--no-session-persistence",
+  ],
   probe: ["claude", "--version"],
-  capabilities: ["plan", "review"],
+  capabilities: ["spec", "plan", "review", "implementation"],
   telemetry: {
     perInvocationModel: true,
     effectiveModel: true,

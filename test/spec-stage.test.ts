@@ -14,10 +14,14 @@ const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-spec-st
 
 function fixtureExecutor(scriptPath: string): ExecutorDefinition {
   return {
-    id: "test-spec-stage",
+    // The fixture simulates the claude-code executor: the run's frozen
+    // profile freezes the fixture each test hands (see withRun and the
+    // per-scratch freeze calls), so the stage's binding checks see the
+    // fixture as the executor the run froze.
+    id: "claude-code",
     command: ["node", scriptPath],
     probe: ["node", "--version"],
-    capabilities: [],
+    capabilities: ["spec", "plan", "review", "implementation"],
     telemetry: { perInvocationModel: true, effectiveModel: true, tokenUsage: true, sessionCost: true },
     sandbox: {
       allowedPaths: [],
@@ -54,6 +58,28 @@ interface Ctx {
   runId: number;
 }
 
+/**
+ * Freeze a profile whose executor is the fixture the tests hand. The
+ * stage's binding checks compare the handed executor against the frozen
+ * one canonically, so a test run must freeze exactly what it hands — the
+ * fixture-blindness answer: a run that hands an executor its profile never
+ * froze must be refused, and fixture tests are not exempt from that
+ * contract.
+ */
+function freezeExecutorIntoProfile(
+  store: Store,
+  root: string,
+  runId: number,
+  executor: ExecutorDefinition
+): void {
+  const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+  const profile = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  profile.executor = executor;
+  const serialized = canonicalJson(profile);
+  writeFileSync(path, serialized);
+  store.setProfileRef(runId, sha256Hex(serialized));
+}
+
 function withRun(fn: (ctx: Ctx) => Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "bw-spec-stage-"));
   const store = openStore(root);
@@ -62,6 +88,9 @@ function withRun(fn: (ctx: Ctx) => Promise<void>): Promise<void> {
   // without one cannot reach a dispatch at all.
   const frozen = freezeProfile(root, run.id, "b".repeat(40), "m");
   store.setProfileRef(run.id, frozen.hash);
+  // The run's frozen executor *is* the fixture the tests hand by default;
+  // scratch-executor tests freeze their own right before the stage call.
+  freezeExecutorIntoProfile(store, root, run.id, fixtureExecutor(FIXTURE));
   mkdirSync(join(root, "docs", "features", "demo"), { recursive: true });
   writeFileSync(join(root, "docs", "features", "demo", "design.md"), "# design\n");
   return Promise.resolve(fn({ store, root, runId: run.id })).finally(() => {
@@ -114,6 +143,7 @@ test("blocked on budget exhaustion", async () => {
       "const findings = false && stdin.includes(\"REVISED-spec\")"
     );
     writeFileSync(scratch, source);
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -146,6 +176,7 @@ test("an invalid author result aborts terminally and writes no spec", async () =
       '    status: "bogus",\n    agent: "spec-author",'
     );
     writeFileSync(scratch, source);
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -164,6 +195,7 @@ test("a null finding entry aborts terminally naming the reviewer", async () => {
       '    : [null, {\n          location: "## Acceptance criteria",'
     );
     writeFileSync(scratch, source);
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -180,6 +212,7 @@ test("a reviewer returning blocked with empty findings cannot pass the gate by a
       '    status: "blocked",\n    agent: agentId,'
     );
     writeFileSync(scratch, source);
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -196,6 +229,7 @@ test("an invalid intentKey aborts terminally naming the reviewer", async () => {
       'intentKey: "Bad Key!",'
     );
     writeFileSync(scratch, source);
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -208,6 +242,7 @@ test("a spec whose change_kind contradicts the run aborts terminally", async () 
     const scratch = join(root, "emit-spec-stage-kind-mismatch.mjs");
     const source = fixtureSource().replace("change_kind: feature", "change_kind: defect_fix");
     writeFileSync(scratch, source);
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -221,6 +256,7 @@ test("a high-risk spec convenes the full three-reviewer panel", async () => {
     const scratch = join(root, "emit-spec-stage-high-risk.mjs");
     const source = fixtureSource().replace("src/a1.ts", "src/agents/evil.ts");
     writeFileSync(scratch, source);
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
     // The gate outcome depends on findings; the panel must never be the
     // blocker — assert no incomplete-panel abort and three round-1 reviews.
@@ -241,6 +277,9 @@ test("a missing design document is refused before any dispatch", async () => {
   const run = store.insertRun("p", "f-1", "no-design", "feature");
   const frozen = freezeProfile(root, run.id, "b".repeat(40), "m");
   store.setProfileRef(run.id, frozen.hash);
+  // This test builds its own run (no design.md exists); like withRun, the
+  // frozen executor must be the fixture the test hands.
+  freezeExecutorIntoProfile(store, root, run.id, fixtureExecutor(FIXTURE));
   try {
     const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId: run.id, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, false);
@@ -268,6 +307,7 @@ test("the panel is sized from distinct artifacts, not repeated ones", async () =
       // reviewer count is the panel size rather than a multiple of it.
       .replace('const findings = stdin.includes("REVISED-spec")', "const findings = true");
     writeFileSync(scratch, source);
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runSpecStage(store, fixtureExecutor(scratch), {
       runId,
       requestedModel: "m",
@@ -346,6 +386,21 @@ test("a stage with no model in the frozen map fails before any dispatch", async 
     assert.match(result.reason, /no model configured for stage spec/);
     // Section 10 requires this failure to precede the invocation; the absent
     // agent_run row is the proof that it did.
+    assert.equal(store.query("SELECT * FROM agent_run").length, 0, "nothing was spent");
+  });
+});
+
+test("an executor without the spec capability is refused before the stage row", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const noSpec = {
+      ...fixtureExecutor(FIXTURE),
+      capabilities: fixtureExecutor(FIXTURE).capabilities.filter((c) => c !== "spec"),
+    };
+    freezeExecutorIntoProfile(store, root, runId, noSpec);
+    const result = await runSpecStage(store, noSpec, { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /lacks the required capability "spec" for stage kind spec/);
     assert.equal(store.query("SELECT * FROM agent_run").length, 0, "nothing was spent");
   });
 });

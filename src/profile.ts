@@ -210,3 +210,57 @@ export function loadVerifiedProfile(
   }
   return { ok: true, profile: loaded.profile, hash: loaded.hash };
 }
+
+/**
+ * The executor capability a stage kind requires (architecture section 11:
+ * "a stage requiring a capability no configured executor declares must fail
+ * at configuration time"). The five dispatchable kinds map to four capability
+ * names — the review kinds share `review`, mirroring how the stages resolve
+ * two model entries. Unknown kinds return null, which the binding check
+ * refuses by name.
+ */
+export function requiredCapability(stageKind: string): string | null {
+  switch (stageKind) {
+    case "spec":
+      return "spec";
+    case "spec_review":
+    case "plan_review":
+      return "review";
+    case "plan":
+      return "plan";
+    case "implementation":
+      return "implementation";
+    default:
+      return null;
+  }
+}
+
+/**
+ * The frozen-executor binding check, enforced at every dispatch construction
+ * site before a stage row, worktree, or paid invocation exists.
+ *
+ * The identity test is canonical JSON equality, not id equality: a caller
+ * handing the same id with a different command, probe, or sandbox would
+ * otherwise pass the check while the run executes against a definition it
+ * never froze (the divergence the step-6 diagnosis's finding 4 names).
+ */
+export function requireFrozenBinding(
+  profile: Profile,
+  executor: ExecutorDefinition,
+  stageKind: string
+): { ok: true } | { ok: false; reason: string } {
+  if (canonicalJson(executor) !== canonicalJson(profile.executor)) {
+    return { ok: false, reason: `the executor handed to the stage does not match the executor frozen at run start` };
+  }
+  const capability = requiredCapability(stageKind);
+  if (capability === null) {
+    return { ok: false, reason: `no executor capability defined for stage kind ${stageKind}` };
+  }
+  if (!profile.executor.capabilities.includes(capability)) {
+    return {
+      ok: false,
+      reason: `executor ${executor.id} lacks the required capability "${capability}" for stage kind ${stageKind}: capabilities are ${profile.executor.capabilities.join(", ")}`,
+    };
+  }
+  return { ok: true };
+}

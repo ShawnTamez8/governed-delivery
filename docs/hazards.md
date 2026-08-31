@@ -153,3 +153,20 @@ the harness's word for it.
 Record the distinction rather than claiming the guarantee:
 `unverified_self_attestation` against `configured_standalone` for a separately
 spawned process.
+
+## 15. A declared sandbox and a compliant sample do not make a proposal subprocess read-only
+
+The first end-to-end run of `bw implement` against the real harness blocked
+with `add requires the file not to exist: src/clamp.mjs`: the implementer had
+written the two files into the run's worktree with its own tools and then
+returned them as `add` patches. The gate's existence check is correct; the
+prompt and one earlier compliant smoke are not evidence that the process is
+read-only — the same prompt and model wrote the files on one run and did not
+on another.
+
+Require proposal subprocesses to run read-only at the invocation boundary
+(restricted mode, an explicit read-only tool inventory, no session
+persistence) and have the stage assert the worktree is clean before and
+after the dispatch, blocking the run and naming the paths when anything
+changed. A prompt-level instruction is a request; the tree is checked, not
+trusted.
