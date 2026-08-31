@@ -5,32 +5,36 @@ resume point. Everything under **Session records** is history, ordered newest
 first, and may name state that has since been superseded — when the two
 disagree, Current state wins.
 
-## Current state (2026-08-30)
+## Current state (2026-08-31)
 
-**Shipped:** build order steps 1-6 on `master` (`32a714e`). Step 7
-(verification) is built and committed as `3be15fd` on branch **`step7`**, which
-is not merged. Suite 429 pass / 1 recorded skip, `typecheck` clean,
-`check:docs` clean.
+**Shipped:** build order steps 1-7. The step-6 trust-boundary correction
+(read-only executor invocation, worktree cleanliness gate, literal git paths,
+link fail-closed, frozen executor binding) is on `master` (`1d73eac`), review
+reconciled. Step 7 (verification) is fully done on branch **`step7`**, unmerged:
+all twelve tasks of `docs/features/verification-stage/plan.md` complete,
+including the manual smoke, and the plan is `Implemented`. The combined tree
+(correction + verification) is green: 446 tests / 445 pass / 1 recorded skip /
+0 fail, `typecheck` clean, `check:docs` clean.
 
-**Step 7 is NOT done.** Tasks 1-11 of `docs/features/verification-stage/plan.md`
-are complete and its independent code review is reconciled; **Task 12, the
-manual smoke, is outstanding** and the plan stays `Proposed`. Unproven: a
-passing verification stage, a blocking one, and the environment canary absent
-from real retained output. All three need a passed `implementation` stage.
+**The smoke is complete, with real model spend** (scratch repos, `claude-sonnet-5`,
+keypair in `~/.buildworks`): a passing run (smoke1 run 1, 5 dispatches,
+$0.07618) drove `migrate` → `new-run` → `spec` → approval → `plan` →
+`implement` → `verify` end to end; the implementer returned a valid patch
+without writing into the worktree (the correction's target failure did not
+recur), and verify passed both commands with retained evidence, run
+`in_progress`. A blocking run (smoke2 run 2, 5 dispatches, $0.06595) blocked
+verify on `node missing.mjs` exit 1, naming the command in the record, with
+the real failure output retained, worktree surviving, and the
+`BW_SMOKE_CANARY` absent from the retained env dump. Full detail in the
+verification-stage plan's implementation note (2026-08-31 entry).
 
-**The blocker is in step 6, on master, not in this branch.** `bw implement`
-blocked with `add requires the file not to exist` because the implementer wrote
-its files into the worktree and then also proposed them as `add` patches. The
-prompt forbids git commands and never forbids writing files. Step 6's own smoke
-passed the same prompt on one dispatch, so **the behaviour is nondeterministic
-and a retry may simply succeed**. Filed as
-`docs/proposals/implementer-writes-files-it-also-proposes.md`.
+**Also recorded:** smoke2 run 1 blocked at the plan coverage gate for real —
+the plan restated criteria without their `(traces to: …)` suffixes and
+`coverageMeetsCriteria` held the full text. Gate right; a re-run of a blocked
+run is refused by name.
 
 **Open and deferred:**
 
-- Task 12 needs a passed implementation stage. Cheapest path: fix the
-  implementer prompt, confirm across **several** runs (one green run is the
-  evidence step 6 already had), then one full-chain run for the record.
 - `VERIFY_RETENTION_MAX_BYTES` is 64 MB — chosen, not derived. Operator may
   want a different value; it is frozen per run either way.
 - Filesystem and network containment for verification commands is unbuilt and
@@ -40,9 +44,9 @@ and a retry may simply succeed**. Filed as
 - The build order stops at step 9. Do not build past it without an explicit
   decision.
 
-**Next up:** decide whether to fix the step-6 implementer prompt (one or two
-sentences in `buildImplementationAuthorPrompt`, `src/prompts.ts`) so Task 12
-can finish, or retry the smoke as-is given the failure is nondeterministic.
+**Next up:** step 8 (delivery check) is the next build-order step; it consumes
+the structured record the verification stage writes. Nothing on either branch
+blocks it.
 
 ## Diagnostics quick-reference
 
@@ -81,6 +85,43 @@ general habits.
   commits are not possible.
 
 ## Session records
+
+### Step 7: smoke completed; step 6 correction shipped (2026-08-31)
+
+The step-6 trust-boundary correction was planned, reviewed, reconciled,
+implemented, and code-reviewed on `master` (plan + review files under
+`docs/features/step6-trust-boundary/`), then step 7 was rebased onto it and
+the Task 12 smoke ran to completion — one passing run, one blocking run, and
+the environment canary proven absent, all against the real binary. Costs:
+passing run $0.07618, blocking run $0.06595, plus the tool-inventory probe
+$0.01116 (returned exactly `Glob/Grep/Read` under the read-only invocation).
+
+What the smoke added beyond the fixture suite:
+
+- **The passing run's implementer did not write files.** The nondeterministic
+  step-6 failure (write-then-propose) did not recur under the corrected
+  invocation. One green run is still one sample — the correction's mechanism
+  (read-only tools at the invocation boundary, not a prompt) is what makes the
+  difference, and the fixture suite breaks each guard on purpose.
+- **A genuine plan-coverage block.** The model dropped `(traces to: …)`
+  suffixes when restating criteria; the gate held the full criterion text
+  (case/whitespace normalization only) and blocked the run. This is the gate
+  being right, and it cost a full run. The prompt could tell the author to
+  copy criteria verbatim — not done, because the gate's honesty is the
+  designed behaviour and the record is the evidence.
+- **The env guarantee held for real.** `set` under the verify runner retains
+  only the eight named passthrough variables plus cmd's own defaults; a canary
+  exported to `bw verify` never reached the child.
+- **Exit codes through pipelines lie.** `cmd | grep ...; echo $?` reports
+  grep's status, not the stage's. The verify stage's real exit codes were
+  captured only when measured without the pipe. The smoke record uses only
+  un-piped exits.
+
+Also: a fresh `new-run` refuses a tree dirtied by a blocked run's projections —
+commit or clean them before starting the next run; CRLF normalization of a
+committed `governed.yaml` is harmless (the parser splits on `\r?\n`), but the
+working copy *will* be rewritten to CRLF by git's next touch, so never expect
+committed bytes on disk.
 
 ### Step 7: verification stage built, smoke blocked upstream (2026-08-30)
 

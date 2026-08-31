@@ -1,6 +1,6 @@
 # Verification Stage Implementation Plan
 
-**Status:** Proposed
+**Status:** Implemented
 
 **Goal:** Build order step 7: the `verification` stage chained from the passed `implementation` row — the system runs the commands frozen at run start from a committed `governed.yaml` inside the run's worktree, under a named environment passthrough, a bounded per-command ceiling, and a bounded output budget; it proves the worktree still holds the commit implementation left and is clean before and after every command, retains every command's complete output before deciding anything, and hands `delivery_check` a structured record naming the worktree and the verified commit. A missing or uncommitted configuration, a dirty or moved worktree, an overflowing command, a timeout, or any non-zero exit blocks the run and names the cause.
 
@@ -383,22 +383,22 @@
 
 **Steps:**
 
-- [ ] **Step 1: Drive a run to a passed implementation stage**
+- [x] **Step 1: Drive a run to a passed implementation stage**
   - Change: in a scratch git repository holding its own committed `governed.yaml` with cheap real commands, run `migrate`, `new-run`, `spec`, `approval-request`, sign, `approve`, `plan`, `implement` against the real `claude` binary, as the step-6 smoke did.
   - Verify: `bw implement --run <id>` prints a worktree path
   - Expected: a passed implementation stage with projections and the applied patch committed. Record the cost.
 
-- [ ] **Step 2: Verify for real**
+- [x] **Step 2: Verify for real**
   - Change: run `bw verify --run <id>`.
   - Verify: the command prints the result path and exits 0
   - Expected: every command ran in the worktree, each has an evidence file, the audit names each with its exit code, the record carries the worktree path and the verified commit, the stage is `passed`, and the run is still `in_progress`.
 
-- [ ] **Step 3: Prove the block path and the environment guarantee against the real binary**
+- [x] **Step 3: Prove the block path and the environment guarantee against the real binary**
   - Change: on a fresh run through the same sequence, make one configured command genuinely fail in the scratch repository — not by editing the system's own code. Separately, set a canary variable in the parent shell and add a command that prints its environment, confirming the canary does not appear in the evidence file.
   - Verify: `bw verify --run <id>` exits 1 naming the failing command
   - Expected: the stage is `blocked`, the run is `blocked`, the evidence holds the real failure output, the worktree survives, and the canary is absent from the retained environment dump.
 
-- [ ] **Step 4: Record the evidence**
+- [x] **Step 4: Record the evidence**
   - Change: record run ids, the cost of the earlier stages, each command's duration, and the evidence paths.
   - Verify: `npm test` in the working tree afterwards
   - Expected: unaffected; the smoke runs against a scratch repository.
@@ -528,3 +528,56 @@ output. All three need a passed `implementation` stage, which needs the step 6
 prompt fixed first. The stage is proven against fixtures, a real git worktree,
 and twenty-four break-restore cycles — but never against a run the real binary
 drove to completion.
+
+### Task 12: completed, 2026-08-31
+
+The upstream block is closed: the step-6 correction (frozen read-only executor,
+worktree cleanliness gate, literal git paths, link fail-closed — see
+`docs/features/step6-trust-boundary/plan.md`) is on master and this branch was
+rebased onto it. The smoke then ran against the real `claude` binary on the
+corrected tree, in two scratch repositories outside the working tree, each
+with its own committed `governed.yaml` and a throwaway Ed25519 keypair in
+`~/.buildworks` (no operator key existed on this machine; `new-run` froze the
+signer fingerprint into each profile).
+
+**Passing run** (scratch repo `smoke1`, run 1, five dispatches, $0.07618,
+about 34 seconds of harness time, all on `claude-sonnet-5`): the sequence
+`migrate`, `new-run`, `spec` (gate passed round 1, specHash
+`8f67cbfd…`), `approval-request` → `sign` → `approve`, `plan` (gate passed
+round 1, planHash `b57b8dbb…`), `implement`, `verify` completed end to end.
+The implementer returned a valid `add` patch for `scripts/clamp.mjs` without
+writing anything into the worktree — the exact failure the correction exists
+to close — and the stage's before/after cleanliness assertions held. The
+verification record (`result.json`) names the worktree, the verified commit
+`c7452e9a…`, and both commands with their evidence files; `node --version`
+passed in 34 ms and `npm --version` in 361 ms — the npm shim is hazard 8's
+path, exercised for real. The stage is `passed` and the run remains
+`in_progress`, exactly as Task 12 Step 2 specifies.
+
+**Blocking run** (scratch repo `smoke2`, run 2, five dispatches, $0.06595):
+the same sequence against a `governed.yaml` committing `["set"]` (an
+environment dump) first and `["node", "missing.mjs"]` second — a genuinely
+failing command authored in the scratch repository, not in this one. `verify`
+exited 1 and named the cause: the record carries `"outcome": "block"`,
+`"blockingCommand": "fail-check"`, and `"blockedBecause": "the command exited
+with code 1"`; the retained evidence file holds node's real `Cannot find
+module '…\worktrees\2\missing.mjs'` output, proving the command ran in the
+worktree. The stage is `blocked`, the run is `blocked`, and the worktree
+survives. With `BW_SMOKE_CANARY=canary-3f9a2c77` exported in the parent shell
+of `bw verify`, the retained `env-dump.log` — the real cmd environment, the
+passthrough variables and cmd's own defaults — contains no `canary` string
+anywhere: the named-passthrough guarantee holds against the real binary.
+
+**Also exercised for real, unplanned:** in `smoke2`, run 1 blocked at the
+plan gate (`plan.coverage.incomplete`) — the model's `## Coverage` section
+restated the spec's acceptance criteria without their `(traces to: …)`
+suffixes, and the gate held the full criterion text, refusing and blocking
+the run; a re-run of `plan --run 1` was refused by name (`run 1 is blocked,
+not in_progress`). The gate was right: `coverageMeetsCriteria` normalizes
+case and whitespace only, deliberately. That block is recorded here as
+evidence of a genuine gate decision, not a defect.
+
+Both repositories' `verify-audit` chains validate across all dispatches and
+blocked stages. `npm test` in the working tree afterwards: unaffected — 446
+tests, typecheck and doc-check clean (recorded below the smoke ran on a
+scratch tree).
