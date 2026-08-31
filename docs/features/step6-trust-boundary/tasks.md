@@ -1,0 +1,13 @@
+# Step-6 Trust-Boundary Correction — Tasks
+
+**Hazards considered:** 3 (the prompt states the read-only constraint), 4 (fixtures derive from the recorded smoke), 8 (one shell-resolved harness), 11 (no `--bare`; capability added), 12 (frozen executor enforced), 14 (independence recording untouched), 15 (the new entry this plan adds). Entries 1, 2, 5, 6, 7, 9, 10, 13 do not drive this correction — see `plan.md`'s line for the reasons.
+
+- [ ] **Task 1: The read-only executor definition** — `CLAUDE_CODE` gains the restricted/safe read-only invocation and `capabilities: ["spec", "plan", "review", "implementation"]`; the regression test fails first; `ARCHITECTURE.md` section 11's YAML follows.
+- [ ] **Task 2: Frozen agent and executor binding at every construction site** — `requireFrozenBinding` + `requiredCapability` in `src/profile.ts`; profile-sourced agents in the three stages; `selectReviewers` takes candidates; the CLI's four cases pass `profile.executor`; fixture scaffolds freeze what they hand; the regressions fail before the enforcement lands.
+- [ ] **Task 3: Worktree cleanliness is a deterministic gate** — `mutate-then-propose` fixture mode; before-dispatch, post-dispatch, and pre-pass cleanliness assertions; the regression fails first.
+- [ ] **Task 4: Literal git paths and exact staged and committed sets** — `git --literal-pathspecs add --` invocation, staged-set and committed-set equality, audit derived from the observed set; the `-A` ordering test fails first.
+- [ ] **Task 5: Link and junction components fail closed** — link-component walk replaces the dangling-link branch; `link-ordinary` junction regression fails first; the four existing link-test expectations move.
+- [ ] **Task 6: The prompt sentence, the hazards entry, and the architecture prose** — read-only sentence in the implementer prompt (scan covered), `docs/hazards.md` entry 15, `ARCHITECTURE.md` sections 11 and 22.
+- [ ] **Task 7: Break and restore every guard** — six recorded break-restore cycles (the two cleanliness checks recorded as one layered family), plus the three guards recorded with their unbreakable-at-stage-level reasoning.
+- [ ] **Task 8: The completion gate, the commits, and the step-7 rebase** — `npm ci && typecheck && test && check:docs`; two commits on master; `step7` rebased; proposal and verification-stage records get resolution notes.
+- [ ] **Task 9: The step-7 Task 12 smoke and the learnings** — the tool-inventory probe first, then one passing and one blocking verification run plus the environment canary against the real binary in fresh scratch repositories; step-7 plan to Implemented; learnings entry.
