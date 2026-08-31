@@ -1,6 +1,6 @@
 # Step-6 Trust-Boundary Correction Implementation Plan
 
-**Status:** Reconciled
+**Status:** Implemented
 
 **Goal:** Close the step-6 trust-boundary defect the recorded step-7 smoke exposed — the implementer subprocess could mutate the worktree the deterministic gate later trusted — by enforcing a read-only executor invocation, a clean-worktree gate before and after dispatch, literal git path handling with exact staged/committed set equality, fail-closed link components, and frozen agent/executor binding at every dispatch construction site, then re-running the step-7 Task 12 smoke against the corrected code.
 
@@ -318,25 +318,25 @@
 
 **Steps:**
 
-- [ ] **Step 1: the tool-inventory probe, then the passing run**
+- [x] **Step 1: the tool-inventory probe, then the passing run**
   - Change: **first, the probe** — in the scratch repository, run the exact `CLAUDE_CODE.command` array plus `--model claude-sonnet-5` with a probe prompt on stdin asking the model to enumerate the tools available to it in this session. This is a direct invocation (the same way the smoke drives the harness), not a governed dispatch — no `agent_run` row is owed for a probe. Assert the response names exactly `Read`, `Glob`, and `Grep` and nothing that can write. Any deviation is a blocking finding: record it and stop before the chain's spend — a silent-ignore failure in the CLI's tool-name validation would otherwise defeat the read-only guarantee without failing a one-sample smoke.
   - Change: **then the passing run** — in the same fresh scratch git repository outside the working tree (the step-7 Task 12 Step 1 pattern: committed `governed.yaml` with cheap real commands — `["node", "--version"]` and `["npm", "--version"]`, npm deliberately for hazard 8's shim path — and a throwaway Ed25519 keypair via `node scripts/sign-approval.mjs keygen`), drive `migrate`, `new-run --model claude-sonnet-5`, `spec`, `approval-request`, sign, `approve`, `plan`, `implement`, then `verify`. Record: the model requested and effective, the cost from the envelopes, whether the implementer returned a valid patch set without writing, whether the gate passed and committed, and the verification result.
   - Verify: `bw implement --run <id>` then `bw verify --run <id>` in the scratch repository
   - Expected: the probe names exactly the three read tools; then a passed implementation stage (the read-only invocation working for real), then a passed verification stage with evidence files. A block is an acceptable recorded outcome if it names a cause worth fixing — do not retry to green (hazard 7 and the diagnosis's one-sample lesson).
   - Budget: roughly the recorded full-chain cost ($0.5021 through seven dispatches) plus verification, plus the probe (~$0.02-0.05); expect $0.6-0.95 for the run. The verification stage's own cost is bounded by its configured commands (cheap `node --version` invocations), not additional dispatches.
 
-- [ ] **Step 2: the blocking run and the canary**
+- [x] **Step 2: the blocking run and the canary**
   - Change: a second fresh scratch repository through the same sequence, with one configured command genuinely failing (e.g. `["node", "-e", "process.exit(3)"]` — a failure in the scratch repo's own `governed.yaml`, never in the system's code), and a canary variable set in the parent shell with a command that prints its environment.
   - Verify: `bw verify --run <id>` exits 1 naming the failing command; the evidence file from the env-printing command lacks the canary
   - Expected: the stage is `blocked`, the run is `blocked`, the evidence holds the real failure output, the worktree survives, and the canary is absent from the retained environment dump.
   - Budget: $0.6-0.9.
 
-- [ ] **Step 3: the step-7 record**
+- [x] **Step 3: the step-7 record**
   - Change: `docs/features/verification-stage/plan.md` — Task 12's four steps checked, the implementation note gains the dated evidence (run ids, costs, durations, evidence paths), the status flips to `Implemented` (its gate names Task 12, now complete).
   - Verify: `npm run check:docs` in the working tree afterwards
   - Expected: unaffected by the smoke; the scratch repositories are outside the tree.
 
-- [ ] **Step 4: the learnings**
+- [x] **Step 4: the learnings**
   - Change: append an entry to `.claude/sessions/project-learnings.md` covering: the correction's landed decisions (the capability vocabulary, the canonical-JSON executor identity, the layered guards and which were proven by breaking), the smoke's real outcome and costs, and the honest boundary recorded in Task 7 (guards proven vs. layered backstops).
   - Verify: read the entry back
   - Expected: it names the smoke's real output and the landed decisions, not a summary of intent.
@@ -347,4 +347,75 @@
 
 ## Implementation note
 
-To be written on completion, following the step-6 plan's precedent: the shipped summary, the deviations, and the smoke's real costs. The gate is Task 8's completion gate plus Task 9's recorded smoke.
+**Date:** 2026-08-31
+
+### What shipped
+
+All five enforcement layers on `master`, as designed: the read-only executor
+invocation (`--restricted --safe-mode --tools Read,Glob,Grep
+--disallowedTools Write,Edit,NotebookEdit,Bash,mcp__* --permission-mode
+dontAsk --strict-mcp-config --no-session-persistence`, no `--bare`, the
+implementation capability declared — hazard 11); the worktree cleanliness gate
+(before dispatch, after dispatch, before pass); literal git paths and
+staged/committed set equality; the link-component fail-closed walk; and
+`requireFrozenBinding` + `requiredCapability` with the canonical-JSON executor
+identity, enforced at the CLI's four cases and inside the three stages.
+`ARCHITECTURE.md` sections 11 and 22 and `docs/hazards.md` entry 15 follow.
+Gate: typecheck clean, 384 tests / 383 pass / 1 recorded skip / 0 fail at
+review time on master; 446 tests on the combined rebased tree.
+
+### Deviations (all recorded at code review, all accepted)
+
+- **Fixture-freeze mechanism:** the run-setup helpers did not gain
+  `opts.executor`; instead every scratch test freezes exactly the executor it
+  hands via an explicit `freezeExecutorIntoProfile` call at each site. Same
+  contract, proven by the binding regressions and the green suite
+  (code-review finding 2).
+- **`cli.test.ts`'s `--agent a` became a real agent id** (`spec-author`) and
+  the standalone spec-stage test gained a freeze line — necessitated
+  consequences of the enforcement, withheld from the review.
+- **The `-A` ordering tests landed green** (the cleanliness gate arrived
+  first); the fail-first proof for that family is Task 7's break 4.
+- **The capability-name message quotes the capability** to match the tests'
+  regexes.
+- **The implementer prompt fix** (code-review finding 1): the enforcement
+  meta-comment now sits above the `return` statement; the delivered prompt
+  holds exactly the plan's sentence.
+
+### The smoke, for real
+
+Costs below are from the `agent_run` rows (all `claude-sonnet-5`); budgets
+came in far under the plan's $0.6-0.95 estimate because both runs passed
+their spec and plan gates in round 1 (five dispatches each, not the recorded
+$0.5021/seven-dispatch earlier attempt).
+
+- **Tool-inventory probe:** exactly `Glob`, `Grep`, `Read` in the response —
+  nothing that can write — at $0.01116. The read-only invocation is verified
+  against the real binary, closing the plan review's high-risk finding.
+- **Passing run** (`smoke1`, run 1, 5 dispatches, **$0.07618**, ~34 s):
+  `migrate` → `new-run` → `spec` (round 1, specHash `8f67cbfd…`) → approval
+  (signer frozen) → `plan` (round 1, planHash `b57b8dbb…`) → `implement` →
+  `verify`. The implementer returned a valid `add` patch for
+  `scripts/clamp.mjs` **without writing anything into the worktree** — the
+  exact failure this correction exists to close — and the gate applied and
+  committed it (base `b5ef1239…`). Verify passed both commands with retained
+  evidence; the run stays `in_progress`, as step-7 Task 12 Step 2 specifies.
+- **Blocking run** (`smoke2`, run 2, 5 dispatches, **$0.06595**): the same
+  sequence against a `governed.yaml` committing `["set"]` then
+  `["node", "missing.mjs"]`. `verify` exited 1; the record carries
+  `"outcome": "block"`, `"blockingCommand": "fail-check"`, and
+  `"blockedBecause": "the command exited with code 1"`; the retained evidence
+  holds node's real module-not-found output from inside the worktree. Stage
+  and run `blocked`; the worktree survives. With
+  `BW_SMOKE_CANARY=canary-3f9a2c77` exported to `bw verify`, the retained
+  `env-dump.log` contains no `canary` string — the named-passthrough
+  guarantee holds against the real binary.
+- **Unplanned, recorded:** `smoke2` run 1 blocked at the plan coverage gate
+  (`plan.coverage.incomplete`) — the plan restated criteria without their
+  `(traces to: …)` suffixes and the gate held the full text. The gate was
+  right; the block cost a full run and is evidence, not a defect. A re-run of
+  a blocked run is refused by name.
+
+Both scratch repositories' `verify-audit` chains validate. Working tree
+afterwards: 446 tests / 445 pass / 1 recorded skip / 0 fail, typecheck and
+doc-check clean. Full detail in the step-7 plan's 2026-08-31 record.
