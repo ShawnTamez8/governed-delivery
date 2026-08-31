@@ -44,20 +44,23 @@ This is hazard 3 — a constrained field must have its constraint stated in the
 prompt — applied to a constrained *behaviour* rather than a field. The
 constraint exists and is enforced; it was simply never said.
 
-## Why this was not caught before
+## Why the step-6 smoke did not catch it
 
-There is no recorded step-6 smoke, and no earlier smoke could have caught it
-either, because **every previous smoke exercised one stage in isolation.**
-Step 2 drove the harness adapter, step 3 drove `bw spec`, and step 5 drove the
-plan stage with — in its own words — "the spec, stage chain, `spec.gate.pass`
-event, and approval ... constructed through the store, so the plan stage's
-dispatches were the only spend." The run that found this is the first in which
-the stages were chained on real model output.
+**Step 6 was smoked, and it passed.** `.claude/sessions/project-learnings.md`
+records it: "one `claude-sonnet-5` dispatch, $0.0673, 5.1s, valid patch set on
+the first attempt", and `docs/features/implementation-stage/plan.md` Task 9
+Step 1 is checked off. Same prompt, same model, same constructed-upstream
+setup. That run's implementer returned its files as JSON without writing them;
+this run's implementer wrote them first.
 
-Step 6 shipped on fixture coverage alone, and the fixture executor returns a
-canned `AgentResult` without ever touching the worktree — so no test could
-have observed this. It reproduces the step-3 lesson exactly: real smoke output
-must drive prompt iteration, and fixtures cannot.
+So the behaviour is **not deterministic**, and that is the point. The prompt
+permits both readings, the gate accepts only one, and which one occurs is the
+model's choice on the day. A one-run smoke that passes is not evidence the
+path is sound — it is one sample from a distribution nobody has characterised.
+
+The fixture suite cannot see any of this: the fixture executor returns a
+canned `AgentResult` and never touches the worktree, so no automated test can
+observe an implementer that writes.
 
 ## Options
 
@@ -77,9 +80,13 @@ must drive prompt iteration, and fixtures cannot.
   `docs/proposals/verification-containment.md` raises for verification
   commands, and the same missing mechanism blocks it.
 
-The first option is the one to try first, and it needs its own smoke to
-confirm — a prompt change unverified against the real binary is the same
-mistake in a new place.
+The first option is the one to try first. Confirming it needs **more than one
+run**: the failure is nondeterministic, so a single green smoke is exactly the
+evidence step 6 already had. Run the implementer several times against a
+constructed upstream — the pattern steps 5 and 6 both used, where the spec,
+chain, gate event, and approval are built through the store so the implementer
+dispatch is the only spend, about $0.13 an attempt — and require every one of
+them to return files it did not write.
 
 ## Blast radius
 

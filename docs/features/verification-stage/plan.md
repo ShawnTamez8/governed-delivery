@@ -491,11 +491,18 @@ What worked, all against `claude-sonnet-5`:
 src/clamp.mjs`. The implementer had written the files into the worktree with
 its own tools and then also returned them as `add` patches. The gate is right
 and the model is not being unreasonable: the prompt forbids git commands and
-never forbids writing files. This is a step 6 prompt defect, filed as
-`docs/proposals/implementer-writes-files-it-also-proposes.md`, and it is
-systematic rather than unlucky — a retry buys another dispatch and the same
-block. **There is no recorded step-6 smoke**; this appears to be the first
-time `bw implement` has been driven against the real binary at all.
+never forbids writing files. Filed as
+`docs/proposals/implementer-writes-files-it-also-proposes.md` — step 6 scope,
+not folded in here.
+
+**Corrected after first writing this note:** step 6 *was* smoked, and it
+passed — one dispatch, $0.0673, "valid patch set on the first attempt". This
+note originally said no step-6 smoke existed, from a grep hit misattributed to
+step 2 without opening the entry around it. The correction makes the defect
+worse rather than better: same prompt and same model, one run wrote the files
+and one did not, so `bw implement` passes or blocks on model whim and its
+single smoke happened to land on the good side. It also means a retry here may
+simply succeed.
 
 What the smoke did establish about *this* stage, against real state rather
 than fixtures: `bw verify --run 1` refuses the blocked run by name
