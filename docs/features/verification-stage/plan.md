@@ -415,6 +415,17 @@ Complete when `npm ci && npm run typecheck && npm test && npm run check:docs` pa
 
 ## Implementation note
 
+**Date:** 2026-08-31
+
+**The upstream block is resolved.** The step-6 trust-boundary correction
+(`docs/features/step6-trust-boundary/plan.md`, on master) closes the
+implementer-mutates-worktree defect: the implementer runs read-only at the
+invocation boundary, the stage asserts a clean worktree before and after
+dispatch, patch paths travel literally, link components fail closed, and the
+frozen executor and agents bind every dispatch construction site. This
+branch has been rebased onto the corrected master; Task 12 now runs against
+the corrected executor and is completed in the entry below.
+
 **Date:** 2026-08-30
 
 **Tasks 1 through 11 are complete; Task 12 is outstanding.** The plan's status

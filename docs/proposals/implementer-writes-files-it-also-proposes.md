@@ -95,3 +95,18 @@ them to return files it did not write.
 work and is deliberately not folded into the verification-stage plan, which is
 complete except for its own smoke — that smoke is blocked on this, because it
 cannot reach a passed `implementation` stage to verify.
+
+## Resolution (2026-08-31)
+
+The failure was diagnosed as a step-6 trust-boundary defect
+(`.claude/sessions/2026-08-31-debug-implementer-mutates-worktree.md`) and
+closed by `docs/features/step6-trust-boundary/plan.md`: the implementer now
+runs read-only at the invocation boundary (restricted mode, an inventory
+fixed to Read/Glob/Grep), the stage asserts the worktree is clean before and
+after dispatch, patch paths travel literally with exact staged and committed
+set equality, link components fail closed, and the run's frozen executor and
+agents bind every dispatch construction site. The prompt sentence this
+proposal's first option recommends is included as UX — hazard 3 applied to a
+constrained behaviour — and the gate-tolerance option remains rejected. The
+recorded smoke run is terminal; the step-7 Task 12 smoke reruns against the
+corrected code.
