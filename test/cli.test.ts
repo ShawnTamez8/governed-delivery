@@ -1115,7 +1115,3 @@ test("the usage text distinguishes verify from verify-audit", () => {
     rmSync(cwd, { recursive: true, force: true });
   }
 });
-  } finally {
-    rmSync(cwd, { recursive: true, force: true });
-  }
-});

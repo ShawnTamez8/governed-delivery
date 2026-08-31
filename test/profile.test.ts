@@ -202,7 +202,7 @@ test("requiredCapability maps the five dispatchable stage kinds", () => {
 
 test("requireFrozenBinding accepts the frozen executor with the required capability", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
     assert.deepEqual(requireFrozenBinding(profile, CLAUDE_CODE, "implementation"), { ok: true });
     assert.deepEqual(requireFrozenBinding(profile, CLAUDE_CODE, "spec_review"), { ok: true });
   });
@@ -210,7 +210,7 @@ test("requireFrozenBinding accepts the frozen executor with the required capabil
 
 test("requireFrozenBinding refuses an executor that differs from the frozen one, even with the same id", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
     const different = {
       ...CLAUDE_CODE,
       sandbox: { ...CLAUDE_CODE.sandbox, idleTimeoutSeconds: 999 },
@@ -224,7 +224,7 @@ test("requireFrozenBinding refuses an executor that differs from the frozen one,
 
 test("requireFrozenBinding refuses a missing capability naming capability and kind", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
     const without = {
       ...profile,
       executor: {
@@ -241,7 +241,7 @@ test("requireFrozenBinding refuses a missing capability naming capability and ki
 
 test("requireFrozenBinding refuses an unknown stage kind by name", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
     const verdict = requireFrozenBinding(profile, CLAUDE_CODE, "delivery_check");
     assert.equal(verdict.ok, false);
     if (verdict.ok) return;
