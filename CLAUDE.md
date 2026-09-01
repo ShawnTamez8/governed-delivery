@@ -62,9 +62,18 @@ something critical without naming the configurations that reach it.
 - `docs/hazards.md` — failures that have actually occurred, each costing real
   money. Read the relevant entry before implementing that area.
 - `docs/proposals/` — backlog. Markdown, no enforced lifecycle.
-- `docs/features/<slug>/` — active work. `design.md` is the only human-authored
-  file; everything else is produced by a stage and `status.md` is a projection.
+- `docs/features/<slug>/` — active work. That is the design: `design.md` is the
+  only human-authored file, everything else is produced by a stage, and
+  `status.md` is a projection. No stage writes there yet. Every directory
+  present today is bootstrap work on BuildWorks itself — a hand-written
+  `plan.md`, sometimes `tasks.md`, and dated review records beside them. Do not
+  read them as stage output.
 - `.governance/` — machine-local state. Gitignored. Never hand-edited.
+
+Plans and review records carry a `**Status:**` line. A plan is `Implemented`
+once it has shipped and `Reconciled` when it has absorbed its reviews but
+nothing is built; a review record is `reconciled` once every finding carries a
+disposition. Nothing enforces these values — `check:docs` does not read them.
 
 ## Session continuity
 
