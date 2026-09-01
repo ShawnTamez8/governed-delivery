@@ -98,9 +98,9 @@ cannot reach a passed `implementation` stage to verify.
 
 ## Resolution (2026-08-31)
 
-The failure was diagnosed as a step-6 trust-boundary defect
-(`.claude/sessions/2026-08-31-debug-implementer-mutates-worktree.md`) and
-closed by `docs/features/step6-trust-boundary/plan.md`: the implementer now
+The failure was diagnosed as a step-6 trust-boundary defect and closed by
+`docs/features/step6-trust-boundary/plan.md`, which records the diagnosis in
+full: the implementer now
 runs read-only at the invocation boundary (restricted mode, an inventory
 fixed to Read/Glob/Grep), the stage asserts the worktree is clean before and
 after dispatch, patch paths travel literally with exact staged and committed

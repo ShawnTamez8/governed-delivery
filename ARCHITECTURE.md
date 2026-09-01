@@ -231,10 +231,18 @@ write.
 
 ### Finding identity
 
-Derive a finding's ID from a normalized location plus an `intentKey` describing
-what is wrong — not from its wording. The same concern rephrased in a
-later round then produces the same ID, so findings deduplicate and can be
-tracked across rounds and reviewers.
+Derive a finding's canonical ID from the round, a normalized location, and an
+`intentKey` describing what is wrong — not from its wording. Within one round,
+two reviewers describing the same concern at the same location produce one
+canonical finding, and each reviewer's report hangs off it as immutable
+evidence carrying that reviewer's own severity, classification, and subject.
+
+Deduplication stops at the round boundary, and that is deliberate. `intentKey`
+is model-authored: a reviewer restating the same concern in a later round has
+been measured to supply a different one. A later round's finding is therefore a
+new canonical identity that never overwrites the earlier round's evidence. The
+system deduplicates wording within a round; it does not recognize a concern as
+semantically the same across rounds, and nothing may be built as though it did.
 
 Consequence: `intentKey` cannot be normalized after the fact without changing
 identity, so its accepted shape must be stated in the prompt that asks for it.
@@ -290,18 +298,31 @@ Enforced at dispatch, not by convention:
 A pure function, not a subsystem:
 
 ```ts
-selectReviewers(stage, risk, spec) -> Agent[]
+selectReviewers(candidates, size, requestedSpecialties, requiredSpecialties)
+  -> Agent[]
 ```
 
-Required specialties first, then ranked relevance to fill remaining slots, with
-role separation applied. Roughly eighty lines, trivially testable. Panel size
-is configuration, resolved at run start and frozen in the profile: a count per
-risk level. Defaults: two reviewers at standard risk, one at low risk.
+Required specialties first, then the specialties the artifact's author
+requested, then ranked relevance to fill remaining seats, with role separation
+applied and no specialty seated twice. Roughly eighty lines, trivially
+testable.
+
+Panel size is configuration, resolved at run start and frozen in the profile.
+Its floor is two reviewers; the configured maximum defaults to two and may be
+raised to five, which requires registering the additional specialists first.
+The author proposes a size inside those bounds and the system staffs it —
+section 12 states the request, the seat accounting, and the refusal. A
+one-reviewer panel is deliberately unavailable: one reviewer is one lens, and
+the default installation should staff two distinct specialties before a lower
+floor is worth designing. Risk-tiered panel sizes, including the one-reviewer
+low-risk tier this document previously specified, are deferred rather than
+rejected; reintroduce them only with a stated reason and a floor that still
+holds.
 
 Risk is computed once, deterministically, at intake — from the spec's
 `changeKind`, the size of its declared scope, and whether it touches protected
-paths. It sizes the panel and travels into the authorization for the operator
-to sign. An agent never assesses its own risk.
+paths. It travels into the authorization for the operator to sign. An agent
+never assesses its own risk.
 
 Keep it free of model routing and telemetry concerns. Entangling selection with
 semantic model tiers and capability preflight is what made the previous
@@ -419,13 +440,69 @@ requires.
 A gate is deterministic. A reviewer's verdict is an input to a gate, never the
 gate itself.
 
-**`spec_review`.** Persist immutable source and policy intake first. Dispatch
-the author and the review panel. A material finding or any change to governed
-content triggers a closure pass — one further round by the same panel, charged
-against the remediation budget, after which the gate decides again. The
-reviewer assigns severity; materiality is a severity threshold set in
-configuration and frozen in the profile, never a reviewer's self-assessment.
-The deterministic gate decides completion.
+**`spec_review` and `plan_review`.** Persist immutable source and policy intake
+first. Both reviewed artifacts run the same five phases in a fixed order: the
+author drafts; the same author definition self-critiques once, in its own
+dispatch, returning the revised artifact and its panel request; a complete
+independent panel of specialist reviewers reports findings; the same author
+definition reconciles, in its own dispatch, returning the revised artifact and
+one typed decision per canonical finding; and the deterministic gate decides.
+There is no closure pass — no further panel is dispatched to confirm the
+author's own answers. Round counts are configuration, frozen in the profile,
+and default to one. A configured round is one complete panel-and-reconciliation
+cycle; self-critique happens once per artifact regardless of how many are
+configured.
+
+**The author proposes the panel; the system staffs it.** The self-critique
+result carries a requested panel size within frozen bounds and a unique list of
+specialties — never an agent identity. Configured required specialties consume
+seats inside that size. Deterministic code selects distinct eligible reviewers
+with distinct specialties from the frozen registry, excludes the author, and
+refuses by name when the required-and-requested union cannot be staffed. It
+never shrinks the panel and never drops a requested lens.
+
+**Completion is a property of the decisions, not of an empty findings list.**
+The gate passes when every canonical finding of every configured round carries
+exactly one retained typed decision, the conditional content that disposition
+requires is present and valid, and the reconciled artifact passes the same
+mechanical document gates its draft did. Severity remains immutable reviewer
+evidence and no longer gates these two stages: a materiality threshold deciding
+completion is replaced by decision completeness.
+
+**Where authority sits, stated exactly.** The author supplies the semantic
+disposition — what a finding means and what to do about it. Deterministic code
+validates, before any stage state changes: that every canonical finding carries
+one decision and no decision names a finding that does not exist; that the
+normative delta between the artifact before and after reconciliation is fully
+accounted for; that every cited excerpt occurs textually in the governing
+input; that conditional proposal content is complete where its disposition
+requires it and absent where it forbids it; that the mechanical artifact gates
+pass; and that the resulting route is honoured.
+
+**`addressed` is not authority to invent an obligation.** Deterministic code
+derives the normative delta by set-diffing the parsed nodes of the validated
+artifact before and after reconciliation — declared artifacts and acceptance
+criteria for a specification, tasks and coverage for a plan. Every added node,
+including the added half of a replacement, must be claimed exactly once by an
+`addressed` decision and carry an excerpt from the governing input: the design
+for a specification, the approved specification for a plan. The artifact under
+review is never an authority for its own content. An added node that is
+unclaimed, claimed twice, or ungrounded is handled as `cannot_determine` and
+blocks. Where the governing input is genuinely silent, the author's route is an
+upstream disposition with a complete proposal candidate, not a new requirement.
+This adds no round and no dispatch: the delta is computed from artifacts the
+stage already holds.
+
+**What these checks do not establish.** An exact match proves that the cited
+words occur in the governing input, in that order. It does not prove they
+logically support the rejection or the addition they are offered for. Artifact
+hashes and mechanical document gates prove what changed and that the result
+still parses; they do not prove the reported concern was semantically cured. No
+panel independently confirms an `addressed` decision or a grounded rejection.
+That residual semantic judgement is the author's, it is retained as evidence,
+and it is the accepted cost of removing the closure pass. It is not a gap the
+checks above close, and nothing in this system should be described as though it
+were.
 
 **`awaiting_approval`.** The only human gate. One signed authorization — an
 Ed25519 signature by the operator, verified by the gate against a public key
@@ -435,9 +512,9 @@ gate re-checks that policy has not changed since intake before honoring it.
 Worker sessions cannot resolve it and never receive signing secrets.
 
 The **profile** is the frozen record of everything the run resolved at start —
-model map, limits, policy, agent definitions, verification config, panel
-sizes, and system name — stored under `.governance/profiles/<run>/` with its
-hash on the run row. Policy is
+model map, limits, policy, agent definitions, verification config, review panel
+bounds and round counts, and system name — stored under
+`.governance/profiles/<run>/` with its hash on the run row. Policy is
 the subset of the profile that gates consult; the re-check compares the
 profile's policy hash against the policy in force. The **scope** the operator
 signs is the set of paths and artifacts the spec declares; the gate computes
@@ -499,32 +576,56 @@ explicit decision. Building past it is not a matter of finding time.
 Reviewers produce findings. They do not vote, and the system does not need them
 to agree.
 
-**Findings deduplicate by identity.** Two reviewers raising the same concern
-about the same location produce one finding, because identity derives from
-intent and location rather than wording. This removes most apparent conflict
-before anything has to resolve it.
+**Findings deduplicate by identity, within a round.** Two reviewers raising the
+same concern about the same location in the same round produce one canonical
+finding, because identity derives from intent and location rather than wording.
+Each reviewer's report remains a separate immutable child of that finding,
+carrying its own severity, classification, and subject, so no stored value ever
+pairs fields no single reviewer returned. Round is part of the identity: the
+same concern in a later configured round takes a later-round identity and
+cannot overwrite the earlier round's evidence.
+
+**Identity deduplicates wording, not meaning.** `intentKey` is model-authored,
+and a reviewer restating the same concern in a later round has been measured to
+supply a different one. Cross-round deduplication is a convenience that
+sometimes fires, never a guarantee that the system recognizes a repeated
+concern. Do not build a behaviour that depends on it.
 
 **The gate is deterministic, so consensus is not required.** A gate does not ask
-whether reviewers agreed; it asks whether every material finding is resolved or
-explicitly dispositioned with a justification. Contradictory recommendations
-from two reviewers are two findings, and both must be answered.
+whether reviewers agreed; it asks whether every canonical finding carries
+exactly one retained typed decision whose conditional content is complete and
+valid. Contradictory recommendations from two reviewers are two immutable
+reports on one canonical finding, and the single decision answers both without
+either report being rewritten.
 
-**Nothing resolves its own finding.** The author may address or dispute a
-finding; the decision that it is resolved belongs to the gate, and where the
-gate cannot decide, to a human.
+**Nothing resolves its own finding.** The author supplies the disposition and
+the artifact revision; whether that advances the run belongs to the
+deterministic gate, and where the gate cannot decide, to a human. The author
+reconciles by design — it is the only actor holding the context to answer a
+finding about its own artifact — and the boundary that keeps this honest is
+that it never decides whether its own answer suffices. A reviewer never
+reconciles, and no agent approves.
 
-**Exhausting the remediation budget blocks the run and names the findings.**
-A bounded number of rounds, then a terminal block that identifies the specific
-finding IDs still open, with the branch and worktree retained. An unresolvable
-disagreement is a human decision, not an aggregation function, and burning more
-rounds against it only spends money.
+**Exhausting the configured rounds blocks the run and names the findings.** A
+bounded number of panel-and-reconciliation cycles, then a terminal block
+identifying the canonical finding IDs still unanswered, with the branch and
+worktree retained. The gate reads every configured round's decisions, not only
+the last: a later round cannot clear a block an earlier round raised. An
+unresolvable disagreement is a human decision, not an aggregation function, and
+burning more rounds against it only spends money.
 
-**A finding whose cause is upstream must be reportable as such.** A reviewer who
-correctly concludes that the specification is at fault should not be forced to
-express that as a defect in the plan, because the author can then only answer by
-revising the wrong artifact. Give the result contract a way to say "this is
-valid and its cause is upstream" and route it to a human rather than to another
-remediation round.
+**A finding whose cause is upstream must be reportable as such, and must have
+somewhere to go.** A reviewer who correctly concludes that the specification is
+at fault should not be forced to express that as a defect in the plan, because
+the author can then only answer by revising the wrong artifact. The result
+contract says "this is valid and its cause is upstream", and reconciliation
+routes it three ways: `upstream_follow_up` writes a proposal and the run
+continues; `upstream_blocking` writes the proposal and blocks, because filing a
+missing decision does not make the approved input implementable; and
+`cannot_determine` blocks for a human and may claim no proposal. A proposal is
+run state with retained evidence and is non-binding — it adds no acceptance
+criterion to the current feature. No run writes into `docs/proposals/`; export
+and promotion are human actions, as section 14 describes.
 
 ## 14. Work intake and projections
 
@@ -754,9 +855,15 @@ price.
   but the flood.
 - **Concurrency.** One writer per repository, enforced by a lock. A second
   invocation fails fast with a clear diagnostic rather than interleaving writes.
-- **Remediation rounds.** A bounded budget per reviewed stage, set in
-  configuration and frozen in the profile — default three rounds, counting
-  closure passes. Exhausting it blocks; it does not silently accept.
+- **Review rounds.** A bounded budget per reviewed stage, set in configuration
+  and frozen in the profile — one round by default, configurable higher. A
+  round is one complete panel-and-reconciliation cycle; there is no closure
+  pass, and the count is unrelated to panel size. Exhausting the budget blocks;
+  it does not silently accept.
+- **Verification retries.** No limit is in force, because there is no round
+  loop: the first verification command that does not pass blocks the run.
+  Adding retries later means adding a limit of its own, frozen in the profile
+  like every other value here — not borrowing the review budget above.
 - **Invocation time.** An inactivity budget with a separate absolute ceiling,
   as "Harness invocation" describes.
 - **Run duration.** A ceiling, because an unattended run that cannot finish

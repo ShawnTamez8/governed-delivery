@@ -17,6 +17,7 @@ These were settled during reconciliation of the four review records and are bind
 - **The author is the reconciler.** There is no separate reconciler agent. `spec-author` reconciles the specification, `plan-author` reconciles the plan, each as its own evidence-bearing dispatch under the frozen author definition and model mapping.
 - **One self-critique per artifact,** before any independent reviewer sees it, and never occupying a panel seat.
 - **`rejected_with_rationale` advances at any severity when it is textually grounded.** The author may decline any finding, including `critical`, with a retained rationale and an exact source reference deterministic code can match against the governing upstream input: `design.md` for specification reconciliation and the approved specification for plan reconciliation. That match proves the excerpt occurs; it does not prove the excerpt logically supports the rejection. The current artifact cannot ground its own rejection. Missing or unmatched grounding becomes `cannot_determine` and blocks for a human, but a semantically weak matching rationale can advance under the selected author-led authority. Only `upstream_blocking` and `cannot_determine` block after validation. Severity remains immutable reviewer evidence and stops being a completion gate for the review stages.
+- **`addressed` is not authority to invent a normative obligation.** Deterministic code compares the validated artifact before and after reconciliation. Every added or replaced parsed normative node must be claimed by exactly one `addressed` decision and textually grounded in the governing design for a specification or the approved specification for a plan. If the author cannot supply that grounding, it must route the concern upstream with a complete proposal candidate or return `cannot_determine`; an ungrounded `addressed` decision cannot advance. This adds no closure round or dispatch. Exact matching still proves textual occurrence rather than semantic sufficiency.
 - **The author proposes the panel; deterministic code staffs it.** After self-critique the author returns a requested panel size between two and the frozen configured maximum, plus a unique list of specialties the artifact calls for. It never names agent identities. Configured required specialties consume seats in that size; their union with requested specialties must fit. Deterministic code selects distinct eligible reviewers with distinct specialties from the frozen registry, excludes the author, and blocks by name rather than shrinking or dropping a requested lens when the union cannot be staffed.
 - **The configured panel maximum defaults to two,** with configurable bounds of two to five. The default installation only needs to staff two; raising the maximum is an operator action that requires adding specialists.
 - **An upstream concern becomes a proposal stored as run state,** with evidence under the machine-local governance directory. Materializing it into `docs/proposals/` is an explicit human command, not a run write. Promotion to active work remains the human `git mv` section 14 already describes.
@@ -44,8 +45,9 @@ These were settled during reconciliation of the four review records and are bind
 - **Reviewers are not expected to return zero findings.** The existing behaviour that resolves findings absent from a later panel round has no meaning under a default of one round and is removed rather than left dormant.
 - **Findings are round-scoped canonical identities with immutable reports.** Identity is `(stage_id, round, intent_key, location)`. Every panel member's report is a separate immutable child carrying that report's severity, classification, subject, and `agent_run`; the author supplies one decision keyed to the canonical finding id. No classification, severity, or subject ratchets across rounds or panel members.
 - **Severity stops gating the review stages.** `MATERIAL_THRESHOLD` is read today only by `specReviewGate` (`src/spec-stage.ts:30`) and `planReviewGate` (`src/plan-gate.ts:19`). When reconciliation completeness replaces both, nothing consults it, and section 9 says a value nothing enforces does not belong. Task 3 removes it from `policy.ts` and `buildPolicy()`, or names the surviving consumer that keeps it. Either way the frozen policy shape and its hash change, and that consequence is recorded rather than absorbed.
-- **The disposition vocabulary is `addressed`, `rejected_with_rationale`, `upstream_follow_up`, `upstream_blocking`, and `cannot_determine`.** `addressed` advances after the reconciled artifact passes its mechanical gates; hashes and gate results prove what changed and that the artifact is structurally valid, not that the reported concern was semantically cured. `rejected_with_rationale` advances only with a governing source document, location, and exact excerpt that deterministic code matches after the same normalization the document validator uses; the current artifact is not an accepted grounding source, and a missing or failed match is treated as `cannot_determine`. Exact matching proves textual occurrence, not semantic sufficiency. `upstream_follow_up` requires a proposal candidate, writes a non-binding proposal, and advances. `upstream_blocking` requires the same candidate, writes it, and blocks because filing the missing decision does not make the approved specification implementable. `cannot_determine` forbids a claimed proposal and blocks for a human. No closure panel independently confirms `addressed` or a textually grounded rejection; that residual semantic risk is the explicit cost of the selected author-led flow.
-- **The reconciliation result owns conditional proposal content.** Every decision carries finding id, disposition, and rationale. `rejected_with_rationale` additionally carries grounding. The two upstream dispositions additionally carry a proposal candidate with title, problem statement, and why the concern belongs upstream. Those conditional fields are required exactly where used and forbidden elsewhere; impact is derived from disposition.
+- **The disposition vocabulary is `addressed`, `rejected_with_rationale`, `upstream_follow_up`, `upstream_blocking`, and `cannot_determine`.** `addressed` advances only after its normative-delta grounding is complete and the reconciled artifact passes its mechanical gates; hashes and gate results prove what changed and that the artifact is structurally valid, not that the reported concern was semantically cured. `rejected_with_rationale` advances only with a governing source document, location, and exact excerpt that deterministic code matches after normalizing the BOM, CRLF, and runs of whitespace on both sides — the document validator's `normalizeText` alone is not enough, because every governing document here is hard-wrapped and the Task 1 prototype recorded a correct citation failing purely because it spanned a line break; the current artifact is not an accepted grounding source, and a missing or failed match is treated as `cannot_determine`. Exact matching proves textual occurrence, not semantic sufficiency. `upstream_follow_up` requires a proposal candidate, writes a non-binding proposal, and advances. `upstream_blocking` requires the same candidate, writes it, and blocks because filing the missing decision does not make the approved specification implementable. `cannot_determine` forbids a claimed proposal and blocks for a human. No closure panel independently confirms an addressed change or a textually grounded rejection; that residual semantic risk is the explicit cost of the selected author-led flow.
+- **Normative reconciliation deltas are derived, not model-declared.** For a specification, the parsed normative nodes are `declaredArtifacts` and `acceptanceCriteria`; for a plan, they are `tasks` and `coverage`. Deterministic code set-diffs the validated before/after nodes after the same normalization their document parsers use. Every added node — including the added half of a replacement — must appear exactly once in an `addressed` decision's `normativeChanges`, carrying the exact artifact node and `grounding: { source, location, excerpt }`. The current artifact is never an authority source. Deletion-only and prose-only changes do not create a normative node, but their declared changed locations and before/after hashes remain retained. An extra, omitted, duplicated, wrongly sourced, or unmatched normative change is handled as `cannot_determine`; code does not invent a proposal the author failed to supply.
+- **The reconciliation result owns conditional grounding and proposal content.** Every decision carries finding id, disposition, rationale, and changed locations. `rejected_with_rationale` additionally carries grounding. An `addressed` decision additionally carries `normativeChanges` exactly when the derived artifact diff adds or replaces parsed normative nodes, with one source grounding per node. The two upstream dispositions additionally carry a proposal candidate with title, problem statement, and why the concern is upstream. Those conditional fields are required exactly where used and forbidden elsewhere; impact is derived from disposition.
 - **Task 1 settles column placement, not entity responsibility.** The plan commits to canonical finding, immutable reviewer-report, and one-decision-per-finding records. Task 1 decides the minimal columns and migration mapping after exercising real output; a `repair_target` column survives only if evidence identifies an enforced or audited consumer. It may not collapse the three responsibilities back into one upserted row.
 - **Every actor receives the source needed to obey the no-invention rule.** Specification self-critique, review, and reconciliation receive `design.md` plus the specification; plan self-critique, review, and reconciliation receive the approved specification plus the plan. An upstream location is never an invented heading: use `upstream:design:<decision-key>` in specification review and `upstream:specification:<decision-key>` in plan review, where `<decision-key>` is lowercase kebab-case within 64 characters and identifies the missing decision or obligation.
 - **No "smarter model" claim is encoded.** The system cannot prove one model is more capable than another. It can guarantee that self-critique and reconciliation run under the author's frozen mapping with a dedicated prompt, the complete artifact, every per-report finding, and sufficient result budget, and that the effective model of each dispatch is recorded as already required. No new model-tier configuration is introduced in this step.
@@ -96,18 +98,145 @@ These were settled during reconciliation of the four review records and are bind
 
 **Steps:**
 
-- [ ] Build the prototype against the real dispatch boundary with scratch or fixture storage. It may not modify `STAGE_SEQUENCE`, the canonical schema, or either shipped stage's order. It exists to measure the flow, not to become it.
-- [ ] Run the eight comparisons this design depends on: draft versus self-critiqued artifact findings; two specialty findings that agree; conflicting reports whose severity and upstream classification differ; the same canonical concern reported by two reviewers and again in a later round; one non-blocking upstream concern; one blocking upstream dependency; a specification-upstream concern grounded against the supplied design; and malformed or incomplete reconciliation output.
-- [ ] For each, record dispatch count, cost, duration, parsing success or failure, finding counts before and after self-critique, canonical finding count, immutable report count and pairs, round identity, reconciliation completeness against the canonical finding id set, proposal-candidate completeness, rejection-grounding match, and whether the reconciler invented an obligation the approved input never stated.
-- [ ] Confirm at the parser what the panel request, reviewer report, reconciliation decision, conditional proposal candidate, and rejection-grounding shapes actually look like coming back from a real model, including deliberately malformed, duplicate-specialty, over-capacity, missing-proposal, and unmatched-grounding responses before those shapes are fixed in production code.
-- [ ] Record the exit decision in this plan: confirm the disposition vocabulary, panel-request shape, canonical-finding/report/decision responsibilities, reconciliation result, conditional proposal candidate, upstream location tokens, and minimal columns — or revise Tasks 4 through 9 here before production work starts. A `repair_target`-style column survives only with an enforced or audited consumer.
-- [ ] If the prototype confirms the selected design, present its measured result and the exact sections 12 and 13 amendment for operator acceptance, then amend the architecture before Task 3 begins. State that the author supplies the semantic disposition while deterministic code validates completeness, textual source occurrence, conditional proposal content, mechanical artifact gates, and route before changing stage state. State equally plainly that exact-match grounding does not prove logical support and that hashes plus artifact gates do not independently prove an `addressed` concern was semantically cured. Record operator acceptance of that authority and residual risk. Replace closure review with the five phases, author-proposed panel inside frozen bounds, one-round default, and named staffing refusal. If the prototype disconfirms the design or the operator does not accept the amendment, stop and reconcile this plan again; do not start production tasks under conflicting architecture.
+- [x] Build the prototype against the real dispatch boundary with scratch or fixture storage. It may not modify `STAGE_SEQUENCE`, the canonical schema, or either shipped stage's order. It exists to measure the flow, not to become it.
+- [x] Run the eight comparisons this design depends on: draft versus self-critiqued artifact findings; two specialty findings that agree; conflicting reports whose severity and upstream classification differ; the same canonical concern reported by two reviewers and again in a later round; one non-blocking upstream concern; one blocking upstream dependency; a specification-upstream concern grounded against the supplied design; and malformed or incomplete reconciliation output.
+- [x] For each, record dispatch count, cost, duration, parsing success or failure, finding counts before and after self-critique, canonical finding count, immutable report count and pairs, round identity, reconciliation completeness against the canonical finding id set, proposal-candidate completeness, rejection-grounding match, and whether the reconciler invented an obligation the approved input never stated.
+- [x] Confirm at the parser what the panel request, reviewer report, reconciliation decision, conditional proposal candidate, and rejection-grounding shapes actually look like coming back from a real model, including deliberately malformed, duplicate-specialty, over-capacity, missing-proposal, and unmatched-grounding responses before those shapes are fixed in production code.
+- [x] Record the exit decision in this plan: confirm the disposition vocabulary, panel-request shape, canonical-finding/report/decision responsibilities, reconciliation result, conditional proposal candidate, upstream location tokens, and minimal columns — or revise Tasks 4 through 9 here before production work starts. A `repair_target`-style column survives only with an enforced or audited consumer.
+- [x] If the prototype confirms the selected design, present its measured result and the exact sections 12 and 13 amendment for operator acceptance, then amend the architecture before Task 3 begins. State that the author supplies the semantic disposition while deterministic code validates completeness, derived normative deltas, textual source occurrence, conditional proposal content, mechanical artifact gates, and route before changing stage state. State equally plainly that exact-match grounding does not prove logical support and that hashes plus artifact gates do not independently prove an `addressed` concern was semantically cured. Record operator acceptance of that authority boundary and residual semantic limit; do not describe the ungrounded-`addressed` behaviour observed in the prototype as accepted. Replace closure review with the five phases, author-proposed panel inside frozen bounds, one-round default, and named staffing refusal. If the prototype disconfirms the design or the operator does not accept the amendment, stop and reconcile this plan again; do not start production tasks under conflicting architecture.
 
 **Verify:** the prototype's retained output; this plan's dated decision paragraph; `npm run check:docs` after the architecture decision; `npm run typecheck` if any committed source changed; a diff showing architecture sections 5 and 23 unchanged.
 
 **Expected:** One bounded real sample per comparison, with actual cost and no retry to green. A disconfirming result revises the plan. A confirming result makes the operator-approved authority change binding before production code relies on it.
 
 **Task completion evidence:** The per-comparison record, parser results including each malformed case, the dated decision paragraph appended to this plan, the operator decision, and the sections 12 and 13 diff with doc-check exit 0.
+
+#### Exit decision, 2026-09-01
+
+The prototype ran: twelve real dispatches on `claude-sonnet-5`, **$0.59543**,
+430 s, zero parse failures, plus 58 constructed refusal checks and 19
+break-and-restore proofs. The per-comparison record, the dispatch table, and
+the full reasoning are in
+`docs/features/step5b-upstream-findings/2026-09-01-task1-prototype-evidence.md`;
+the harness and every retained prompt and raw response are preserved outside
+this repository at `../step5b-task1-prototype`.
+
+**Confirmed by real output, and now fixed for Tasks 4 through 9:** the
+five-value disposition vocabulary; the panel-request shape (integer size plus
+a unique specialty list, never an agent identity); the canonical-finding /
+immutable-reviewer-report / one-decision-per-finding split, with no fusion
+observed; the conditional proposal candidate with impact derived from the
+disposition and no model-returned impact field; and the exact
+`upstream:design:<decision-key>` token, which six upstream findings produced
+correctly on first attempt with no invented design heading. Both upstream
+routes occurred naturally with complete candidates: `upstream_follow_up`
+advanced, `upstream_blocking` blocked naming its canonical finding ids. **No
+`repair_target`-style column survives** — nothing in the run identified an
+enforced or audited consumer.
+
+**Revisions this prototype makes binding on the later tasks:**
+
+- **Task 4** must supply the frozen registry's specialty list to the
+  self-critique prompt. Not told what could be seated, the author requested
+  `data-privacy`; the request was structurally valid, unstaffable, and blocked
+  by name. Told the registry, the same author requested `security`, which
+  staffed. Task 5's named refusal stays as the backstop; without this it is
+  the ordinary outcome.
+- **Task 6's** rejection-grounding match must collapse runs of whitespace, not
+  only strip a BOM and normalize CRLF. A correct citation spanning a line
+  break in the hard-wrapped design failed the literal match and a sound
+  rejection became `cannot_determine`. Every governing document here is
+  hard-wrapped. The assumption above that reads "after the same normalization
+  the document validator uses" is corrected accordingly. The guarantee is
+  unchanged: textual occurrence, never logical support.
+- **Tasks 7 and 9** may not treat `(round, intentKey, location)` as detecting
+  recurrence. Round 2 raised the identical concern at the identical location
+  under a different model-authored `intentKey`. Round-scoping still prevents a
+  later round overwriting earlier evidence, which is its actual job; Task 9's
+  two-round recurrence step becomes a fixture test, because real output does
+  not reproduce a stable intent key.
+- **Task 9's** gate must evaluate every round's decisions, not the current
+  round's. Round 1 blocked on two findings and round 2 routed advance; a
+  per-round gate would let a later round erase an earlier `upstream_blocking`.
+- **Tasks 6, 9, 10, and 11** must treat the invented atomicity criterion as a
+  defect to mitigate, not an unqualified residual risk to accept. The author
+  added a normative acceptance criterion the design never states, marked the
+  finding `addressed`, and passed the artifact gate. The revised contract
+  derives normative nodes from the before/after artifact and requires every
+  added node to carry governing-source grounding under its `addressed`
+  decision. Without it, the decision becomes `cannot_determine`; when the
+  governing source is genuinely silent, the prompt requires an upstream
+  disposition and complete proposal candidate. Task 11 replays the retained
+  atomicity case as the regression. Task 10 records both the observation and
+  the mitigation under hazard 16. Exact textual grounding still cannot prove
+  semantic support, so that narrower limitation remains explicit.
+
+#### Operator response to finding E, 2026-09-01
+
+The operator did **not** accept an ungrounded `addressed` decision as an
+unmitigated residual risk. The normative-delta grounding rule above is binding
+on Tasks 6, 9, 10, and 11 before the architecture amendment can be accepted.
+This response adds no review round or model dispatch and does not itself
+approve architecture sections 12 and 13 or authorize Task 3.
+
+**Not established by one sample, and not to be written into a prompt, test, or
+this plan as a rate:** self-critique did not reduce findings here — the same
+two reviewers with the same prompts returned 3 canonical findings on the draft
+and 4 on the self-critiqued specification. The two reviewers never shared a
+canonical identity across nine findings, so agreeing and conflicting report
+pairs were not observed at the dispatch boundary and stay proven by fixture.
+No real dispatch produced malformed output; fail-closed handling stays proven
+by construction.
+
+#### Operator acceptance and architecture amendment, 2026-09-01
+
+The operator accepted the prototype result and the sections 12 and 13
+amendment, and directed that sections 8, 9, and 20 be amended in the same
+change so the binding document is not left contradicting itself. Applied to
+`ARCHITECTURE.md`: 155 insertions, 48 deletions across sections 8, 9, 12, 13,
+and 20. Section 5, `STAGE_SEQUENCE`, section 15's schema block, and section 23
+are unchanged. `npm run check:docs` reports the same single pre-existing error
+and the same 40 warnings as before the change, and every fact it derives from
+source is identical.
+
+**Accepted — the authority boundary.** The author supplies the semantic
+disposition. Before any stage state changes, deterministic code validates
+decision completeness, the derived normative delta, textual occurrence of every
+cited excerpt, conditional proposal content, the mechanical artifact gates, and
+the route.
+
+**Accepted — the residual semantic limit.** An exact match proves the cited
+words occur in the governing input; it does not prove they logically support
+the rejection or the addition. Artifact hashes and document gates prove what
+changed and that the result parses; they do not prove a concern was
+semantically cured. No panel independently confirms either.
+
+**Not accepted:** the ungrounded `addressed` decision the prototype recorded.
+It is mitigated by normative-delta grounding, not absorbed as residual risk.
+
+Section decisions made in the same pass:
+
+- **Section 8** limits canonical deduplication to one round and disclaims
+  semantic recurrence across rounds outright.
+- **Section 9** keeps a configurable panel with a floor and default of two
+  reviewers and defers the one-reviewer low-risk tier rather than deleting it.
+  Two is the default panel size, not a round count. Risk no longer sizes the
+  panel; it travels into the signed authorization only.
+- **Section 20** states one review round by default, configurable higher, with
+  no closure-pass language, and records that no verification round limit is in
+  force because no loop exists — the first failing command blocks, and adding
+  retries later requires its own frozen limit. A draft of that bullet claimed a
+  configured verification budget that does not exist; the operator caught it and
+  it was corrected before the amendment was applied.
+- **Section 15's** remediation-budget sentence stays for Task 10.
+
+These values are constants in `src/policy.ts` frozen into the run profile, not
+operator-prompted: `governed.yaml` accepts only a `verify:` block and `new-run`
+has no panel or round flag. Task 3's contribution is to make the stages read
+them from the frozen profile instead of importing the live constants.
+
+Task 1 is complete. Tasks 3 through 9 are unblocked; none has started, and no
+production code has changed.
 
 ### Task 2: One governance path module
 
@@ -220,20 +349,20 @@ These were settled during reconciliation of the four review records and are bind
 
 - [ ] Define the reviewer-report result before reconciliation depends on it. Each report carries canonical `location` and `intentKey`, plus that reviewer's `severity`, `classification: current_artifact | upstream`, and `subject`. Reject duplicate canonical identities within one reviewer's result. Preserve the complete report with its producing `agent_run`; do not upsert one reviewer's fields over another's.
 - [ ] Change both reviewer prompts from “through your specialty lens” to “report only findings within specialty `<specialty>`”. State that an empty in-specialty result is valid and that out-of-specialty concerns must not be reported. Pin the exact boundary in source and generated-prompt tests; the reconciler's ability to reject an out-of-specialty report remains a backstop, not the primary control.
-- [ ] Supply the governing upstream input everywhere it is needed: `buildSpecReviewPrompt` receives design plus specification, and specification reconciliation receives both; plan review and reconciliation continue to receive approved specification plus plan. This is the evidence used by the no-invention prompt and rejection-grounding validator.
+- [ ] Supply the governing upstream input everywhere it is needed: `buildSpecReviewPrompt` receives design plus specification, and specification reconciliation receives both; plan review and reconciliation continue to receive approved specification plus plan. This is the evidence used by the no-invention prompt and both addressed-change and rejection-grounding validators.
 - [ ] Define `location` beside `classification` in both reviewer prompts. `current_artifact` uses a real heading, task, or artifact path from the artifact under review. `upstream` uses exactly `upstream:design:<decision-key>` for specification review or `upstream:specification:<decision-key>` for plan review; `<decision-key>` is lowercase kebab-case within 64 characters and names the absent decision or obligation. Never require or invent a heading for an omission.
 - [ ] Add explicit `spec-reconciliation` and `plan-reconciliation` output capabilities to the two author definitions and assert that reviewers cannot produce either result kind.
-- [ ] Define the reconciliation result: the revised artifact plus exactly one decision per canonical finding id, using the five-value vocabulary. Every decision requires a rationale. `rejected_with_rationale` also requires `grounding: { source, location, excerpt }`; `source` is exactly `design` for specification reconciliation and `specification` for plan reconciliation, never the current artifact. Deterministic code normalizes and exact-matches the excerpt inside that supplied governing input. An incorrect source, missing excerpt, or failed match is handled as `cannot_determine`, not accepted as prose. Name the validator according to that textual guarantee and do not claim it verifies that the excerpt semantically supports the rationale.
+- [ ] Define the reconciliation result: the revised artifact plus exactly one decision per canonical finding id, using the five-value vocabulary. Every decision requires a rationale and changed locations. `rejected_with_rationale` also requires `grounding: { source, location, excerpt }`. An `addressed` decision also requires `normativeChanges: [{ artifactLocation, artifactText, grounding }]` exactly when the deterministic before/after parse adds or replaces a normative node. `source` is exactly `design` for specification reconciliation and `specification` for plan reconciliation, never the current artifact. Deterministic code collapses whitespace, exact-matches the source excerpt, and set-compares the returned `artifactText` values with every added parsed node. An incorrect source, missing excerpt, failed match, or extra/omitted/duplicate node is handled as `cannot_determine`, not accepted as prose. Name validators according to those textual and structural guarantees and do not claim they verify that an excerpt semantically supports a change.
 - [ ] Define a conditional `proposal` candidate inside each decision. It is required exactly for `upstream_follow_up` and `upstream_blocking`, forbidden for the other dispositions, and carries title, problem statement, and why the concern is upstream. Impact is not model output: code derives `follow_up` from `upstream_follow_up` and `blocking_dependency` from `upstream_blocking`. Refuse extras, duplicates, omissions, unknown dispositions, misplaced proposal fields, and incomplete grounding with named errors.
-- [ ] Write the reconciliation prompt with the governing input, complete artifact, canonical finding ids, and every immutable per-reviewer report with its severity and classification intact. State that the author may address, ground a rejection, route upstream with a complete proposal candidate, or return `cannot_determine`, and may not add an obligation absent from the governing input. Require the author to explain what artifact change addresses a finding or why the cited source defeats it, while keeping that explanation as retained semantic evidence rather than mislabeling it as deterministic proof.
+- [ ] Write the reconciliation prompt with the governing input, complete artifact, canonical finding ids, and every immutable per-reviewer report with its severity and classification intact. State that the author may address only a change whose added normative nodes it can ground, ground a rejection, route an unsupported obligation upstream with a complete proposal candidate, or return `cannot_determine`. State explicitly that a reviewer calling a concern `current_artifact` does not authorize the author to add an obligation absent from the governing input. Require the author to explain what artifact change addresses a finding or why the cited source defeats it, while keeping that explanation as retained semantic evidence rather than mislabeling it as deterministic proof.
 - [ ] Rerun the mechanical artifact gates on the reconciled artifact, and record before and after artifact hashes on the reconciliation event exactly as `plan.gate.pass` already records `planHash=` (`src/plan-stage.ts:433`), so the evidence survives a later run overwriting the file.
 - [ ] Preserve report pairs. Add the mixed case — one reviewer reporting `critical` on the current artifact, another reporting `low` upstream on the same canonical concern — and prove one canonical finding plus two immutable reports reach the reconciler unfused, and that no stored value pairs a severity with a classification no reviewer returned.
 
 **Verify:** `node --test test/prompts.test.ts test/spec-stage.test.ts test/plan-stage.test.ts`; `npm run typecheck`.
 
-**Expected:** Every canonical finding id has every reviewer report and exactly one retained typed decision; malformed, textually ungrounded, or conditionally incomplete reconciliation fails closed; every actor receives the governing input; no prompt authorizes minting an obligation; no aggregation invents or erases a report; and tests and names do not overstate textual or mechanical checks as semantic verification.
+**Expected:** Every canonical finding id has every reviewer report and exactly one retained typed decision; every added parsed normative node is claimed once by an `addressed` decision and textually grounded in the governing input; malformed, ungrounded, unaccounted, or conditionally incomplete reconciliation fails closed; every actor receives the governing input; no prompt authorizes minting an obligation; no aggregation invents or erases a report; and tests and names do not overstate textual or mechanical checks as semantic verification.
 
-**Task completion evidence:** The extras/duplicates/omissions/unknown and conditional-field refusals, exact-grounding match and mismatch, design-present spec-review assertion, mixed-pair preservation test, and each prompt-scan test failing when its sentence is removed.
+**Task completion evidence:** The extras/duplicates/omissions/unknown and conditional-field refusals; exact-set addressed-node checks; addressed and rejection grounding matches and mismatches; the design-present spec-review assertion; mixed-pair preservation; and each prompt-scan test failing when its sentence is removed.
 
 ### Task 7: Canonical finding, reviewer-report, and reconciliation storage
 
@@ -304,7 +433,7 @@ These were settled during reconciliation of the four review records and are bind
 **Steps:**
 
 - [ ] Replace the round loop in both stages with: draft, self-critique, then for each configured round a complete panel followed by reconciliation, then the deterministic gate. Remove the closure-round redispatch and the resolution of findings absent from a later panel. Pass design plus specification through the specification phases and approved specification plus plan through the plan phases.
-- [ ] Make the gate decide on report/decision completeness, exact textual rejection grounding, conditional proposal completeness, and the mechanical artifact gates, not on open severity. Advance on `addressed` and textually grounded `rejected_with_rationale` at any severity; block on an absent or unmatched rejection source as `cannot_determine`, `upstream_blocking`, and explicit `cannot_determine`, naming the canonical finding ids and any stored proposal. Do not encode or document this gate as independent semantic confirmation of either an addressed concern or the logical sufficiency of a rejection rationale.
+- [ ] Make the gate decide over every configured round on report/decision completeness, the exact set of derived normative additions, textual grounding for `addressed` additions and rejections, conditional proposal completeness, and the mechanical artifact gates, not on open severity. Advance on a fully accounted and grounded `addressed` decision and a textually grounded `rejected_with_rationale` at any severity. Treat an absent, extra, duplicated, wrongly sourced, or unmatched grounding or normative node as `cannot_determine`; also block on `upstream_blocking` and explicit `cannot_determine`, naming the canonical finding ids and any stored proposal. Do not encode or document this gate as independent semantic confirmation of either an addressed concern or the logical sufficiency of a grounding excerpt.
 - [ ] Add the plan-review regression that reproduces the original defect: a material upstream concern in round one produces a proposal and either a documented advance or a named block by its impact, and no additional plan-author revision round is dispatched to repair the wrong artifact.
 - [ ] Add the spec-review analogue so both stages prove the same semantics, using the new `deps.selectPanel` seam rather than depending on registry contents.
 - [ ] Assert dispatch counts explicitly in both stages: exactly one draft, exactly one self-critique, exactly the requested panel size, exactly one reconciliation per round.
@@ -329,8 +458,8 @@ These were settled during reconciliation of the four review records and are bind
 
 **Steps:**
 
-- [ ] Add hazard 16, `A remediation loop aimed at the wrong artifact cannot repair an upstream omission`. Record the failure mode, name its one recorded observation — the plan-stage smoke's round-2 invented-requirement catch — and state plainly that no full wrong-artifact loop is separately recorded in this repository, so the entry is a class hazard derived from section 13's standing rule.
-- [ ] Verify the sections 12 and 13 authority change accepted in Task 1 still matches the implemented flow, including its explicit distinction between deterministic textual/mechanical validation and author-owned semantic judgment. Do not postpone or rewrite that decision here to fit accidental code; a mismatch returns to implementation or requires a new explicit operator decision.
+- [ ] Add hazard 16, `A remediation loop aimed at the wrong artifact cannot repair an upstream omission`. Record both observations: the plan-stage smoke's round-2 invented-requirement catch and Task 1's ungrounded atomic exclusive-create criterion admitted through `addressed`. State plainly that no full wrong-artifact loop is separately recorded in this repository. Record the normative-delta grounding mitigation and its remaining limit: textual occurrence is auditable but is not semantic proof.
+- [ ] Verify the sections 12 and 13 authority change accepted in Task 1 still matches the implemented flow, including its explicit distinction between deterministic normative-delta/textual/mechanical validation and author-owned semantic judgment. Do not postpone or rewrite that decision here to fit accidental code; a mismatch returns to implementation or requires a new explicit operator decision.
 - [ ] Update section 15's schema block and storage layout for canonical findings, immutable reviewer reports, finding decisions, proposals, and the proposal evidence directory, naming exact column positions. Update section 20 for the new configured limits, section 14 for the two-step proposal flow, and section 22's hazard count and summary.
 - [ ] Add a hazard-count check to `scripts/doc-check.mjs` comparing the `^## \d+\.` heading count in `docs/hazards.md` against section 22's count, so that step is enforced rather than remembered.
 - [ ] Run the checker after each edit. Exit 2 means code, migration, and checker facts disagree and must be fixed at the source; do not weaken a pin or rewrite a historical document to suppress it.
@@ -357,6 +486,7 @@ These were settled during reconciliation of the four review records and are bind
 - [ ] Accept a reconciliation missing one canonical finding id or one reviewer report: the completeness test must fail.
 - [ ] Accept an unknown disposition: the vocabulary test must fail.
 - [ ] Let an unmatched `rejected_with_rationale` grounding advance: the grounding test must fail.
+- [ ] Replay Task 1's retained atomic exclusive-create change as `addressed` without governing-source grounding: the normative-delta test must fail. Then omit, duplicate, or attach the wrong artifact node in `normativeChanges`: the exact-set tests must fail. Restore a grounded fixture and prove it advances without an extra dispatch.
 - [ ] Omit a proposal candidate from an upstream disposition, or attach one to a non-upstream disposition: the conditional-shape tests must fail.
 - [ ] Let `upstream_blocking` advance: the blocking-route test must fail.
 - [ ] Let `cannot_determine` advance: the human-routing test must fail.
@@ -432,7 +562,7 @@ Step 5b is complete only when all of the following are true:
 - Both review stages run exactly one self-critique per artifact before any reviewer dispatch, under the author's frozen definition and model mapping, never occupying a panel seat and never contributing to an independence claim.
 - Review rounds and panel bounds live in the frozen policy and are read where they are enforced; no stage or selector reads a live review-policy constant; the default installation staffs its default panel and an unstaffable request blocks by name.
 - The author proposes a panel size within frozen bounds and unique specialties; configured required specialties consume seats; their union fits the requested size; deterministic code selects distinct identities with distinct specialties, excludes the author, and never drops a requested lens.
-- Every round-scoped canonical finding retains every immutable per-reviewer report and exactly one typed decision. Extras, duplicates, omissions, and unknown values are refused. `rejected_with_rationale` advances at any severity only when its source grounding exact-matches the governing design or approved specification; the current artifact cannot ground itself; an unmatched rejection becomes `cannot_determine`; `upstream_blocking` and `cannot_determine` block with canonical finding ids named. Exact matching proves textual occurrence, not logical support, and an `addressed` disposition is mechanically gated but not independently semantically confirmed; the architecture and implementation state this author-led authority boundary without overstating it.
+- Every round-scoped canonical finding retains every immutable per-reviewer report and exactly one typed decision. Extras, duplicates, omissions, and unknown values are refused. Every added or replaced parsed normative node is claimed exactly once by an `addressed` decision and exact-matches its returned artifact text; its source grounding, and every `rejected_with_rationale` grounding, exact-matches the governing design or approved specification after whitespace normalization. The current artifact cannot ground itself; an ungrounded or unaccounted decision becomes `cannot_determine`; `upstream_blocking` and `cannot_determine` block with canonical finding ids named. Exact matching proves textual occurrence, not logical support, and neither an `addressed` disposition nor artifact gates independently establish semantic correctness; the architecture and implementation state this author-led authority boundary without overstating it.
 - No stored value pairs a severity, route, classification, or subject that no reviewer returned; reports stay round-scoped and unfused, and the same concern in a later round cannot overwrite earlier evidence.
 - An upstream decision carries a validated proposal candidate and produces a stored, queryable, non-binding proposal with impact derived from disposition, source canonical finding ids, immutable reports, and artifact hashes; no run writes into `docs/proposals/`; export and promotion are human actions.
 - The canonical-finding upsert returns the row it wrote, proven by a three-insert regression; immutable report insertion cannot overwrite another reviewer; finding, report, and decision constraints are scoped to their final table bodies and fail when a constraint is dropped.
