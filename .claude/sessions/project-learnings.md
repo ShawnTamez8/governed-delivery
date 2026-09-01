@@ -7,66 +7,67 @@ disagree, Current state wins.
 
 ## Current state (2026-08-31)
 
-**Shipped:** build order steps 1-7 on `master` (`5b93ddb`, step7 merged by
-fast-forward, linear history). The step-6 trust-boundary correction
-(read-only executor invocation, worktree cleanliness gate, literal git paths,
-link fail-closed, frozen executor binding) and step 7 (verification) are both
-complete: all twelve tasks of `docs/features/verification-stage/plan.md` done
-including the manual smoke, both plans `Implemented`. The full tree is green:
-446 tests / 445 pass / 1 recorded skip / 0 fail, `typecheck` clean,
-`check:docs` clean.
+**Shipped:** build order steps 1-7 on `master`, head `84b75e1`. The last four
+commits are documentation only — external-harness review records under
+`docs/proposals/`, then the step-5b plan and its two reviews; the last code
+commit is the step-7 merge `5b93ddb`. The tree was green at that merge — 446
+tests / 445 pass / 1 recorded skip / 0 fail, `typecheck` clean, `check:docs`
+clean — and nothing since has touched `src/` or `test/`.
 
-**The smoke is complete, with real model spend** (scratch repos, `claude-sonnet-5`,
-keypair in `~/.buildworks`): a passing run (smoke1 run 1, 5 dispatches,
-$0.07618) drove `migrate` → `new-run` → `spec` → approval → `plan` →
-`implement` → `verify` end to end; the implementer returned a valid patch
-without writing into the worktree (the correction's target failure did not
-recur), and verify passed both commands with retained evidence, run
-`in_progress`. A blocking run (smoke2 run 2, 5 dispatches, $0.06595) blocked
-verify on `node missing.mjs` exit 1, naming the command in the record, with
-the real failure output retained, worktree surviving, and the
-`BW_SMOKE_CANARY` absent from the retained env dump. Full detail in the
-verification-stage plan's implementation note (2026-08-31 entry).
+**In flight — step 5b, planned, committed at `84b75e1`.**
+`docs/features/step5b-upstream-findings/` holds `plan.md` (`Status:
+Reconciled`, 13 tasks) and two review records reconciled into it on
+2026-08-31. The plan replaces the closure-round review loop with an author-led
+flow — draft, one self-critique, a specialist panel, author reconciliation,
+deterministic gate — and routes an upstream concern to a stored proposal
+instead of another author round. Nothing is implemented. Task 1 is a bounded prototype whose exit decision confirms or
+revises Tasks 4-9, so no schema or stage work starts before it runs.
 
-**Also recorded:** smoke2 run 1 blocked at the plan coverage gate for real —
-the plan restated criteria without their `(traces to: …)` suffixes and
-`coverageMeetsCriteria` held the full text. Gate right; a re-run of a blocked
-run is refused by name.
+**Three latent defects in shipped code** were confirmed while reconciling those
+reviews. They are unfixed, recorded in the plan, and described in the
+diagnostics quick-reference below: `insertFinding`'s return on the upsert
+conflict path, whole-file schema constraint searching, and a frozen policy that
+describes values the live constants actually decide.
 
 **Open and deferred:**
 
-- `VERIFY_RETENTION_MAX_BYTES` is 64 MB — chosen, not derived. Operator may
-  want a different value; it is frozen per run either way.
-- Filesystem and network containment for verification commands is unbuilt and
+- Step 5b's 13 tasks are all open, starting at the Task 1 prototype gate.
+- Whether step 5b or step 8 (delivery check) goes first was not decided. Step 8
+  remains the next build-order step and consumes the record the verification
+  stage writes.
+- `VERIFY_RETENTION_MAX_BYTES` is 64 MB — chosen, not derived. Frozen per run
+  either way.
+- Filesystem and network containment for verification commands is unbuilt,
   stated as a limitation in `ARCHITECTURE.md` section 17, with
   `docs/proposals/verification-containment.md` filed.
+- External configuration of the `.governance` location, and the state migration
+  it implies, are deferred out of step 5b by operator decision.
 - The build order stops at step 9. Do not build past it without an explicit
   decision.
 
-**Next up:** step 8 (delivery check) is the next build-order step; it consumes
-the structured record the verification stage writes. Nothing blocks it, and
-the deliberate stop at step 9 means it must be an explicit decision.
+**Next up:** run Task 1's bounded prototype from
+`docs/features/step5b-upstream-findings/plan.md`.
 
 ## Diagnostics quick-reference
 
 Durable one-liners are **mirrored into auto memory**, which loads every session
-automatically — see `MEMORY.md` there for the full set (`verify-claims-when-written`,
-`break-it-mechanics`, `break-it-direction`, `fixture-blindness`,
-`one-smoke-is-one-sample`, `limits-need-their-own-ceiling`,
-`windows-and-test-runner-quirks`, `line-endings-and-fixtures`,
-`commit-and-shell-gotchas`, `approval-expiry-is-a-signing-window`). Kept here
-are the ones that are specific to working *in this repository* rather than
-general habits.
+automatically — see `MEMORY.md` there for the full set. Kept here are the ones
+specific to working *in this repository*.
 
-- **Prove a guard by breaking what it guards, one cycle per tool call.** Prefer
-  a scratch mirror: the suite imports nothing outside `node:*` and `src/`, so a
-  plain copy with no `node_modules` runs it and nothing needs restoring. Else
-  `git add -A` (no commit) → break → run → `git checkout -- <path>` →
-  `git diff --quiet -- <path>`; non-zero means halt.
-- **A break-it target named in a plan is a hypothesis.** Confirm the attack
-  reaches the guard at the shell first, and revise the target when it does not —
-  two of step 7's twenty-four needed that, one unobservable as written and one
-  that would have hung the suite for fifteen minutes at its real value.
+- **`insertFinding` returns the wrong row after a conflict.** `src/store.ts:389`
+  returns `getFinding(lastInsertRowid)`, and SQLite does not update
+  `last_insert_rowid()` for `ON CONFLICT ... DO UPDATE`, so it returns whichever
+  row the previous insert created. Harmless today only because both stages
+  discard the return value. A two-insert test passes by coincidence — use three.
+- **Schema constraint guards search every migration file as one string.**
+  `test/schema.test.ts:102-120` and `scripts/doc-check.mjs:243-334` assert with
+  `sql.includes(...)` over the concatenation, so a later migration that rebuilds
+  a table can drop its constraints and every gate stays green. Scope to the
+  table body the way `test/schema.test.ts:98` does.
+- **The frozen profile describes values the live constants decide.**
+  `buildPolicy()` records `PANEL_SIZE` and `REMEDIATION_ROUNDS`, but
+  `src/select.ts`, `src/spec-stage.ts`, and `src/plan-stage.ts` all import the
+  live constants. Hard rule 6 is satisfied in the profile and not at the read.
 - **A findings list is not a task list.** Two step-4 findings were one miscount
   seen at two boundaries; fixed separately they would have left the two sides
   inconsistent, which *is* the defect. Group by defect, not by report line.
@@ -82,158 +83,124 @@ general habits.
   `verifyAuditChain` recomputes from surviving rows. `Store.transaction` is
   re-entrant; a nested failure aborts the outermost frame, and silent partial
   commits are not possible.
+- **Exit codes through pipelines lie.** `cmd | grep ...; echo $?` reports grep's
+  status, not the stage's. Measure a stage's exit code without the pipe.
 
 ## Session records
 
+### Step 5b: two plan reviews reconciled, plan rewritten (2026-08-31)
+
+Two review files against `docs/features/step5b-upstream-findings/plan.md`.
+Review 2 superseded the plan's design direction rather than correcting it, so
+the plan was rewritten in place to 13 tasks instead of patched. Both reviews
+were kept unchanged and stamped with per-finding dispositions: 22 accepted on
+review 1, 12 on review 2, none rejected, deferred, or open.
+
+#### Decisions and assumptions
+
+- **The review loop becomes author-led:** draft, one self-critique, a
+  specialist panel, author reconciliation, deterministic gate. Completion stops
+  meaning "reviewers returned an empty list" and starts meaning "every finding
+  carries a retained typed decision and the mechanical gates pass".
+- **`rejected_with_rationale` advances at any severity**; only
+  `upstream_blocking` and `cannot_determine` block. Consequence named in the
+  plan: severity stops gating review, which leaves `MATERIAL_THRESHOLD` with no
+  consumer and changes the frozen policy shape and the profile hash.
+- **The author proposes panel size (2 to a configured maximum defaulting to 2)
+  and the specialties; deterministic code selects the identities**, excludes the
+  author, and blocks by name when the request cannot be staffed. This replaces
+  per-risk panel sizes, contradicting the 2026-08-29 locked decision and
+  architecture section 12, which the plan amends rather than leaving in conflict.
+- **An upstream concern becomes a stored proposal** with evidence under
+  `.governance/`; materializing it into `docs/proposals/` is a human command,
+  because a run writing there writes outside the signed scope.
+- **`.governance` gets one internal path module** and stays fixed and
+  unconfigurable in this step. The literal currently appears in nine production
+  path constructions across seven modules.
+- **The plan carries `Status: Reconciled`** on operator instruction — a third
+  value in a repository that used only `Proposed` and `Implemented`.
+  `scripts/doc-check.mjs` does not pin plan statuses, so nothing breaks.
+
+#### What worked
+
+- Grounding every review claim in the code before dispositioning it. Three of
+  review 1's findings were confirmed defects in shipped code, and one of its
+  citations was wrong: the invented-obligation record lives in
+  `docs/features/plan-stage/plan.md`'s smoke evidence, not in this file.
+
+#### Verification
+
+- `npm run check:docs` — exit 0, `doc-check: clean`. The four `src/paths.ts`
+  warnings are the expected kind for a file a task is about to create.
+
+#### Next time
+
+- A review that supersedes a design direction is reconciled by rewriting the
+  document, not by patching its findings in. The second review's dispositions
+  of the first review's findings are the map for what survives the rewrite.
+- Ask the operator the questions the review leaves open before rewriting. Four
+  decisions here — blocking policy, panel model, proposal persistence, rewrite
+  scope — each changed the shape of several tasks, and inventing any of them
+  would have produced a plan that had to be rewritten twice.
+
 ### Step 7: smoke completed; step 6 correction shipped (2026-08-31)
 
-The step-6 trust-boundary correction was planned, reviewed, reconciled,
-implemented, and code-reviewed on `master` (plan + review files under
-`docs/features/step6-trust-boundary/`), then step 7 was rebased onto it and
-the Task 12 smoke ran to completion — one passing run, one blocking run, and
-the environment canary proven absent, all against the real binary. Costs:
-passing run $0.07618, blocking run $0.06595, plus the tool-inventory probe
-$0.01116 (returned exactly `Glob/Grep/Read` under the read-only invocation).
+Step 6's trust-boundary correction shipped on `master`, then step 7 rebased
+onto it and the Task 12 smoke ran: one passing run ($0.07618, 5 dispatches),
+one blocking run ($0.06595, 5 dispatches), plus a tool-inventory probe
+($0.01116, returning exactly `Glob/Grep/Read` under the read-only invocation).
+Both plans `Implemented`.
 
 What the smoke added beyond the fixture suite:
 
 - **The passing run's implementer did not write files.** The nondeterministic
-  step-6 failure (write-then-propose) did not recur under the corrected
-  invocation. One green run is still one sample — the correction's mechanism
-  (read-only tools at the invocation boundary, not a prompt) is what makes the
-  difference, and the fixture suite breaks each guard on purpose.
-- **A genuine plan-coverage block.** The model dropped `(traces to: …)`
-  suffixes when restating criteria; the gate held the full criterion text
-  (case/whitespace normalization only) and blocked the run. This is the gate
-  being right, and it cost a full run. The prompt could tell the author to
-  copy criteria verbatim — not done, because the gate's honesty is the
-  designed behaviour and the record is the evidence.
-- **The env guarantee held for real.** `set` under the verify runner retains
-  only the eight named passthrough variables plus cmd's own defaults; a canary
-  exported to `bw verify` never reached the child.
-- **Exit codes through pipelines lie.** `cmd | grep ...; echo $?` reports
-  grep's status, not the stage's. The verify stage's real exit codes were
-  captured only when measured without the pipe. The smoke record uses only
-  un-piped exits.
+  step-6 write-then-propose failure did not recur under the corrected
+  invocation. One green run is still one sample; the fixture suite breaking each
+  guard is what carries the proof.
+- **A genuine plan-coverage block, for real.** The model dropped
+  `(traces to: …)` suffixes when restating criteria and `coverageMeetsCriteria`
+  held the full text, so the gate blocked and it cost a run. The gate was right;
+  the prompt was deliberately not softened to make it pass.
+- **The env guarantee held.** `set` under the verify runner retained only the
+  eight named passthrough variables plus cmd's defaults; a canary exported to
+  `bw verify` never reached the child.
+- A fresh `new-run` refuses a tree dirtied by a blocked run's projections —
+  commit or clean before the next run. CRLF normalization of a committed
+  `governed.yaml` is harmless (the parser splits on `\r?\n`), but git's next
+  touch rewrites the working copy, so never expect committed bytes on disk.
 
-Also: a fresh `new-run` refuses a tree dirtied by a blocked run's projections —
-commit or clean them before starting the next run; CRLF normalization of a
-committed `governed.yaml` is harmless (the parser splits on `\r?\n`), but the
-working copy *will* be rewritten to CRLF by git's next touch, so never expect
-committed bytes on disk.
+### Step 7: verification stage built (2026-08-30)
 
-### Step 7: verification stage built, smoke blocked upstream (2026-08-30)
-
-Tasks 1-11 of `docs/features/verification-stage/plan.md` implemented and
-committed as `3be15fd` on branch `step7`; Task 12 outstanding, plan still
-`Proposed`. Independent code review reconciled, 3 findings.
-
-#### Decisions and assumptions
-
-- **Committed to a branch, not master, deliberately.** A stage whose happy path
-  has never executed is a partial pass; the commit message says so and the plan
-  status reflects it.
-- **`VERIFY_RETENTION_MAX_BYTES` = 64 MB** was added beyond the plan while
-  reconciling a review finding. Chosen, not derived — operator may revise.
-- **One shared `VERIFICATION` constant per test file**, not one across five: the
-  plan's affected areas listed no test-support module and every test file here
-  defines its own constants.
-
-#### What failed
+Twelve tasks, `3be15fd` on branch `step7`, later merged. Independent code
+review reconciled, 3 findings. Suite green at 429 pass / 1 skip; smoke 7
+dispatches, **$0.5021**, `claude-sonnet-5`.
 
 - **`bw new-run` could never create a run in a repository that had not
   gitignored `.governance/`** — `openStore()` creates the directory before the
-  clean-tree check runs, so the invocation reported a tree only it had dirtied.
-  Every test passed because the shared temp-root helper wrote the `.gitignore`
-  first. Fixed: the check excludes `.governance/`, and a test now builds a
-  repository with no `.gitignore` at all.
+  clean-tree check, so the invocation reported a tree only it had dirtied. Every
+  test passed because the shared temp-root helper wrote the `.gitignore` first.
+  Fixed; a test now builds a repository with no `.gitignore` at all.
 - **The evidence file had no ceiling.** Measured 5.97 GB in 5.2 s (~1.1 GB/s),
-  roughly 955 GB inside the 900-second command ceiling. Fixed with a frozen
-  retention ceiling; removing it again in a mirror retained 116 GB in 120 s.
-- **Task 12 blocked in step 6, still open.** `bw implement` refused the
-  implementer's own file writes. Step 6's smoke passed the identical prompt, so
-  this is nondeterministic — see `docs/proposals/implementer-writes-files-it-also-proposes.md`.
-- **I claimed step 6 had never been smoked. It had.** A `smoke` grep hit was
-  assigned to the wrong entry without opening it; the record sat three lines
-  above. Wrong claim reached a committed proposal, the plan note, and advice to
-  the operator not to retry, before the next read caught it. All corrected.
-
-#### What worked
-
-- **A scratch mirror beats staged-git for break-it cycles here.** The suite
-  imports nothing outside `node:*` and `src/`, so a plain copy with no
-  `node_modules` runs it. 24 cycles, no risk to the tree, `diff -r` proving the
-  restore.
-- **TAP, not the default reporter, when detecting failures programmatically.**
-  `✖` does not survive a Windows codepage round trip through Python's
-  `subprocess`; the first pass reported 24 false passes. `--test-reporter=tap`
-  gives ASCII `not ok`.
-- **Two break-it cycles needed the plan's revision clause,** proving the clause
-  earns its place: one target was unobservable as written (re-reading the same
-  committed file yields the same config), one would have hung the suite for 15
-  minutes at its real value.
-
-#### Verification
-
-- `npm run typecheck` / `npm test` (429 pass, 1 skip) / `npm run check:docs` — all clean.
-- 24 break-restore cycles, each failing while broken, `diff -r` clean after.
-- Smoke: 7 dispatches, **$0.5021**, `claude-sonnet-5` — spec 4, plan 2,
-  implementer 1. Five stage rows passed on real handoffs before the block.
-- `bw verify` against real state: refuses a blocked run by name, refuses an
-  unknown run, exits 1; `verify-audit` reports chain valid.
-
-#### Deferred and open
-
-- Open: Task 12's three unproven behaviours, blocked on the step-6 prompt.
-- Deferred: verification containment (proposal filed, no sandbox mechanism
-  exists to reuse).
-
-#### Next time
-
-- Prior smokes here each drove **one stage**, with upstream constructed through
-  the store. Use that pattern to iterate a prompt at ~$0.13 an attempt; reserve
-  a full chain for the record.
-- When a review finding is confirmed by measurement, record the measurement in
-  the code comment — `VERIFY_RETENTION_MAX_BYTES` carries its 1 GB/s figure and
-  the next reader never has to re-derive the ceiling.
-
-#### Next up
-
-- Decide the step-6 prompt fix, then finish Task 12 and advance the plan to
-  `Implemented`.
-
-### Step 7: planning (2026-08-30)
-
-`write-plan` full path, 10 tasks; a self-review found 7 material issues and the
-operator supplied 7 external review findings, all verified and accepted, taking
-it to 12 tasks and 24 break-it targets. Decisions and rationale live in
-`docs/features/verification-stage/plan.md` and in the shipped code; only the
-pointers that settled questions are kept here.
-
-**Architecture facts worth knowing before touching this area:**
-
-- Section 12 names **"verification config"** among what the profile freezes, so
-  hard rule 6 puts the read at run start — not an open choice. It also names
-  bounded remediation rounds for `verification` *by name*, unlike
-  implementation, where section 20's "per reviewed stage" wording let step 6
-  decline them without contradiction.
-- Section 4: **stage N's `output_ref` is literally what stage N+1 was handed** —
-  which is why verification's is a JSON record, not a report.
-- `ARCHITECTURE.md` had not changed since `14a7ea5` (step 2), so steps 3-6 all
-  deferred section-12 requirements with plan-level assumptions alone. Step 7
-  ended that: sections 12, 15, 17, and 20 now carry the deferrals and limits.
-
-**Closed:** the three-orchestrator extraction question step 6 deferred here.
-Verification has no author, panel, rounds, model, prompt, or `agent_run` row, so
-the shape the three dispatching stages share is absent; an interface spanning
-all four would have to make every one optional. Do not carry it to step 8.
+  roughly 955 GB inside the 900-second command ceiling. Fixed with
+  `VERIFY_RETENTION_MAX_BYTES`, which carries that measurement in its comment so
+  the next reader never re-derives it.
+- **Architecture facts worth knowing before touching this area:** section 12
+  names "verification config" among what the profile freezes, so hard rule 6
+  puts the read at run start; section 4 means stage N's `output_ref` is
+  literally what stage N+1 was handed, which is why verification's is a JSON
+  record rather than a report.
+- **Closed:** the three-orchestrator extraction question step 6 deferred here.
+  Verification has no author, panel, rounds, model, prompt, or `agent_run` row,
+  so the shape the three dispatching stages share is absent. Do not carry it to
+  step 8.
+- **Next time:** prior smokes here each drove **one stage**, with upstream
+  constructed through the store — roughly $0.13 an attempt for prompt
+  iteration. Reserve a full chain for the record.
 
 ### Step 6: implementation stage — shipped (2026-08-30)
 
-Nine tasks, committed as `32a714e`; independent review filed two low findings,
-both closed. Smoke: one `claude-sonnet-5` dispatch, **$0.0673**, 5.1s, valid
-patch set on the first attempt — the third stage whose prompts worked unmodified
-on the first real attempt. Nine guards broken and restored.
+Nine tasks, `32a714e`; two low review findings, both closed. Smoke: one
+dispatch, **$0.0673**, valid patch set on the first attempt.
 
 **Decisions locked:** `ProposedPatchFile.content` is the complete new file
 content (no diff field); scope matching is exact-or-`s/`-prefix, case-preserving
@@ -246,16 +213,14 @@ head-moved re-validation. Scope fitness and `status.md` deferred past step 9;
 **The review's lesson:** a documented guarantee ("the refusal does not depend on
 the target's existence") was false at a boundary the plan never tested —
 `resolveExisting` walks with `existsSync`, so a dangling link resolves
-lexically. The fix refuses any link component whose target cannot be resolved.
-**Refuse what cannot be verified rather than claim a resolution the filesystem
-cannot provide.** Constructible on Windows via a junction whose target is
-deleted after creation.
+lexically. **Refuse what cannot be verified rather than claim a resolution the
+filesystem cannot provide.** Constructible on Windows via a junction whose
+target is deleted after creation.
 
-**Two draft-gap lessons that survived planning:** a binding argument must name
-the file it covers (an unchanged plan does not imply an unchanged spec, so the
-stage re-verifies both); and consult the repo's own records before writing a
-link-redirect gate — the symlink class was already recorded twice and missed
-both times.
+**Two draft-gap lessons:** a binding argument must name the file it covers (an
+unchanged plan does not imply an unchanged spec, so the stage re-verifies both);
+and consult the repo's own records before writing a link-redirect gate — the
+symlink class was already recorded twice and missed both times.
 
 ### Build order steps 1-5 (2026-08-29)
 
@@ -264,9 +229,9 @@ both times.
   is a human signing window, not an authorization lifetime** — it bounds
   `approval-request` → sign → `approve`; re-checking it later would strand a run
   with no in-place repair. Smoke: six dispatches, **$0.63**, three remediation
-  rounds — but **the plan stage's dispatches were the only spend**: the spec,
-  chain, `spec.gate.pass` event, and approval were constructed through the
-  store. Every smoke in this repo so far has driven one stage this way.
+  rounds, and a round-2 finding caught the plan inventing a rejection
+  requirement the spec never stated — the recorded observation behind step 5b's
+  hazard 16.
 - **Step 4 — human approval gate.** `bw approve` verifies one Ed25519 signature
   and creates `awaiting_approval` only on success. A refusal costs nothing and
   is not terminal — unlike step 3, where every failure was terminal because
@@ -312,13 +277,17 @@ both times.
 ### Locked design decisions (2026-08-29)
 
 Architecture reconciled against `2026-08-28-architecture-review.md`, all 14
-findings applied (`f68347c`).
+findings applied (`f68347c`). These describe shipped behaviour; where step 5b's
+plan changes one, it says so and amends the architecture in the same task.
 
 - System name is a configuration value, default **BuildWorks**.
 - Internal paths stay fixed and non-configurable: `.governance/`,
   `gov/<slug>/<run-id>`, `governed.yaml`.
 - Remediation rounds default 3 (counting closure passes), frozen in the profile.
+  Step 5b's plan replaces this with per-stage round counts defaulting to 1.
 - Panel size is configuration per risk level; defaults 2 at standard, 1 at low.
+  Step 5b's plan replaces this with an author-proposed size inside frozen
+  bounds of 2 to 5.
 - Approval is an Ed25519 signature verified against a public key in
   machine-local configuration.
 - A patch binds to the head in effect when proposed; apply-time re-validation
