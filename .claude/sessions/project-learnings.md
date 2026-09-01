@@ -5,7 +5,7 @@ resume point. Everything under **Session records** is history, ordered newest
 first, and may name state that has since been superseded — when the two
 disagree, Current state wins.
 
-## Current state (2026-08-31)
+## Current state (2026-09-01)
 
 **Shipped:** build order steps 1-7 on `master`, head `84b75e1`. The last four
 commits are documentation only — external-harness review records under
@@ -14,14 +14,26 @@ commit is the step-7 merge `5b93ddb`. The tree was green at that merge — 446
 tests / 445 pass / 1 recorded skip / 0 fail, `typecheck` clean, `check:docs`
 clean — and nothing since has touched `src/` or `test/`.
 
-**In flight — step 5b, planned, committed at `84b75e1`.**
+**In flight — step 5b, planned; last committed baseline `84b75e1`.**
 `docs/features/step5b-upstream-findings/` holds `plan.md` (`Status:
-Reconciled`, 13 tasks) and two review records reconciled into it on
-2026-08-31. The plan replaces the closure-round review loop with an author-led
+Reconciled`, 13 tasks), three plan-review records, and one review of the third
+reconciliation, all reconciled into the plan. The third plan review, dated
+2026-09-01, audited the prior reconciliation and found five nominally closed
+contracts that were not executable. Its follow-up review accepted those corrections
+and identified five additional record and clarity issues. The plan now replaces the closure-round review loop with an author-led
 flow — draft, one self-critique, a specialist panel, author reconciliation,
 deterministic gate — and routes an upstream concern to a stored proposal
-instead of another author round. Nothing is implemented. Task 1 is a bounded prototype whose exit decision confirms or
-revises Tasks 4-9, so no schema or stage work starts before it runs.
+instead of another author round. Canonical findings, immutable per-reviewer
+reports, and reconciliation decisions are separate records; specification
+review receives the design input; proposal content is conditional reconciliation
+output; and required specialties consume seats inside the author-requested
+panel. Exact source matching proves cited text occurs, not that it semantically
+supports a rejection; artifact hashes and mechanical gates likewise do not prove an
+`addressed` finding was cured. That residual author-judgment risk is explicit and no
+closure panel independently confirms it. Nothing is implemented. Task 1 is a bounded prototype whose exit decision
+confirms or revises Tasks 4-9. A confirming result must receive explicit operator
+acceptance and amend architecture sections 12 and 13 before production schema or
+stage work starts.
 
 **Three latent defects in shipped code** were confirmed while reconciling those
 reviews. They are unfixed, recorded in the plan, and described in the
@@ -87,6 +99,58 @@ specific to working *in this repository*.
   status, not the stage's. Measure a stage's exit code without the pipe.
 
 ## Session records
+
+### Step 5b: review of third reconciliation accepted (2026-09-01)
+
+`2026-09-01-plan-review-3-review.md` found no critical or high-severity defect in
+the third reconciliation. All five of its concerns were accepted. An append-only
+addendum now records the plan's post-reconciliation state, corrects the Task 6
+prompt attribution, and links the five findings to the two earlier reviews. The
+review-of-review carries its own five dispositions. The plan remains `Reconciled`
+and authorizes Task 1 only; Tasks 3-9 still require confirming prototype evidence,
+explicit operator acceptance, and the architecture sections 12 and 13 amendment.
+
+The substantive limit is now explicit throughout the plan: an exact source match
+proves textual occurrence but cannot prove that the citation logically supports a
+rejection. Likewise, an `addressed` decision advances after retained hashes and
+mechanical artifact gates, without an independent semantic closure pass. A missing
+or unmatched source and an explicit `cannot_determine` route to a human; a weak but
+matching author rationale can advance. That is the selected author-led authority
+tradeoff, not a property deterministic code can eliminate.
+
+The process lesson: state exactly what a deterministic check proves. Structural and
+textual validation can fail closed on malformed evidence, but must not be described
+as semantic verification.
+
+### Step 5b: third reconciliation audit closed five plan-contract gaps (2026-09-01)
+
+`2026-09-01-plan-review-3.md` audited the `Reconciled` claim against both prior
+reviews, the binding architecture, hazards, this learning record, the shipped
+prompts/stages/store/migration, and `doc-check`. All five findings were accepted
+and reconciled into the same `plan.md`; the first two review records remain
+unchanged and no second plan or spike document was added.
+
+- Canonical concern identity, immutable per-reviewer reports, and one
+  reconciliation decision are separate storage responsibilities. Round is part
+  of canonical identity, so a later configured round cannot overwrite the first.
+- Specification reviewers and reconcilers receive `design.md`; upstream omissions
+  use stable `upstream:design:<decision-key>` tokens rather than headings the
+  source does not contain. Plan review uses the approved specification analogue.
+- Proposal title/problem/upstream explanation is a conditional candidate inside
+  the reconciliation decision. Deterministic code derives impact from disposition.
+- Required specialties consume panel seats and the required/requested union must
+  fit. Reviewers and specialties are both distinct. With the default size of two,
+  requirements-traceability leaves one requested lens; SQL plus UI needs three
+  seats and registered specialists.
+- Task 1 remains a non-production prototype, but a confirming exit now includes
+  the operator-approved sections 12 and 13 amendment before Tasks 3-9. A grounded
+  rejection may advance at any severity; unmatched grounding becomes
+  `cannot_determine` and blocks for a human.
+
+The important process lesson: a reconciliation stamp is a claim, not evidence.
+Trace the promised result through prompt input, parser, storage, and gate before
+calling the finding closed; `check:docs` intentionally does not validate that
+semantic chain or the `Status` value.
 
 ### Step 5b: two plan reviews reconciled, plan rewritten (2026-08-31)
 
