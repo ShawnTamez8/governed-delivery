@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { acquireLock } from "./lock.ts";
 import { GOVERNANCE_PREFIX } from "./paths.ts";
 import { requireRunInProgress, CHANGE_KINDS, GATE_RESULTS, ROLES, openStore, type Store } from "./store.ts";
@@ -33,7 +34,11 @@ commands:
   approve --run <id> --expires <iso> --signature <base64>
                                          verify and record the authorization
   verify-audit                           recompute the whole audit chain
-                                         (unrelated to verify above)`;
+                                         (unrelated to verify above)
+  proposal-export --proposal <id> [--name <slug>]
+                                         materialize a stored proposal into
+                                         docs/proposals/ as an explicit
+                                         operator action`;
 
 class UsageError extends Error {}
 
@@ -127,6 +132,7 @@ async function main(): Promise<void> {
     "approval-request",
     "approve",
     "verify-audit",
+    "proposal-export",
   ];
   if (!known.includes(command)) {
     console.error(USAGE);
@@ -542,6 +548,74 @@ async function main(): Promise<void> {
           break;
         }
         console.log("chain valid");
+        break;
+      }
+      case "proposal-export": {
+        // A run never writes here (architecture section 14): this command is
+        // the human's own action, materializing state the run only stored.
+        const proposalId = numeric(args, "proposal");
+        const proposal = store.getProposal(proposalId);
+        if (!proposal) {
+          throw new Error(`proposal ${proposalId} does not exist`);
+        }
+        const explicitName = optional(args, "name");
+        const defaultName = proposal.title
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "");
+        const name = explicitName ?? defaultName;
+        if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name)) {
+          throw new UsageError(
+            explicitName !== undefined
+              ? `invalid --name ${name}: must be lowercase kebab-case`
+              : `the proposal's title does not derive a usable file name; pass --name explicitly`
+          );
+        }
+        const targetDir = join(process.cwd(), "docs", "proposals");
+        const targetPath = join(targetDir, `${name}.md`);
+        const sources = store.getProposalSources(proposal.id);
+        const body = `# ${proposal.title}
+
+**Route:** ${proposal.route}
+**Raised in:** run ${proposal.run_id}, stage ${proposal.stage_id}
+**Source finding id(s):** ${sources.join(", ")}
+**Evidence:** ${proposal.evidence_ref}
+
+## Problem
+
+${proposal.problem}
+
+## Why this is upstream
+
+${proposal.why_upstream}
+`;
+        mkdirSync(targetDir, { recursive: true });
+        // One filesystem decision, not two. An `existsSync` preflight followed
+        // by a default (truncating) write leaves a window in which another
+        // process, an editor, or a link creation places the target and this
+        // command destroys it — and the refusal it promises the operator is
+        // absolute. `wx` makes the refusal the write's own outcome, so there
+        // is no window to lose.
+        try {
+          writeFileSync(targetPath, body, { flag: "wx" });
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+            console.error(`refusing to overwrite an existing proposal file: docs/proposals/${name}.md`);
+            process.exitCode = 1;
+            break;
+          }
+          throw err;
+        }
+        appendAudit(store, {
+          runId: proposal.run_id,
+          stageId: proposal.stage_id,
+          actor: "operator",
+          actorType: "human",
+          action: "proposal.export",
+          summary: `exported proposal ${proposal.id} to docs/proposals/${name}.md`,
+        });
+        console.log(`docs/proposals/${name}.md`);
         break;
       }
     }

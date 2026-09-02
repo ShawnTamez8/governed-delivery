@@ -168,6 +168,13 @@ function derive() {
   if (migrationFiles.length === 0) throw new Error("no .sql files found under src/migrations");
   const migrationSql = migrationFiles.map((f) => read(`src/migrations/${f}`)).join("\n");
 
+  // A table's *final* body: later `CREATE TABLE <name> (...)` occurrences
+  // overwrite earlier ones with the same name, so a table a later migration
+  // renames-and-rebuilds (step 5b Task 7) resolves to the shape it has now,
+  // not the dead text an earlier, superseded migration still carries
+  // verbatim. `checkConstraints` uses this to scope a constraint assertion to
+  // one table instead of the whole concatenated file.
+  const migrationTableBodies = new Map();
   const migrationColumns = new Map();
   const tableRe = /^CREATE TABLE (\w+) \(/gm;
   let m;
@@ -180,8 +187,10 @@ function derive() {
       else if (migrationSql[i] === ")") depth--;
       i++;
     }
+    const body = migrationSql.slice(tableRe.lastIndex, i - 1);
+    migrationTableBodies.set(name, body);
     const cols = [];
-    for (const line of migrationSql.slice(tableRe.lastIndex, i - 1).split("\n")) {
+    for (const line of body.split("\n")) {
       const cm = /^\s*([a-z_][a-z0-9_]*)\s+/.exec(line);
       if (cm) cols.push(cm[1]);
     }
@@ -202,6 +211,7 @@ function derive() {
     migrationFiles,
     migrationSql,
     migrationColumns,
+    migrationTableBodies,
   };
 }
 
@@ -236,10 +246,22 @@ const PINNED_DEFERRED = [
   "pr_summary",
 ];
 
-const PINNED_TABLES = ["agent_run", "approval", "audit", "finding", "run", "stage"];
+const PINNED_TABLES = [
+  "agent_run",
+  "approval",
+  "audit",
+  "finding",
+  "finding_decision",
+  "finding_report",
+  "proposal",
+  "proposal_source",
+  "run",
+  "stage",
+];
 
-// Constraints are not columns, so the column comparison cannot see them. These
-// are asserted against the literal migration text.
+// Constraints on tables nothing in this step rebuilds. An unscoped whole-file
+// search is safe for these: the table's CREATE TABLE text never changes
+// underneath it, so there is no dead-text case to guard against.
 const PINNED_CONSTRAINTS = [
   "UNIQUE (run_id, ordinal)",
   "CHECK (change_kind IN ('feature', 'defect_fix'))",
@@ -248,13 +270,30 @@ const PINNED_CONSTRAINTS = [
   "CHECK (gate_result IN ('pass', 'block'))",
   "CHECK (role IN ('author', 'reviewer'))",
   "CHECK (independence IN ('unverified_self_attestation', 'configured_standalone'))",
-  "CHECK (severity IN ('low', 'medium', 'high', 'critical'))",
-  "CHECK (disposition IN ('open', 'resolved', 'disputed', 'accepted'))",
-  "UNIQUE (stage_id, intent_key, location)",
   "CHECK (risk IN ('low', 'standard', 'high'))",
   "UNIQUE (run_id)",
   "CREATE TRIGGER audit_no_update",
   "CREATE TRIGGER audit_no_delete",
+];
+
+// Constraints scoped to one table's *final* body (step 5b Task 7). `finding`
+// was rebuilt with a new shape; its original CREATE TABLE text survives
+// verbatim in an earlier, superseded migration file, so an unscoped search
+// for these would pass forever regardless of what the current table looks
+// like — the exact defect this plan's blast-radius review named.
+const PINNED_TABLE_CONSTRAINTS = [
+  ["finding", "UNIQUE (stage_id, round, intent_key, location)"],
+  ["finding_report", "CHECK (severity IN ('low', 'medium', 'high', 'critical'))"],
+  ["finding_report", "CHECK (classification IN ('current_artifact', 'upstream'))"],
+  ["finding_report", "UNIQUE (finding_id, agent_run_id)"],
+  [
+    "finding_decision",
+    "CHECK (disposition IN ('addressed', 'rejected_with_rationale', 'upstream_follow_up', 'upstream_blocking', 'cannot_determine'))",
+  ],
+  ["finding_decision", "UNIQUE (finding_id)"],
+  ["proposal", "CHECK (route IN ('follow_up', 'blocking_dependency'))"],
+  ["proposal", "UNIQUE (stage_id, identity)"],
+  ["proposal_source", "UNIQUE (proposal_id, finding_id)"],
 ];
 
 const lineIn = (text, needle) => {
@@ -329,6 +368,19 @@ function checkConstraints(facts) {
   for (const constraint of PINNED_CONSTRAINTS) {
     if (!facts.migrationSql.includes(constraint)) {
       err("constraints", "src/migrations/001_init.sql", 1, `constraint absent from the migrations: ${constraint}`);
+    }
+  }
+  for (const [table, constraint] of PINNED_TABLE_CONSTRAINTS) {
+    const body = facts.migrationTableBodies.get(table);
+    if (!body) {
+      err("constraints", "src/migrations/001_init.sql", 1, `table ${table} is pinned but absent from the migrations`);
+    } else if (!body.includes(constraint)) {
+      err(
+        "constraints",
+        "src/migrations/001_init.sql",
+        1,
+        `constraint absent from ${table}'s final table body: ${constraint}`
+      );
     }
   }
 }

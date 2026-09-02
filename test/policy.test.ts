@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   APPROVAL_MAX_LIFETIME_SECONDS,
-  MATERIAL_THRESHOLD,
   PANEL_SIZE_CEILING,
   PANEL_SIZE_FLOOR,
   PANEL_SIZE_MAX,
@@ -17,7 +16,7 @@ import {
   invalidPolicyReason,
   policyHash,
 } from "../src/policy.ts";
-import { DISPOSITIONS, SEVERITIES } from "../src/finding.ts";
+import { SEVERITIES } from "../src/finding.ts";
 import { PROMPT_MAX_BYTES, RESULT_MAX_BYTES } from "../src/harness.ts";
 import { PROTECTED_PATH_PREFIXES } from "../src/scope.ts";
 import { RISKS, computeRisk } from "../src/select.ts";
@@ -36,9 +35,7 @@ test("every policy value is the one the enforcing module actually uses", () => {
   assert.equal(p.planReviewRounds, PLAN_REVIEW_ROUNDS);
   assert.equal(p.panelSizeMin, PANEL_SIZE_FLOOR);
   assert.equal(p.panelSizeMax, PANEL_SIZE_MAX);
-  assert.equal(p.materialityThreshold, MATERIAL_THRESHOLD);
   assert.deepEqual(p.severities, [...SEVERITIES]);
-  assert.deepEqual(p.dispositions, [...DISPOSITIONS]);
   assert.deepEqual(p.requiredSpecialties, [...REQUIRED_SPECIALTIES]);
   assert.deepEqual(p.protectedPathPrefixes, [...PROTECTED_PATH_PREFIXES]);
   assert.equal(p.promptMaxBytes, PROMPT_MAX_BYTES);
@@ -59,10 +56,6 @@ test("no verification passthrough name can carry governance material to a comman
   }
 });
 
-test("the materiality threshold names a real severity", () => {
-  assert.ok(SEVERITIES.includes(MATERIAL_THRESHOLD));
-});
-
 test("buildPolicy hands out a copy: mutating the result cannot change the live values", () => {
   const p = buildPolicy();
   p.requiredSpecialties.push("invented");
@@ -74,7 +67,6 @@ test("any change to policy changes its hash", () => {
   const before = policyHash(base);
   assert.notEqual(policyHash({ ...base, specReviewRounds: base.specReviewRounds + 1 }), before);
   assert.notEqual(policyHash({ ...base, planReviewRounds: base.planReviewRounds + 1 }), before);
-  assert.notEqual(policyHash({ ...base, materialityThreshold: "low" }), before);
   assert.notEqual(policyHash({ ...base, panelSizeMax: base.panelSizeMax + 1 }), before);
 });
 
@@ -175,13 +167,6 @@ test("required specialties are unique and fit within the maximum panel", () => {
   );
 });
 
-test("a materiality threshold that is not a real severity is refused", () => {
-  assert.match(
-    String(invalidPolicyReason({ ...buildPolicy(), materialityThreshold: "catastrophic" })),
-    /materialityThreshold must be one of/
-  );
-});
-
 test("a string array field holding a non-string is refused", () => {
   assert.match(
     String(invalidPolicyReason({ ...buildPolicy(), requiredSpecialties: ["ok", 7] })),
@@ -205,10 +190,6 @@ const SRC = join(fileURLToPath(new URL("..", import.meta.url)), "src");
  * profile at run start, and a stage that imported the live value would govern
  * the run by whatever is configured *now* — the opposite of hard rule 6, and
  * invisible, because the profile would still record the value the run froze.
- *
- * Round counts are frozen now but remain inactive until Task 9 can give a
- * round its promised panel-and-reconciliation meaning. The other values are
- * active now and must be read from the profile rather than these defaults.
  */
 const FROZEN_ONLY = [
   "SPEC_REVIEW_ROUNDS",
@@ -216,7 +197,6 @@ const FROZEN_ONLY = [
   "PANEL_SIZE_MAX",
   "PANEL_SIZE_FLOOR",
   "PANEL_SIZE_CEILING",
-  "MATERIAL_THRESHOLD",
   "REQUIRED_SPECIALTIES",
 ];
 
@@ -259,20 +239,16 @@ test("both stages read every active review value from the frozen profile", () =>
       source.includes("profile.policy.requiredSpecialties"),
       `${file} must read required specialties from the frozen profile`
     );
-    assert.ok(
-      source.includes("profile.policy.materialityThreshold"),
-      `${file} must read materiality from the frozen profile`
-    );
   }
 });
 
-test("configured round counts remain inactive until Task 9 implements reconciliation", () => {
+test("configured round counts are read from the frozen profile, and the legacy closure budget is gone", () => {
   for (const [file, field] of [
     ["spec-stage.ts", "specReviewRounds"],
     ["plan-stage.ts", "planReviewRounds"],
   ]) {
     const source = readFileSync(join(SRC, file), "utf8");
-    assert.ok(!source.includes(`profile.policy.${field}`), `${file} activates ${field} too early`);
-    assert.ok(source.includes("LEGACY_CLOSURE_PASSES"), `${file} must name the transition`);
+    assert.ok(source.includes(`profile.policy.${field}`), `${file} must activate ${field}`);
+    assert.ok(!source.includes("LEGACY_CLOSURE_PASSES"), `${file} must not carry the legacy closure budget`);
   }
 });

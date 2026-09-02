@@ -1,10 +1,22 @@
-import { SEVERITY_ORDER } from "./finding.ts";
 import type { PlanDoc } from "./plan-doc.ts";
-import type { FindingRow } from "./store.ts";
+import type { FindingDecisionRow } from "./store.ts";
+
+/** Every disposition that blocks the run (section 12). */
+export const BLOCKING_DISPOSITIONS: readonly string[] = ["cannot_determine", "upstream_blocking"];
 
 /**
- * The deterministic review gate (section 12): a reviewer's verdict is an
- * input, never the gate. Passes iff no material finding remains open.
+ * The deterministic decision gate (section 12, as amended for step 5b):
+ * completion is decision completeness, not an open-severity threshold. By
+ * the time a decision reaches here it has already passed
+ * `validateReconciliation`'s structural and content checks — a content
+ * failure was already converted to `cannot_determine` — so this gate asks
+ * only whether any decision, across every round this stage ran, still
+ * carries a blocking disposition. `cannot_determine` blocks for a human;
+ * `upstream_blocking` blocks because filing the missing decision does not
+ * make the artifact implementable. Neither this gate nor the checks that
+ * feed it independently confirm that an `addressed` decision was
+ * semantically cured or that a grounding excerpt logically supports its
+ * rejection — see `src/reconciliation.ts`'s module comment.
  *
  * Identical in contract to `specReviewGate`. The duplication is deliberate:
  * hard rule 4 forbids an abstraction before two real implementations exist,
@@ -12,17 +24,12 @@ import type { FindingRow } from "./store.ts";
  * that has all the evidence, not a reflex here.
  */
 export function planReviewGate(
-  findings: FindingRow[],
-  materialityThreshold: string
-): { pass: true } | { pass: false; openMaterialIds: number[] } {
-  const openMaterial = findings.filter(
-    (f) =>
-      SEVERITY_ORDER[f.severity] >= SEVERITY_ORDER[materialityThreshold] &&
-      f.disposition === "open"
-  );
-  return openMaterial.length === 0
+  decisions: FindingDecisionRow[]
+): { pass: true } | { pass: false; blockedFindingIds: number[] } {
+  const blocked = decisions.filter((d) => BLOCKING_DISPOSITIONS.includes(d.disposition));
+  return blocked.length === 0
     ? { pass: true }
-    : { pass: false, openMaterialIds: openMaterial.map((f) => f.id) };
+    : { pass: false, blockedFindingIds: blocked.map((d) => d.finding_id) };
 }
 
 /**

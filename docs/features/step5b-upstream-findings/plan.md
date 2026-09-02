@@ -695,6 +695,38 @@ test and restored byte-identical by hash.
 decisions are not stored yet (Task 7); the gate still decides by severity;
 and no proposal record exists (Task 8).
 
+#### Operator decision: Tasks 7-9 merged into one atomic tranche, 2026-09-02
+
+Task 7's Files list names only `src/finding.ts` and `src/store.ts`, but its
+own steps rebuild the `finding` table's shape: drop `severity`, `subject`,
+`agent_run_id`, and `disposition`; add `round`; split reviewer evidence into
+`finding_report` and one decision into `finding_decision`. `src/spec-stage.ts`,
+`src/plan-stage.ts`, and `src/plan-gate.ts` — all named in Task 9's Files list,
+none in Task 7's — still run the legacy severity-gated closure loop against
+the old contract (`insertFinding`, `getFindings`, `updateFindingDisposition`,
+`FindingRow.severity`/`.disposition`). Shipping Task 7 alone, as its own
+commit, would either break those three files (outside Task 7's stated scope)
+or require an unspecified temporary severity-gate adapter bridging the old
+and new schemas — itself a second, compatibility schema for the same concept,
+which hard rule 3 forbids and which "nothing has shipped" gives no reason to
+build.
+
+**Decision:** Tasks 7, 8, and 9 execute as one atomic working-tree change. The
+storage rebuild (Task 7), proposal persistence (Task 8), and orchestrator and
+gate rewiring (Task 9) land together; no independently completed or committed
+state exists between them. Each task's own Steps, Verify, and Task completion
+evidence stay as internal checkpoints during implementation, but the combined
+`npm run typecheck`, `npm test`, and `npm run check:docs` gate — run once the
+whole tranche is in place — is what completion is judged against. Task 10
+(final architecture facts, hazards, README, and checker alignment) remains a
+separate task afterward, as planned.
+
+This is a plan defect, not a new design decision: Task 9's Files list already
+names `src/spec-stage.ts`, `src/plan-stage.ts`, and `src/plan-gate.ts`, so the
+combined file footprint was already implied; only the task boundary — that
+Task 7 could ship alone — was wrong. No parallel or compatibility finding
+schema is built at any point.
+
 ### Task 7: Canonical finding, reviewer-report, and reconciliation storage
 
 **Depends on:** Tasks 1 and 6
@@ -705,17 +737,18 @@ and no proposal record exists (Task 8).
 - Modify: `src/finding.ts`, `src/store.ts`
 - Modify: `test/store.test.ts`, `test/schema.test.ts`, `test/migrate.test.ts`
 - Modify: `scripts/doc-check.mjs`
+- Modify (found necessary during the Tasks 7-9 tranche, not foreseen here): `src/policy.ts`, `src/paths.ts`, `ARCHITECTURE.md` (section 15 schema fence only), `test/policy.test.ts`, `test/profile.test.ts` — see the implementation note after Task 9 for the actual combined footprint and why
 
 **Steps:**
 
-- [ ] Replace the lossy `insertFinding` contract with two writes. `upsertCanonicalFinding(stageId, round, intentKey, location)` returns the exact canonical row using `RETURNING id` or identity re-select. `insertFindingReport(findingId, agentRunId, severity, classification, subject)` inserts immutable evidence and refuses a duplicate `(finding_id, agent_run_id)`. Add the three-insert regression against the canonical return path because the two-insert case passes by coincidence.
-- [ ] Give the three entities one responsibility each. `finding` owns `(stage_id, round, intent_key, location)` and a stable id; `finding_report` owns reviewer `agent_run_id`, severity, classification, and subject; `finding_decision` owns one reconciling `agent_run_id`, disposition, rationale, conditional grounding, and before/after artifact hashes. Task 8's proposal record links upstream candidate content to its decision and source finding ids. Enforce `UNIQUE (stage_id, round, intent_key, location)`, `UNIQUE (finding_id, agent_run_id)`, and `UNIQUE (finding_id)` respectively.
-- [ ] Read canonical findings together with all reports before reconciliation. Assert one canonical row and two report rows for a same-location pair whose severities differ, two canonical rows for the mixed-classification pair, and separate canonical rows for the same identity in rounds one and two. Never use an insert return as proof that no second report was created. Do not construct a one-canonical-two-mixed-classification-report row: the report contract cannot produce that state, and a fixture asserting it would prove a shape no run can reach (hazard 4; operator decision, 2026-09-02).
-- [ ] Validate severity, classification, disposition, and conditional-field vocabularies before SQL, importing each from the module that owns it so validators and constraints cannot drift. Do not rank or combine severity in SQL; immutable migration text cannot import `SEVERITY_ORDER` and a fourth copy would go stale silently.
-- [ ] Scope the finding, report, and decision constraint assertions to their final table bodies in both `test/schema.test.ts` and `scripts/doc-check.mjs`, using the pattern already at `test/schema.test.ts:98`, so a rebuild cannot pass on dead migration text.
-- [ ] If the migration rebuilds `finding`: rename, recreate with the new round-scoped identity and every surviving constraint, copy rows with explicit ids under the legacy-row mapping Task 1 recorded, populate their immutable report evidence without manufacturing a second reviewer, drop the old table, and set the user version. Note that explicit-id copying restores the `AUTOINCREMENT` sequence correctly only because nothing in `src/` deletes findings. Do not edit an existing migration or add a permanent default for a field new writes must supply.
-- [ ] Build the migration regression against a scratch migrations directory holding the prior versions, applied, then the new file copied in and reapplied — `applyMigrations` applies every file in the directory it is given.
-- [ ] Name the exact column position for any schema line added to architecture section 15: `checkMigrations` and `test/schema.test.ts:90` compare column lists with `JSON.stringify`, so order is part of the contract.
+- [x] Replace the lossy `insertFinding` contract with two writes. `upsertCanonicalFinding(stageId, round, intentKey, location)` returns the exact canonical row using `RETURNING id` or identity re-select. `insertFindingReport(findingId, agentRunId, severity, classification, subject)` inserts immutable evidence and refuses a duplicate `(finding_id, agent_run_id)`. Add the three-insert regression against the canonical return path because the two-insert case passes by coincidence.
+- [x] Give the three entities one responsibility each. `finding` owns `(stage_id, round, intent_key, location)` and a stable id; `finding_report` owns reviewer `agent_run_id`, severity, classification, and subject; `finding_decision` owns one reconciling `agent_run_id`, disposition, rationale, conditional grounding, and before/after artifact hashes. Task 8's proposal record links upstream candidate content to its decision and source finding ids. Enforce `UNIQUE (stage_id, round, intent_key, location)`, `UNIQUE (finding_id, agent_run_id)`, and `UNIQUE (finding_id)` respectively.
+- [x] Read canonical findings together with all reports before reconciliation. Assert one canonical row and two report rows for a same-location pair whose severities differ, two canonical rows for the mixed-classification pair, and separate canonical rows for the same identity in rounds one and two. Never use an insert return as proof that no second report was created. Do not construct a one-canonical-two-mixed-classification-report row: the report contract cannot produce that state, and a fixture asserting it would prove a shape no run can reach (hazard 4; operator decision, 2026-09-02).
+- [x] Validate severity, classification, disposition, and conditional-field vocabularies before SQL, importing each from the module that owns it so validators and constraints cannot drift. Do not rank or combine severity in SQL; immutable migration text cannot import `SEVERITY_ORDER` and a fourth copy would go stale silently.
+- [x] Scope the finding, report, and decision constraint assertions to their final table bodies in both `test/schema.test.ts` and `scripts/doc-check.mjs`, using the pattern already at `test/schema.test.ts:98`, so a rebuild cannot pass on dead migration text.
+- [x] If the migration rebuilds `finding`: rename, recreate with the new round-scoped identity and every surviving constraint, copy rows with explicit ids under the legacy-row mapping Task 1 recorded, populate their immutable report evidence without manufacturing a second reviewer, drop the old table, and set the user version. Note that explicit-id copying restores the `AUTOINCREMENT` sequence correctly only because nothing in `src/` deletes findings. Do not edit an existing migration or add a permanent default for a field new writes must supply.
+- [x] Build the migration regression against a scratch migrations directory holding the prior versions, applied, then the new file copied in and reapplied — `applyMigrations` applies every file in the directory it is given.
+- [x] Name the exact column position for any schema line added to architecture section 15: `checkMigrations` and `test/schema.test.ts:90` compare column lists with `JSON.stringify`, so order is part of the contract.
 
 **Verify:** `node --test test/store.test.ts test/schema.test.ts test/migrate.test.ts`; `npm run typecheck`; `npm run check:docs`.
 
@@ -736,14 +769,14 @@ and no proposal record exists (Task 8).
 
 **Steps:**
 
-- [ ] Define the proposal record from the validated reconciliation candidate: source run, stage, feature slug, and canonical finding ids; title and problem statement; why the concern is upstream of the reviewed artifact; the reconciler's rationale; and the artifact hashes in force. Derive `follow_up | blocking_dependency` from the reconciliation disposition; never accept a second model-returned impact value.
-- [ ] Store it as run state with evidence written under the governance directory through `src/paths.ts`. No run writes into `docs/proposals/`, which is outside the signed scope.
-- [ ] Give it a deterministic identity and a stated behaviour when the same proposal is raised again. Deduplicate the candidate without fusing impact, route, or rationale across reports: preserve every source canonical finding id and its immutable reports, and let the reconciler's one disposition determine impact.
-- [ ] Validate that a proposal is non-binding. It cannot add an acceptance criterion to the current feature and cannot become an active `design.md` automatically. Promotion stays the human `git mv` section 14 describes.
-- [ ] Retain the raw reconciliation output and append the audit event before any write, and define the behaviour when rendering or writing the evidence fails — the run blocks with the cause named rather than advancing as though a proposal existed.
-- [ ] Route by derived impact: `upstream_follow_up` renders `follow_up`, writes, and advances; `upstream_blocking` renders `blocking_dependency`, writes, and blocks because filing the missing decision does not make the approved specification implementable; `cannot_determine` blocks for a human with no proposal claimed.
-- [ ] Add a `bw proposal-export` command that materializes a stored proposal into `docs/proposals/` as an explicit operator action, refusing to overwrite an existing file. Document the two-step flow in `docs/proposals/README.md`.
-- [ ] Give proposal and reconciliation audit events a machine-readable summary in the shape the gate events already use — ids, route, artifact hashes, risk, outcome — so a later query finds every upstream block without parsing prose, the way `src/plan-stage.ts:169-185` reads `spec.gate.pass` back.
+- [x] Define the proposal record from the validated reconciliation candidate: source run, stage, feature slug, and canonical finding ids; title and problem statement; why the concern is upstream of the reviewed artifact; the reconciler's rationale; and the artifact hashes in force. Derive `follow_up | blocking_dependency` from the reconciliation disposition; never accept a second model-returned impact value.
+- [x] Store it as run state with evidence written under the governance directory through `src/paths.ts`. No run writes into `docs/proposals/`, which is outside the signed scope.
+- [x] Give it a deterministic identity and a stated behaviour when the same proposal is raised again. Deduplicate the candidate without fusing impact, route, or rationale across reports: preserve every source canonical finding id and its immutable reports, and let the reconciler's one disposition determine impact.
+- [x] Validate that a proposal is non-binding. It cannot add an acceptance criterion to the current feature and cannot become an active `design.md` automatically. Promotion stays the human `git mv` section 14 describes.
+- [x] Retain the raw reconciliation output and append the audit event before any write, and define the behaviour when rendering or writing the evidence fails — the run blocks with the cause named rather than advancing as though a proposal existed.
+- [x] Route by derived impact: `upstream_follow_up` renders `follow_up`, writes, and advances; `upstream_blocking` renders `blocking_dependency`, writes, and blocks because filing the missing decision does not make the approved specification implementable; `cannot_determine` blocks for a human with no proposal claimed.
+- [x] Add a `bw proposal-export` command that materializes a stored proposal into `docs/proposals/` as an explicit operator action, refusing to overwrite an existing file. Document the two-step flow in `docs/proposals/README.md`.
+- [x] Give proposal and reconciliation audit events a machine-readable summary in the shape the gate events already use — ids, route, artifact hashes, risk, outcome — so a later query finds every upstream block without parsing prose, the way `src/plan-stage.ts:169-185` reads `spec.gate.pass` back.
 
 **Verify:** `node --test test/cli.test.ts test/store.test.ts test/schema.test.ts test/audit.test.ts`; `npm run typecheck`; `npm run check:docs`.
 
@@ -763,20 +796,114 @@ and no proposal record exists (Task 8).
 
 **Steps:**
 
-- [ ] Replace the round loop in both stages with: draft, self-critique, then for each configured round a complete panel followed by reconciliation, then the deterministic gate. This is the atomic activation point for `profile.policy.specReviewRounds` and `planReviewRounds`: remove both `LEGACY_CLOSURE_PASSES` constants here, not earlier. Remove the closure-round redispatch and the resolution of findings absent from a later panel. Pass design plus specification through the specification phases and approved specification plus plan through the plan phases.
-- [ ] Make the gate decide over every configured round on report/decision completeness, the exact set of derived normative additions, textual grounding for `addressed` additions and rejections, conditional proposal completeness, and the mechanical artifact gates, not on open severity. Advance on a fully accounted and grounded `addressed` decision and a textually grounded `rejected_with_rationale` at any severity. Treat an absent, extra, duplicated, wrongly sourced, or unmatched grounding or normative node as `cannot_determine`; also block on `upstream_blocking` and explicit `cannot_determine`, naming the canonical finding ids and any stored proposal. Do not encode or document this gate as independent semantic confirmation of either an addressed concern or the logical sufficiency of a grounding excerpt.
-- [ ] Add the plan-review regression that reproduces the original defect: a material upstream concern in round one produces a proposal and either a documented advance or a named block by its impact, and no additional plan-author revision round is dispatched to repair the wrong artifact.
-- [ ] Add the spec-review analogue so both stages prove the same semantics, using the new `deps.selectPanel` seam rather than depending on registry contents.
-- [ ] Assert dispatch counts explicitly in both stages: exactly one draft, exactly one self-critique, exactly the requested panel size, exactly one reconciliation per round.
-- [ ] Prove both round configurations: the default of one, and a configured value greater than one running `panel → reconcile` twice with one self-critique in total. Have the same intent/location recur in both rounds and prove two canonical round identities and all per-reviewer reports survive rather than overwriting each other.
-- [ ] Prove the coverage and document gates still run on the reconciled artifact, and that `coverageFitsScope` and `coverageMeetsCriteria` keep their shipped behaviour.
-- [ ] Assert the blocked run keeps its approval untouched and its findings retained, and that the audit chain validates across the whole stage.
+- [x] Replace the round loop in both stages with: draft, self-critique, then for each configured round a complete panel followed by reconciliation, then the deterministic gate. This is the atomic activation point for `profile.policy.specReviewRounds` and `planReviewRounds`: remove both `LEGACY_CLOSURE_PASSES` constants here, not earlier. Remove the closure-round redispatch and the resolution of findings absent from a later panel. Pass design plus specification through the specification phases and approved specification plus plan through the plan phases.
+- [x] Make the gate decide over every configured round on report/decision completeness, the exact set of derived normative additions, textual grounding for `addressed` additions and rejections, conditional proposal completeness, and the mechanical artifact gates, not on open severity. Advance on a fully accounted and grounded `addressed` decision and a textually grounded `rejected_with_rationale` at any severity. Treat an absent, extra, duplicated, wrongly sourced, or unmatched grounding or normative node as `cannot_determine`; also block on `upstream_blocking` and explicit `cannot_determine`, naming the canonical finding ids and any stored proposal. Do not encode or document this gate as independent semantic confirmation of either an addressed concern or the logical sufficiency of a grounding excerpt.
+- [x] Add the plan-review regression that reproduces the original defect: a material upstream concern in round one produces a proposal and either a documented advance or a named block by its impact, and no additional plan-author revision round is dispatched to repair the wrong artifact.
+- [x] Add the spec-review analogue so both stages prove the same semantics, using the new `deps.selectPanel` seam rather than depending on registry contents.
+- [x] Assert dispatch counts explicitly in both stages: exactly one draft, exactly one self-critique, exactly the requested panel size, exactly one reconciliation per round.
+- [x] Prove both round configurations: the default of one, and a configured value greater than one running `panel → reconcile` twice with one self-critique in total. Have the same intent/location recur in both rounds and prove two canonical round identities and all per-reviewer reports survive rather than overwriting each other.
+- [x] Prove the coverage and document gates still run on the reconciled artifact, and that `coverageFitsScope` and `coverageMeetsCriteria` keep their shipped behaviour.
+- [x] Assert the blocked run keeps its approval untouched and its findings retained, and that the audit chain validates across the whole stage.
 
 **Verify:** `node --test test/spec-stage.test.ts test/plan-stage.test.ts test/plan-gate.test.ts test/audit.test.ts`; `npm run typecheck`.
 
 **Expected:** Both stages run the same five phases, spend a bounded and asserted number of dispatches, and never send an upstream concern back to the author of the wrong artifact.
 
 **Task completion evidence:** Dispatch counts, final stage and run states, retained canonical finding, reviewer-report, decision, and proposal rows, audit validation, and the red-to-green reproduction of the original defect.
+
+#### Implementation note: Tasks 7-9 tranche shipped, 2026-09-02
+
+Shipped as one atomic working-tree change, per the merge decision above: the
+`finding`/`finding_report`/`finding_decision` rebuild and `proposal`/
+`proposal_source` addition (migrations `005_finding_report_decision.sql`,
+`006_proposal.sql`), the new `src/proposal.ts` module, the rewritten
+`src/store.ts` API (`upsertCanonicalFinding`, `insertFindingReport`,
+`insertFindingDecision`, `upsertProposal`, and their readers; the old
+`insertFinding`/`getFindings`/`updateFindingDisposition` removed), the
+decision-completeness gate in `src/plan-gate.ts`
+(`BLOCKING_DISPOSITIONS = [cannot_determine, upstream_blocking]`), the
+rewritten `src/spec-stage.ts` and `src/plan-stage.ts` orchestration (draft,
+self-critique, then `profile.policy.{specReviewRounds,planReviewRounds}`
+rounds of panel-then-reconciliation, then one gate over every round's
+decisions — `LEGACY_CLOSURE_PASSES` and the closure-round redispatch are
+gone), and `bw proposal-export` in `src/cli.ts`.
+
+**Combined file footprint** (supersedes the three tasks' individually stated
+Files lists, which understated it — see the merge decision above):
+`src/migrations/005_finding_report_decision.sql`,
+`src/migrations/006_proposal.sql`, `src/finding.ts`, `src/policy.ts`,
+`src/paths.ts`, `src/store.ts`, `src/proposal.ts`, `src/plan-gate.ts`,
+`src/spec-stage.ts`, `src/plan-stage.ts`, `src/cli.ts`, `ARCHITECTURE.md`
+(section 15 schema fence only), `scripts/doc-check.mjs`,
+`docs/proposals/README.md`; and tests
+`test/store.test.ts`, `test/schema.test.ts`, `test/migrate.test.ts`,
+`test/policy.test.ts`, `test/profile.test.ts`, `test/plan-gate.test.ts`,
+`test/spec-stage.test.ts`, `test/plan-stage.test.ts`, `test/cli.test.ts`.
+`test/audit.test.ts` was reviewed and needed no change: it asserts only the
+generic append-only chain contract, not any stage-specific action name.
+
+**Deviations and judgment calls made during implementation, not separately
+approved beforehand:**
+
+- Removing `materialityThreshold`/`dispositions` from `src/policy.ts` (dead
+  once the severity-gated closure loop they configured was replaced) forced
+  a domino through `src/finding.ts`, `test/policy.test.ts`, and
+  `test/profile.test.ts`, none of which Task 7's Files list named. Treated as
+  required cleanup of the same change, not a separate decision.
+- A reconciliation that leaves an added normative node unclaimed aborts the
+  round in both stages **only when no decision was converted**
+  (`unclaimedNodes.length > 0 && conversions.length === 0`). The first
+  implementation aborted on any unclaimed node; the Tasks 7-9 code review
+  (finding 3, accepted — see `2026-09-02-task7-9-code-review.md`) showed that
+  conflates two causes. A converted decision drops its claims, so its node
+  surfaces as unclaimed while the decision itself survives as
+  `cannot_determine` — there *is* an owning row, and section 12 requires it to
+  be stored and then blocked by name. Only a node nothing owns has no row for
+  the gate to block on, and that case still fails closed before any write.
+  Fail-closed holds either way: a conversion always yields a
+  `cannot_determine` the gate blocks on.
+- Proposal dedup uses a `proposal` + `proposal_source` join table keyed by a
+  deterministic `(stage_id, identity)` hash where `identity` is derived from
+  `(stageId, title, problem, route)` — route is part of the key so a concern
+  that changes route across rounds (e.g. escalating from `follow_up` to
+  `blocking_dependency`) never silently merges into the earlier route's row.
+- ARCHITECTURE.md received only the mechanical section 15 schema-fence sync
+  needed to keep `doc-check` passing against the rebuilt tables. Sections
+  12/13/22, hazard 16, the hazard-count checker, and README.md are
+  deliberately untouched — that is Task 10's narrative work, not derivable
+  from source the way the schema fence is.
+
+**Independent review, reconciled 2026-09-02.**
+`2026-09-02-task7-9-code-review.md` raised six findings — one high, five
+medium — and all six were verified against the code and accepted. The
+corrections are in this tranche: the migration derives a legacy report's
+classification from its retained upstream location instead of writing a
+literal `current_artifact`; `proposal-export` writes with `flag: "wx"` so the
+refusal is the write's own outcome rather than a check a later write could
+contradict; converted decisions reach storage and the gate (above);
+`spec.proposal.record` / `plan.proposal.record` give proposal persistence its
+own queryable event with route, risk, ids, hashes, and created-versus-linked
+outcome, and the reconcile record gained `risk=`; `proposalIdentity` collapses
+whitespace so a restated title deduplicates as its comment always claimed;
+and `insertFindingDecision` validates the full conditional-field matrix and
+grounding-source vocabulary before SQL, importing `UPSTREAM_SOURCES` from the
+module that owns it. Findings 1, 2, and 3 were each proven by breaking the fix
+and watching the named test fail. Fixing finding 6 exposed a hazard-4 fixture
+defect the review predicted: `test/store.test.ts`'s decision helper defaulted
+to a shape no reconciliation can return, and two tests were asserting against
+it.
+
+**Verification (after review reconciliation):** `npm run typecheck` clean;
+`npm test` — 625 tests, 624 passed, 0 failed, 1 skipped (pre-existing,
+environment-conditional: a file-symlink guard test that only runs with Windows
+Developer Mode enabled — unrelated to this tranche); `npm run check:docs` —
+clean (36 pre-existing path warnings in other features' documents, none
+introduced here).
+
+**Deferred, unchanged:** Task 10 (architecture narrative, hazards, README,
+hazard-count checker), Task 11 (break-and-restore every new guard), Task 12
+(bounded production smoke), Task 13 (completion gate and independent
+review). This plan's `**Status:**` line stays `Reconciled`.
 
 ### Task 10: Final architecture facts, hazards, README, and checker alignment
 

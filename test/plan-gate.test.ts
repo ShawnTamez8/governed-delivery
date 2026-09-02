@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { coverageFitsScope, coverageMeetsCriteria, planReviewGate } from "../src/plan-gate.ts";
+import { BLOCKING_DISPOSITIONS, coverageFitsScope, coverageMeetsCriteria, planReviewGate } from "../src/plan-gate.ts";
 import type { CoverageEntry, PlanDoc } from "../src/plan-doc.ts";
-import type { FindingRow } from "../src/store.ts";
+import type { FindingDecisionRow } from "../src/store.ts";
 
 function covers(artifact: string, criterion = `criterion for ${artifact}`): CoverageEntry {
   return { criterion, artifact, rationale: null, alternativeVerification: null };
@@ -21,16 +21,20 @@ function planWith(coverage: CoverageEntry[]): PlanDoc {
   return { feature: "Thing", planFor: "a".repeat(64), tasks: ["do it"], coverage };
 }
 
-function finding(severity: string, disposition: string, id: number): FindingRow {
+function decision(disposition: string, findingId: number): FindingDecisionRow {
   return {
-    id,
-    stage_id: 1,
-    agent_run_id: null,
-    severity,
-    intent_key: "k",
-    subject: "s",
-    location: "l",
+    id: findingId,
+    finding_id: findingId,
+    agent_run_id: 1,
     disposition,
+    rationale: "r",
+    changed_locations: "[]",
+    grounding_source: null,
+    grounding_location: null,
+    grounding_excerpt: null,
+    normative_changes: null,
+    artifact_hash_before: "a".repeat(64),
+    artifact_hash_after: "a".repeat(64),
   };
 }
 
@@ -101,50 +105,41 @@ test("an empty signed scope makes every artifact promise unkeepable", () => {
   assert.deepEqual(result.unkeepable, ["anything"]);
 });
 
-test("planReviewGate passes when no finding is open", () => {
-  assert.deepEqual(planReviewGate([], "high"), { pass: true });
-  assert.deepEqual(planReviewGate([finding("critical", "resolved", 1)], "high"), { pass: true });
+test("planReviewGate passes when there are no decisions at all", () => {
+  assert.deepEqual(planReviewGate([]), { pass: true });
 });
 
-test("planReviewGate ignores open findings below the material threshold", () => {
-  assert.deepEqual(
-    planReviewGate([finding("low", "open", 1), finding("medium", "open", 2)], "high"),
-    { pass: true }
-  );
+test("planReviewGate passes on every non-blocking disposition", () => {
+  // addressed, rejected_with_rationale, and upstream_follow_up all reflect a
+  // decision the panel already reconciled; only cannot_determine and
+  // upstream_blocking withhold completion (section 12, as amended).
+  for (const disposition of ["addressed", "rejected_with_rationale", "upstream_follow_up"]) {
+    assert.deepEqual(planReviewGate([decision(disposition, 1)]), { pass: true }, disposition);
+  }
 });
 
-test("planReviewGate blocks on an open material finding and names its id", () => {
+test("planReviewGate blocks on cannot_determine and upstream_blocking, naming their finding ids", () => {
   const result = planReviewGate([
-    finding("low", "open", 1),
-    finding("high", "open", 2),
-    finding("critical", "open", 3),
-    finding("critical", "resolved", 4),
-  ], "high");
+    decision("addressed", 1),
+    decision("cannot_determine", 2),
+    decision("upstream_blocking", 3),
+    decision("rejected_with_rationale", 4),
+  ]);
   assert.equal(result.pass, false);
   if (result.pass) return;
-  assert.deepEqual(result.openMaterialIds, [2, 3]);
+  assert.deepEqual(result.blockedFindingIds, [2, 3]);
 });
 
-test("planReviewGate blocks only on the open disposition, matching specReviewGate", () => {
-  // `open` is the only blocking disposition: disputed and accepted are
-  // dispositions a panel has already acted on. Asserted explicitly because
-  // the two gates must agree — a plan gate that blocked on `disputed` while
-  // the spec gate did not would make the same finding terminal at one stage
-  // and not the other.
-  assert.deepEqual(planReviewGate([finding("high", "disputed", 7)], "high"), { pass: true });
-  assert.deepEqual(planReviewGate([finding("high", "accepted", 8)], "high"), { pass: true });
-  const blocked = planReviewGate([finding("high", "open", 9)], "high");
-  assert.equal(blocked.pass, false);
-  if (blocked.pass) return;
-  assert.deepEqual(blocked.openMaterialIds, [9]);
-});
-
-test("planReviewGate enforces the threshold frozen for the run", () => {
-  assert.deepEqual(planReviewGate([finding("high", "open", 10)], "critical"), { pass: true });
-  const blocked = planReviewGate([finding("critical", "open", 11)], "critical");
-  assert.equal(blocked.pass, false);
-  if (blocked.pass) return;
-  assert.deepEqual(blocked.openMaterialIds, [11]);
+test("planReviewGate blocks on exactly BLOCKING_DISPOSITIONS", () => {
+  // specReviewGate imports this same constant from plan-gate.ts (step 5b
+  // Task 9), so the two gates agree by construction rather than by a
+  // duplicated literal that could drift.
+  for (const disposition of BLOCKING_DISPOSITIONS) {
+    const blocked = planReviewGate([decision(disposition, 9)]);
+    assert.equal(blocked.pass, false, disposition);
+    if (blocked.pass) continue;
+    assert.deepEqual(blocked.blockedFindingIds, [9]);
+  }
 });
 
 test("coverageMeetsCriteria passes when every criterion has a line", () => {

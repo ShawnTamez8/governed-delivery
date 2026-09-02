@@ -53,7 +53,15 @@ export type Disposition = (typeof DISPOSITIONS)[number];
  * plan reconciliation. The artifact under review can never ground its own
  * change or rejection.
  */
-export type UpstreamSource = "design" | "specification";
+/**
+ * The two governing inputs a review can be grounded in. Exported as a runtime
+ * array, not only a type, because `src/store.ts` validates a stored
+ * decision's grounding source against this same vocabulary before SQL — a
+ * second hand-written copy there would drift silently the moment a source is
+ * added (Task 7: import each vocabulary from the module that owns it).
+ */
+export const UPSTREAM_SOURCES = ["design", "specification"] as const;
+export type UpstreamSource = (typeof UPSTREAM_SOURCES)[number];
 
 /** The exact upstream location token prefix an artifact's review may cite. */
 export function upstreamPrefixFor(source: UpstreamSource): string {

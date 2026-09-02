@@ -1115,3 +1115,155 @@ test("the usage text distinguishes verify from verify-audit", () => {
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+// --- proposal-export (step 5b Task 8) ---------------------------------------
+
+/**
+ * A minimal proposal row, seeded directly through the store rather than a
+ * real reconciliation — the two upstream routes and the deterministic dedup
+ * key are already proven end to end against the real orchestrator in
+ * `test/spec-stage.test.ts`; this file only needs one to exist so the export
+ * command has something to materialize.
+ */
+function seedProposal(
+  cwd: string,
+  opts: { title?: string; route?: string } = {}
+): { runId: number; stageId: number; proposalId: number } {
+  const store = openStore(cwd);
+  try {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "upstream-gap", "upstream:design:upstream-gap");
+    const { proposal } = store.upsertProposal(
+      {
+        runId: run.id,
+        stageId: stage.id,
+        findingId: finding.id,
+        title: opts.title ?? "Missing rate-limit decision",
+        problem: "the design never says whether retries are rate-limited",
+        whyUpstream: "the specification cannot invent a policy the design never stated",
+        route: opts.route ?? "follow_up",
+        evidenceRef: ".governance/proposals/1/finding-1.json",
+      },
+      `test-identity-${run.id}`
+    );
+    return { runId: run.id, stageId: stage.id, proposalId: proposal.id };
+  } finally {
+    store.close();
+  }
+}
+
+test("proposal-export writes the derived file name and audits the export", () => {
+  const cwd = tempCwd();
+  try {
+    const { proposalId } = seedProposal(cwd);
+    const r = runCli(cwd, "proposal-export", "--proposal", String(proposalId));
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim(), "docs/proposals/missing-rate-limit-decision.md");
+    const path = join(cwd, "docs", "proposals", "missing-rate-limit-decision.md");
+    assert.ok(existsSync(path));
+    const body = readFileSync(path, "utf8");
+    assert.match(body, /^# Missing rate-limit decision/);
+    assert.match(body, /\*\*Route:\*\* follow_up/);
+    assert.match(body, /\*\*Source finding id\(s\):\*\*/);
+    assert.match(body, /the design never says whether retries are rate-limited/);
+    assert.match(body, /the specification cannot invent a policy the design never stated/);
+
+    const store = openStore(cwd);
+    try {
+      const audited = store.query<{ summary: string; actor: string; actor_type: string }>(
+        "SELECT summary, actor, actor_type FROM audit WHERE action = 'proposal.export'"
+      );
+      assert.equal(audited.length, 1);
+      assert.match(audited[0].summary, /exported proposal \d+ to docs\/proposals\/missing-rate-limit-decision\.md/);
+      // The human operator's own action (architecture section 14), not the run.
+      assert.equal(audited[0].actor, "operator");
+      assert.equal(audited[0].actor_type, "human");
+    } finally {
+      store.close();
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+// The refusal is the exclusive write's own outcome (`flag: "wx"`), not a
+// separate `existsSync` preflight a later write could contradict, so this
+// exercises the write-time collision rather than only a check branch. Proven
+// by breaking: under a default truncating write the untouched-content
+// assertion below fails.
+test("proposal-export refuses to overwrite an existing file", () => {
+  const cwd = tempCwd();
+  try {
+    const { proposalId } = seedProposal(cwd);
+    mkdirSync(join(cwd, "docs", "proposals"), { recursive: true });
+    writeFileSync(join(cwd, "docs", "proposals", "missing-rate-limit-decision.md"), "# already here\n");
+    const r = runCli(cwd, "proposal-export", "--proposal", String(proposalId));
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /refusing to overwrite an existing proposal file: docs\/proposals\/missing-rate-limit-decision\.md/);
+    assert.equal(
+      readFileSync(join(cwd, "docs", "proposals", "missing-rate-limit-decision.md"), "utf8"),
+      "# already here\n",
+      "the pre-existing file must be untouched"
+    );
+    const store = openStore(cwd);
+    try {
+      assert.equal(store.query("SELECT * FROM audit WHERE action = 'proposal.export'").length, 0, "a refused export audits nothing");
+    } finally {
+      store.close();
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("proposal-export honours an explicit --name over the derived title", () => {
+  const cwd = tempCwd();
+  try {
+    const { proposalId } = seedProposal(cwd);
+    const r = runCli(cwd, "proposal-export", "--proposal", String(proposalId), "--name", "rate-limit-policy");
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim(), "docs/proposals/rate-limit-policy.md");
+    assert.ok(existsSync(join(cwd, "docs", "proposals", "rate-limit-policy.md")));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("proposal-export refuses a non-kebab-case --name", () => {
+  const cwd = tempCwd();
+  try {
+    const { proposalId } = seedProposal(cwd);
+    const r = runCli(cwd, "proposal-export", "--proposal", String(proposalId), "--name", "Not Kebab Case");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /invalid --name Not Kebab Case: must be lowercase kebab-case/);
+    assert.ok(!existsSync(join(cwd, "docs", "proposals")));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("proposal-export renders the blocking_dependency route", () => {
+  const cwd = tempCwd();
+  try {
+    const { proposalId } = seedProposal(cwd, { title: "Blocking gap", route: "blocking_dependency" });
+    const r = runCli(cwd, "proposal-export", "--proposal", String(proposalId));
+    assert.equal(r.status, 0, r.stderr);
+    const body = readFileSync(join(cwd, "docs", "proposals", "blocking-gap.md"), "utf8");
+    assert.match(body, /\*\*Route:\*\* blocking_dependency/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("proposal-export with a nonexistent proposal id exits 1 naming it", () => {
+  const cwd = tempCwd();
+  try {
+    assert.equal(runCli(cwd, "migrate").status, 0);
+    const r = runCli(cwd, "proposal-export", "--proposal", "9999");
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /proposal 9999 does not exist/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});

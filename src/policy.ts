@@ -1,5 +1,5 @@
 import { canonicalJson, sha256Hex } from "./canonical.ts";
-import { DISPOSITIONS, SEVERITIES } from "./finding.ts";
+import { SEVERITIES } from "./finding.ts";
 import { PROMPT_MAX_BYTES, RESULT_MAX_BYTES } from "./harness.ts";
 import { PROTECTED_PATH_PREFIXES } from "./scope.ts";
 
@@ -17,10 +17,9 @@ export const SYSTEM_NAME = "BuildWorks";
  *
  * One, not the three this replaces. Those three counted closure passes, and a
  * closure pass redispatches a panel that varies nothing that matters —
- * hazard 7 exactly. Frozen per run through the profile now; Task 9 activates
- * these values when the stages can execute the complete `panel -> reconcile`
- * cycle they count. Applying them to the legacy closure loop would make one
- * configured round mean one panel and zero reconciliation dispatches.
+ * hazard 7 exactly. Frozen per run through the profile and read by both
+ * stages (step 5b Task 9), which run exactly this many complete
+ * `panel -> reconcile` cycles before the decision gate.
  */
 export const SPEC_REVIEW_ROUNDS = 1;
 export const PLAN_REVIEW_ROUNDS = 1;
@@ -51,17 +50,6 @@ export const PLAN_REVIEW_ROUNDS = 1;
 export const PANEL_SIZE_FLOOR = 2;
 export const PANEL_SIZE_CEILING = 5;
 export const PANEL_SIZE_MAX = 2;
-
-/**
- * Materiality is a severity threshold set in configuration (section 12).
- *
- * Kept rather than removed. Step 5b Task 3 permits removing it "once
- * reconciliation completeness replaces both severity gates"; that replacement
- * is Task 9, and until it lands the surviving consumers are `specReviewGate`
- * (`src/spec-stage.ts`) and `planReviewGate` (`src/plan-gate.ts`). Removing it
- * now would leave both review stages ungated for the length of the build.
- */
-export const MATERIAL_THRESHOLD = "high";
 
 export const REQUIRED_SPECIALTIES = ["requirements-traceability"];
 
@@ -163,9 +151,7 @@ export interface Policy {
   planReviewRounds: number;
   panelSizeMin: number;
   panelSizeMax: number;
-  materialityThreshold: string;
   severities: string[];
-  dispositions: string[];
   requiredSpecialties: string[];
   protectedPathPrefixes: string[];
   promptMaxBytes: number;
@@ -190,9 +176,7 @@ export function buildPolicy(): Policy {
     planReviewRounds: PLAN_REVIEW_ROUNDS,
     panelSizeMin: PANEL_SIZE_FLOOR,
     panelSizeMax: PANEL_SIZE_MAX,
-    materialityThreshold: MATERIAL_THRESHOLD,
     severities: [...SEVERITIES],
-    dispositions: [...DISPOSITIONS],
     requiredSpecialties: [...REQUIRED_SPECIALTIES],
     protectedPathPrefixes: [...PROTECTED_PATH_PREFIXES],
     promptMaxBytes: PROMPT_MAX_BYTES,
@@ -234,7 +218,6 @@ const POSITIVE_INT_FIELDS = [
 /** Every policy field that must be an array of strings. */
 const STRING_ARRAY_FIELDS = [
   "severities",
-  "dispositions",
   "requiredSpecialties",
   "protectedPathPrefixes",
   "verifyEnvPassthrough",
@@ -306,11 +289,6 @@ export function invalidPolicyReason(policy: unknown): string | null {
   }
   if (required.length > max) {
     return `the frozen policy has ${required.length} required specialties, which cannot fit in its maximum panel of ${max}`;
-  }
-  if (typeof p.materialityThreshold !== "string" || !SEVERITIES.includes(p.materialityThreshold)) {
-    return `the frozen policy materialityThreshold must be one of ${SEVERITIES.join(
-      ", "
-    )}, found ${JSON.stringify(p.materialityThreshold)}`;
   }
   return null;
 }

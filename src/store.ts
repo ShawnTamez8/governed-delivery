@@ -56,15 +56,75 @@ export interface AgentRunRow {
   independence: "unverified_self_attestation" | "configured_standalone";
 }
 
-export interface FindingRow {
+/**
+ * Round-scoped canonical identity (section 8): `(stage_id, round, intent_key,
+ * location)`. Carries no severity, classification, or subject — those are a
+ * reviewer's own assertion and live on `finding_report`, never fused here.
+ */
+export interface CanonicalFindingRow {
   id: number;
   stage_id: number;
-  agent_run_id: number | null;
-  severity: string;
+  round: number;
   intent_key: string;
-  subject: string;
   location: string;
+}
+
+/**
+ * One reviewer's immutable report on a canonical finding. `UNIQUE (finding_id,
+ * agent_run_id)` is what makes "one report per reviewer per finding" a schema
+ * rule: a second report from the same `agent_run` is a bug, not evidence.
+ */
+export interface FindingReportRow {
+  id: number;
+  finding_id: number;
+  agent_run_id: number;
+  severity: string;
+  classification: string;
+  subject: string;
+}
+
+/**
+ * The reconciler's one typed answer to a canonical finding (section 12).
+ * `changed_locations` and `normative_changes` are JSON-encoded, matching
+ * `approval.scope`'s existing convention for an array column nothing queries
+ * into; grounding gets three real columns because unlike those arrays it is
+ * one object with three named, individually meaningful fields.
+ * `UNIQUE (finding_id)` is what makes "exactly one decision per finding,
+ * ever" a schema rule.
+ */
+export interface FindingDecisionRow {
+  id: number;
+  finding_id: number;
+  agent_run_id: number;
   disposition: string;
+  rationale: string;
+  changed_locations: string;
+  grounding_source: string | null;
+  grounding_location: string | null;
+  grounding_excerpt: string | null;
+  normative_changes: string | null;
+  artifact_hash_before: string;
+  artifact_hash_after: string;
+}
+
+/**
+ * An upstream concern's durable record (section 13, section 14). `identity`
+ * is the deterministic dedup key `proposal.ts` derives; `UNIQUE (stage_id,
+ * identity)` is what makes "the same concern raised again links a source
+ * rather than duplicating" a schema rule instead of a convention a caller
+ * could forget.
+ */
+export interface ProposalRow {
+  id: number;
+  run_id: number;
+  stage_id: number;
+  identity: string;
+  title: string;
+  problem: string;
+  why_upstream: string;
+  route: string;
+  evidence_ref: string;
+  created_at: string;
 }
 
 export interface ApprovalRow {
@@ -95,14 +155,47 @@ export interface ApprovalInput {
   signer: string;
 }
 
-export interface FindingInput {
-  stageId: number;
-  agentRunId: number | null;
+export interface FindingReportInput {
+  findingId: number;
+  agentRunId: number;
   severity: string;
-  intentKey: string;
+  classification: string;
   subject: string;
+}
+
+export interface DecisionGrounding {
+  source: string;
   location: string;
-  disposition?: string;
+  excerpt: string;
+}
+
+export interface DecisionNormativeChange {
+  artifactLocation: string;
+  artifactText: string;
+  grounding: DecisionGrounding;
+}
+
+export interface FindingDecisionInput {
+  findingId: number;
+  agentRunId: number;
+  disposition: string;
+  rationale: string;
+  changedLocations: string[];
+  grounding: DecisionGrounding | null;
+  normativeChanges: DecisionNormativeChange[] | null;
+  artifactHashBefore: string;
+  artifactHashAfter: string;
+}
+
+export interface ProposalInput {
+  runId: number;
+  stageId: number;
+  findingId: number;
+  title: string;
+  problem: string;
+  whyUpstream: string;
+  route: string;
+  evidenceRef: string;
 }
 
 export interface AgentRunInput {
@@ -131,9 +224,15 @@ export const GATE_RESULTS: readonly string[] = ["pass", "block"];
 export const ROLES: readonly string[] = ["author", "reviewer"];
 export const INDEPENDENCE: readonly string[] = ["unverified_self_attestation", "configured_standalone"];
 const RUN_STATUSES: readonly string[] = ["in_progress", "blocked", "completed"];
-// Single source: finding.ts owns the finding enums; the store imports them
-// so the validation and the migration CHECK cannot drift apart.
-import { DISPOSITIONS as FINDING_DISPOSITIONS, SEVERITIES as FINDING_SEVERITIES } from "./finding.ts";
+// Single source: finding.ts and reconciliation.ts own their vocabularies; the
+// store imports them so validation and the migration CHECK cannot drift apart.
+import { SEVERITIES as FINDING_SEVERITIES } from "./finding.ts";
+import {
+  CLASSIFICATIONS,
+  DISPOSITIONS as RECONCILIATION_DISPOSITIONS,
+  UPSTREAM_SOURCES,
+} from "./reconciliation.ts";
+import { PROPOSAL_ROUTES } from "./proposal.ts";
 // Same rule for risk: select.ts owns the values beside the Risk type.
 import { RISKS } from "./select.ts";
 
@@ -362,54 +461,242 @@ export class Store {
     return this.query<AgentRunRow>("SELECT * FROM agent_run WHERE id = ?", [id])[0];
   }
 
-  insertFinding(input: FindingInput): FindingRow {
+  /**
+   * Resolve against the canonical findings already stored for this stage and
+   * round (the round-scoped identity, section 8), never a map local to one
+   * call — a caller that re-derives its own in-memory table can only ever
+   * agree with itself. Read-then-maybe-insert is wrapped in `transaction()`
+   * for the same reason `insertStage` wraps its ordinal computation: the pair
+   * must be atomic under the single-writer lock.
+   *
+   * Returns the row that now exists at this identity, by identity re-select
+   * rather than `lastInsertRowid` — the bug this replaces (`src/store.ts`'s
+   * removed `insertFinding`) returned whichever row the *previous* successful
+   * insert created on the conflict path, because SQLite does not update
+   * `last_insert_rowid()` on `ON CONFLICT ... DO UPDATE`. This upsert never
+   * updates a matched row at all, so there is no excluded-value ambiguity to
+   * get wrong: a match returns exactly the row it matched.
+   */
+  upsertCanonicalFinding(stageId: number, round: number, intentKey: string, location: string): CanonicalFindingRow {
+    return this.transaction(() => {
+      const existing = this.query<CanonicalFindingRow>(
+        "SELECT * FROM finding WHERE stage_id = ? AND round = ? AND intent_key = ? AND location = ?",
+        [stageId, round, intentKey, location]
+      )[0];
+      if (existing) return existing;
+      const result = this.#db
+        .prepare("INSERT INTO finding (stage_id, round, intent_key, location) VALUES (?, ?, ?, ?)")
+        .run(stageId, round, intentKey, location);
+      return this.getCanonicalFinding(Number(result.lastInsertRowid))!;
+    });
+  }
+
+  getCanonicalFinding(id: number): CanonicalFindingRow | undefined {
+    return this.query<CanonicalFindingRow>("SELECT * FROM finding WHERE id = ?", [id])[0];
+  }
+
+  /** Every canonical finding raised in any round of this stage, oldest first. */
+  getCanonicalFindings(stageId: number): CanonicalFindingRow[] {
+    return this.query<CanonicalFindingRow>("SELECT * FROM finding WHERE stage_id = ? ORDER BY id", [stageId]);
+  }
+
+  /**
+   * Immutable evidence: one reviewer's severity, classification, and subject
+   * on one canonical finding. `UNIQUE (finding_id, agent_run_id)` refuses a
+   * second report from the same reviewer rather than upserting over the
+   * first — section 13's no-fusion rule enforced as a constraint, not a
+   * convention a caller could forget.
+   */
+  insertFindingReport(input: FindingReportInput): FindingReportRow {
     if (!FINDING_SEVERITIES.includes(input.severity)) {
       throw new Error(
         `invalid severity ${input.severity}: allowed values are ${FINDING_SEVERITIES.join(", ")}`
       );
     }
-    const disposition = input.disposition ?? "open";
-    if (!FINDING_DISPOSITIONS.includes(disposition)) {
+    if (!CLASSIFICATIONS.includes(input.classification)) {
       throw new Error(
-        `invalid disposition ${disposition}: allowed values are ${FINDING_DISPOSITIONS.join(", ")}`
+        `invalid classification ${input.classification}: allowed values are ${CLASSIFICATIONS.join(", ")}`
       );
     }
     const result = this.#withRetry(() =>
       this.#db
         .prepare(
-          `INSERT INTO finding (stage_id, agent_run_id, severity, intent_key, subject, location, disposition)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(stage_id, intent_key, location) DO UPDATE SET
-             severity = excluded.severity,
-             subject = excluded.subject,
-             agent_run_id = excluded.agent_run_id,
-             disposition = excluded.disposition`
+          `INSERT INTO finding_report (finding_id, agent_run_id, severity, classification, subject)
+           VALUES (?, ?, ?, ?, ?)`
         )
-        .run(input.stageId, input.agentRunId, input.severity, input.intentKey, input.subject, input.location, disposition)
+        .run(input.findingId, input.agentRunId, input.severity, input.classification, input.subject)
     );
-    return this.getFinding(Number(result.lastInsertRowid))!;
+    return this.getFindingReport(Number(result.lastInsertRowid))!;
   }
 
-  getFinding(id: number): FindingRow | undefined {
-    return this.query<FindingRow>("SELECT * FROM finding WHERE id = ?", [id])[0];
+  getFindingReport(id: number): FindingReportRow | undefined {
+    return this.query<FindingReportRow>("SELECT * FROM finding_report WHERE id = ?", [id])[0];
   }
 
-  getFindings(stageId: number): FindingRow[] {
-    return this.query<FindingRow>("SELECT * FROM finding WHERE stage_id = ? ORDER BY id", [stageId]);
+  /** Every immutable report on one canonical finding, oldest first. */
+  getFindingReports(findingId: number): FindingReportRow[] {
+    return this.query<FindingReportRow>(
+      "SELECT * FROM finding_report WHERE finding_id = ? ORDER BY id",
+      [findingId]
+    );
   }
 
-  updateFindingDisposition(id: number, disposition: string): void {
-    if (!FINDING_DISPOSITIONS.includes(disposition)) {
+  /**
+   * The reconciler's one typed answer to a canonical finding. `UNIQUE
+   * (finding_id)` refuses a second decision on the same finding — a finding
+   * is decided once, ever; a later round raising the same concern again gets
+   * a later-round canonical identity (section 8) and its own decision.
+   */
+  insertFindingDecision(input: FindingDecisionInput): FindingDecisionRow {
+    if (!RECONCILIATION_DISPOSITIONS.includes(input.disposition)) {
       throw new Error(
-        `invalid disposition ${disposition}: allowed values are ${FINDING_DISPOSITIONS.join(", ")}`
+        `invalid disposition ${input.disposition}: allowed values are ${RECONCILIATION_DISPOSITIONS.join(", ")}`
       );
     }
-    const result = this.#withRetry(() =>
-      this.#db.prepare("UPDATE finding SET disposition = ? WHERE id = ?").run(disposition, id)
-    );
-    if (result.changes === 0) {
-      throw new Error(`finding ${id} does not exist`);
+    // The conditional-field matrix `src/reconciliation.ts` enforces on the
+    // model's answer, enforced again at the storage boundary (Task 7 step 4).
+    // The stages only ever pass decisions that validator already checked, so
+    // this refuses nothing the ordinary path produces — but the exported
+    // method and the authoritative table are reachable without it, and a
+    // CHECK constraint cannot express a cross-column rule like "grounding
+    // exactly when rejected_with_rationale". Without this, the database can
+    // hold a decision shape no reconciliation could ever return.
+    const requiresGrounding = input.disposition === "rejected_with_rationale";
+    if (requiresGrounding && input.grounding === null) {
+      throw new Error(`disposition ${input.disposition} requires a grounding object`);
     }
+    if (!requiresGrounding && input.grounding !== null) {
+      throw new Error(`disposition ${input.disposition} forbids a grounding object`);
+    }
+    const requiresNormativeChanges = input.disposition === "addressed";
+    if (requiresNormativeChanges && input.normativeChanges === null) {
+      throw new Error(`disposition ${input.disposition} requires a normativeChanges array`);
+    }
+    if (!requiresNormativeChanges && input.normativeChanges !== null) {
+      throw new Error(`disposition ${input.disposition} forbids normativeChanges`);
+    }
+    // Every grounding object, including the one nested in each normative
+    // change, must cite a governing source rather than the artifact under
+    // review — the rule `groundingTextuallyFails` states first.
+    const sources = [
+      ...(input.grounding ? [input.grounding.source] : []),
+      ...(input.normativeChanges ?? []).map((change) => change.grounding.source),
+    ];
+    for (const source of sources) {
+      if (!UPSTREAM_SOURCES.includes(source as (typeof UPSTREAM_SOURCES)[number])) {
+        throw new Error(
+          `invalid grounding source ${source}: allowed values are ${UPSTREAM_SOURCES.join(", ")}`
+        );
+      }
+    }
+    const result = this.#withRetry(() =>
+      this.#db
+        .prepare(
+          `INSERT INTO finding_decision (finding_id, agent_run_id, disposition, rationale, changed_locations,
+             grounding_source, grounding_location, grounding_excerpt, normative_changes,
+             artifact_hash_before, artifact_hash_after)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          input.findingId,
+          input.agentRunId,
+          input.disposition,
+          input.rationale,
+          JSON.stringify(input.changedLocations),
+          input.grounding?.source ?? null,
+          input.grounding?.location ?? null,
+          input.grounding?.excerpt ?? null,
+          input.normativeChanges ? JSON.stringify(input.normativeChanges) : null,
+          input.artifactHashBefore,
+          input.artifactHashAfter
+        )
+    );
+    return this.getFindingDecision(Number(result.lastInsertRowid))!;
+  }
+
+  getFindingDecision(id: number): FindingDecisionRow | undefined {
+    return this.query<FindingDecisionRow>("SELECT * FROM finding_decision WHERE id = ?", [id])[0];
+  }
+
+  /**
+   * Every decision recorded against this stage, across every round — the
+   * read the decision gate (Task 9) uses. A per-round read would let a later
+   * round's clean decisions hide an earlier round's `upstream_blocking`.
+   */
+  getFindingDecisions(stageId: number): FindingDecisionRow[] {
+    return this.query<FindingDecisionRow>(
+      `SELECT finding_decision.* FROM finding_decision
+       JOIN finding ON finding.id = finding_decision.finding_id
+       WHERE finding.stage_id = ?
+       ORDER BY finding_decision.id`,
+      [stageId]
+    );
+  }
+
+  /**
+   * A validated upstream proposal candidate becomes a stored, queryable,
+   * non-binding proposal. `identity` (computed by `proposal.ts`, the module
+   * that owns the derivation) is the dedup key: a candidate that already
+   * matches one raised earlier in this stage links its source finding rather
+   * than duplicating title, problem, or route — no field is fused across the
+   * two decisions, only the source finding id set grows.
+   */
+  upsertProposal(input: ProposalInput, identity: string): { proposal: ProposalRow; created: boolean } {
+    if (!PROPOSAL_ROUTES.includes(input.route)) {
+      throw new Error(`invalid route ${input.route}: allowed values are ${PROPOSAL_ROUTES.join(", ")}`);
+    }
+    return this.transaction(() => {
+      const existing = this.query<ProposalRow>(
+        "SELECT * FROM proposal WHERE stage_id = ? AND identity = ?",
+        [input.stageId, identity]
+      )[0];
+      let proposal: ProposalRow;
+      let created: boolean;
+      if (existing) {
+        proposal = existing;
+        created = false;
+      } else {
+        const result = this.#db
+          .prepare(
+            `INSERT INTO proposal (run_id, stage_id, identity, title, problem, why_upstream, route, evidence_ref, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            input.runId,
+            input.stageId,
+            identity,
+            input.title,
+            input.problem,
+            input.whyUpstream,
+            input.route,
+            input.evidenceRef,
+            new Date().toISOString()
+          );
+        proposal = this.getProposal(Number(result.lastInsertRowid))!;
+        created = true;
+      }
+      this.#db
+        .prepare("INSERT INTO proposal_source (proposal_id, finding_id) VALUES (?, ?)")
+        .run(proposal.id, input.findingId);
+      return { proposal, created };
+    });
+  }
+
+  getProposal(id: number): ProposalRow | undefined {
+    return this.query<ProposalRow>("SELECT * FROM proposal WHERE id = ?", [id])[0];
+  }
+
+  /** Every proposal raised out of this stage, oldest first. */
+  getProposalsForStage(stageId: number): ProposalRow[] {
+    return this.query<ProposalRow>("SELECT * FROM proposal WHERE stage_id = ? ORDER BY id", [stageId]);
+  }
+
+  /** Every canonical finding id that contributed to one proposal, oldest link first. */
+  getProposalSources(proposalId: number): number[] {
+    return this.query<{ finding_id: number }>(
+      "SELECT finding_id FROM proposal_source WHERE proposal_id = ? ORDER BY rowid",
+      [proposalId]
+    ).map((r) => r.finding_id);
   }
 
   /**

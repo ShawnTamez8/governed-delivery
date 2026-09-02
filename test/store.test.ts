@@ -183,61 +183,439 @@ test("a missing stage_id fails on the foreign key", () => {
   });
 });
 
-function findingInput(stageId: number, overrides: Record<string, unknown> = {}) {
+// --- canonical finding, immutable report, and reconciliation decision ------
+
+test("upsertCanonicalFinding returns the row it wrote, not the most recently inserted row", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const first = store.upsertCanonicalFinding(stage.id, 1, "missing-trace", "## Acceptance criteria");
+    const second = store.upsertCanonicalFinding(stage.id, 1, "different-concern", "## Declared artifacts");
+    assert.notEqual(first.id, second.id);
+    // The two-insert case passes by coincidence: with only one prior row, a
+    // broken implementation returning "whatever was last inserted overall"
+    // regardless of identity would still happen to be right. A third call
+    // repeating the first identity, after a different row was inserted in
+    // between, is what the removed `insertFinding`'s `ON CONFLICT ... DO
+    // UPDATE` plus `lastInsertRowid` could not pass — that bug returned
+    // whichever row the *previous* successful insert created, which here
+    // would be `second`.
+    const third = store.upsertCanonicalFinding(stage.id, 1, "missing-trace", "## Acceptance criteria");
+    assert.equal(third.id, first.id);
+    assert.equal(store.getCanonicalFindings(stage.id).length, 2);
+  });
+});
+
+test("a same-location pair with differing severities is one canonical finding with two immutable reports", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const agentA = store.insertAgentRun(agentRunInput(stage.id, { agent: "reviewer-a" }));
+    const agentB = store.insertAgentRun(agentRunInput(stage.id, { agent: "reviewer-b" }));
+    const findingA = store.upsertCanonicalFinding(stage.id, 1, "missing-trace", "## Acceptance criteria");
+    const findingB = store.upsertCanonicalFinding(stage.id, 1, "missing-trace", "## Acceptance criteria");
+    assert.equal(findingA.id, findingB.id);
+    store.insertFindingReport({
+      findingId: findingA.id,
+      agentRunId: agentA.id,
+      severity: "critical",
+      classification: "current_artifact",
+      subject: "sev A",
+    });
+    store.insertFindingReport({
+      findingId: findingA.id,
+      agentRunId: agentB.id,
+      severity: "low",
+      classification: "current_artifact",
+      subject: "sev B",
+    });
+    const reports = store.getFindingReports(findingA.id);
+    assert.equal(reports.length, 2);
+    assert.deepEqual(
+      reports.map((r) => r.severity).sort(),
+      ["critical", "low"]
+    );
+    assert.equal(store.getCanonicalFindings(stage.id).length, 1);
+  });
+});
+
+test("a mixed-classification pair is two canonical findings, each with its own report, never fused", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const agentA = store.insertAgentRun(agentRunInput(stage.id, { agent: "reviewer-a" }));
+    const agentB = store.insertAgentRun(agentRunInput(stage.id, { agent: "reviewer-b" }));
+    // Classification determines the location shape, so the two reports
+    // cannot share one canonical identity (operator decision, 2026-09-02):
+    // the report contract cannot produce a one-canonical-two-mixed-report
+    // row, so this never constructs one — it proves the two halves stay
+    // separate instead.
+    const currentArtifact = store.upsertCanonicalFinding(stage.id, 1, "atomic-write", "## Acceptance criteria");
+    const upstream = store.upsertCanonicalFinding(stage.id, 1, "atomic-write", "upstream:design:atomic-write-decision");
+    assert.notEqual(currentArtifact.id, upstream.id);
+    store.insertFindingReport({
+      findingId: currentArtifact.id,
+      agentRunId: agentA.id,
+      severity: "critical",
+      classification: "current_artifact",
+      subject: "critical here",
+    });
+    store.insertFindingReport({
+      findingId: upstream.id,
+      agentRunId: agentB.id,
+      severity: "low",
+      classification: "upstream",
+      subject: "low upstream",
+    });
+    assert.equal(store.getCanonicalFindings(stage.id).length, 2);
+    assert.equal(store.getFindingReports(currentArtifact.id).length, 1);
+    assert.equal(store.getFindingReports(upstream.id).length, 1);
+    assert.equal(store.getFindingReports(currentArtifact.id)[0].classification, "current_artifact");
+    assert.equal(store.getFindingReports(upstream.id)[0].classification, "upstream");
+  });
+});
+
+test("the same identity in a later round gets a separate canonical row, not an overwrite", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const round1 = store.upsertCanonicalFinding(stage.id, 1, "missing-trace", "## Acceptance criteria");
+    const round2 = store.upsertCanonicalFinding(stage.id, 2, "missing-trace", "## Acceptance criteria");
+    assert.notEqual(round1.id, round2.id);
+    assert.equal(store.getCanonicalFindings(stage.id).length, 2);
+  });
+});
+
+test("a second report from the same reviewer on the same finding is refused by the UNIQUE constraint", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const agent = store.insertAgentRun(agentRunInput(stage.id));
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "missing-trace", "## Acceptance criteria");
+    store.insertFindingReport({
+      findingId: finding.id,
+      agentRunId: agent.id,
+      severity: "high",
+      classification: "current_artifact",
+      subject: "first",
+    });
+    assert.throws(
+      () =>
+        store.insertFindingReport({
+          findingId: finding.id,
+          agentRunId: agent.id,
+          severity: "low",
+          classification: "current_artifact",
+          subject: "second",
+        }),
+      /UNIQUE constraint failed/
+    );
+  });
+});
+
+test("insertFindingReport refuses an invalid severity or classification, naming the allowed values", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const agent = store.insertAgentRun(agentRunInput(stage.id));
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "missing-trace", "## Acceptance criteria");
+    assert.throws(
+      () =>
+        store.insertFindingReport({
+          findingId: finding.id,
+          agentRunId: agent.id,
+          severity: "catastrophic",
+          classification: "current_artifact",
+          subject: "s",
+        }),
+      /invalid severity catastrophic: allowed values are low, medium, high, critical/
+    );
+    assert.throws(
+      () =>
+        store.insertFindingReport({
+          findingId: finding.id,
+          agentRunId: agent.id,
+          severity: "high",
+          classification: "somewhere",
+          subject: "s",
+        }),
+      /invalid classification somewhere: allowed values are current_artifact, upstream/
+    );
+  });
+});
+
+/**
+ * A decision in the exact conditional shape `validateReconciliation` produces
+ * for the disposition asked for: grounding only on `rejected_with_rationale`,
+ * `normativeChanges` only on `addressed` — an empty array there is legal,
+ * because a deletion-only or prose-only revision adds no normative node to
+ * claim.
+ *
+ * Derived from the disposition rather than defaulted flat. A flat default of
+ * `normativeChanges: null` on `addressed` describes a combination no
+ * reconciliation can return, so every test built on it asserted a state no
+ * run can reach — and the store, which had no matrix check, agreed with it.
+ */
+function decisionInput(findingId: number, agentRunId: number, overrides: Record<string, unknown> = {}) {
+  const disposition = (overrides.disposition as string | undefined) ?? "addressed";
   return {
-    stageId,
-    agentRunId: null,
-    severity: "high",
-    intentKey: "missing-traceability",
-    subject: "no trace for criterion 3",
-    location: "## Acceptance criteria",
+    findingId,
+    agentRunId,
+    disposition,
+    rationale: "fixed it",
+    changedLocations: ["## Acceptance criteria"],
+    grounding:
+      disposition === "rejected_with_rationale"
+        ? { source: "design", location: "## Retention", excerpt: "any operator may export" }
+        : null,
+    normativeChanges: disposition === "addressed" ? [] : null,
+    artifactHashBefore: "a".repeat(64),
+    artifactHashAfter: "b".repeat(64),
     ...overrides,
   };
 }
 
-test("two insertions with the same identity produce one row", () => {
+test("insertFindingDecision persists every field, including conditional grounding as its own columns", () => {
   withStore((store) => {
     const run = store.insertRun("p", "f-1", "s", "feature");
-    const stage = store.insertStage(run.id, "spec", null);
-    store.insertFinding(findingInput(stage.id));
-    store.insertFinding(findingInput(stage.id, { subject: "reworded concern" }));
-    assert.equal(store.getFindings(stage.id).length, 1);
-    assert.equal(store.getFindings(stage.id)[0].subject, "reworded concern");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const agent = store.insertAgentRun(agentRunInput(stage.id));
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "missing-trace", "## Acceptance criteria");
+    const decision = store.insertFindingDecision(
+      decisionInput(finding.id, agent.id, {
+        disposition: "rejected_with_rationale",
+        grounding: { source: "design", location: "## Retention", excerpt: "any operator may export" },
+        changedLocations: [],
+      })
+    );
+    assert.equal(decision.finding_id, finding.id);
+    assert.equal(decision.disposition, "rejected_with_rationale");
+    assert.equal(decision.grounding_source, "design");
+    assert.equal(decision.grounding_location, "## Retention");
+    assert.equal(decision.grounding_excerpt, "any operator may export");
+    assert.equal(decision.normative_changes, null);
+    assert.deepEqual(JSON.parse(decision.changed_locations), []);
+    assert.equal(store.getFindingDecision(decision.id)!.id, decision.id);
   });
 });
 
-test("different intent keys produce two rows", () => {
+test("insertFindingDecision persists normativeChanges as JSON round-tripping the nested grounding", () => {
   withStore((store) => {
     const run = store.insertRun("p", "f-1", "s", "feature");
-    const stage = store.insertStage(run.id, "spec", null);
-    store.insertFinding(findingInput(stage.id));
-    store.insertFinding(findingInput(stage.id, { intentKey: "different-concern" }));
-    assert.equal(store.getFindings(stage.id).length, 2);
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const agent = store.insertAgentRun(agentRunInput(stage.id));
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "missing-trace", "## Acceptance criteria");
+    const normativeChanges = [
+      {
+        artifactLocation: "## Acceptance criteria",
+        artifactText: "the export refuses when the file already exists",
+        grounding: { source: "design", location: "## Behaviour", excerpt: "refuses when <path> already exists" },
+      },
+    ];
+    const decision = store.insertFindingDecision(
+      decisionInput(finding.id, agent.id, { normativeChanges })
+    );
+    assert.deepEqual(JSON.parse(decision.normative_changes!), normativeChanges);
   });
 });
 
-test("an invalid severity or disposition is refused naming the allowed values", () => {
+test("a second decision on the same finding is refused by the UNIQUE constraint", () => {
   withStore((store) => {
     const run = store.insertRun("p", "f-1", "s", "feature");
-    const stage = store.insertStage(run.id, "spec", null);
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const agent = store.insertAgentRun(agentRunInput(stage.id));
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "missing-trace", "## Acceptance criteria");
+    store.insertFindingDecision(decisionInput(finding.id, agent.id));
+    assert.throws(() => store.insertFindingDecision(decisionInput(finding.id, agent.id)), /UNIQUE constraint failed/);
+  });
+});
+
+test("insertFindingDecision refuses an invalid disposition, naming the allowed values", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const agent = store.insertAgentRun(agentRunInput(stage.id));
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "missing-trace", "## Acceptance criteria");
     assert.throws(
-      () => store.insertFinding(findingInput(stage.id, { severity: "catastrophic" })),
-      /invalid severity catastrophic: allowed values are low, medium, high, critical/
+      () => store.insertFindingDecision(decisionInput(finding.id, agent.id, { disposition: "ignored" })),
+      /invalid disposition ignored: allowed values are addressed, rejected_with_rationale, upstream_follow_up, upstream_blocking, cannot_determine/
+    );
+  });
+});
+
+// The store is the authoritative boundary, not a pass-through for whatever
+// the stages happen to send today. `validateReconciliation` enforces this
+// matrix on the model's answer; a CHECK constraint cannot express a
+// cross-column rule like "grounding exactly when rejected_with_rationale", so
+// without these refusals the database can hold a decision shape no
+// reconciliation could ever produce (Task 7 step 4).
+test("insertFindingDecision refuses a conditional field the disposition forbids", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const agent = store.insertAgentRun(agentRunInput(stage.id));
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "missing-trace", "## Acceptance criteria");
+    const grounding = { source: "design", location: "## R", excerpt: "any operator may export" };
+    assert.throws(
+      () => store.insertFindingDecision(decisionInput(finding.id, agent.id, { grounding })),
+      /disposition addressed forbids a grounding object/
     );
     assert.throws(
-      () => store.insertFinding(findingInput(stage.id, { disposition: "ignored" })),
-      /invalid disposition ignored: allowed values are open, resolved, disputed, accepted/
+      () =>
+        store.insertFindingDecision(
+          decisionInput(finding.id, agent.id, { disposition: "cannot_determine", normativeChanges: [] })
+        ),
+      /disposition cannot_determine forbids normativeChanges/
+    );
+    assert.throws(
+      () =>
+        store.insertFindingDecision(
+          decisionInput(finding.id, agent.id, { disposition: "upstream_blocking", grounding })
+        ),
+      /disposition upstream_blocking forbids a grounding object/
     );
   });
 });
 
-test("updateFindingDisposition changes the row", () => {
+test("insertFindingDecision refuses a conditional field the disposition requires but omits", () => {
   withStore((store) => {
     const run = store.insertRun("p", "f-1", "s", "feature");
-    const stage = store.insertStage(run.id, "spec", null);
-    const finding = store.insertFinding(findingInput(stage.id));
-    store.updateFindingDisposition(finding.id, "resolved");
-    assert.equal(store.getFinding(finding.id)!.disposition, "resolved");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const agent = store.insertAgentRun(agentRunInput(stage.id));
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "missing-trace", "## Acceptance criteria");
+    assert.throws(
+      () =>
+        store.insertFindingDecision(
+          decisionInput(finding.id, agent.id, { disposition: "rejected_with_rationale", grounding: null })
+        ),
+      /disposition rejected_with_rationale requires a grounding object/
+    );
+    assert.throws(
+      () => store.insertFindingDecision(decisionInput(finding.id, agent.id, { normativeChanges: null })),
+      /disposition addressed requires a normativeChanges array/
+    );
+  });
+});
+
+test("insertFindingDecision refuses a grounding source that is not a governing input", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const agent = store.insertAgentRun(agentRunInput(stage.id));
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "missing-trace", "## Acceptance criteria");
+    // The artifact under review cannot ground its own rejection — the first
+    // rule `groundingTextuallyFails` states.
+    assert.throws(
+      () =>
+        store.insertFindingDecision(
+          decisionInput(finding.id, agent.id, {
+            disposition: "rejected_with_rationale",
+            grounding: { source: "specification.md", location: "## R", excerpt: "e" },
+          })
+        ),
+      /invalid grounding source specification\.md: allowed values are design, specification/
+    );
+    // Including the grounding nested inside a normative change, which the
+    // top-level check never sees.
+    assert.throws(
+      () =>
+        store.insertFindingDecision(
+          decisionInput(finding.id, agent.id, {
+            normativeChanges: [
+              {
+                artifactLocation: "## Acceptance criteria",
+                artifactText: "a new criterion",
+                grounding: { source: "the spec itself", location: "## B", excerpt: "e" },
+              },
+            ],
+          })
+        ),
+      /invalid grounding source the spec itself: allowed values are design, specification/
+    );
+  });
+});
+
+test("getFindingDecisions reads across every round of a stage, not only the latest", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const agent = store.insertAgentRun(agentRunInput(stage.id));
+    const round1 = store.upsertCanonicalFinding(stage.id, 1, "a", "## A");
+    const round2 = store.upsertCanonicalFinding(stage.id, 2, "b", "## B");
+    store.insertFindingDecision(decisionInput(round1.id, agent.id, { disposition: "upstream_blocking" }));
+    store.insertFindingDecision(decisionInput(round2.id, agent.id, { disposition: "addressed" }));
+    const decisions = store.getFindingDecisions(stage.id);
+    assert.deepEqual(
+      decisions.map((d) => d.finding_id).sort(),
+      [round1.id, round2.id].sort()
+    );
+  });
+});
+
+// --- proposal: dedup without fusion -----------------------------------
+
+function proposalInput(
+  runId: number,
+  stageId: number,
+  findingId: number,
+  overrides: Record<string, unknown> = {}
+) {
+  return {
+    runId,
+    stageId,
+    findingId,
+    title: "Missing redaction policy",
+    problem: "The design never states a redaction rule.",
+    whyUpstream: "No amount of plan work can invent the missing decision.",
+    route: "follow_up",
+    evidenceRef: ".governance/proposals/1/finding-1.json",
+    ...overrides,
+  };
+}
+
+test("upsertProposal creates one row and links its source finding", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "a", "upstream:design:x");
+    const first = store.upsertProposal(proposalInput(run.id, stage.id, finding.id), "identity-a");
+    assert.equal(first.created, true);
+    assert.equal(store.getProposalsForStage(stage.id).length, 1);
+    assert.deepEqual(store.getProposalSources(first.proposal.id), [finding.id]);
+  });
+});
+
+test("the same identity raised again links its source finding instead of duplicating the row", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const findingA = store.upsertCanonicalFinding(stage.id, 1, "a", "upstream:design:x");
+    const findingB = store.upsertCanonicalFinding(stage.id, 2, "a", "upstream:design:x");
+    const identity = "identity-a";
+    const first = store.upsertProposal(proposalInput(run.id, stage.id, findingA.id), identity);
+    const second = store.upsertProposal(
+      proposalInput(run.id, stage.id, findingB.id, { title: "a differently worded title" }),
+      identity
+    );
+    assert.equal(second.created, false);
+    assert.equal(second.proposal.id, first.proposal.id);
+    // No field is fused across the two decisions: the stored row keeps the
+    // first candidate's content, and only the source finding set grows.
+    assert.equal(second.proposal.title, first.proposal.title);
+    assert.deepEqual(store.getProposalSources(first.proposal.id).sort(), [findingA.id, findingB.id].sort());
+    assert.equal(store.getProposalsForStage(stage.id).length, 1);
+  });
+});
+
+test("upsertProposal refuses an invalid route, naming the allowed values", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "a", "upstream:design:x");
+    assert.throws(
+      () => store.upsertProposal(proposalInput(run.id, stage.id, finding.id, { route: "immediate" }), "id"),
+      /invalid route immediate: allowed values are follow_up, blocking_dependency/
+    );
   });
 });
 

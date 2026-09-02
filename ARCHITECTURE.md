@@ -733,10 +733,17 @@ stage(id, run_id, kind, ordinal, input_stage_id, output_ref, status, gate_result
 agent_run(id, stage_id, agent, role, executor, requested_model, effective_model,
           fallback, tokens_in, tokens_out, cache_read, cache_write, cost,
           duration_ms, input_hash, output_hash, raw_output_ref, independence)
-finding(id, stage_id, agent_run_id, severity, intent_key, subject, location, disposition)
+finding(id, stage_id, round, intent_key, location)
+finding_report(id, finding_id, agent_run_id, severity, classification, subject)
+finding_decision(id, finding_id, agent_run_id, disposition, rationale, changed_locations,
+                  grounding_source, grounding_location, grounding_excerpt, normative_changes,
+                  artifact_hash_before, artifact_hash_after)
 approval(id, run_id, feature_id, spec_hash, starting_commit, profile_hash, risk,
          scope, expires_at, signature, signer, created_at)
 audit(id, run_id, stage_id, actor, actor_type, action, summary, hash, prev_hash, created_at)
+proposal(id, run_id, stage_id, identity, title, problem, why_upstream, route,
+         evidence_ref, created_at)
+proposal_source(proposal_id, finding_id)
 ```
 
 `run.status` is one of `in_progress`, `blocked`, `completed`; `stage.status` one

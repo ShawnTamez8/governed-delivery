@@ -5,6 +5,23 @@ Backlog. Features, enhancements, and defects that are not yet active work.
 Markdown files, one per proposal. There is no enforced lifecycle and no status
 field — nothing downstream depends on a proposal's state being accurate.
 
+## Proposals raised by a run
+
+An upstream concern a review stage routes past the reviewed artifact (section
+13) is stored as run state, not written here directly — no run writes into
+this directory. Materializing one is a separate, explicit operator action:
+
+```
+bw proposal-export --proposal <id> [--name <slug>]
+```
+
+This writes `docs/proposals/<slug>.md` (derived from the proposal's title
+when `--name` is omitted) and refuses to overwrite an existing file. The
+stored proposal — its title, problem statement, why it is upstream, derived
+route, source finding ids, and retained evidence — is inspectable through the
+run store before export; the command only decides whether it belongs in the
+backlog.
+
 Promoting a proposal to active work is a move:
 
 ```

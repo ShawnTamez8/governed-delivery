@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { ExecutorDefinition } from "./executor.ts";
-import { requireRunInProgress, type FindingRow, type Store } from "./store.ts";
+import { requireRunInProgress, type CanonicalFindingRow, type Store } from "./store.ts";
 import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
 import { dispatchOnce } from "./dispatch.ts";
 import type { AgentDefinition } from "./agents.ts";
@@ -26,14 +26,9 @@ import {
   validateReviewerReports,
 } from "./reconciliation.ts";
 import { validateSelfCritique } from "./self-critique.ts";
+import { deriveRoute, proposalIdentity, writeProposalEvidence } from "./proposal.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
-
-// Transitional only. The shipped stages still implement the old
-// panel -> author revision -> closure-panel loop. Task 9 removes this budget
-// and activates the frozen configured rounds only when each one can include
-// the promised reconciliation dispatch.
-const LEGACY_CLOSURE_PASSES = 3;
 
 export type PlanStageResult =
   | { ok: true; stageIds: { plan: number; planReview: number }; planPath: string }
@@ -521,17 +516,22 @@ export async function runPlanStage(
       }
     }
 
-    // The configured count starts governing here only when Task 9 replaces
-    // this legacy loop with complete panel-and-reconciliation cycles.
-    const rounds: number = LEGACY_CLOSURE_PASSES;
+    // The configured round count (section 12, as amended 2026-09-01): one
+    // complete panel -> reconciliation cycle per round, gated once over every
+    // round's decisions after the loop — not a closure budget with an early
+    // exit on the first clean pass.
+    const rounds: number = profile.policy.planReviewRounds;
     for (let round = 1; round <= rounds; round++) {
-      const reportedIdentities = new Set<string>();
       // This round's reports, keyed by canonical identity, in panel order.
       // They travel to the reconciler unfused: two reviewers reporting one
-      // identity are two reports on one canonical finding, each keeping its
-      // own severity and classification (section 13's no-fusion rule, applied
-      // at the dispatch boundary until Task 7 gives reports their own rows).
+      // identity are two immutable reports on one canonical finding, each
+      // keeping its own severity and classification (section 13's no-fusion
+      // rule). The canonical row itself is looked up fresh every round
+      // because identity is round-scoped (section 8): the same location and
+      // intentKey in a later round is a different row, never a resolution of
+      // the earlier one.
       const roundReports = new Map<string, ReconciliationFindingInput["reports"]>();
+      const roundFindings = new Map<string, CanonicalFindingRow>();
       for (const reviewer of panel) {
         if (!reviewer.outputs.includes("findings")) {
           return abort(reviewStage.id, "plan.reviewer.failed", `configured agent ${reviewer.id} does not allow findings output`);
@@ -583,19 +583,23 @@ export async function runPlanStage(
         }
         for (const report of reports.value) {
           // The validator normalizes the location: identity derives from the
-          // normalized form (section 8), so the DB and the resolution pass
-          // key on the same string.
-          store.insertFinding({
-            stageId: reviewStage.id,
+          // normalized form (section 8), so the canonical row and the
+          // reconciliation input key on the same string.
+          const finding = store.upsertCanonicalFinding(reviewStage.id, round, report.intentKey, report.location);
+          store.insertFindingReport({
+            findingId: finding.id,
             agentRunId: dispatch.agentRunId,
             severity: report.severity,
-            intentKey: report.intentKey,
+            classification: report.classification,
             subject: report.subject,
-            location: report.location,
           });
-          audit(reviewStage.id, "plan.finding.record", `recorded finding at ${report.location} (${report.intentKey})`);
+          audit(
+            reviewStage.id,
+            "plan.finding.record",
+            `recorded finding ${finding.id} at ${report.location} (${report.intentKey}), round ${round}`
+          );
           const identity = findingIdentity(report.location, report.intentKey);
-          reportedIdentities.add(identity);
+          roundFindings.set(identity, finding);
           const list = roundReports.get(identity) ?? [];
           list.push({
             reviewerId: reviewer.id,
@@ -608,34 +612,13 @@ export async function runPlanStage(
           roundReports.set(identity, list);
         }
       }
-      // Resolution: the panel's re-review resolves a finding. The author's
-      // claim to have addressed it never does — a finding the panel stops
-      // reporting is resolved, and one it keeps reporting stays open.
-      for (const finding of store.getFindings(reviewStage.id)) {
-        if (finding.disposition === "open" && !reportedIdentities.has(findingIdentity(finding.location, finding.intent_key))) {
-          store.updateFindingDisposition(finding.id, "resolved");
-          audit(reviewStage.id, "plan.finding.resolved", `finding ${finding.id} resolved by re-review`);
-        }
-      }
       // --- reconciliation: the author's typed answer to this round's findings ---
       // The phase order (section 12) is panel, then reconciliation, then the
-      // gate, once per round. The legacy severity gate below is still what
-      // decides; the reconciliation dispatch, its validated decisions, and its
-      // retained hashes are what Task 9's decision gate will read.
-      const reconcileFindings: ReconciliationFindingInput[] = [];
-      {
-        const rowsByIdentity = new Map<string, FindingRow>();
-        for (const row of store.getFindings(reviewStage.id)) {
-          rowsByIdentity.set(findingIdentity(row.location, row.intent_key), row);
-        }
-        for (const [identity, reports] of roundReports) {
-          const row = rowsByIdentity.get(identity);
-          if (!row) {
-            return abort(reviewStage.id, "plan.reconcile.failed", `recorded finding for ${identity} is missing from the store`);
-          }
-          reconcileFindings.push({ findingId: row.id, reports });
-        }
-      }
+      // gate, once per round — dispatched even over an empty round, because
+      // the reconciler is the actor that confirms an empty findings set.
+      const reconcileFindings: ReconciliationFindingInput[] = [...roundReports.entries()].map(
+        ([identity, reports]) => ({ findingId: roundFindings.get(identity)!.id, reports })
+      );
       const beforeContent = planContent;
       const reconcileDispatch = await dispatchOnce(
         store,
@@ -710,6 +693,31 @@ export async function runPlanStage(
       if (!reconciliation.ok) {
         return abort(reviewStage.id, "plan.reconcile.invalid", `plan reconciliation refused: ${reconciliation.reason}`);
       }
+      // An added normative node no decision claimed. Two different situations
+      // raise this same signal, and only one of them has nothing to record.
+      //
+      // A deterministic content check that converted a decision drops that
+      // decision's claims — `src/reconciliation.ts`: "a converted decision
+      // drops its entries, so its nodes surface as unclaimed" — while the
+      // decision itself survives as `cannot_determine`. There *is* an owning
+      // decision there, and section 12 requires it to be stored and then
+      // blocked by name at the gate. Aborting on the released node instead
+      // would discard the typed answer, the conversion record, and the
+      // canonical finding id, leaving the operator prose where the contract
+      // promises a named finding.
+      //
+      // With no conversion, nothing owns the node: there is no decision row
+      // for the gate to block on, so the round fails closed here.
+      if (
+        reconciliation.value.unclaimedNodes.length > 0 &&
+        reconciliation.value.conversions.length === 0
+      ) {
+        return abort(
+          reviewStage.id,
+          "plan.reconcile.invalid",
+          `plan reconciliation left normative node(s) unclaimed by any decision: ${reconciliation.value.unclaimedNodes.join(" | ")}`
+        );
+      }
       try {
         written = writePlanDoc(rootDir, run.slug, reconcileContent.plan);
       } catch (err) {
@@ -718,11 +726,70 @@ export async function runPlanStage(
       planContent = reconcileContent.plan;
       planPath = written.path;
       audit(planStage.id, "plan.content.write", `wrote reconciliation revision ${planPath}`);
+      const planHashBefore = sha256Hex(normalizeText(beforeContent));
+      const planHashAfter = sha256Hex(normalizeText(planContent));
+      // Persist each decision against its canonical finding (Task 7), and
+      // every upstream candidate as a stored, non-binding proposal (Task 8).
+      // One reconciling agent_run_id: every decision this round came from the
+      // same reconciliation dispatch.
+      const proposalParts: string[] = [];
+      for (const decision of reconciliation.value.decisions) {
+        store.insertFindingDecision({
+          findingId: decision.findingId,
+          agentRunId: reconcileDispatch.agentRunId,
+          disposition: decision.disposition,
+          rationale: decision.rationale,
+          changedLocations: decision.changedLocations,
+          grounding: decision.grounding,
+          normativeChanges: decision.normativeChanges,
+          artifactHashBefore: planHashBefore,
+          artifactHashAfter: planHashAfter,
+        });
+        if (decision.disposition === "upstream_follow_up" || decision.disposition === "upstream_blocking") {
+          const candidate = decision.proposal!;
+          const route = deriveRoute(decision.disposition);
+          const evidenceRef = writeProposalEvidence(rootDir, runId, {
+            findingId: decision.findingId,
+            candidate,
+            route,
+            rationale: decision.rationale,
+            artifactHashBefore: planHashBefore,
+            artifactHashAfter: planHashAfter,
+          });
+          const identity = proposalIdentity(reviewStage.id, candidate.title, candidate.problem, route);
+          const { proposal, created } = store.upsertProposal(
+            {
+              runId,
+              stageId: reviewStage.id,
+              findingId: decision.findingId,
+              title: candidate.title,
+              problem: candidate.problem,
+              whyUpstream: candidate.whyUpstream,
+              route,
+              evidenceRef,
+            },
+            identity
+          );
+          // Its own queryable event (Task 8 step 8), not just a field inside
+          // the reconciliation summary: a later query has to find every
+          // upstream block, and whether a candidate created a proposal or
+          // linked to one already raised, without parsing prose. A valid hash
+          // chain proves the events present were not altered — it cannot
+          // prove a required event was ever emitted, so the event has to
+          // exist in its own right.
+          audit(
+            reviewStage.id,
+            "plan.proposal.record",
+            `proposal ${proposal.id} ${created ? "created" : "linked"}; finding=${decision.findingId}; route=${route}; risk=${risk}; planHashBefore=${planHashBefore}; planHashAfter=${planHashAfter}; evidence=${evidenceRef}`
+          );
+          proposalParts.push(
+            `${decision.findingId}:${proposal.id}:${route}:${created ? "created" : "linked"}`
+          );
+        }
+      }
       // Machine-readable, in the shape the gate events use: the before and
       // after hashes are retained on the event itself, so the evidence
-      // survives a later run overwriting the file (hazard 2), and the
-      // per-finding dispositions and changed locations are the retained
-      // record of the decisions until Task 7 stores them.
+      // survives a later run overwriting the file (hazard 2).
       {
         const decisionParts = reconcileFindings.map((f) => {
           const decision = reconciliation.value.decisions.find((d) => d.findingId === f.findingId)!;
@@ -734,38 +801,41 @@ export async function runPlanStage(
         audit(
           reviewStage.id,
           "plan.reconcile.record",
-          `plan reconcile round ${round}: planHashBefore=${sha256Hex(normalizeText(beforeContent))}; planHashAfter=${sha256Hex(normalizeText(planContent))}; decisions=${reconciliation.value.decisions.length}; findings=${reconcileFindings.map((f) => f.findingId).join(",")}; ${decisionParts.join(" ")}; conversions=${conversionParts}; unclaimed=${reconciliation.value.unclaimedNodes.length}`
-        );
-      }
-      const gate = planReviewGate(
-        store.getFindings(reviewStage.id),
-        profile.policy.materialityThreshold
-      );
-      if (gate.pass) {
-        audit(
-          reviewStage.id,
-          "plan.gate.pass",
-          // `planFor` is recorded for the same reason the spec event carries
-          // `specHash`: a later stage must not have to trust an editable file
-          // to learn which specification the passed plan was written from.
-          `plan_review gate passed in round ${round}; planHash=${sha256Hex(normalizeText(planContent))}; planFor=${written.doc.planFor}; risk=${risk}`
-        );
-        store.completeStage(reviewStage.id, planPath, "pass");
-        return { ok: true, stageIds: { plan: planStage.id, planReview: reviewStage.id }, planPath };
-      }
-      if (round >= rounds) {
-        return abort(
-          reviewStage.id,
-          "plan.gate.block",
-          `plan_review blocked: material findings remain open after ${rounds} legacy closure passes: ${gate.openMaterialIds.join(", ")}`
+          `plan reconcile round ${round}: planHashBefore=${planHashBefore}; planHashAfter=${planHashAfter}; risk=${risk}; decisions=${reconciliation.value.decisions.length}; findings=${reconcileFindings.map((f) => f.findingId).join(",")}; ${decisionParts.join(" ")}; conversions=${conversionParts}; unclaimed=${reconciliation.value.unclaimedNodes.length}; proposals=${proposalParts.join(",")}`
         );
       }
     }
-    return abort(
-      reviewStage.id,
-      "plan.gate.block",
-      "plan_review exhausted its legacy closure passes without a terminal gate result"
-    );
+
+    // --- decision gate: over every round this stage ran, not the last one ---
+    const decisions = store.getFindingDecisions(reviewStage.id);
+    const gate = planReviewGate(decisions);
+    if (gate.pass) {
+      audit(
+        reviewStage.id,
+        "plan.gate.pass",
+        // `planFor` is recorded for the same reason the spec event carries
+        // `specHash`: a later stage must not have to trust an editable file
+        // to learn which specification the passed plan was written from.
+        `plan_review gate passed after ${rounds} round(s); planHash=${sha256Hex(normalizeText(planContent))}; planFor=${written.doc.planFor}; risk=${risk}`
+      );
+      store.completeStage(reviewStage.id, planPath, "pass");
+      return { ok: true, stageIds: { plan: planStage.id, planReview: reviewStage.id }, planPath };
+    }
+    const proposalsByFinding = new Map<number, number[]>();
+    for (const proposal of store.getProposalsForStage(reviewStage.id)) {
+      for (const findingId of store.getProposalSources(proposal.id)) {
+        const list = proposalsByFinding.get(findingId) ?? [];
+        list.push(proposal.id);
+        proposalsByFinding.set(findingId, list);
+      }
+    }
+    const blockedNames = gate.blockedFindingIds
+      .map((id) => {
+        const proposals = proposalsByFinding.get(id);
+        return proposals && proposals.length > 0 ? `${id} (proposal ${proposals.join("+")})` : `${id}`;
+      })
+      .join(", ");
+    return abort(reviewStage.id, "plan.gate.block", `plan_review blocked: finding id(s) ${blockedNames}`);
   } catch (err) {
     // The wedge guard: an unexpected throw must produce the same terminal
     // state as any other failure.

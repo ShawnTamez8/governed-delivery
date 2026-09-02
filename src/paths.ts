@@ -69,15 +69,16 @@ export function worktreePath(rootDir: string, runId: number): string {
   return join(rootDir, GOVERNANCE_DIR, "worktrees", String(runId));
 }
 
-/**
- * The directory an upstream proposal's evidence will be written to.
- *
- * Nothing calls this yet — the proposal record and its persistence are Task 8
- * of the step 5b plan. It is here because the point of this module is that
- * adding a governance location is an edit to one file, and the per-run shape
- * is the one every other location above already uses. What goes inside is
- * Task 8's decision, not this one's.
- */
+/** The directory holding one run's retained upstream-proposal evidence (section 13, section 14). */
 export function proposalEvidenceDir(rootDir: string, runId: number): string {
   return join(rootDir, GOVERNANCE_DIR, "proposals", String(runId));
+}
+
+/**
+ * The same file `proposal.evidence_ref` stores it: relative to the
+ * repository root, mirroring `rawOutputRef`'s reasoning — the reference must
+ * survive the tree being read from elsewhere.
+ */
+export function proposalEvidenceRef(runId: number, name: string): string {
+  return join(GOVERNANCE_DIR, "proposals", String(runId), name);
 }

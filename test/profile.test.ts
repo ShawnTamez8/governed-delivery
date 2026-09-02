@@ -383,7 +383,6 @@ test("a profile frozen under a different but legal configuration still executes"
       ...profile.policy,
       panelSizeMax: 5,
       specReviewRounds: 3,
-      materialityThreshold: "critical",
       requiredSpecialties: ["security"],
     };
     const candidate = { ...profile, policy, policyHash: policyHash(policy as never) };

@@ -1,6 +1,4 @@
 export const SEVERITIES: readonly string[] = ["low", "medium", "high", "critical"];
-export const DISPOSITIONS: readonly string[] = ["open", "resolved", "disputed", "accepted"];
-export const SEVERITY_ORDER: Record<string, number> = { low: 0, medium: 1, high: 2, critical: 3 };
 
 /**
  * Normalize a location for identity: trim, collapse internal whitespace,
