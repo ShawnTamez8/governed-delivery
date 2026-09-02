@@ -7,48 +7,48 @@ disagree, Current state wins.
 
 ## Current state (2026-09-01)
 
-**Shipped:** build order steps 1-7 on `master`, head `84b75e1`. The last four
-commits are documentation only — external-harness review records under
-`docs/proposals/`, then the step-5b plan and its two reviews; the last code
-commit is the step-7 merge `5b93ddb`. The tree was green at that merge — 446
-tests / 445 pass / 1 recorded skip / 0 fail, `typecheck` clean, `check:docs`
-clean — and nothing since has touched `src/` or `test/`.
+**Shipped:** build order steps 1-7 and step 5b Task 1, on `master`, head
+`60587fc`, tree clean, **not pushed** to `origin`. The last code commit is
+still the step-7 merge `5b93ddb` — nothing since has touched `src/` or
+`test/`, so the last measured suite state stands: 446 tests / 445 pass / 1
+recorded skip / 0 fail. `check:docs` is clean (0 errors, 40 warnings).
 
-**In flight — step 5b, planned; last committed baseline `84b75e1`.**
-`docs/features/step5b-upstream-findings/` holds `plan.md` (`Status:
-Reconciled`, 13 tasks), three plan-review records, and one review of the third
-reconciliation, all reconciled into the plan. The third plan review, dated
-2026-09-01, audited the prior reconciliation and found five nominally closed
-contracts that were not executable. Its follow-up review accepted those corrections
-and identified five additional record and clarity issues. The plan now replaces the closure-round review loop with an author-led
-flow — draft, one self-critique, a specialist panel, author reconciliation,
-deterministic gate — and routes an upstream concern to a stored proposal
-instead of another author round. Canonical findings, immutable per-reviewer
-reports, and reconciliation decisions are separate records; specification
-review receives the design input; proposal content is conditional reconciliation
-output; and required specialties consume seats inside the author-requested
-panel. Exact source matching proves cited text occurs, not that it semantically
-supports a rejection; artifact hashes and mechanical gates likewise do not prove an
-`addressed` finding was cured. That residual author-judgment risk is explicit and no
-closure panel independently confirms it. Nothing is implemented. Task 1 is a bounded prototype whose exit decision
-confirms or revises Tasks 4-9. A confirming result must receive explicit operator
-acceptance and amend architecture sections 12 and 13 before production schema or
-stage work starts.
+**The binding architecture changed.** `60587fc` amended `ARCHITECTURE.md`
+sections 8, 9, 12, 13, and 20 under operator acceptance: the five-phase
+author-led review flow replaces the closure pass, the author proposes a panel
+the system staffs and refuses by name, completion is decision completeness
+rather than a severity threshold, canonical identity is round-scoped with every
+reviewer report immutable, the panel floor and default are two reviewers, and
+one review round is the default. Section 5, `STAGE_SEQUENCE`, section 15's
+schema block, and section 23 are unchanged. Both limits are stated in the
+document itself: an exact match proves textual occurrence, not logical support,
+and hashes plus document gates do not prove a concern was semantically cured.
 
-**Three latent defects in shipped code** were confirmed while reconciling those
-reviews. They are unfixed, recorded in the plan, and described in the
-diagnostics quick-reference below: `insertFinding`'s return on the upsert
-conflict path, whole-file schema constraint searching, and a frozen policy that
-describes values the live constants actually decide.
+**In flight — step 5b, Tasks 2-13 open, nothing implemented.** Task 1's
+prototype ran and its exit decision is recorded in
+`docs/features/step5b-upstream-findings/plan.md` and
+`docs/features/step5b-upstream-findings/2026-09-01-task1-prototype-evidence.md`.
+It confirmed the contracts and forced five revisions to Tasks 4-10, all already
+written into the plan. Task 2 (governance path module, no dependencies) and
+Task 3 (review configuration in the frozen policy, now unblocked) are next; the
+plan runs 2 before 3.
+
+**Three latent defects in shipped code** remain unfixed: `insertFinding`'s
+return on the upsert conflict path, whole-file schema constraint searching, and
+a frozen policy that describes values the live constants actually decide. Each
+has its own auto-memory file with the line numbers and the reproduction. Task 3
+fixes the third, Task 7 the first two.
 
 **Open and deferred:**
 
-- Step 5b's 13 tasks are all open, starting at the Task 1 prototype gate.
-- Whether step 5b or step 8 (delivery check) goes first was not decided. Step 8
-  remains the next build-order step and consumes the record the verification
-  stage writes.
-- `VERIFY_RETENTION_MAX_BYTES` is 64 MB — chosen, not derived. Frozen per run
-  either way.
+- `docs/features/step6-trust-boundary/plan.md` names
+  `.claude/sessions/2026-08-31-debug-implementer-mutates-worktree.md` in four
+  places, including "committed as the evidence record". That file was never
+  written. Historical tier, so `check:docs` only warns; the gap in the step-6
+  record is real and undecided.
+- Whether step 5b or step 8 (delivery check) goes first was never decided. Step
+  8 remains the next build-order step.
+- `VERIFY_RETENTION_MAX_BYTES` is 64 MB — chosen, not derived.
 - Filesystem and network containment for verification commands is unbuilt,
   stated as a limitation in `ARCHITECTURE.md` section 17, with
   `docs/proposals/verification-containment.md` filed.
@@ -57,8 +57,8 @@ describes values the live constants actually decide.
 - The build order stops at step 9. Do not build past it without an explicit
   decision.
 
-**Next up:** run Task 1's bounded prototype from
-`docs/features/step5b-upstream-findings/plan.md`.
+**Next up:** start step 5b Task 2 (`src/paths.ts`, the single governance-path
+module) from `docs/features/step5b-upstream-findings/plan.md`.
 
 ## Diagnostics quick-reference
 
@@ -66,20 +66,29 @@ Durable one-liners are **mirrored into auto memory**, which loads every session
 automatically — see `MEMORY.md` there for the full set. Kept here are the ones
 specific to working *in this repository*.
 
-- **`insertFinding` returns the wrong row after a conflict.** `src/store.ts:389`
-  returns `getFinding(lastInsertRowid)`, and SQLite does not update
-  `last_insert_rowid()` for `ON CONFLICT ... DO UPDATE`, so it returns whichever
-  row the previous insert created. Harmless today only because both stages
-  discard the return value. A two-insert test passes by coincidence — use three.
-- **Schema constraint guards search every migration file as one string.**
-  `test/schema.test.ts:102-120` and `scripts/doc-check.mjs:243-334` assert with
-  `sql.includes(...)` over the concatenation, so a later migration that rebuilds
-  a table can drop its constraints and every gate stays green. Scope to the
-  table body the way `test/schema.test.ts:98` does.
-- **The frozen profile describes values the live constants decide.**
-  `buildPolicy()` records `PANEL_SIZE` and `REMEDIATION_ROUNDS`, but
-  `src/select.ts`, `src/spec-stage.ts`, and `src/plan-stage.ts` all import the
-  live constants. Hard rule 6 is satisfied in the profile and not at the read.
+- **An exact-match citation check must collapse whitespace, not only BOM and
+  CRLF.** Every governing document here is hard-wrapped at ~78 columns, so a
+  correct quotation spanning a line break fails `normalizeText`-only matching.
+  Measured: a sound rejection became `cannot_determine` for that reason alone.
+  Collapse runs of whitespace on both sides; the guarantee is unchanged.
+- **`intentKey` is model-authored and unstable across rounds.** A reviewer
+  restating the same concern in a later round supplied a different key at the
+  same location, so identity deduplicates wording within a round and cannot
+  detect semantic recurrence. Never build behaviour that assumes it does.
+- **Review defaults are code constants, not operator input.** `governed.yaml`
+  accepts only a `verify:` block (`src/governed-config.ts:91`) and `new-run`
+  has no panel or round flag. Panel size and round counts live in
+  `src/policy.ts` and reach a run through `buildPolicy()` and the frozen
+  profile. "Configuration" in this repo means that, not a prompt.
+- **A large-context dispatch costs about three times a reviewer dispatch.**
+  Reviewer dispatches ran $0.02-0.04; self-critique and reconciliation, which
+  carry the design plus the full artifact plus every per-reviewer report, ran
+  $0.07-0.09. Budget from the prompt's contents, not from a per-dispatch average.
+- **A break-it mutation that crashes the checker looks exactly like a guard
+  that held** — both report zero failing checks, and an uncaught throw exits 1
+  just as a real failure does. Require the run's summary line to be present
+  before trusting "no check failed", and prefer a mutation that *loosens* the
+  guard over one that deletes a null check and throws.
 - **A findings list is not a task list.** Two step-4 findings were one miscount
   seen at two boundaries; fixed separately they would have left the two sides
   inconsistent, which *is* the defect. Group by defect, not by report line.
@@ -89,202 +98,170 @@ specific to working *in this repository*.
   case-exact `touchesProtected` let a capitalized path evade it on Windows.
 - **A documented workflow's shell, editor, and filesystem are part of the
   contract.** The signing tool signed bytes the gate could never recompute,
-  because PowerShell 5.1's pipe adds a BOM and rewrites LF to CRLF. Put that
-  layer inside the test.
+  because PowerShell 5.1's pipe adds a BOM and rewrites LF to CRLF.
 - **A rolled-back audit insert does not break the hash chain** —
   `verifyAuditChain` recomputes from surviving rows. `Store.transaction` is
-  re-entrant; a nested failure aborts the outermost frame, and silent partial
-  commits are not possible.
-- **Exit codes through pipelines lie.** `cmd | grep ...; echo $?` reports grep's
-  status, not the stage's. Measure a stage's exit code without the pipe.
+  re-entrant; a nested failure aborts the outermost frame.
+- **Exit codes through pipelines lie.** `cmd | tail; echo $?` reports tail's
+  status, not the command's. This recurs — measure exit codes without the pipe.
 
 ## Session records
 
-### Step 5b: review of third reconciliation accepted (2026-09-01)
+### Step 5b Task 1: prototype run, architecture amended (2026-09-01)
 
-`2026-09-01-plan-review-3-review.md` found no critical or high-severity defect in
-the third reconciliation. All five of its concerns were accepted. An append-only
-addendum now records the plan's post-reconciliation state, corrects the Task 6
-prompt attribution, and links the five findings to the two earlier reviews. The
-review-of-review carries its own five dispositions. The plan remains `Reconciled`
-and authorizes Task 1 only; Tasks 3-9 still require confirming prototype evidence,
-explicit operator acceptance, and the architecture sections 12 and 13 amendment.
-
-The substantive limit is now explicit throughout the plan: an exact source match
-proves textual occurrence but cannot prove that the citation logically supports a
-rejection. Likewise, an `addressed` decision advances after retained hashes and
-mechanical artifact gates, without an independent semantic closure pass. A missing
-or unmatched source and an explicit `cannot_determine` route to a human; a weak but
-matching author rationale can advance. That is the selected author-led authority
-tradeoff, not a property deterministic code can eliminate.
-
-The process lesson: state exactly what a deterministic check proves. Structural and
-textual validation can fail closed on malformed evidence, but must not be described
-as semantic verification.
-
-### Step 5b: third reconciliation audit closed five plan-contract gaps (2026-09-01)
-
-`2026-09-01-plan-review-3.md` audited the `Reconciled` claim against both prior
-reviews, the binding architecture, hazards, this learning record, the shipped
-prompts/stages/store/migration, and `doc-check`. All five findings were accepted
-and reconciled into the same `plan.md`; the first two review records remain
-unchanged and no second plan or spike document was added.
-
-- Canonical concern identity, immutable per-reviewer reports, and one
-  reconciliation decision are separate storage responsibilities. Round is part
-  of canonical identity, so a later configured round cannot overwrite the first.
-- Specification reviewers and reconcilers receive `design.md`; upstream omissions
-  use stable `upstream:design:<decision-key>` tokens rather than headings the
-  source does not contain. Plan review uses the approved specification analogue.
-- Proposal title/problem/upstream explanation is a conditional candidate inside
-  the reconciliation decision. Deterministic code derives impact from disposition.
-- Required specialties consume panel seats and the required/requested union must
-  fit. Reviewers and specialties are both distinct. With the default size of two,
-  requirements-traceability leaves one requested lens; SQL plus UI needs three
-  seats and registered specialists.
-- Task 1 remains a non-production prototype, but a confirming exit now includes
-  the operator-approved sections 12 and 13 amendment before Tasks 3-9. A grounded
-  rejection may advance at any severity; unmatched grounding becomes
-  `cannot_determine` and blocks for a human.
-
-The important process lesson: a reconciliation stamp is a claim, not evidence.
-Trace the promised result through prompt input, parser, storage, and gate before
-calling the finding closed; `check:docs` intentionally does not validate that
-semantic chain or the `Status` value.
-
-### Step 5b: two plan reviews reconciled, plan rewritten (2026-08-31)
-
-Two review files against `docs/features/step5b-upstream-findings/plan.md`.
-Review 2 superseded the plan's design direction rather than correcting it, so
-the plan was rewritten in place to 13 tasks instead of patched. Both reviews
-were kept unchanged and stamped with per-finding dispositions: 22 accepted on
-review 1, 12 on review 2, none rejected, deferred, or open.
+Commit `60587fc` on `master`. Twelve real dispatches on `claude-sonnet-5`,
+**$0.59543**, 430 s, **zero parse failures**, driven against the shipped
+dispatch boundary in scratch storage outside production stage order. Nothing
+under `src/` or `test/` changed.
 
 #### Decisions and assumptions
 
-- **The review loop becomes author-led:** draft, one self-critique, a
-  specialist panel, author reconciliation, deterministic gate. Completion stops
-  meaning "reviewers returned an empty list" and starts meaning "every finding
-  carries a retained typed decision and the mechanical gates pass".
-- **`rejected_with_rationale` advances at any severity**; only
-  `upstream_blocking` and `cannot_determine` block. Consequence named in the
-  plan: severity stops gating review, which leaves `MATERIAL_THRESHOLD` with no
-  consumer and changes the frozen policy shape and the profile hash.
-- **The author proposes panel size (2 to a configured maximum defaulting to 2)
-  and the specialties; deterministic code selects the identities**, excludes the
-  author, and blocks by name when the request cannot be staffed. This replaces
-  per-risk panel sizes, contradicting the 2026-08-29 locked decision and
-  architecture section 12, which the plan amends rather than leaving in conflict.
-- **An upstream concern becomes a stored proposal** with evidence under
-  `.governance/`; materializing it into `docs/proposals/` is a human command,
-  because a run writing there writes outside the signed scope.
-- **`.governance` gets one internal path module** and stays fixed and
-  unconfigurable in this step. The literal currently appears in nine production
-  path constructions across seven modules.
-- **The plan carries `Status: Reconciled`** on operator instruction — a third
-  value in a repository that used only `Proposed` and `Implemented`.
-  `scripts/doc-check.mjs` does not pin plan statuses, so nothing breaks.
+- **The operator accepted the authority boundary and its residual semantic
+  limit**, and amended sections 8, 9, 12, 13, and 20 in one commit rather than
+  only 12 and 13 — the sections-12/13-only change would have left section 8
+  claiming cross-round deduplication works and section 9 claiming per-risk panel
+  sizes. Amend every section a design change falsifies, not only the ones named.
+- **The ungrounded `addressed` decision was not accepted as residual risk.** The
+  operator directed normative-delta grounding: deterministic code set-diffs the
+  parsed artifact before and after reconciliation, and every added normative node
+  must be claimed by exactly one `addressed` decision and grounded in the
+  governing input. Binding on Tasks 6, 9, 10, and 11.
+- **Panel floor and default are two reviewers**; the one-reviewer low-risk tier
+  is deferred, not deleted. Two is the panel size, never a round count.
+- **One review round by default**, configurable higher, no closure pass. No
+  verification round limit is in force because no loop exists.
+
+#### What failed
+
+- **`addressed` admitted an invented obligation.** Answering a TOCTOU finding,
+  the author added an atomic exclusive-create acceptance criterion the design
+  never states, and the artifact gate passed. The no-invention prompt sentence
+  did not prevent it and no mechanical check detects it. Fixed at the plan level
+  by normative-delta grounding; the retained case is Task 11's regression.
+- **A correct citation failed the grounding match** (quick-reference above).
+  Re-evaluating the *same stored model output* under the corrected matcher
+  turned both probe rejections into matches with no further spend.
+- **Three of eighteen break-it mutations did not detect their break.** Two were
+  unrealistic (they threw instead of loosening the guard); one was a real defect
+  in the prototype — `mergeCanonical` deduplicated within a single call, so
+  dropping `round` from the identity changed nothing observable.
+- **Cost overran the estimate**, $0.60 against $0.25-0.45.
 
 #### What worked
 
-- Grounding every review claim in the code before dispositioning it. Three of
-  review 1's findings were confirmed defects in shipped code, and one of its
-  citations was wrong: the invented-obligation record lives in
-  `docs/features/plan-stage/plan.md`'s smoke evidence, not in this file.
+- **Importing the repo's `.ts` modules into a scratch `.mjs` harness** via
+  `await import(pathToFileURL(...).href)` under Node 24 type stripping. This is
+  how the prototype used the real executor, harness, parser, and validators
+  without touching production or duplicating them.
+- **Splicing an amendment by line range on a copy, then `diff -U3`**, instead of
+  editing the binding document directly. It produced an exact reviewable diff
+  and made the invariant checks (headings identical, sections 5/23 byte-equal,
+  no new overlong lines) mechanical before anything was applied.
+- **Not naming the reviewer registry in the self-critique prompt on the first
+  attempt.** It measured what the author asks for unprompted — an unstaffable
+  `data-privacy` lens — which is the evidence Task 4 needs. Told the registry,
+  the same author requested `security` and staffed.
+
+#### Running state
+
+- `C:\Users\Shawn-work\repositories\step5b-task1-prototype` — the retained
+  prototype bundle: harness, prompts, all 12 prompts and raw responses, derived
+  state, 441 KB. Outside the repository, uncommitted, no process attached.
 
 #### Verification
 
-- `npm run check:docs` — exit 0, `doc-check: clean`. The four `src/paths.ts`
-  warnings are the expected kind for a file a task is about to create.
+- `npm run check:docs` — exit 0, `doc-check: clean`, 40 warnings.
+- `node validators.check.mjs` in the prototype bundle — 58/58 checks as expected.
+- `node break.mjs` in the prototype bundle — 19/19 guards proven by breaking them.
+- `npm test` and `npm run typecheck` were **not** run: no source changed.
+
+#### Deferred and open
+
+- Open: report pairs (two reviewers on one canonical finding) were never
+  observed in real output — 9 findings, 9 reports, no pairs. Tasks 6 and 7 must
+  keep proving pair preservation by fixture.
+- Open: `master` is not pushed to `origin`, and local branches `step5b-task1`
+  (identical to master) and `step7` still exist.
 
 #### Next time
 
-- A review that supersedes a design direction is reconciled by rewriting the
-  document, not by patching its findings in. The second review's dispositions
-  of the first review's findings are the map for what survives the rewrite.
-- Ask the operator the questions the review leaves open before rewriting. Four
-  decisions here — blocking policy, panel model, proposal persistence, rewrite
-  scope — each changed the shape of several tasks, and inventing any of them
-  would have produced a plan that had to be rewritten twice.
+- **State what a deterministic check proves, in the document that describes
+  it.** Every overstatement caught this session was a textual or mechanical
+  check described as semantic verification.
+- **A checker's own error can be someone else's stale citation.** The one
+  `check:docs` error was a dangling path reference inside a proposal, not a
+  check to remove. Fix the reference; do not weaken a scan that is tracking
+  40 other paths.
+- **Measure the thing the prompt does not say.** Withholding one input on the
+  first attempt turned a guess about model behaviour into evidence.
 
-### Step 7: smoke completed; step 6 correction shipped (2026-08-31)
+### Step 5b: plan reviews and reconciliations (2026-08-31 to 2026-09-01)
 
-Step 6's trust-boundary correction shipped on `master`, then step 7 rebased
-onto it and the Task 12 smoke ran: one passing run ($0.07618, 5 dispatches),
-one blocking run ($0.06595, 5 dispatches), plus a tool-inventory probe
-($0.01116, returning exactly `Glob/Grep/Read` under the read-only invocation).
-Both plans `Implemented`.
+Four review records against `docs/features/step5b-upstream-findings/plan.md`,
+all reconciled and retained unchanged with per-finding dispositions. Review 2
+superseded the plan's design direction, so the plan was rewritten in place to 13
+tasks instead of patched; review 3 then audited the `Reconciled` claim and found
+five nominally closed contracts that were not executable. The design decisions
+those reviews settled now live in `ARCHITECTURE.md`, not only in the plan.
 
-What the smoke added beyond the fixture suite:
+#### Next time
 
-- **The passing run's implementer did not write files.** The nondeterministic
-  step-6 write-then-propose failure did not recur under the corrected
-  invocation. One green run is still one sample; the fixture suite breaking each
-  guard is what carries the proof.
-- **A genuine plan-coverage block, for real.** The model dropped
-  `(traces to: …)` suffixes when restating criteria and `coverageMeetsCriteria`
-  held the full text, so the gate blocked and it cost a run. The gate was right;
-  the prompt was deliberately not softened to make it pass.
-- **The env guarantee held.** `set` under the verify runner retained only the
-  eight named passthrough variables plus cmd's defaults; a canary exported to
-  `bw verify` never reached the child.
-- A fresh `new-run` refuses a tree dirtied by a blocked run's projections —
-  commit or clean before the next run. CRLF normalization of a committed
-  `governed.yaml` is harmless (the parser splits on `\r?\n`), but git's next
-  touch rewrites the working copy, so never expect committed bytes on disk.
+- **A reconciliation stamp is a claim, not evidence.** Trace the promised result
+  through prompt input, parser, storage, and gate before calling a finding
+  closed. `check:docs` intentionally validates neither that chain nor `Status`.
+- **A review that supersedes a design direction is reconciled by rewriting the
+  document, not by patching its findings in.** The later review's dispositions
+  of the earlier review's findings are the map for what survives.
+- **Ask the operator the questions a review leaves open before rewriting.** Four
+  decisions here each changed the shape of several tasks; inventing any would
+  have produced a plan rewritten twice.
 
-### Step 7: verification stage built (2026-08-30)
+### Step 7: verification stage and smoke (2026-08-30 to 2026-08-31)
 
-Twelve tasks, `3be15fd` on branch `step7`, later merged. Independent code
-review reconciled, 3 findings. Suite green at 429 pass / 1 skip; smoke 7
-dispatches, **$0.5021**, `claude-sonnet-5`.
+Twelve tasks, merged to `master`; suite green at 429 pass / 1 skip. Step 6's
+trust-boundary correction shipped first, then the Task 12 smoke ran: a passing
+run ($0.07618, 5 dispatches), a blocking run ($0.06595, 5 dispatches), and a
+tool-inventory probe ($0.01116) returning exactly `Glob/Grep/Read`.
 
 - **`bw new-run` could never create a run in a repository that had not
   gitignored `.governance/`** — `openStore()` creates the directory before the
   clean-tree check, so the invocation reported a tree only it had dirtied. Every
   test passed because the shared temp-root helper wrote the `.gitignore` first.
-  Fixed; a test now builds a repository with no `.gitignore` at all.
 - **The evidence file had no ceiling.** Measured 5.97 GB in 5.2 s (~1.1 GB/s),
   roughly 955 GB inside the 900-second command ceiling. Fixed with
-  `VERIFY_RETENTION_MAX_BYTES`, which carries that measurement in its comment so
-  the next reader never re-derives it.
-- **Architecture facts worth knowing before touching this area:** section 12
-  names "verification config" among what the profile freezes, so hard rule 6
-  puts the read at run start; section 4 means stage N's `output_ref` is
-  literally what stage N+1 was handed, which is why verification's is a JSON
-  record rather than a report.
-- **Closed:** the three-orchestrator extraction question step 6 deferred here.
-  Verification has no author, panel, rounds, model, prompt, or `agent_run` row,
-  so the shape the three dispatching stages share is absent. Do not carry it to
-  step 8.
-- **Next time:** prior smokes here each drove **one stage**, with upstream
-  constructed through the store — roughly $0.13 an attempt for prompt
-  iteration. Reserve a full chain for the record.
+  `VERIFY_RETENTION_MAX_BYTES`, whose comment carries that measurement.
+- **A genuine plan-coverage block, for real.** The model dropped
+  `(traces to: …)` suffixes when restating criteria and `coverageMeetsCriteria`
+  held the full text. The gate was right; the prompt was not softened to pass.
+- **Closed:** the three-orchestrator extraction question. Verification has no
+  author, panel, rounds, model, prompt, or `agent_run` row, so the shape the
+  three dispatching stages share is absent. Do not carry it to step 8.
+- A fresh `new-run` refuses a tree dirtied by a blocked run's projections.
+  Commit or clean between runs. Never expect committed bytes on disk: git's next
+  touch rewrites CRLF in the working copy.
+- **Reserve a full chain for the record.** Prior smokes drove one stage with
+  upstream constructed through the store — about $0.13 an attempt for prompt
+  iteration.
 
 ### Step 6: implementation stage — shipped (2026-08-30)
 
-Nine tasks, `32a714e`; two low review findings, both closed. Smoke: one
-dispatch, **$0.0673**, valid patch set on the first attempt.
+Nine tasks, `32a714e`. Smoke: one dispatch, **$0.0673**, valid patch set first try.
 
 **Decisions locked:** `ProposedPatchFile.content` is the complete new file
 content (no diff field); scope matching is exact-or-`s/`-prefix, case-preserving
 (`touchesProtected` folds case, scope does not); one commit per patch under
 `BuildWorks <buildworks@buildworks.invalid>` via `-c` flags; the projections are
 the run branch's first commit; one patch per file per dispatch, enforced by the
-head-moved re-validation. Scope fitness and `status.md` deferred past step 9;
-`RUN_DURATION_LIMIT_SECONDS` (7 days) landed here.
+head-moved re-validation. `RUN_DURATION_LIMIT_SECONDS` (7 days) landed here.
 
 **The review's lesson:** a documented guarantee ("the refusal does not depend on
 the target's existence") was false at a boundary the plan never tested —
 `resolveExisting` walks with `existsSync`, so a dangling link resolves
 lexically. **Refuse what cannot be verified rather than claim a resolution the
 filesystem cannot provide.** Constructible on Windows via a junction whose
-target is deleted after creation.
-
-**Two draft-gap lessons:** a binding argument must name the file it covers (an
-unchanged plan does not imply an unchanged spec, so the stage re-verifies both);
-and consult the repo's own records before writing a link-redirect gate — the
-symlink class was already recorded twice and missed both times.
+target is deleted after creation. Also: a binding argument must name the file it
+covers, and consult the repo's own records before writing a gate — the symlink
+class was already recorded twice and missed both times.
 
 ### Build order steps 1-5 (2026-08-29)
 
@@ -292,66 +269,57 @@ symlink class was already recorded twice and missed both times.
   extracting a shared abstraction (hard rule 4). **The approval's `expires_at`
   is a human signing window, not an authorization lifetime** — it bounds
   `approval-request` → sign → `approve`; re-checking it later would strand a run
-  with no in-place repair. Smoke: six dispatches, **$0.63**, three remediation
-  rounds, and a round-2 finding caught the plan inventing a rejection
-  requirement the spec never stated — the recorded observation behind step 5b's
-  hazard 16.
+  with no in-place repair. Smoke: six dispatches, **$0.63**, and a round-2
+  finding caught the plan inventing a rejection requirement the spec never
+  stated — the recorded observation behind step 5b's hazard 16.
 - **Step 4 — human approval gate.** `bw approve` verifies one Ed25519 signature
   and creates `awaiting_approval` only on success. A refusal costs nothing and
   is not terminal — unlike step 3, where every failure was terminal because
   money had already been spent. The profile carries `startingCommit` because
-  section 15's `run` table has no column for one and `test/schema.test.ts`
-  compares columns against `ARCHITECTURE.md`.
-- **Step 3 — spec stage.** Enums the architecture left open: severity
-  low/medium/high/critical, threshold `high`; disposition
-  open/resolved/disputed/accepted; risk low/standard/high, panel sizes 1/2/3.
-  Its smoke exposed two prompt defects fixtures could not — naming `baseCommit`
-  in the author prompt made the model refuse without a git repo, and the
-  reviewer returned a bare findings object until the prompt stated the full
-  envelope shape. **Real smoke output must drive prompt iteration.**
+  section 15's `run` table has no column for one.
+- **Step 3 — spec stage.** Its smoke exposed two prompt defects fixtures could
+  not: naming `baseCommit` in the author prompt made the model refuse without a
+  git repo, and the reviewer returned a bare findings object until the prompt
+  stated the full envelope shape. **Real smoke output must drive prompt
+  iteration.**
 - **Step 2 — harness adapter.** From the one recorded real envelope:
   `claude -p --output-format json` **does** report `total_cost_usd` (the
   architecture's `sessionCost: false` example was wrong); `modelUsage` can carry
   auxiliary queries, so the effective model is the unique entry whose
-  `inputTokens` match `usage.input_tokens`, and no unique match records `null`.
-  `invokeHarness` is async by necessity — timeout timers starve under a
-  synchronous wait.
+  `inputTokens` match `usage.input_tokens`. `invokeHarness` is async by
+  necessity — timeout timers starve under a synchronous wait.
 - **Step 1 — run store.** SQLite via `node:sqlite`, no runtime dependencies.
-  Preserve: fail-closed `--gate-result`, transactional audit appends, lock
-  ownership tokens. Migrations anchor to the module location, not cwd. The
-  pid-reuse wedge carries a held-since diagnostic only — age-based takeover was
-  rejected as unsafe.
+  Migrations anchor to the module location, not cwd. The pid-reuse wedge carries
+  a held-since diagnostic only — age-based takeover was rejected as unsafe.
 
 ### Skills and tooling (2026-08-29)
 
-- `review-code` is a global skill reading the per-repo checklist
-  `.claude/review-code.md`. The doc skills discover the project documentation
-  skill by what it does, so they find `doc-check` here.
 - `scripts/doc-check.mjs` has tiers (current / reference / historical),
   `--json`, `--only=`, and **exit 2 when the checker itself cannot read the
   source** — the motivating defect was a renamed `ARCHITECTURE.md` section
   making the old checker report a documentation defect that did not exist. **A
   checker that blames the wrong artifact is worse than no checker.**
 - Historical-tier documents (`docs/features/**`, `.claude/sessions/**`) get
-  warnings, never errors. Path warnings for files a plan is about to create are
-  expected; do not chase them to zero.
-- Skill files load into context on every invocation, `description` fields in
-  *every session*. Cut anything the tool's own output already says.
+  warnings, never errors; `docs/proposals/` errors. Path warnings for files a
+  plan is about to create are expected; do not chase them to zero.
+- `review-code` is a global skill reading `.claude/review-code.md`. The doc
+  skills discover the project documentation skill by what it does, so they find
+  `doc-check` here.
 
-### Locked design decisions (2026-08-29)
+### Locked design decisions (2026-08-29, amended 2026-09-01)
 
 Architecture reconciled against `2026-08-28-architecture-review.md`, all 14
-findings applied (`f68347c`). These describe shipped behaviour; where step 5b's
-plan changes one, it says so and amends the architecture in the same task.
+findings applied (`f68347c`). Lines marked **amended** were superseded by
+`60587fc`; the rest still describe shipped behaviour.
 
 - System name is a configuration value, default **BuildWorks**.
 - Internal paths stay fixed and non-configurable: `.governance/`,
   `gov/<slug>/<run-id>`, `governed.yaml`.
-- Remediation rounds default 3 (counting closure passes), frozen in the profile.
-  Step 5b's plan replaces this with per-stage round counts defaulting to 1.
-- Panel size is configuration per risk level; defaults 2 at standard, 1 at low.
-  Step 5b's plan replaces this with an author-proposed size inside frozen
-  bounds of 2 to 5.
+- **Amended:** remediation rounds defaulted to 3 counting closure passes; the
+  review stages now default to one round with no closure pass.
+- **Amended:** panel size was configuration per risk level, 2 at standard and 1
+  at low; it is now author-proposed inside frozen bounds with a floor and
+  default of 2, and risk no longer sizes the panel.
 - Approval is an Ed25519 signature verified against a public key in
   machine-local configuration.
 - A patch binds to the head in effect when proposed; apply-time re-validation
