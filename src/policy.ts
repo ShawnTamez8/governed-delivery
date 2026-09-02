@@ -32,9 +32,16 @@ export const PLAN_REVIEW_ROUNDS = 1;
  *
  * The floor is also the default. Two is what makes an independence claim mean
  * anything, and the default installation only needs to staff two distinct
- * specialties. Until the author proposes a size (step 5b Task 5), the stages
- * staff the floor; they deliberately do not staff the maximum, or raising the
- * ceiling would silently seat reviewers nobody asked for.
+ * specialties. The author proposes the size within these bounds (step 5b
+ * Task 5) and the stages staff exactly what it asked for, so the maximum is a
+ * ceiling on that request rather than the size a run seats by default.
+ *
+ * Configuring more required specialties than the floor is legal — the check
+ * below only requires that they fit the maximum — and it raises the smallest
+ * request that can succeed to `requiredSpecialties.length`, because required
+ * lenses consume seats inside whatever size the author asks for. The
+ * self-critique prompt states that effective floor rather than this constant;
+ * an operator raising one should expect the other to move.
  *
  * `PANEL_SIZE_MAX` must lie within [`PANEL_SIZE_FLOOR`, `PANEL_SIZE_CEILING`].
  * Raising it is an operator action that requires registering more specialists,

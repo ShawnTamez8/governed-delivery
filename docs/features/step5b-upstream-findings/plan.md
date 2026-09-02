@@ -500,18 +500,93 @@ count was activated, and `LEGACY_CLOSURE_PASSES` is untouched.
 
 **Steps:**
 
-- [ ] Validate the panel request before it reaches selection: an integer size within `[2, panelSizeMax]` and a unique list of specialty strings. Normalize no model value. Duplicate, non-string, missing, or out-of-range values abort by name. Compute the unique union with configured required specialties and refuse when that union exceeds the requested size; nothing clamps, truncates, or defaults.
-- [ ] Extend `selectReviewers` to take the validated size and requested specialties alongside the required ones, keeping it pure over the frozen agent list. Required specialties fill first, requested specialties next, then ranked relevance fills remaining seats with specialties not already represented. The author is excluded because candidates are reviewers only.
-- [ ] Block by name when the request cannot be staffed with distinct eligible reviewers and distinct specialties, naming the requested size, required and requested specialty union, and what the frozen registry could seat. Do not shrink the panel, drop a requested lens, or select two agents with the same specialty.
-- [ ] State and test the default-seat consequence: with size two and `requirements-traceability` required, the author may request at most one additional specialty. A request for both SQL and UI is over-capacity at size two; at size three it succeeds only when both specialist definitions are in the frozen registry.
-- [ ] Add a `deps.selectPanel` seam to `runSpecStage` mirroring the one `runPlanStage` already has (`src/plan-stage.ts:62-67`), so a spec-review test can control its panel without depending on registry contents.
-- [ ] Test that the author never influences identity: equivalent requests with the same size and specialty set against the same frozen registry select the same reviewers regardless of specialty-list order.
+- [x] Validate the panel request before it reaches selection: an integer size within `[2, panelSizeMax]` and a unique list of specialty strings. Normalize no model value. Duplicate, non-string, missing, or out-of-range values abort by name. Compute the unique union with configured required specialties and refuse when that union exceeds the requested size; nothing clamps, truncates, or defaults.
+- [x] Extend `selectReviewers` to take the validated size and requested specialties alongside the required ones, keeping it pure over the frozen agent list. Required specialties fill first, requested specialties next, then ranked relevance fills remaining seats with specialties not already represented. The author is excluded because candidates are reviewers only.
+- [x] Block by name when the request cannot be staffed with distinct eligible reviewers and distinct specialties, naming the requested size, required and requested specialty union, and what the frozen registry could seat. Do not shrink the panel, drop a requested lens, or select two agents with the same specialty.
+- [x] State and test the default-seat consequence: with size two and `requirements-traceability` required, the author may request at most one additional specialty. A request for both SQL and UI is over-capacity at size two; at size three it succeeds only when both specialist definitions are in the frozen registry.
+- [x] Add a `deps.selectPanel` seam to `runSpecStage` mirroring the one `runPlanStage` already has (`src/plan-stage.ts:62-67`), so a spec-review test can control its panel without depending on registry contents.
+- [x] Test that the author never influences identity: equivalent requests with the same size and specialty set against the same frozen registry select the same reviewers regardless of specialty-list order.
 
 **Verify:** `node --test test/select.test.ts test/spec-stage.test.ts test/plan-stage.test.ts`; `npm run typecheck`.
 
 **Expected:** The author proposes a size and distinct lenses; required lenses consume seats and deterministic code decides who reviews. An over-capacity or unstaffable request is a named block, and selection stays reproducible from the frozen profile.
 
 **Task completion evidence:** The validation and seat-accounting truth table, distinct-specialty selection, SQL-plus-UI default refusal and configured success, unstaffable block message, and order-independent determinism test.
+
+#### Completion record, 2026-09-02
+
+Shipped on `master`. `validatePanelRequest` and an extended `selectReviewers`
+and `staffingShortfall` in `src/select.ts`; both review stages now validate the
+author's request against the frozen policy, refuse an unstaffable panel by
+name, and select against the requested lenses; `runSpecStage` gained the
+`deps.selectPanel` seam `runPlanStage` already had. No dispatch was paid for:
+every test runs against the fixture executors.
+
+**Deviation: `src/prompts.ts` and `test/prompts.test.ts` were in scope, and
+this task's file list does not name them.** Task 5 makes `[panelSizeMin,
+panelSizeMax]` binding, and in the default installation that range is exactly
+`[2, 2]` while the configured required lens consumes one of the two seats. The
+self-critique prompt stated neither bound, so shipping the code alone would
+have made the named refusal the ordinary outcome of a well-behaved run — the
+same defect Task 1's revision A fixed for specialties, and the case this plan's
+`Hazards considered` line names first under entry 3. The operator was asked
+before any code was written and approved the wider scope. Both self-critique
+builders now take one `PanelPromptBounds` object in place of the bare
+`registeredSpecialties` list and state the size range and the always-seated
+lenses; the always-seated block is omitted entirely when no lens is configured,
+because announcing a constraint that does not exist is the same defect as
+omitting one that does.
+
+**`staffingShortfall` was extended rather than duplicated.** It answers one
+question — can this registry seat this panel with these mandatory lenses — at
+two moments: profile freeze, where no request exists and the requested list is
+empty, and review staffing, where the author's validated request supplies the
+rest. A second near-identical function would have been a place for one rule to
+go missing.
+
+**Requested lenses are seated in ranked order, not in the order the author
+listed them.** The plan asks only that equivalent requests select the same
+reviewers; seating from the ranked list makes the returned array itself
+order-independent, so the test compares an ordered list rather than a set. The
+author's list is read as a set, which is the only thing it is allowed to be.
+
+**Two of fourteen break-it mutations held, and both exposed a real coverage gap
+rather than a defective attack.** Replacing `requested.value.size` with the
+interim `max(panelSizeMin, requiredSpecialties.length)` changed nothing
+observable in either stage test, because both configurations made the two rules
+agree numerically: one required lens with a request of two gives two either
+way, and three required lenses with a request of three gives three either way.
+The discriminating configuration is one required lens under a ceiling of three
+with the author asking for three — the old rule seats two. Both stage tests were
+rewritten to that configuration and both mutations are now detected. The
+original tests asserted the right number for the wrong reason and would have
+shipped as proof.
+
+**Independent review in `2026-09-02-task5-code-review.md`: four findings, all
+applied.** Two were medium and both concerned the prompt this task brought into
+scope, which is where the risk of that expansion actually landed. The prompt
+advertised `sizeMin` as the floor, but required lenses consume seats inside the
+requested size, so the smallest legal request is
+`max(sizeMin, requiredSpecialties.length)` — and `invalidPolicyReason` permits a
+policy configuring more required lenses than the floor. In that reachable
+configuration the prompt named a size the validator is guaranteed to refuse, and
+the hardcoded `"size": 2` in the advertised example was the same defect in the
+value a model is most likely to copy. Hazard 3's second sentence names this case
+outright. Both were reproduced by execution before being accepted. The fix
+derives the advertised floor and the example from the same frozen values the
+validator enforces, and a new test asserts every advertised size validates
+across three required-lens configurations.
+
+**Verified:** `npm run typecheck` clean; `npm test` 552 tests, 551 pass, 1
+recorded skip, 0 fail (524/523/1 at Task 4); `npm run check:docs` exit 0 with
+36 warnings, unchanged. Seventeen break-and-restore mutations across
+`src/select.ts`, `src/prompts.ts`, `src/spec-stage.ts`, and `src/plan-stage.ts`,
+each restored and confirmed byte-identical by hash.
+
+**Not done here, by scope:** no round count was activated and both
+`LEGACY_CLOSURE_PASSES` constants are untouched; no reconciliation dispatch, no
+storage change, and no proposal work. The panel request now reaches selection,
+which is the whole of what Task 5 promised.
 
 ### Task 6: Reconciliation contract and prompt
 

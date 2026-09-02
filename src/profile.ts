@@ -150,10 +150,15 @@ export function freezeProfile(
   // would have spent money discovering it. Checked against the agents this
   // profile is about to freeze, so the refusal is about what the run would
   // actually have to work with.
+  // No requested specialties: no author has proposed a panel when a profile is
+  // frozen. The question here is whether the registry could staff the
+  // configured maximum at all. The review stages ask the same function the
+  // narrower question once the author's validated request exists.
   const shortfall = staffingShortfall(
     agents,
     policy.panelSizeMax,
     policy.requiredSpecialties,
+    [],
     CLAUDE_CODE.id
   );
   if (shortfall !== null) {

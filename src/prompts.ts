@@ -43,6 +43,58 @@ ${designContent}`;
 }
 
 /**
+ * What an author needs to know to propose a panel the system can actually
+ * staff: the frozen size bounds, the lenses configuration always seats, and
+ * the lenses the registry can seat at all.
+ *
+ * All four are frozen configuration read from the run's profile, never live
+ * constants (hard rule 6). They travel as one object because they answer one
+ * question, and a builder taking four loose values invites a caller to supply
+ * three.
+ */
+export interface PanelPromptBounds {
+  sizeMin: number;
+  sizeMax: number;
+  requiredSpecialties: string[];
+  registeredSpecialties: string[];
+}
+
+/**
+ * The smallest size a request can legally carry.
+ *
+ * Not `sizeMin`. Required specialties consume seats inside whatever size the
+ * author asks for, so `validatePanelRequest` refuses any size their union
+ * overflows — and `invalidPolicyReason` permits a policy configuring more
+ * required lenses than the floor, provided they fit the maximum. A prompt
+ * advertising the bare floor there would name a size guaranteed to be refused,
+ * after the draft and self-critique dispatches were already paid for.
+ */
+function effectiveFloor(panel: PanelPromptBounds): number {
+  return Math.max(panel.sizeMin, panel.requiredSpecialties.length);
+}
+
+/**
+ * How seats are accounted, stated one way or the other and never omitted.
+ *
+ * With required lenses configured the cap is on the *union* of the author's
+ * list and theirs; with none it is on the author's list alone. Stating the
+ * plain cap unconditionally was wrong in the first case — an author naming two
+ * lenses at size two on the default installation satisfies it and still blocks
+ * on a union of three.
+ */
+function seatAccountingBlock(requiredSpecialties: string[]): string {
+  if (requiredSpecialties.length === 0) {
+    return `
+    You may name no more of them than the size you request.`;
+  }
+  return `
+    These lenses are always seated and already consume seats:
+${requiredSpecialties.map((s) => `      - ${s}`).join("\n")}
+    Your specialties and those are counted together as one set of unique
+    lenses, and that set must fit inside the size you request.`;
+}
+
+/**
  * The spec self-critique prompt: the author's own pass over the draft it
  * just wrote, before any independent reviewer sees it.
  *
@@ -59,13 +111,21 @@ ${designContent}`;
  * registry, the same author requested `security`, which staffed. The named
  * staffing refusal stays (step 5b Task 5); this keeps it a backstop rather
  * than the ordinary outcome.
+ *
+ * The size bounds and the always-seated lenses are stated for the same
+ * measured reason, and Task 5 is what made them binding. The default
+ * installation's only legal size is two, and required specialties consume
+ * seats inside it — an author told neither would block a run on arithmetic it
+ * was never given (hazard 3: a constrained field is stated in the prompt that
+ * requests it).
  */
 export function buildSpecSelfCritiquePrompt(
   agent: AgentDefinition,
   designContent: string,
   specContent: string,
-  registeredSpecialties: string[]
+  panel: PanelPromptBounds
 ): string {
+  const floor = effectiveFloor(panel);
   return `you are the spec author ${agent.id}
 
 This is your own self-critique pass on the specification you just wrote. No
@@ -75,7 +135,7 @@ you are revising a specification document, not code changes.
 Return exactly a JSON AgentResult object with this shape; your critique, the
 revised specification, and your panel request travel together in the
 AgentResult's proposedContentChanges.selfCritique:
-{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"selfCritique": {"critique": ["..."], "artifact": "<the full revised specification markdown>", "panelRequest": {"size": 2, "specialties": ["..."]}}}}
+{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"selfCritique": {"critique": ["..."], "artifact": "<the full revised specification markdown>", "panelRequest": {"size": ${floor}, "specialties": ["..."]}}}}
 
 status must be one of proposed, blocked, failed. Output the JSON object
 directly, with no surrounding prose, no markdown fences, and no commentary.
@@ -90,14 +150,14 @@ The self-critique has:
   A revised specification that does not validate blocks the run. There is no
   fallback to your draft.
 - panelRequest: the panel you propose for the independent review
-  - size: an integer, the number of reviewers to seat
+  - size: an integer, the number of reviewers to seat: at least ${floor}
+    and at most ${panel.sizeMax}. A size outside that range blocks the run.
   - specialties: the specialty lenses this specification calls for. Unique
-    non-empty strings, no more of them than the size you request, and
-    never an agent identity — you propose lenses, the system picks the
-    reviewers.
+    non-empty strings, and never an agent identity — you propose lenses, the
+    system picks the reviewers.
     The panel is staffed from these registered specialties:
-${registeredSpecialties.map((s) => `      - ${s}`).join("\n")}
-    A specialty outside that list cannot be staffed.
+${panel.registeredSpecialties.map((s) => `      - ${s}`).join("\n")}
+    A specialty outside that list cannot be staffed.${seatAccountingBlock(panel.requiredSpecialties)}
 
 You may not add an obligation the design below does not contain. Sharpening
 the specification, completing it, and making it consistent is the work;
@@ -233,8 +293,9 @@ export function buildPlanSelfCritiquePrompt(
   planContent: string,
   specHash: string,
   scope: string[],
-  registeredSpecialties: string[]
+  panel: PanelPromptBounds
 ): string {
+  const floor = effectiveFloor(panel);
   return `you are the plan author ${agent.id}
 
 This is your own self-critique pass on the plan you just wrote. No
@@ -244,7 +305,7 @@ you are revising a plan document, not code changes.
 Return exactly a JSON AgentResult object with this shape; your critique, the
 revised plan, and your panel request travel together in the AgentResult's
 proposedContentChanges.selfCritique:
-{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"selfCritique": {"critique": ["..."], "artifact": "<the full revised plan markdown>", "panelRequest": {"size": 2, "specialties": ["..."]}}}}
+{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"selfCritique": {"critique": ["..."], "artifact": "<the full revised plan markdown>", "panelRequest": {"size": ${floor}, "specialties": ["..."]}}}}
 
 status must be one of proposed, blocked, failed. Output the JSON object
 directly, with no surrounding prose, no markdown fences, and no commentary.
@@ -266,14 +327,14 @@ The self-critique has:
   promises an artifact outside the approved scope blocks the run. There is no
   fallback to your draft.
 - panelRequest: the panel you propose for the independent review
-  - size: an integer, the number of reviewers to seat
+  - size: an integer, the number of reviewers to seat: at least ${floor}
+    and at most ${panel.sizeMax}. A size outside that range blocks the run.
   - specialties: the specialty lenses this plan calls for. Unique non-empty
-    strings, no more of them than the size you request, and
-    never an agent identity — you propose lenses, the system picks the
-    reviewers.
+    strings, and never an agent identity — you propose lenses, the system
+    picks the reviewers.
     The panel is staffed from these registered specialties:
-${registeredSpecialties.map((s) => `      - ${s}`).join("\n")}
-    A specialty outside that list cannot be staffed.
+${panel.registeredSpecialties.map((s) => `      - ${s}`).join("\n")}
+    A specialty outside that list cannot be staffed.${seatAccountingBlock(panel.requiredSpecialties)}
 
 Every artifact path you name in ## Coverage must be one of the approved scope
 paths below. A plan promising an artifact outside the approved scope is

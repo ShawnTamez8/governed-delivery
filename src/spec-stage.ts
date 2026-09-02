@@ -6,8 +6,9 @@ import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./
 import { dispatchOnce } from "./dispatch.ts";
 import { validateAgentResult } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
+import type { AgentDefinition } from "./agents.ts";
 import { SEVERITIES, SEVERITY_ORDER, findingIdentity, normalizeLocation } from "./finding.ts";
-import { computeRisk, selectReviewers } from "./select.ts";
+import { computeRisk, selectReviewers, staffingShortfall, validatePanelRequest } from "./select.ts";
 import { computeScope, touchesProtected } from "./scope.ts";
 import { buildSpecAuthorPrompt, buildSpecReviewPrompt, buildSpecSelfCritiquePrompt } from "./prompts.ts";
 import { writeSpecDoc, type SpecDoc } from "./spec-doc.ts";
@@ -60,9 +61,24 @@ interface FindingShape {
 export async function runSpecStage(
   store: Store,
   executor: ExecutorDefinition,
-  input: { runId: number; requestedModel?: string; rootDir: string }
+  input: { runId: number; requestedModel?: string; rootDir: string },
+  // A test seam, and the only one, mirroring `runPlanStage`'s: the seeded
+  // registry seats more distinct specialties than any request a fixture can
+  // honestly make short, so the short-panel refusal below is otherwise
+  // unreachable and could never be proven by breaking it. Callers pass
+  // nothing. Candidates travel in because the panel must come from the frozen
+  // profile's agents (hard rule 6).
+  deps: {
+    selectPanel?: (
+      candidates: readonly AgentDefinition[],
+      size: number,
+      requiredSpecialties: string[],
+      requestedSpecialties: readonly string[]
+    ) => AgentDefinition[];
+  } = {}
 ): Promise<StageResult> {
   const { runId, requestedModel, rootDir } = input;
+  const selectPanel = deps.selectPanel ?? selectReviewers;
   const run = store.getRun(runId);
   if (!run) {
     return { ok: false, reason: `run ${runId} does not exist` };
@@ -253,7 +269,12 @@ export async function runSpecStage(
         agent: author.id,
         role: "author",
         requestedModel: model,
-        prompt: buildSpecSelfCritiquePrompt(author, design, specContent, registeredSpecialties),
+        prompt: buildSpecSelfCritiquePrompt(author, design, specContent, {
+          sizeMin: profile.policy.panelSizeMin,
+          sizeMax: profile.policy.panelSizeMax,
+          requiredSpecialties: profile.policy.requiredSpecialties,
+          registeredSpecialties,
+        }),
       },
       rootDir
     );
@@ -305,11 +326,9 @@ export async function runSpecStage(
       );
     }
     audit(specStage.id, "spec.content.write", `wrote self-critique revision ${specPath}`);
-    // The panel request is validated and retained here, and deliberately does
-    // not reach selection: the frozen bounds, the union with the configured
-    // required specialties, and the staffing refusal are Task 5's. Wiring a
-    // validated value into the nearest similarly named selector is how a
-    // configuration change becomes a behaviour change nobody asked for.
+    // Recorded before it is acted on, so the request the author made survives
+    // in the audit trail whether or not the panel it asked for could be
+    // staffed.
     audit(
       specStage.id,
       "spec.selfcritique.record",
@@ -329,17 +348,42 @@ export async function runSpecStage(
     // Active review configuration comes from the profile frozen at run start.
     // The new round budget is frozen but stays inactive until Task 9 can give
     // it its promised panel-and-reconciliation meaning. Risk still binds the
-    // approval; it simply no longer sizes the panel. Until the author proposes
-    // a size (Task 5), staff the smallest valid configured panel: the frozen
-    // floor, enlarged only when configured required specialties need seats.
-    const panelSize = Math.max(
+    // approval; it simply no longer sizes the panel — the author does, within
+    // the bounds this run froze.
+    const requested = validatePanelRequest(
+      critique.value.panelRequest,
       profile.policy.panelSizeMin,
-      profile.policy.requiredSpecialties.length
-    );
-    const panel = selectReviewers(
-      profile.agents.filter((agent) => agent.executor === executor.id),
-      panelSize,
+      profile.policy.panelSizeMax,
       profile.policy.requiredSpecialties
+    );
+    if (!requested.ok) {
+      return abort(reviewStage.id, "spec.panel.invalid", `spec panel request refused: ${requested.reason}`);
+    }
+    const panelSize = requested.value.size;
+    const candidates = profile.agents.filter((agent) => agent.executor === executor.id);
+    // Refused before selection, not after: the ranked fill would happily seat
+    // a different lens in place of one the registry cannot staff, and the
+    // panel would come out the right size with the wrong composition. The
+    // length check below cannot see that — only this can.
+    const shortfall = staffingShortfall(
+      candidates,
+      panelSize,
+      profile.policy.requiredSpecialties,
+      requested.value.specialties,
+      executor.id
+    );
+    if (shortfall !== null) {
+      return abort(
+        reviewStage.id,
+        "spec.panel.unstaffable",
+        `spec panel cannot be staffed: ${shortfall}`
+      );
+    }
+    const panel = selectPanel(
+      candidates,
+      panelSize,
+      profile.policy.requiredSpecialties,
+      requested.value.specialties
     );
     if (panel.length < panelSize) {
       return abort(

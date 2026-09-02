@@ -7,11 +7,14 @@ disagree, Current state wins.
 
 ## Current state (2026-09-02)
 
-**Shipped:** build order steps 1-7 and step 5b Tasks 1, 2, 3, and 4, on
-`master`, head `578d0eb`, tree clean, **committed but not pushed** —
-`origin/master` is at `5d63726`, two behind (`974eec0` the learnings
-compaction and `578d0eb` Task 4), and `master` is the only local branch.
-Verified at `578d0eb`: `npm test` 524 tests / 523 pass / 1 recorded skip / 0
+**Shipped:** build order steps 1-7 and step 5b Tasks 1, 2, 3, 4, and 5, on
+`master`, the only local branch. Everything through the Task 4 learnings
+compaction is pushed — `origin/master` and `master` were both at `0d4598b`
+when this session started, correcting the previous entry here, which claimed
+head `578d0eb` and two unpushed commits. Read the head with `git log -1` and
+the unpushed set with `git log origin/master..master` rather than trusting
+either number written here.
+Verified after Task 5: `npm test` 552 tests / 551 pass / 1 recorded skip / 0
 fail; `npm run typecheck` clean; `npm run check:docs` exit 0 with 36 warnings.
 
 **The binding architecture changed** in `60587fc` under operator acceptance,
@@ -25,12 +28,14 @@ one review round is the default. Sections 5, 15's schema block, 23, and
 exact match proves textual occurrence, not logical support, and hashes plus
 document gates do not prove a concern was semantically cured.
 
-**In flight — step 5b, Tasks 5-13 open.** Task 5 (author-proposed panel,
-deterministic staffing) is next, from
-`docs/features/step5b-upstream-findings/plan.md`. It is the task that finally
-lets the panel request Task 4 retains influence selection: the
-`[2, panelSizeMax]` bound, the union with `requiredSpecialties`, distinct-lens
-selection, and the named unstaffable block.
+**In flight — step 5b, Tasks 6-13 open.** Task 6 (reconciliation contract and
+prompt) is next, from `docs/features/step5b-upstream-findings/plan.md`. Task 5
+closed the loop Task 4 left open: the author's panel request is now validated
+against the frozen `[panelSizeMin, panelSizeMax]` bound and the
+`requiredSpecialties` union, an unstaffable request blocks by name before any
+reviewer is dispatched, and `selectReviewers` seats the requested lenses. Both
+self-critique prompts now state the size range and the always-seated lenses —
+scope the task's file list did not name, approved by the operator first.
 
 **The round-activation boundary is still the thing to know before touching a
 stage.** `specReviewRounds` and `planReviewRounds` are frozen into every profile
@@ -48,10 +53,10 @@ Each has an auto-memory file with line numbers and reproduction.
 
 **Open and deferred:**
 
-- **Nothing has been pushed since `5d63726`**, which is where `origin/master`
-  still points. Every commit above it is local. Pushing was offered and not
-  requested; a compaction commit cannot name its own hash, so count with
-  `git log origin/master..master` rather than trusting a list here.
+- **Push state is not recorded here on purpose.** A record that names the
+  commit containing it invalidates itself on the next amend, and the previous
+  entry was wrong on both head and push state by the time it was read. Count
+  with `git log origin/master..master`.
 - `docs/features/step6-trust-boundary/plan.md` names
   `.claude/sessions/2026-08-31-debug-implementer-mutates-worktree.md` in four
   places, including "committed as the evidence record". That file was never
@@ -75,8 +80,8 @@ Each has an auto-memory file with line numbers and reproduction.
 - The build order stops at step 9. Do not build past it without an explicit
   decision.
 
-**Next up:** start step 5b Task 5 (author-proposed panel, deterministic
-staffing) from `docs/features/step5b-upstream-findings/plan.md`.
+**Next up:** start step 5b Task 6 (reconciliation contract and prompt) from
+`docs/features/step5b-upstream-findings/plan.md`.
 
 ## Diagnostics quick-reference
 
@@ -92,6 +97,72 @@ One line memory does not yet carry:
   `normalizeText`, case-folding, and PowerShell's BOM each caused one here.
 
 ## Session records
+
+### Step 5b Task 5: author-proposed panel, deterministic staffing (2026-09-02)
+
+`src/select.ts` gained `validatePanelRequest` and a `requestedSpecialties`
+parameter on both `selectReviewers` and `staffingShortfall`; both review stages
+validate the author's request against the frozen policy, refuse an unstaffable
+panel by name before dispatching a reviewer, and select against the requested
+lenses. `runSpecStage` gained the `deps.selectPanel` seam `runPlanStage` had.
+No dispatch was paid for.
+
+#### Decisions and assumptions
+
+- **The prompts were brought into scope, and the task's file list did not name
+  them.** The operator was asked before any code was written. The default
+  installation's legal size is exactly two and the configured required lens
+  eats one seat, so a prompt silent on both would have made Task 5's named
+  refusal the ordinary outcome of a correct run. **When a task makes a
+  constraint binding, find the prompt that requests it** — hazard 3 names panel
+  size explicitly, and Task 1's revision A is the same lesson already paid for.
+- **`staffingShortfall` was extended, not duplicated.** One question asked at
+  two moments (profile freeze with no request, review staffing with one) is one
+  function; a near-copy is a place for one rule to go missing.
+- **Requested lenses are seated in ranked order, not the author's list order,**
+  so the returned panel array is order-independent and the test can compare an
+  ordered list instead of a set.
+
+#### What failed
+
+- **Two of fourteen break-it mutations held, and both were real coverage gaps,
+  not defective attacks.** Swapping the author's requested size back to the
+  interim `max(panelSizeMin, requiredSpecialties.length)` changed nothing
+  observable, because both stage tests had picked configurations where the two
+  rules agree numerically — one required lens with a request of two, and three
+  required lenses with a request of three. **A test asserting a number proves
+  nothing unless the rule it replaced would produce a different number.** The
+  discriminating case is one required lens under a ceiling of three with a
+  request of three; both tests were rewritten to it and both mutations are now
+  detected.
+- The comment in the original test *claimed* a companion test distinguished the
+  two rules. It did not. A stated justification is not a proof either.
+- **The prompt brought into scope to state a bound stated the wrong bound.**
+  Independent review found it: the prompt advertised `panelSizeMin` as the
+  floor, but required lenses consume seats inside the requested size, so the
+  smallest legal request is `max(sizeMin, requiredSpecialties.length)` — and
+  `invalidPolicyReason` permits a policy with more required lenses than the
+  floor. In that reachable configuration the prompt named a size the validator
+  always refuses, and the example envelope's hardcoded `"size": 2` repeated it
+  in the value a model is likeliest to copy. **A prompt that states a bound must
+  derive it from the same values the validator reads, not from the nearest
+  constant with a matching name** — the derived floor and the advertised example
+  are now both computed by one function, and a test asserts every advertised
+  size validates. Hazard 3's second sentence had already required this and no
+  test enforced it.
+
+#### Verification
+
+Fourteen break-and-restore mutations across `src/select.ts`, `src/prompts.ts`,
+`src/spec-stage.ts`, and `src/plan-stage.ts`, each restored and confirmed
+byte-identical by hash. Everything was staged before mutating, which is what
+makes `git checkout --` a safe restore. Suite results are in Current state.
+
+#### Next time
+
+- **Choose the configuration that makes the old rule and the new rule
+  disagree.** Equal expected values under both rules is the fixture-blindness
+  failure in a new costume, and only the break-it pass caught it.
 
 ### Step 5b Task 4: self-critique contract and prompt (2026-09-02)
 

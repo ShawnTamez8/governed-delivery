@@ -298,7 +298,7 @@ test("the passing gate records the plan hash, the plan_for binding, and the risk
       "SELECT COUNT(DISTINCT ar.agent) AS n FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? AND ar.role = 'reviewer'",
       [runId]
     )[0].n;
-    assert.equal(distinctReviewers, 2, "the frozen floor seats two, whatever the risk");
+    assert.equal(distinctReviewers, 2, "the author asked for two, whatever the risk");
   });
 });
 
@@ -557,7 +557,7 @@ test("the seeded registry can staff the plan panel end to end", async () => {
   await withApprovedRun(async ({ store, root, runId }) => {
     const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
-    assert.equal(agentRunCounts(store, runId).reviewer % 2, 0, "the frozen floor seats two per round");
+    assert.equal(agentRunCounts(store, runId).reviewer % 2, 0, "the author asked for two per round");
   });
 });
 
@@ -583,6 +583,145 @@ test("an unstaffable panel blocks the plan_review stage by name", async () => {
     },
     { spec: HIGH_SPEC, scope: HIGH_SCOPE, changeKind: "defect_fix" }
   );
+});
+
+test("a plan request too small for the configured required lenses blocks by name", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    // The spec stage carries the same assertion, and it has to exist twice:
+    // these two orchestrators are duplicated on purpose, so nothing structural
+    // notices a guard that was wired on one side and only tested on the other.
+    const scratch = join(root, "emit-plan-clean.mjs");
+    writeFileSync(scratch, fixtureSource().replace('stdin.includes("REVISED-plan")', "true"));
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    freezePolicyInto(store, root, runId, {
+      panelSizeMax: 3,
+      requiredSpecialties: ["requirements-traceability", "security", "consistency"],
+    });
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(
+      result.reason,
+      /plan panel request refused: panel request of 2 cannot seat the 3 required and requested specialties: consistency, requirements-traceability, security/
+    );
+    assert.equal(agentRunCounts(store, runId).reviewer, 0, "no reviewer was dispatched");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("a plan author asking for three seats staffs every required lens", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-plan-three-seats.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource()
+        .replace(
+          'panelRequest: { size: 2, specialties: ["security"] },',
+          'panelRequest: { size: 3, specialties: ["security"] },'
+        )
+        .replace('stdin.includes("REVISED-plan")', "true")
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    freezePolicyInto(store, root, runId, {
+      panelSizeMax: 3,
+      requiredSpecialties: ["requirements-traceability", "security", "consistency"],
+    });
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    assert.equal(agentRunCounts(store, runId).reviewer, 3, "one seat per required lens");
+  });
+});
+
+test("the plan author's requested size is what sizes the panel", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    // The discriminating configuration: one required lens under a ceiling of
+    // three, with the author asking for three. The interim rule this replaced
+    // was `max(panelSizeMin, requiredSpecialties.length)`, which is two here,
+    // so a stage that ignored the request seats two and this fails. Asking for
+    // two — or for three with three required lenses — makes the old and new
+    // rules agree numerically and proves nothing.
+    const scratch = join(root, "emit-plan-three-requested.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource()
+        .replace(
+          'panelRequest: { size: 2, specialties: ["security"] },',
+          'panelRequest: { size: 3, specialties: ["security"] },'
+        )
+        .replace('stdin.includes("REVISED-plan")', "true")
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    freezePolicyInto(store, root, runId, { panelSizeMax: 3 });
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    assert.equal(
+      agentRunCounts(store, runId).reviewer,
+      3,
+      "the requested three, not the two the frozen floor would have staffed"
+    );
+  });
+});
+
+test("a plan request outside the frozen bounds blocks before the panel spends", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-plan-oversized-request.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace(
+        'panelRequest: { size: 2, specialties: ["security"] },',
+        'panelRequest: { size: 3, specialties: ["security"] },'
+      )
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /panel request size 3 is outside the frozen bounds 2-2/);
+    assert.equal(agentRunCounts(store, runId).reviewer, 0, "no reviewer was dispatched");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("a plan requesting a lens the frozen registry cannot seat blocks by name", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-plan-unstaffable-lens.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace(
+        'panelRequest: { size: 2, specialties: ["security"] },',
+        'panelRequest: { size: 2, specialties: ["data-privacy"] },'
+      )
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /plan panel cannot be staffed/);
+    assert.match(result.reason, /no reviewer for requested specialty data-privacy/);
+    assert.match(result.reason, /the registry seats consistency, requirements-traceability, security/);
+    assert.equal(agentRunCounts(store, runId).reviewer, 0, "no reviewer was dispatched");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("the plan panel seats the lens the author asked for", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    // The request names `security`; the ranked fill would otherwise take
+    // `consistency` first. Asserting the seated ids is what distinguishes a
+    // request that was honoured from one that was validated and discarded.
+    const scratch = join(root, "emit-plan-lens-check.mjs");
+    writeFileSync(scratch, fixtureSource().replace('stdin.includes("REVISED-plan")', "true"));
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const seated = store
+      .query<{ agent: string }>(
+        "SELECT DISTINCT ar.agent FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? AND ar.role = 'reviewer' ORDER BY ar.agent",
+        [runId]
+      )
+      .map((r) => r.agent);
+    assert.deepEqual(seated, ["spec-reviewer-security", "spec-reviewer-traceability"]);
+  });
 });
 
 test("a revision that drops a criterion's coverage blocks and leaves the gated plan on disk", async () => {
@@ -741,7 +880,7 @@ test("the transitional legacy flow passes a clean panel in its first pass", asyn
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
     const counts = agentRunCounts(store, runId);
     assert.equal(counts.author, 2, "draft and self-critique; a clean panel needs no legacy revision");
-    assert.equal(counts.reviewer, 2, "the frozen floor seats two");
+    assert.equal(counts.reviewer, 2, "the author asked for two");
     assert.match(auditSummaries(store, runId, "plan.gate.pass")[0], /gate passed in round 1/);
   });
 });

@@ -296,7 +296,7 @@ test("the panel is sized by the frozen policy, and high risk does not enlarge it
   await withRun(async ({ store, root, runId }) => {
     // `src/agents/` is a protected path, so this spec scores high risk. Risk
     // still binds the approval and is still recorded, but it stopped sizing
-    // the panel: the seated count must be the frozen floor either way.
+    // the panel: the seated count is the size the author asked for either way.
     const scratch = join(root, "emit-spec-stage-high-risk.mjs");
     const source = fixtureSource()
       .replace("src/a1.ts", "src/agents/evil.ts")
@@ -305,7 +305,7 @@ test("the panel is sized by the frozen policy, and high risk does not enlarge it
     freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
-    assert.equal(agentRunCounts(store, runId).reviewer, 2, "the frozen floor seats two, not three");
+    assert.equal(agentRunCounts(store, runId).reviewer, 2, "the author asked for two, not three");
     const gate = store.query<{ summary: string }>(
       "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.gate.pass' ORDER BY id DESC LIMIT 1",
       [runId]
@@ -314,8 +314,12 @@ test("the panel is sized by the frozen policy, and high risk does not enlarge it
   });
 });
 
-test("configured required specialties enlarge the interim panel without touching risk", async () => {
+test("a request too small for the configured required lenses blocks by name", async () => {
   await withRun(async ({ store, root, runId }) => {
+    // Required specialties consume seats inside the size the author asks for
+    // (hazard 11). The fixture requests two; three lenses are configured as
+    // always seated, so the request cannot be honoured. Nothing shrinks the
+    // configuration or drops the author's lens to make it fit.
     const scratch = join(root, "emit-spec-stage-clean.mjs");
     writeFileSync(
       scratch,
@@ -327,12 +331,165 @@ test("configured required specialties enlarge the interim panel without touching
       requiredSpecialties: ["requirements-traceability", "security", "consistency"],
     });
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(
+      result.reason,
+      /spec panel request refused: panel request of 2 cannot seat the 3 required and requested specialties: consistency, requirements-traceability, security/
+    );
+    assert.equal(agentRunCounts(store, runId).reviewer, 0, "no reviewer was dispatched");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("an author asking for seats enough to hold every required lens staffs all of them", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // The same configuration as above, and a request that fits it. This is the
+    // half that proves the refusal is about capacity rather than about the
+    // configuration being unusable.
+    const scratch = join(root, "emit-spec-stage-three-seats.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource()
+        .replace(
+          'panelRequest: { size: 2, specialties: ["security"] },',
+          'panelRequest: { size: 3, specialties: ["security"] },'
+        )
+        .replace('const findings = stdin.includes("REVISED-spec")', "const findings = true")
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    freezePolicyInto(store, root, runId, {
+      panelSizeMax: 3,
+      requiredSpecialties: ["requirements-traceability", "security", "consistency"],
+    });
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
     assert.equal(
       agentRunCounts(store, runId).reviewer,
       3,
-      "every configured required specialty consumes a seat"
+      "every configured required specialty consumes a seat the author asked for"
     );
+  });
+});
+
+test("the author's requested size is what sizes the panel", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // The discriminating configuration, and it has to be chosen deliberately:
+    // one required lens under a ceiling of three, with the author asking for
+    // three. The interim rule this replaced was
+    // `max(panelSizeMin, requiredSpecialties.length)`, which is two here — so
+    // a stage that ignored the request seats two and this fails. Asking for
+    // two, or asking for three with three required lenses, makes the old and
+    // new rules agree numerically and proves nothing.
+    const scratch = join(root, "emit-spec-stage-three-requested.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource()
+        .replace(
+          'panelRequest: { size: 2, specialties: ["security"] },',
+          'panelRequest: { size: 3, specialties: ["security"] },'
+        )
+        .replace('const findings = stdin.includes("REVISED-spec")', "const findings = true")
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    freezePolicyInto(store, root, runId, { panelSizeMax: 3 });
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    assert.equal(
+      agentRunCounts(store, runId).reviewer,
+      3,
+      "the requested three, not the two the frozen floor would have staffed"
+    );
+  });
+});
+
+test("a requested size outside the frozen bounds blocks before the panel spends", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-spec-stage-oversized-request.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace(
+        'panelRequest: { size: 2, specialties: ["security"] },',
+        'panelRequest: { size: 3, specialties: ["security"] },'
+      )
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /panel request size 3 is outside the frozen bounds 2-2/);
+    assert.equal(agentRunCounts(store, runId).reviewer, 0, "no reviewer was dispatched");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("a requested lens the frozen registry cannot seat blocks by name", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // The Task 1 prototype's `data-privacy` case, now reaching the staffing
+    // refusal it was always meant to hit. The selector alone would have filled
+    // the seat with another lens and returned a full-sized panel.
+    const scratch = join(root, "emit-spec-stage-unstaffable-lens.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace(
+        'panelRequest: { size: 2, specialties: ["security"] },',
+        'panelRequest: { size: 2, specialties: ["data-privacy"] },'
+      )
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /spec panel cannot be staffed/);
+    assert.match(result.reason, /no reviewer for requested specialty data-privacy/);
+    assert.match(result.reason, /the registry seats consistency, requirements-traceability, security/);
+    assert.equal(agentRunCounts(store, runId).reviewer, 0, "no reviewer was dispatched");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("the spec panel seats the lens the author asked for", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // The request names `security`; the ranked fill would otherwise take
+    // `consistency` first, because it sorts earlier by id. Asserting the seated
+    // ids is what distinguishes a request that was honoured from one that was
+    // validated and then discarded, which is what the stage did before Task 5.
+    const scratch = join(root, "emit-spec-stage-lens-check.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace('const findings = stdin.includes("REVISED-spec")', "const findings = true")
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const seated = store
+      .query<{ agent: string }>(
+        "SELECT DISTINCT ar.agent FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? AND ar.role = 'reviewer' ORDER BY ar.agent",
+        [runId]
+      )
+      .map((r) => r.agent);
+    assert.deepEqual(seated, ["spec-reviewer-security", "spec-reviewer-traceability"]);
+  });
+});
+
+test("the seam's short panel is still refused after staffing passes", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // The backstop, reachable only through the seam: the registry seats more
+    // distinct specialties than the request asks for, so no fixture can
+    // produce a short panel honestly. This is the guard `staffingShortfall`
+    // cannot cover, because staffing has already said yes by the time
+    // selection returns.
+    const result = await runSpecStage(
+      store,
+      fixtureExecutor(FIXTURE),
+      { runId, requestedModel: "m", rootDir: root },
+      { selectPanel: () => [] }
+    );
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /spec panel incomplete: needs 2 reviewers, found 0/);
+    assert.equal(agentRunCounts(store, runId).reviewer, 0, "no reviewer was dispatched");
+    assert.equal(store.getRun(runId)!.status, "blocked");
   });
 });
 
@@ -413,7 +570,7 @@ test("the panel is sized from distinct artifacts, not repeated ones", async () =
       rootDir: root,
     });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
-    assert.equal(agentRunCounts(store, runId).reviewer, 2, "the frozen floor seats two at any risk");
+    assert.equal(agentRunCounts(store, runId).reviewer, 2, "the author asked for two, at any risk");
     const gate = store.query<{ summary: string }>(
       "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.gate.pass' ORDER BY id DESC LIMIT 1",
       [runId]

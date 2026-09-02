@@ -10,16 +10,33 @@ import {
   buildSpecAuthorPrompt,
   buildSpecReviewPrompt,
   buildSpecSelfCritiquePrompt,
+  type PanelPromptBounds,
 } from "../src/prompts.ts";
 import { IMPLEMENTER } from "../src/agents/implementer.ts";
 import { PLAN_AUTHOR } from "../src/agents/plan-author.ts";
 import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
 import { SPEC_REVIEWER_TRACEABILITY } from "../src/agents/spec-reviewer-traceability.ts";
+import { validatePanelRequest } from "../src/select.ts";
 
 // Hazard 3: every constrained field the prompts request must state its
 // constraint in the prompt source. This test reads the file, never the
 // generated strings — it guards the source.
 const source = readFileSync(join(process.cwd(), "src", "prompts.ts"), "utf8");
+
+/**
+ * The frozen panel configuration a self-critique prompt is built from.
+ *
+ * `sizeMin` and `sizeMax` deliberately differ: with the default 2 and 2 a
+ * builder that rendered the maximum where the minimum belongs would produce
+ * identical text, and the assertion would pass on a prompt that tells the
+ * author the wrong bound.
+ */
+const PANEL: PanelPromptBounds = {
+  sizeMin: 2,
+  sizeMax: 3,
+  requiredSpecialties: ["requirements-traceability"],
+  registeredSpecialties: ["consistency", "security"],
+};
 
 // The patch rules (baseCommit, the add/modify action enum, whole-file
 // content, the no-deletion rule) arrived with the implementation stage —
@@ -70,6 +87,13 @@ const CONSTRAINT_STRINGS = [
   "no more of them than the size you request",
   "never an agent identity",
   "registered specialties",
+  // The panel bounds Task 5 made binding. The default installation's only
+  // legal size is two and the configured required lenses consume seats inside
+  // it, so an author told neither would block a run on arithmetic it was never
+  // given — hazard 3 names panel size explicitly.
+  "A size outside that range blocks the run",
+  "always seated and already consume seats",
+  "must fit inside the size you request",
   // Two behaviours, not shapes. The first is the no-invention rule the
   // prototype watched an author break; the second says what happens to a
   // self-critique that produces an invalid document, so the model is not
@@ -196,19 +220,24 @@ test("the generated spec self-critique prompt states the contract and carries bo
   // Both inputs travel: the design is the ceiling on what the author may
   // require, the specification is what it is revising. A prompt with only one
   // of them asks for a judgement the model has no basis to make.
-  const prompt = buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", [
-    "consistency",
-    "security",
-  ]);
+  const prompt = buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PANEL);
   for (const constraint of [
     "proposedContentChanges.selfCritique",
     "proposed, blocked, failed",
     "panelRequest",
-    "no more of them than the size you request",
     "never an agent identity",
     "may not add an obligation",
     "fallback to your draft",
     "Output the JSON object",
+    // Asserted here and again on the plan prompt, per prompt rather than per
+    // file: both prompts carry these sentences, and the whole-file scan above
+    // cannot tell which one dropped it.
+    "at least 2",
+    "at most 3",
+    "A size outside that range blocks the run",
+    "always seated and already consume seats",
+    "      - requirements-traceability",
+    "must fit inside the size you request",
   ]) {
     assert.ok(prompt.includes(constraint), `spec self-critique prompt missing: ${constraint}`);
   }
@@ -227,7 +256,7 @@ test("the spec self-critique prompt is not the author prompt", () => {
   // Hazard 7 in the small: two dispatches under one agent and one model that
   // sent the same bytes would be paying twice for one answer.
   const author = buildSpecAuthorPrompt(SPEC_AUTHOR, "DESIGN-TEXT");
-  const critique = buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", ["security"]);
+  const critique = buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PANEL);
   assert.notEqual(author, critique);
   assert.ok(!author.includes("selfCritique"), "the draft prompt asks for a spec, not a critique");
 });
@@ -240,7 +269,7 @@ test("the generated plan self-critique prompt restates the hash and the scope it
     "PLAN-TEXT",
     specHash,
     ["src/thing.ts", "test/thing.test.ts"],
-    ["security"]
+    PANEL
   );
   for (const constraint of [
     "proposedContentChanges.selfCritique",
@@ -250,6 +279,15 @@ test("the generated plan self-critique prompt restates the hash and the scope it
     "not_applicable requires both a rationale and an alternative verification",
     "may not add an obligation",
     "fallback to your draft",
+    // The plan side's own copy. Task 4 shipped a guard proven only on the spec
+    // side once already; these two prompts are duplicated on purpose and
+    // nothing structural notices a missing assertion on one of them.
+    "at least 2",
+    "at most 3",
+    "A size outside that range blocks the run",
+    "always seated and already consume seats",
+    "      - requirements-traceability",
+    "must fit inside the size you request",
   ]) {
     assert.ok(prompt.includes(constraint), `plan self-critique prompt missing: ${constraint}`);
   }
@@ -260,4 +298,76 @@ test("the generated plan self-critique prompt restates the hash and the scope it
   assert.ok(prompt.includes(`plan_for must be exactly: ${specHash}`));
   assert.ok(prompt.includes("- src/thing.ts"));
   assert.ok(prompt.includes("- test/thing.test.ts"));
+});
+
+test("every size a self-critique prompt advertises is one the validator accepts", () => {
+  // Hazard 3's second sentence: "assert that every example value a prompt
+  // advertises validates against the schema that receives it." Both the stated
+  // floor and the example JSON are advertised sizes, and a model copies the
+  // example. The configuration that broke this is the third one below —
+  // required lenses outnumbering the floor, which `invalidPolicyReason`
+  // permits — where the bare floor is a value guaranteed to be refused.
+  for (const requiredSpecialties of [
+    [],
+    ["requirements-traceability"],
+    ["requirements-traceability", "security", "consistency"],
+  ]) {
+    const bounds: PanelPromptBounds = {
+      sizeMin: 2,
+      sizeMax: 3,
+      requiredSpecialties,
+      registeredSpecialties: ["consistency", "security"],
+    };
+    const prompts = {
+      spec: buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", bounds),
+      plan: buildPlanSelfCritiquePrompt(
+        PLAN_AUTHOR,
+        "SPEC-TEXT",
+        "PLAN-TEXT",
+        "a".repeat(64),
+        ["src/a.ts"],
+        bounds
+      ),
+    };
+    for (const [name, prompt] of Object.entries(prompts)) {
+      const stated = Number(/at least (\d+)/.exec(prompt)![1]);
+      const example = Number(/"size": (\d+)/.exec(prompt)![1]);
+      assert.equal(
+        example,
+        stated,
+        `${name} prompt advertises an example size the same prompt calls illegal`
+      );
+      const accepted = validatePanelRequest(
+        { size: stated, specialties: [] },
+        bounds.sizeMin,
+        bounds.sizeMax,
+        requiredSpecialties
+      );
+      assert.equal(
+        accepted.ok,
+        true,
+        `${name} prompt advertises size ${stated} with ${requiredSpecialties.length} required lenses, which the validator refuses: ${
+          accepted.ok ? "" : accepted.reason
+        }`
+      );
+    }
+  }
+});
+
+test("a configuration requiring no lens states no always-seated block", () => {
+  // An empty required list is legal. A prompt that announced "these lenses are
+  // always seated" and then listed nothing would be stating a constraint that
+  // does not exist, which is the same defect as omitting one that does.
+  const none: PanelPromptBounds = { ...PANEL, requiredSpecialties: [] };
+  for (const prompt of [
+    buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", none),
+    buildPlanSelfCritiquePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", "a".repeat(64), ["src/a.ts"], none),
+  ]) {
+    assert.ok(!prompt.includes("always seated"), "no always-seated block without required lenses");
+    // The cap is still stated, just the simpler one: with no required lens the
+    // author's own list is the whole set that has to fit.
+    assert.ok(prompt.includes("no more of them than the size you request"));
+    assert.ok(prompt.includes("at least 2"), "the size bound is stated either way");
+    assert.ok(prompt.includes("A specialty outside that list cannot be staffed"));
+  }
 });

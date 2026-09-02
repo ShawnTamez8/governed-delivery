@@ -7,7 +7,7 @@ import type { AgentDefinition } from "./agents.ts";
 import { validateAgentResult } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import { SEVERITIES, findingIdentity, normalizeLocation } from "./finding.ts";
-import { computeRisk, selectReviewers } from "./select.ts";
+import { computeRisk, selectReviewers, staffingShortfall, validatePanelRequest } from "./select.ts";
 import { computeScope, touchesProtected } from "./scope.ts";
 import { buildPlanAuthorPrompt, buildPlanReviewPrompt, buildPlanSelfCritiquePrompt } from "./prompts.ts";
 import { validatePlanDoc, writePlanDoc, type PlanDoc } from "./plan-doc.ts";
@@ -71,7 +71,8 @@ export async function runPlanStage(
     selectPanel?: (
       candidates: readonly AgentDefinition[],
       size: number,
-      specialties: string[]
+      requiredSpecialties: string[],
+      requestedSpecialties: readonly string[]
     ) => AgentDefinition[];
   } = {}
 ): Promise<PlanStageResult> {
@@ -358,7 +359,12 @@ export async function runPlanStage(
           planContent,
           specHash,
           scope,
-          registeredSpecialties
+          {
+            sizeMin: profile.policy.panelSizeMin,
+            sizeMax: profile.policy.panelSizeMax,
+            requiredSpecialties: profile.policy.requiredSpecialties,
+            registeredSpecialties,
+          }
         ),
       },
       rootDir
@@ -427,11 +433,9 @@ export async function runPlanStage(
     planContent = critique.value.artifact;
     planPath = written.path;
     audit(planStage.id, "plan.content.write", `wrote self-critique revision ${planPath}`);
-    // The panel request is validated and retained here, and deliberately does
-    // not reach selection: the frozen bounds, the union with the configured
-    // required specialties, and the staffing refusal are Task 5's. Wiring a
-    // validated value into the nearest similarly named selector is how a
-    // configuration change becomes a behaviour change nobody asked for.
+    // Recorded before it is acted on, so the request the author made survives
+    // in the audit trail whether or not the panel it asked for could be
+    // staffed.
     audit(
       planStage.id,
       "plan.selfcritique.record",
@@ -451,17 +455,42 @@ export async function runPlanStage(
     // Active review configuration comes from the profile frozen at run start.
     // The new round budget is frozen but stays inactive until Task 9 can give
     // it its promised panel-and-reconciliation meaning. Risk still binds the
-    // approval; it no longer sizes the panel. Until the author proposes a size
-    // (Task 5), staff the smallest valid configured panel: the frozen floor,
-    // enlarged only when configured required specialties need seats.
-    const panelSize = Math.max(
+    // approval; it no longer sizes the panel — the author does, within the
+    // bounds this run froze.
+    const requested = validatePanelRequest(
+      critique.value.panelRequest,
       profile.policy.panelSizeMin,
-      profile.policy.requiredSpecialties.length
-    );
-    const panel = selectPanel(
-      profile.agents.filter((agent) => agent.executor === executor.id),
-      panelSize,
+      profile.policy.panelSizeMax,
       profile.policy.requiredSpecialties
+    );
+    if (!requested.ok) {
+      return abort(reviewStage.id, "plan.panel.invalid", `plan panel request refused: ${requested.reason}`);
+    }
+    const panelSize = requested.value.size;
+    const candidates = profile.agents.filter((agent) => agent.executor === executor.id);
+    // Refused before selection, not after: the ranked fill would happily seat
+    // a different lens in place of one the registry cannot staff, and the
+    // panel would come out the right size with the wrong composition. The
+    // length check below cannot see that — only this can.
+    const shortfall = staffingShortfall(
+      candidates,
+      panelSize,
+      profile.policy.requiredSpecialties,
+      requested.value.specialties,
+      executor.id
+    );
+    if (shortfall !== null) {
+      return abort(
+        reviewStage.id,
+        "plan.panel.unstaffable",
+        `plan panel cannot be staffed: ${shortfall}`
+      );
+    }
+    const panel = selectPanel(
+      candidates,
+      panelSize,
+      profile.policy.requiredSpecialties,
+      requested.value.specialties
     );
     if (panel.length < panelSize) {
       return abort(
