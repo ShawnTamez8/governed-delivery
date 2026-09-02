@@ -7,7 +7,7 @@ import type { AgentDefinition } from "./agents.ts";
 import { validateAgentResult } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import { SEVERITIES, findingIdentity, normalizeLocation } from "./finding.ts";
-import { computeRisk, selectReviewers, PANEL_SIZE, type Risk } from "./select.ts";
+import { computeRisk, selectReviewers } from "./select.ts";
 import { computeScope, touchesProtected } from "./scope.ts";
 import { buildPlanAuthorPrompt, buildPlanReviewPrompt } from "./prompts.ts";
 import { validatePlanDoc, writePlanDoc, type PlanDoc } from "./plan-doc.ts";
@@ -15,7 +15,12 @@ import { coverageFitsScope, coverageMeetsCriteria, planReviewGate } from "./plan
 import { validateSpecDoc } from "./spec-doc.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
-import { REMEDIATION_ROUNDS, REQUIRED_SPECIALTIES } from "./policy.ts";
+
+// Transitional only. The shipped stages still implement the old
+// panel -> author revision -> closure-panel loop. Task 9 removes this budget
+// and activates the frozen configured rounds only when each one can include
+// the promised reconciliation dispatch.
+const LEGACY_CLOSURE_PASSES = 3;
 
 export type PlanStageResult =
   | { ok: true; stageIds: { plan: number; planReview: number }; planPath: string }
@@ -54,13 +59,18 @@ export async function runPlanStage(
   store: Store,
   executor: ExecutorDefinition,
   input: { runId: number; requestedModel?: string; rootDir: string },
-  // A test seam, and the only one: the seeded registry staffs every risk
-  // level, so the short-panel refusal is unreachable with real agents and the
-  // guard could otherwise never be proven by breaking it. Callers pass
-  // nothing; tests pass a panel of any size. Candidates travel in because
-  // the panel must come from the frozen profile's agents (hard rule 6).
+  // A test seam, and the only one: the seeded registry seats more distinct
+  // specialties than the frozen floor asks for, so the short-panel refusal is
+  // unreachable with real agents and the guard could otherwise never be proven
+  // by breaking it. Callers pass nothing; tests pass a panel of any size.
+  // Candidates travel in because the panel must come from the frozen
+  // profile's agents (hard rule 6).
   deps: {
-    selectPanel?: (candidates: readonly AgentDefinition[], risk: Risk, specialties: string[]) => AgentDefinition[];
+    selectPanel?: (
+      candidates: readonly AgentDefinition[],
+      size: number,
+      specialties: string[]
+    ) => AgentDefinition[];
   } = {}
 ): Promise<PlanStageResult> {
   const { runId, requestedModel, rootDir } = input;
@@ -313,12 +323,26 @@ export async function runPlanStage(
       computeScope(specDoc.value.declaredArtifacts).length,
       touchesProtected(specDoc.value.declaredArtifacts, run.slug)
     );
-    const panel = selectPanel(profile.agents, risk, REQUIRED_SPECIALTIES);
-    if (panel.length < PANEL_SIZE[risk]) {
+    // Active review configuration comes from the profile frozen at run start.
+    // The new round budget is frozen but stays inactive until Task 9 can give
+    // it its promised panel-and-reconciliation meaning. Risk still binds the
+    // approval; it no longer sizes the panel. Until the author proposes a size
+    // (Task 5), staff the smallest valid configured panel: the frozen floor,
+    // enlarged only when configured required specialties need seats.
+    const panelSize = Math.max(
+      profile.policy.panelSizeMin,
+      profile.policy.requiredSpecialties.length
+    );
+    const panel = selectPanel(
+      profile.agents.filter((agent) => agent.executor === executor.id),
+      panelSize,
+      profile.policy.requiredSpecialties
+    );
+    if (panel.length < panelSize) {
       return abort(
         reviewStage.id,
         "plan.panel.incomplete",
-        `plan panel incomplete: risk ${risk} needs ${PANEL_SIZE[risk]} reviewers, found ${panel.length}`
+        `plan panel incomplete: needs ${panelSize} reviewers, found ${panel.length}`
       );
     }
     for (const reviewer of panel) {
@@ -331,7 +355,10 @@ export async function runPlanStage(
       }
     }
 
-    for (let round = 1; round <= REMEDIATION_ROUNDS; round++) {
+    // The configured count starts governing here only when Task 9 replaces
+    // this legacy loop with complete panel-and-reconciliation cycles.
+    const rounds: number = LEGACY_CLOSURE_PASSES;
+    for (let round = 1; round <= rounds; round++) {
       const reportedIdentities = new Set<string>();
       for (const reviewer of panel) {
         if (!reviewer.outputs.includes("findings")) {
@@ -422,7 +449,10 @@ export async function runPlanStage(
           audit(reviewStage.id, "plan.finding.resolved", `finding ${finding.id} resolved by re-review`);
         }
       }
-      const gate = planReviewGate(store.getFindings(reviewStage.id));
+      const gate = planReviewGate(
+        store.getFindings(reviewStage.id),
+        profile.policy.materialityThreshold
+      );
       if (gate.pass) {
         audit(
           reviewStage.id,
@@ -435,11 +465,11 @@ export async function runPlanStage(
         store.completeStage(reviewStage.id, planPath, "pass");
         return { ok: true, stageIds: { plan: planStage.id, planReview: reviewStage.id }, planPath };
       }
-      if (round >= REMEDIATION_ROUNDS) {
+      if (round >= rounds) {
         return abort(
           reviewStage.id,
           "plan.gate.block",
-          `plan_review blocked: material findings remain open after ${REMEDIATION_ROUNDS} rounds: ${gate.openMaterialIds.join(", ")}`
+          `plan_review blocked: material findings remain open after ${rounds} legacy closure passes: ${gate.openMaterialIds.join(", ")}`
         );
       }
       // Revision round: the author addresses the open material findings, so
@@ -523,7 +553,11 @@ export async function runPlanStage(
       planPath = written.path;
       audit(planStage.id, "plan.content.write", `wrote revision ${planPath}`);
     }
-    return { ok: false, reason: "plan_review did not reach a terminal state" };
+    return abort(
+      reviewStage.id,
+      "plan.gate.block",
+      "plan_review exhausted its legacy closure passes without a terminal gate result"
+    );
   } catch (err) {
     // The wedge guard: an unexpected throw must produce the same terminal
     // state as any other failure.

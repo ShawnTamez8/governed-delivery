@@ -208,11 +208,14 @@ export function approveRun(
   // case proceeds on the previous behaviour and says so in the audit below,
   // so an unbound approval is never mistaken afterwards for a bound one.
   //
-  // `!= null` rather than `!== null`: a profile frozen before this field
-  // existed parses without it (`undefined`), which means "no key was bound at
-  // intake" exactly like null — treating it as a mismatched fingerprint would
-  // refuse every pre-existing run and name `undefined` as the frozen key.
-  if (bound.approvalSigner != null && bound.approvalSigner !== key.signer) {
+  // `!== null`, not `!= null`. This used to tolerate `undefined` for a profile
+  // frozen before the field existed, reading it as "no key bound at intake".
+  // That tolerance is gone: `loadVerifiedProfile` now refuses a profile
+  // missing the field outright, so the only values that reach here are a
+  // fingerprint or a null that was deliberately frozen. Null is a live state
+  // and stays supported; absent is an obsolete shape and is somebody else's
+  // refusal, not a case to absorb here.
+  if (bound.approvalSigner !== null && bound.approvalSigner !== key.signer) {
     return refuse(
       `approval key ${key.signer} is not the key frozen at run start (${bound.approvalSigner})`,
       true
@@ -259,7 +262,7 @@ export function approveRun(
       actorType: "human",
       action: "approval.granted",
       summary: `approval ${approval.id} verified for run ${runId}, signer ${key.signer}${
-        bound.approvalSigner == null ? "; signer not bound at intake" : ""
+        bound.approvalSigner === null ? "; signer not bound at intake" : ""
       }`,
     });
     return { approvalId: approval.id, stageId: stage.id };

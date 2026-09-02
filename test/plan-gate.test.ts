@@ -102,14 +102,15 @@ test("an empty signed scope makes every artifact promise unkeepable", () => {
 });
 
 test("planReviewGate passes when no finding is open", () => {
-  assert.deepEqual(planReviewGate([]), { pass: true });
-  assert.deepEqual(planReviewGate([finding("critical", "resolved", 1)]), { pass: true });
+  assert.deepEqual(planReviewGate([], "high"), { pass: true });
+  assert.deepEqual(planReviewGate([finding("critical", "resolved", 1)], "high"), { pass: true });
 });
 
 test("planReviewGate ignores open findings below the material threshold", () => {
-  assert.deepEqual(planReviewGate([finding("low", "open", 1), finding("medium", "open", 2)]), {
-    pass: true,
-  });
+  assert.deepEqual(
+    planReviewGate([finding("low", "open", 1), finding("medium", "open", 2)], "high"),
+    { pass: true }
+  );
 });
 
 test("planReviewGate blocks on an open material finding and names its id", () => {
@@ -118,7 +119,7 @@ test("planReviewGate blocks on an open material finding and names its id", () =>
     finding("high", "open", 2),
     finding("critical", "open", 3),
     finding("critical", "resolved", 4),
-  ]);
+  ], "high");
   assert.equal(result.pass, false);
   if (result.pass) return;
   assert.deepEqual(result.openMaterialIds, [2, 3]);
@@ -130,12 +131,20 @@ test("planReviewGate blocks only on the open disposition, matching specReviewGat
   // the two gates must agree — a plan gate that blocked on `disputed` while
   // the spec gate did not would make the same finding terminal at one stage
   // and not the other.
-  assert.deepEqual(planReviewGate([finding("high", "disputed", 7)]), { pass: true });
-  assert.deepEqual(planReviewGate([finding("high", "accepted", 8)]), { pass: true });
-  const blocked = planReviewGate([finding("high", "open", 9)]);
+  assert.deepEqual(planReviewGate([finding("high", "disputed", 7)], "high"), { pass: true });
+  assert.deepEqual(planReviewGate([finding("high", "accepted", 8)], "high"), { pass: true });
+  const blocked = planReviewGate([finding("high", "open", 9)], "high");
   assert.equal(blocked.pass, false);
   if (blocked.pass) return;
   assert.deepEqual(blocked.openMaterialIds, [9]);
+});
+
+test("planReviewGate enforces the threshold frozen for the run", () => {
+  assert.deepEqual(planReviewGate([finding("high", "open", 10)], "critical"), { pass: true });
+  const blocked = planReviewGate([finding("critical", "open", 11)], "critical");
+  assert.equal(blocked.pass, false);
+  if (blocked.pass) return;
+  assert.deepEqual(blocked.openMaterialIds, [11]);
 });
 
 test("coverageMeetsCriteria passes when every criterion has a line", () => {

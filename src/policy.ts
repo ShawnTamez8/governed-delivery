@@ -2,7 +2,6 @@ import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { DISPOSITIONS, SEVERITIES } from "./finding.ts";
 import { PROMPT_MAX_BYTES, RESULT_MAX_BYTES } from "./harness.ts";
 import { PROTECTED_PATH_PREFIXES } from "./scope.ts";
-import { PANEL_SIZE } from "./select.ts";
 
 /**
  * The system name is configuration, resolved at run start and frozen in the
@@ -10,10 +9,51 @@ import { PANEL_SIZE } from "./select.ts";
  */
 export const SYSTEM_NAME = "BuildWorks";
 
-/** Bounded remediation rounds, counting closure passes (section 20). */
-export const REMEDIATION_ROUNDS = 3;
+/**
+ * Review rounds per artifact. One configured round is one complete
+ * panel -> reconcile cycle (architecture section 12, as amended 2026-09-01).
+ * Self-critique happens once per artifact regardless of this count, before
+ * the first panel, and never occupies a panel seat.
+ *
+ * One, not the three this replaces. Those three counted closure passes, and a
+ * closure pass redispatches a panel that varies nothing that matters —
+ * hazard 7 exactly. Frozen per run through the profile now; Task 9 activates
+ * these values when the stages can execute the complete `panel -> reconcile`
+ * cycle they count. Applying them to the legacy closure loop would make one
+ * configured round mean one panel and zero reconciliation dispatches.
+ */
+export const SPEC_REVIEW_ROUNDS = 1;
+export const PLAN_REVIEW_ROUNDS = 1;
 
-/** Materiality is a severity threshold set in configuration (section 12). */
+/**
+ * The panel size bounds, replacing the per-risk map the author-proposed panel
+ * supersedes. Risk itself survives — the approval payload binds it — it just
+ * no longer sizes the panel.
+ *
+ * The floor is also the default. Two is what makes an independence claim mean
+ * anything, and the default installation only needs to staff two distinct
+ * specialties. Until the author proposes a size (step 5b Task 5), the stages
+ * staff the floor; they deliberately do not staff the maximum, or raising the
+ * ceiling would silently seat reviewers nobody asked for.
+ *
+ * `PANEL_SIZE_MAX` must lie within [`PANEL_SIZE_FLOOR`, `PANEL_SIZE_CEILING`].
+ * Raising it is an operator action that requires registering more specialists,
+ * and `assertStaffable` refuses at configuration time when they are absent —
+ * before a run row exists and before anything has been spent.
+ */
+export const PANEL_SIZE_FLOOR = 2;
+export const PANEL_SIZE_CEILING = 5;
+export const PANEL_SIZE_MAX = 2;
+
+/**
+ * Materiality is a severity threshold set in configuration (section 12).
+ *
+ * Kept rather than removed. Step 5b Task 3 permits removing it "once
+ * reconciliation completeness replaces both severity gates"; that replacement
+ * is Task 9, and until it lands the surviving consumers are `specReviewGate`
+ * (`src/spec-stage.ts`) and `planReviewGate` (`src/plan-gate.ts`). Removing it
+ * now would leave both review stages ungated for the length of the build.
+ */
 export const MATERIAL_THRESHOLD = "high";
 
 export const REQUIRED_SPECIALTIES = ["requirements-traceability"];
@@ -112,8 +152,10 @@ export const VERIFY_ENV_PASSTHROUGH = [
 ];
 
 export interface Policy {
-  panelSizes: Record<string, number>;
-  remediationRounds: number;
+  specReviewRounds: number;
+  planReviewRounds: number;
+  panelSizeMin: number;
+  panelSizeMax: number;
   materialityThreshold: string;
   severities: string[];
   dispositions: string[];
@@ -137,8 +179,10 @@ export interface Policy {
  */
 export function buildPolicy(): Policy {
   return {
-    panelSizes: { ...PANEL_SIZE },
-    remediationRounds: REMEDIATION_ROUNDS,
+    specReviewRounds: SPEC_REVIEW_ROUNDS,
+    planReviewRounds: PLAN_REVIEW_ROUNDS,
+    panelSizeMin: PANEL_SIZE_FLOOR,
+    panelSizeMax: PANEL_SIZE_MAX,
     materialityThreshold: MATERIAL_THRESHOLD,
     severities: [...SEVERITIES],
     dispositions: [...DISPOSITIONS],
@@ -157,4 +201,109 @@ export function buildPolicy(): Policy {
 
 export function policyHash(policy: Policy): string {
   return sha256Hex(canonicalJson(policy));
+}
+
+function isPositiveInt(v: unknown): boolean {
+  return typeof v === "number" && Number.isInteger(v) && v > 0;
+}
+
+function isStringArray(v: unknown): boolean {
+  return Array.isArray(v) && v.every((e) => typeof e === "string");
+}
+
+/** Every policy field that must be a positive integer, with no further bound. */
+const POSITIVE_INT_FIELDS = [
+  "specReviewRounds",
+  "planReviewRounds",
+  "promptMaxBytes",
+  "resultMaxBytes",
+  "approvalMaxLifetimeSeconds",
+  "approvalDefaultLifetimeSeconds",
+  "runDurationLimitSeconds",
+  "verifyCommandTimeoutSeconds",
+  "verifyRetentionMaxBytes",
+];
+
+/** Every policy field that must be an array of strings. */
+const STRING_ARRAY_FIELDS = [
+  "severities",
+  "dispositions",
+  "requiredSpecialties",
+  "protectedPathPrefixes",
+  "verifyEnvPassthrough",
+];
+
+/**
+ * Is this frozen policy one this code enforces? Returns the reason it is not,
+ * or null when it is.
+ *
+ * Not a version check, and deliberately not compatibility handling — hard rule
+ * 3 forbids both, and this is that rule said out loud rather than an exception
+ * to it. The question has no notion of "old": does the policy this run froze
+ * carry the values the stages read, within the bounds they assume?
+ *
+ * The reason it has to exist. A profile frozen before a field existed parses
+ * with `undefined` in its place, and in JavaScript every comparison against
+ * `undefined` is false: `panel.length < undefined` is false, so a staffing
+ * refusal would never fire, and a loop bounded by `undefined` would run zero
+ * times. The central refusal keeps that malformed value from reaching any
+ * consumer.
+ * Filling a default would be worse — it would govern a run by a value it never
+ * froze — so the only honest answer is to refuse and name what is wrong.
+ *
+ * The expected field set is read from `buildPolicy()` rather than listed here,
+ * so adding a policy field cannot leave this check silently behind. An
+ * obsolete field is reported too: a policy still carrying `panelSizes` is as
+ * clear a signal of a superseded shape as one missing `panelSizeMax`.
+ */
+export function invalidPolicyReason(policy: unknown): string | null {
+  if (policy === null || typeof policy !== "object" || Array.isArray(policy)) {
+    return "the frozen profile carries no policy object";
+  }
+  const p = policy as Record<string, unknown>;
+  const expected = Object.keys(buildPolicy());
+  const missing = expected.filter((k) => !(k in p));
+  const obsolete = Object.keys(p).filter((k) => !expected.includes(k));
+  if (missing.length > 0 || obsolete.length > 0) {
+    const parts: string[] = [];
+    if (missing.length > 0) parts.push(`missing ${missing.sort().join(", ")}`);
+    if (obsolete.length > 0) parts.push(`carrying obsolete ${obsolete.sort().join(", ")}`);
+    return `the frozen policy is not the shape this code enforces: ${parts.join("; ")}`;
+  }
+  for (const field of POSITIVE_INT_FIELDS) {
+    if (!isPositiveInt(p[field])) {
+      return `the frozen policy field ${field} must be a positive integer, found ${JSON.stringify(p[field])}`;
+    }
+  }
+  for (const field of STRING_ARRAY_FIELDS) {
+    if (!isStringArray(p[field])) {
+      return `the frozen policy field ${field} must be an array of strings, found ${JSON.stringify(p[field])}`;
+    }
+  }
+  if (!isPositiveInt(p.panelSizeMin) || !isPositiveInt(p.panelSizeMax)) {
+    return `the frozen policy panel sizes must be positive integers, found min ${JSON.stringify(
+      p.panelSizeMin
+    )} and max ${JSON.stringify(p.panelSizeMax)}`;
+  }
+  const min = p.panelSizeMin as number;
+  const max = p.panelSizeMax as number;
+  // The bound is the absolute one, not today's configured value: a run frozen
+  // under a different but legal maximum is still governed by what it froze
+  // (hard rule 6). Only a size the selector could not honour is refused.
+  if (min < PANEL_SIZE_FLOOR || max > PANEL_SIZE_CEILING || min > max) {
+    return `the frozen policy panel sizes ${min}-${max} are outside the permitted ${PANEL_SIZE_FLOOR}-${PANEL_SIZE_CEILING}`;
+  }
+  const required = p.requiredSpecialties as string[];
+  if (new Set(required).size !== required.length) {
+    return "the frozen policy requiredSpecialties must not contain duplicates";
+  }
+  if (required.length > max) {
+    return `the frozen policy has ${required.length} required specialties, which cannot fit in its maximum panel of ${max}`;
+  }
+  if (typeof p.materialityThreshold !== "string" || !SEVERITIES.includes(p.materialityThreshold)) {
+    return `the frozen policy materialityThreshold must be one of ${SEVERITIES.join(
+      ", "
+    )}, found ${JSON.stringify(p.materialityThreshold)}`;
+  }
+  return null;
 }

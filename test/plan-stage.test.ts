@@ -8,7 +8,7 @@ import { runPlanStage } from "../src/plan-stage.ts";
 import { freezeProfile } from "../src/profile.ts";
 import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
-import { REMEDIATION_ROUNDS } from "../src/policy.ts";
+import { policyHash } from "../src/policy.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
 
@@ -95,6 +95,33 @@ function freezeExecutorIntoProfile(
   const path = join(root, ".governance", "profiles", String(runId), "profile.json");
   const profile = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
   profile.executor = executor;
+  const serialized = canonicalJson(profile);
+  writeFileSync(path, serialized);
+  store.setProfileRef(runId, sha256Hex(serialized));
+}
+
+/**
+ * Rewrite one or more frozen policy values and re-freeze, recomputing both
+ * `policyHash` and the profile hash on the run row.
+ *
+ * Active policy values such as panel size come from the frozen profile, so a
+ * test that wants another configuration has to freeze one. Round counts are
+ * present but remain inactive until Task 9. Recomputing `policyHash` matters:
+ * the profile validity check refuses a profile whose recorded hash does not
+ * describe its own policy, so a lazy patch here would be refused rather than
+ * honoured.
+ */
+function freezePolicyInto(
+  store: Store,
+  root: string,
+  runId: number,
+  patch: Record<string, unknown>
+): void {
+  const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+  const profile = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  const policy = { ...(profile.policy as Record<string, unknown>), ...patch };
+  profile.policy = policy;
+  profile.policyHash = policyHash(policy as never);
   const serialized = canonicalJson(profile);
   writeFileSync(path, serialized);
   store.setProfileRef(runId, sha256Hex(serialized));
@@ -219,6 +246,8 @@ function auditSummaries(store: Store, runId: number, action: string): string[] {
 
 test("the happy path chains plan and plan_review from the approved stage", async () => {
   await withApprovedRun(async ({ store, root, runId, approvalStageId }) => {
+    // Task 9 has not activated configured panel-and-reconciliation cycles yet;
+    // this exercises the explicitly transitional legacy closure loop.
     const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
     if (!result.ok) return;
@@ -254,19 +283,21 @@ test("the passing gate records the plan hash, the plan_for binding, and the risk
     const specHash = sha256Hex(normalizeText(readFileSync(specPath, "utf8")));
     const summaries = auditSummaries(store, runId, "plan.gate.pass");
     assert.equal(summaries.length, 1);
-    // Pinned exactly, not matched as an alternation: risk is the panel-size
-    // input, and a computeRisk or PANEL_SIZE regression must fail this test.
+    // Pinned exactly, not matched as an alternation: the recorded risk is what
+    // the approval binds, so a computeRisk regression must fail this test.
     assert.equal(
       summaries[0],
       `plan_review gate passed in round 2; planHash=${onDisk}; planFor=${specHash}; risk=low`
     );
     // Panel size is the count of distinct reviewers seated, not of dispatch
-    // rows — a panel of one dispatches once per round.
+    // rows — the same panel dispatches once per round. It is the frozen floor
+    // regardless of the risk recorded above, which is the decoupling this
+    // assertion now protects.
     const distinctReviewers = store.query<{ n: number }>(
       "SELECT COUNT(DISTINCT ar.agent) AS n FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? AND ar.role = 'reviewer'",
       [runId]
     )[0].n;
-    assert.equal(distinctReviewers, 1, "low risk seats a panel of one");
+    assert.equal(distinctReviewers, 2, "the frozen floor seats two, whatever the risk");
   });
 });
 
@@ -467,13 +498,12 @@ test("budget exhaustion blocks naming the still-open finding ids", async () => {
     const scratch = join(root, "emit-never-satisfied.mjs");
     writeFileSync(scratch, fixtureSource().replace('stdin.includes("REVISED-plan")', "false"));
     freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    // The transitional legacy loop still has three closure passes. Task 9
+    // removes it when it activates the configured round budget.
     const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
-    assert.match(
-      result.reason,
-      new RegExp(`material findings remain open after ${REMEDIATION_ROUNDS} rounds: \\d+`)
-    );
+    assert.match(result.reason, /material findings remain open after 3 legacy closure passes: \d+/);
     const reviewStage = store.getStageChain(runId).find((s) => s.kind === "plan_review")!;
     assert.equal(reviewStage.status, "blocked");
     assert.equal(store.getRun(runId)!.status, "blocked");
@@ -521,21 +551,22 @@ test("an author returning an invalid plan document blocks terminally and writes 
 test("the seeded registry can staff the plan panel end to end", async () => {
   // Hazard 11: a default installation must be able to complete a run. The
   // panel-size refusal itself is proven by the selectPanel seam below: the
-  // seeded registry staffs every risk level, so no fixture can produce a
-  // short panel honestly.
+  // seeded registry seats more distinct specialties than the frozen floor
+  // asks for, so no fixture can produce a short panel honestly.
   await withApprovedRun(async ({ store, root, runId }) => {
     const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
-    assert.ok(agentRunCounts(store, runId).reviewer >= 1, "at least one reviewer was seated");
+    assert.equal(agentRunCounts(store, runId).reviewer % 2, 0, "the frozen floor seats two per round");
   });
 });
 
 test("an unstaffable panel blocks the plan_review stage by name", async () => {
   await withApprovedRun(
     async ({ store, root, runId }) => {
-      // A high-risk run needs three reviewers; the seam returns none, which is
-      // the state a depleted registry would produce. The guard must refuse by
-      // name before any reviewer is dispatched.
+      // The seam returns no reviewers, which is the state a depleted registry
+      // would produce. The guard must refuse by name before any reviewer is
+      // dispatched. Risk is high here and no longer changes the expected
+      // count — the frozen floor of two is what the refusal names.
       const result = await runPlanStage(
         store,
         fixtureExecutor(FIXTURE),
@@ -544,7 +575,7 @@ test("an unstaffable panel blocks the plan_review stage by name", async () => {
       );
       assert.equal(result.ok, false);
       if (result.ok) return;
-      assert.match(result.reason, /plan panel incomplete: risk high needs 3 reviewers, found 0/);
+      assert.match(result.reason, /plan panel incomplete: needs 2 reviewers, found 0/);
       assert.equal(agentRunCounts(store, runId).reviewer, 0, "no reviewer was dispatched");
       assert.equal(store.getStageChain(runId).find((s) => s.kind === "plan_review")!.status, "blocked");
       assert.equal(store.getRun(runId)!.status, "blocked");
@@ -555,6 +586,7 @@ test("an unstaffable panel blocks the plan_review stage by name", async () => {
 
 test("a revision that drops a criterion's coverage blocks and leaves the gated plan on disk", async () => {
   await withApprovedRun(async ({ store, root, runId }) => {
+
     // The revision variant drops the "it stays working" line. The
     // completeness gate must run on revisions exactly as on the first write,
     // and it must refuse *before* the revision overwrites the document the
@@ -695,5 +727,33 @@ test("a plan covering only some acceptance criteria blocks before the panel", as
     assert.equal(audited.length, 1);
     assert.match(audited[0], /it is observable/);
     assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("the transitional legacy flow passes a clean panel in its first pass", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    // A clean first panel does not need the legacy revision path.
+    const scratch = join(root, "emit-plan-clean-default.mjs");
+    writeFileSync(scratch, fixtureSource().replace('stdin.includes("REVISED-plan")', "true"));
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const counts = agentRunCounts(store, runId);
+    assert.equal(counts.author, 1, "a clean panel needs no legacy revision");
+    assert.equal(counts.reviewer, 2, "the frozen floor seats two");
+    assert.match(auditSummaries(store, runId, "plan.gate.pass")[0], /gate passed in round 1/);
+  });
+});
+
+test("the frozen one-round budget stays inactive until reconciliation exists", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    // The fixture clears its finding after the legacy author revision.
+    // Applying planReviewRounds=1 here would block before Task 9 provides the
+    // reconciliation dispatch that a configured round promises.
+    const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const counts = agentRunCounts(store, runId);
+    assert.equal(counts.author, 2, "the legacy author revision remains available");
+    assert.equal(counts.reviewer, 4, "the legacy closure panel still confirms the revision");
   });
 });

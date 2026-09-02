@@ -313,23 +313,113 @@ in `ARCHITECTURE.md`, and the layout did not move.
 **Files:**
 
 - Modify: `src/policy.ts`, `src/profile.ts`, `src/select.ts`, `src/spec-stage.ts`, `src/plan-stage.ts`, `src/plan-gate.ts`
-- Modify: `test/policy.test.ts`, `test/profile.test.ts`, `test/select.test.ts`, `test/plan-gate.test.ts`
+- Modify: `test/policy.test.ts`, `test/profile.test.ts`, `test/select.test.ts`, `test/plan-gate.test.ts`, `test/spec-stage.test.ts`, `test/plan-stage.test.ts`
 - Modify: `scripts/doc-check.mjs` where it pins policy facts
 
 **Steps:**
 
-- [ ] Add `specReviewRounds` and `planReviewRounds`, both defaulting to one, and `panelSizeMax`, defaulting to two with validated bounds of two through five. Replace the per-risk `PANEL_SIZE` map, which the author-proposed panel supersedes; keep `computeRisk` and the risk value itself, which the approval payload binds.
-- [ ] Define a configured round as one complete `panel → reconcile` cycle. Self-critique happens once per artifact regardless of the configured round count, before the first panel.
-- [ ] Make both stages and the selector read these values from the frozen profile policy. Remove the live-constant fallbacks and add a test that fails if a stage imports a review-policy constant directly.
-- [ ] Settle materiality: remove `MATERIAL_THRESHOLD` and `materialityThreshold` once reconciliation completeness replaces both severity gates, or name in a comment the consumer that keeps it. Record the resulting policy-shape and profile-hash change.
-- [ ] State and implement the rule for profiles created before this change — refuse by name, or readable as history and not resumable — and test it. Do not let an old profile silently produce a policy the code no longer honours.
-- [ ] Add a configuration-time staffing refusal: when the frozen registry cannot seat `panelSizeMax` eligible reviewers with distinct specialties including the configured required specialties, the run refuses at configuration time and names the missing seats or specialties. Required specialties count inside every requested panel size.
+- [x] Add `specReviewRounds` and `planReviewRounds`, both defaulting to one, and `panelSizeMax`, defaulting to two with validated bounds of two through five. Replace the per-risk `PANEL_SIZE` map, which the author-proposed panel supersedes; keep `computeRisk` and the risk value itself, which the approval payload binds.
+- [x] Define a configured round as one complete `panel → reconcile` cycle. Self-critique happens once per artifact regardless of the configured round count, before the first panel.
+- [x] Make both stages read every active review value from the frozen profile policy. Panel size, required specialties, and materiality are active in the legacy stages. Freeze the new round counts now, but do not apply them to the legacy closure loop: Task 9 activates them when a round can actually contain the promised `panel → reconcile` cycle. Add tests that fail if a stage imports a review-policy constant directly or activates the configured count before reconciliation exists.
+- [x] Settle materiality: remove `MATERIAL_THRESHOLD` and `materialityThreshold` once reconciliation completeness replaces both severity gates, or name in a comment the consumer that keeps it. Record the resulting policy-shape and profile-hash change.
+- [x] State and implement the rule for profiles created before this change — refuse by name, or readable as history and not resumable — and test it. Do not let an old profile silently produce a policy the code no longer honours.
+- [x] Add a configuration-time staffing refusal: when the frozen registry cannot seat `panelSizeMax` eligible reviewers on the frozen executor, with unique agent ids and distinct specialties including the configured required specialties, profile creation refuses and names the defect. Required specialties count inside every requested panel size and may not outnumber its seats.
 
-**Verify:** `node --test test/policy.test.ts test/profile.test.ts test/select.test.ts test/plan-gate.test.ts`; `npm run typecheck`; `npm run check:docs`.
+**Verify:** `node --test test/policy.test.ts test/profile.test.ts test/select.test.ts test/plan-gate.test.ts test/spec-stage.test.ts test/plan-stage.test.ts`; `npm run typecheck`; `npm run check:docs`.
 
-**Expected:** Round counts and panel bounds have one source, are frozen per run, and are read where they are enforced. A default installation staffs two distinct specialties. A configuration the registry cannot satisfy fails before any money is spent.
+**Expected:** Round counts and panel bounds have one source and are frozen per run. Active legacy-stage values are read from that profile; configured round counts remain inactive until Task 9 implements their stated semantics. A default installation staffs two distinct eligible specialties. A configuration the registry cannot satisfy fails before any money is spent.
 
 **Task completion evidence:** The red tests against the live constants, the green focused gate, the recorded policy-hash change, and the old-profile rule proven by test.
+
+#### Completion record, 2026-09-01
+
+**The old-profile rule is Route A, decided by the operator.** A frozen profile
+that is missing, or violates, the fields this code enforces is an invalid
+profile, refused by name in `loadVerifiedProfile`. Nothing migrates it, fills a
+default, or continues past it. That single door is the whole argument: every
+execution and resume path loads the frozen profile through it, so the refusal
+cannot be enforced at one stage and forgotten at another — the same reason the
+tamper-hash comparison already lives there. Nothing that only reads the
+database, the retained evidence, or the audit chain passes through it, so a
+refused run stays fully inspectable and `verify-audit` still verifies it.
+
+This is not a version check and not compatibility handling, both of which hard
+rule 3 forbids; it is that rule stated out loud. The question it asks has no
+notion of "old": does the policy this run froze carry the values the stages
+read, within the bounds they assume? The reason it must exist is mechanical —
+a profile frozen before a field existed parses with `undefined` there, and
+every JavaScript comparison against `undefined` is false, so a missing bound
+could bypass a downstream refusal or skip a loop. The central validity check
+prevents malformed policy from reaching any consumer. Both review stages also
+terminally block if their legacy loop ever falls through without a gate result;
+they cannot return a nonterminal failure and leave the run wedged.
+
+**Policy shape and hash.** `panelSizes` and `remediationRounds` are gone;
+`specReviewRounds`, `planReviewRounds`, `panelSizeMin`, and `panelSizeMax`
+replace them.
+
+| | policy hash |
+|---|---|
+| pre-Task-3 shape | `5df5a26bd3c2f88a8a7daf3672497060534c81593c74d88a3e2e3e73fc486ef5` |
+| this change | `657d705359c992399f70a467c14273cfe8be52916a20d179d26e784c09023001` |
+
+Every profile frozen before this change therefore carries the first hash and is
+refused. The profile hash on the run row changes with it, since the policy is
+part of the serialized profile.
+
+**Two decisions this task settled that the plan left open.**
+
+`MATERIAL_THRESHOLD` and `materialityThreshold` stay. The plan permits removing
+them "once reconciliation completeness replaces both severity gates"; that
+replacement is Task 9. Until then `specReviewGate` (`src/spec-stage.ts`) and
+`planReviewGate` (`src/plan-gate.ts`) receive the threshold frozen in the run's
+profile. Neither imports the live default. Removing it now would leave both
+review stages ungated for the length of the build.
+
+`panelSizeMin` is a frozen policy value beside `panelSizeMax`. The floor of two
+is also the default, and until the author proposes a size (Task 5) the stages
+have to staff something. They staff the larger of the floor and the number of
+configured required specialties — the smallest valid panel. Staffing the
+maximum would have silently seated five reviewers the moment an operator
+raised the ceiling.
+
+**Round activation boundary.** Both new policy values default to one complete
+`panel → reconcile` cycle, but Task 3 cannot honestly enforce that definition:
+the typed reconciliation dispatch and decisions do not exist until Tasks 6 and
+9. Applying one to the old loop produced one panel and zero author revisions.
+The two stages therefore retain their explicitly named three-pass legacy
+closure budget until Task 9 atomically removes it and activates the frozen
+counts. Risk is still computed, recorded in the gate summary, and bound into
+the approval; it no longer sizes the panel.
+
+**The `approvalSigner` tolerance is gone.** `approval-stage.ts` compared with
+`!= null` so that a profile frozen before the field existed read as "no key
+bound at intake". It now compares with `!== null`. Null stays a live, supported
+state; absent is an obsolete shape and is refused upstream. The line change is
+not itself observable — which is the point — so what is tested is that the case
+it absorbed can no longer reach the comparison.
+
+**Verified after independent correction:** `npm run typecheck` clean; the 128
+focused policy, profile, selection, gate, specification-stage, and plan-stage
+tests pass; `npm run check:docs` exits 0 with `doc-check: clean`. The original
+Task 3 run recorded `npm test` as 484 tests, 483 pass, 1 skip, 0 fail. A new
+full-suite run was attempted twice but did not complete in this environment:
+it stopped producing output in the unchanged dispatch timeout test after that
+file's first two tests passed. No new full-suite count is claimed.
+
+**Guard record after independent correction.** The unchanged Route A guards
+still cover the central validity check, exact policy shape, panel bounds,
+`approvalSigner` presence, staffing before profile write, and the narrow
+registry seam. The corrected boundaries were also broken and restored. Making
+the specification stage activate `specReviewRounds` before Task 9, while
+replacing its frozen specialty list with the live default, failed both named
+stage regressions. Disabling the required-specialty capacity check, executor
+eligibility, and duplicate-id refusal failed all three named staffing
+regressions. Allowing selection to reuse a specialty failed the distinct-lens
+regression. Each set passed again after restoration. The legacy-loop
+fallthrough is unreachable with its positive constant, but it now calls the
+same terminal `abort` machinery as every reachable failure instead of returning
+a nonterminal result.
 
 ### Task 4: Self-critique contract and prompt
 
@@ -477,7 +567,7 @@ in `ARCHITECTURE.md`, and the layout did not move.
 
 **Steps:**
 
-- [ ] Replace the round loop in both stages with: draft, self-critique, then for each configured round a complete panel followed by reconciliation, then the deterministic gate. Remove the closure-round redispatch and the resolution of findings absent from a later panel. Pass design plus specification through the specification phases and approved specification plus plan through the plan phases.
+- [ ] Replace the round loop in both stages with: draft, self-critique, then for each configured round a complete panel followed by reconciliation, then the deterministic gate. This is the atomic activation point for `profile.policy.specReviewRounds` and `planReviewRounds`: remove both `LEGACY_CLOSURE_PASSES` constants here, not earlier. Remove the closure-round redispatch and the resolution of findings absent from a later panel. Pass design plus specification through the specification phases and approved specification plus plan through the plan phases.
 - [ ] Make the gate decide over every configured round on report/decision completeness, the exact set of derived normative additions, textual grounding for `addressed` additions and rejections, conditional proposal completeness, and the mechanical artifact gates, not on open severity. Advance on a fully accounted and grounded `addressed` decision and a textually grounded `rejected_with_rationale` at any severity. Treat an absent, extra, duplicated, wrongly sourced, or unmatched grounding or normative node as `cannot_determine`; also block on `upstream_blocking` and explicit `cannot_determine`, naming the canonical finding ids and any stored proposal. Do not encode or document this gate as independent semantic confirmation of either an addressed concern or the logical sufficiency of a grounding excerpt.
 - [ ] Add the plan-review regression that reproduces the original defect: a material upstream concern in round one produces a proposal and either a documented advance or a named block by its impact, and no additional plan-author revision round is dispatched to repair the wrong artifact.
 - [ ] Add the spec-review analogue so both stages prove the same semantics, using the new `deps.selectPanel` seam rather than depending on registry contents.

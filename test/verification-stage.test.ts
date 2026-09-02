@@ -17,6 +17,7 @@ import { runVerificationStage } from "../src/verification-stage.ts";
 import { freezeProfile, loadProfile } from "../src/profile.ts";
 import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, sha256Hex } from "../src/canonical.ts";
+import { policyHash } from "../src/policy.ts";
 import type { Profile } from "../src/profile.ts";
 import type { VerifyCommand } from "../src/governed-config.ts";
 
@@ -143,6 +144,11 @@ function withImplementedRun(fn: (ctx: Ctx) => Promise<void>, opts: Opts = {}): P
 function refreeze(root: string, store: Store, runId: number, mutate: (p: Profile) => void): void {
   const { profile } = loadProfile(root, runId);
   mutate(profile);
+  // `policyHash` is recomputed rather than carried over. The profile validity
+  // check refuses a profile whose recorded hash does not describe its own
+  // policy, so a mutation that skipped this would be refused for the wrong
+  // reason and the test would prove nothing about the limit it was changing.
+  profile.policyHash = policyHash(profile.policy);
   const serialized = canonicalJson(profile);
   writeFileSync(join(root, ".governance", "profiles", String(runId), "profile.json"), serialized);
   store.setProfileRef(runId, sha256Hex(serialized));
@@ -448,14 +454,23 @@ test("a profile modified since intake is refused by name", async () => {
 
 test("a run past the frozen duration limit is refused by name", async () => {
   await withImplementedRun(async (ctx) => {
+    // The limit stays a real one and the *run* is what goes stale. A frozen
+    // limit of zero used to be how this reached the breach path, but zero is
+    // not a configuration that can be frozen any more — it would refuse every
+    // run the moment it started — so the run is backdated past a one-second
+    // limit instead, which is how a run actually breaches it.
     refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
-      p.policy.runDurationLimitSeconds = 0;
+      p.policy.runDurationLimitSeconds = 1;
     });
+    ctx.store.exec("UPDATE run SET created_at = ? WHERE id = ?", [
+      new Date(Date.now() - 3600_000).toISOString(),
+      ctx.runId,
+    ]);
     const result = await runVerificationStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
     assert.equal(result.ok, false);
     assert.match(
       (result as { ok: false; reason: string }).reason,
-      /exceeded the run-duration limit of 0 seconds/
+      /exceeded the run-duration limit of 1 seconds/
     );
   });
 });

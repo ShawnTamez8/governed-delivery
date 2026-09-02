@@ -7,13 +7,18 @@ import { dispatchOnce } from "./dispatch.ts";
 import { validateAgentResult } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import { SEVERITIES, SEVERITY_ORDER, findingIdentity, normalizeLocation } from "./finding.ts";
-import { computeRisk, selectReviewers, PANEL_SIZE } from "./select.ts";
+import { computeRisk, selectReviewers } from "./select.ts";
 import { computeScope, touchesProtected } from "./scope.ts";
 import { buildSpecAuthorPrompt, buildSpecReviewPrompt } from "./prompts.ts";
 import { writeSpecDoc, type SpecDoc } from "./spec-doc.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
-import { MATERIAL_THRESHOLD, REMEDIATION_ROUNDS, REQUIRED_SPECIALTIES } from "./policy.ts";
+
+// Transitional only. The shipped stages still implement the old
+// panel -> author revision -> closure-panel loop. Task 9 removes this budget
+// and activates the frozen configured rounds only when each one can include
+// the promised reconciliation dispatch.
+const LEGACY_CLOSURE_PASSES = 3;
 
 export type StageResult =
   | { ok: true; stageIds: { spec: number; specReview: number }; specPath: string }
@@ -24,10 +29,13 @@ export type StageResult =
  * never the gate. Passes iff no material finding remains open.
  */
 export function specReviewGate(
-  findings: FindingRow[]
+  findings: FindingRow[],
+  materialityThreshold: string
 ): { pass: true } | { pass: false; openMaterialIds: number[] } {
   const openMaterial = findings.filter(
-    (f) => SEVERITY_ORDER[f.severity] >= SEVERITY_ORDER[MATERIAL_THRESHOLD] && f.disposition === "open"
+    (f) =>
+      SEVERITY_ORDER[f.severity] >= SEVERITY_ORDER[materialityThreshold] &&
+      f.disposition === "open"
   );
   return openMaterial.length === 0
     ? { pass: true }
@@ -217,12 +225,26 @@ export async function runSpecStage(
       computeScope(written.doc.declaredArtifacts).length,
       touchesProtected(written.doc.declaredArtifacts, run.slug)
     );
-    const panel = selectReviewers(profile.agents, risk, REQUIRED_SPECIALTIES);
-    if (panel.length < PANEL_SIZE[risk]) {
+    // Active review configuration comes from the profile frozen at run start.
+    // The new round budget is frozen but stays inactive until Task 9 can give
+    // it its promised panel-and-reconciliation meaning. Risk still binds the
+    // approval; it simply no longer sizes the panel. Until the author proposes
+    // a size (Task 5), staff the smallest valid configured panel: the frozen
+    // floor, enlarged only when configured required specialties need seats.
+    const panelSize = Math.max(
+      profile.policy.panelSizeMin,
+      profile.policy.requiredSpecialties.length
+    );
+    const panel = selectReviewers(
+      profile.agents.filter((agent) => agent.executor === executor.id),
+      panelSize,
+      profile.policy.requiredSpecialties
+    );
+    if (panel.length < panelSize) {
       return abort(
         reviewStage.id,
         "spec.panel.incomplete",
-        `spec panel incomplete: risk ${risk} needs ${PANEL_SIZE[risk]} reviewers, found ${panel.length}`
+        `spec panel incomplete: needs ${panelSize} reviewers, found ${panel.length}`
       );
     }
     for (const reviewer of panel) {
@@ -235,7 +257,10 @@ export async function runSpecStage(
       }
     }
 
-    for (let round = 1; round <= REMEDIATION_ROUNDS; round++) {
+    // The configured count starts governing here only when Task 9 replaces
+    // this legacy loop with complete panel-and-reconciliation cycles.
+    const rounds: number = LEGACY_CLOSURE_PASSES;
+    for (let round = 1; round <= rounds; round++) {
       const reportedIdentities = new Set<string>();
       for (const reviewer of panel) {
         if (!reviewer.outputs.includes("findings")) {
@@ -327,7 +352,10 @@ export async function runSpecStage(
           audit(reviewStage.id, "spec.finding.resolved", `finding ${finding.id} resolved by re-review`);
         }
       }
-      const gate = specReviewGate(store.getFindings(reviewStage.id));
+      const gate = specReviewGate(
+        store.getFindings(reviewStage.id),
+        profile.policy.materialityThreshold
+      );
       if (gate.pass) {
         audit(
           reviewStage.id,
@@ -340,11 +368,11 @@ export async function runSpecStage(
         store.completeStage(reviewStage.id, specPath, "pass");
         return { ok: true, stageIds: { spec: specStage.id, specReview: reviewStage.id }, specPath };
       }
-      if (round >= REMEDIATION_ROUNDS) {
+      if (round >= rounds) {
         return abort(
           reviewStage.id,
           "spec.gate.block",
-          `spec_review blocked: material findings remain open after ${REMEDIATION_ROUNDS} rounds: ${gate.openMaterialIds.join(", ")}`
+          `spec_review blocked: material findings remain open after ${rounds} legacy closure passes: ${gate.openMaterialIds.join(", ")}`
         );
       }
       // Revision round: the author addresses the open material findings.
@@ -399,7 +427,11 @@ export async function runSpecStage(
       specPath = written.path;
       audit(specStage.id, "spec.content.write", `wrote revision ${specPath}`);
     }
-    return { ok: false, reason: "spec_review did not reach a terminal state" };
+    return abort(
+      reviewStage.id,
+      "spec.gate.block",
+      "spec_review exhausted its legacy closure passes without a terminal gate result"
+    );
   } catch (err) {
     // The wedge guard: an unexpected throw (filesystem, database) must
     // produce the same terminal state as any other failure.

@@ -1,6 +1,5 @@
 import { SEVERITY_ORDER } from "./finding.ts";
 import type { PlanDoc } from "./plan-doc.ts";
-import { MATERIAL_THRESHOLD } from "./policy.ts";
 import type { FindingRow } from "./store.ts";
 
 /**
@@ -13,10 +12,13 @@ import type { FindingRow } from "./store.ts";
  * that has all the evidence, not a reflex here.
  */
 export function planReviewGate(
-  findings: FindingRow[]
+  findings: FindingRow[],
+  materialityThreshold: string
 ): { pass: true } | { pass: false; openMaterialIds: number[] } {
   const openMaterial = findings.filter(
-    (f) => SEVERITY_ORDER[f.severity] >= SEVERITY_ORDER[MATERIAL_THRESHOLD] && f.disposition === "open"
+    (f) =>
+      SEVERITY_ORDER[f.severity] >= SEVERITY_ORDER[materialityThreshold] &&
+      f.disposition === "open"
   );
   return openMaterial.length === 0
     ? { pass: true }

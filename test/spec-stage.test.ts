@@ -4,9 +4,10 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
+import { verifyAuditChain, appendAudit } from "../src/audit.ts";
 import { freezeProfile } from "../src/profile.ts";
 import { runSpecStage } from "../src/spec-stage.ts";
-import { REMEDIATION_ROUNDS } from "../src/policy.ts";
+import { buildPolicy, policyHash } from "../src/policy.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
@@ -102,6 +103,33 @@ function withRun(fn: (ctx: Ctx) => Promise<void>): Promise<void> {
   });
 }
 
+/**
+ * Rewrite one or more frozen policy values and re-freeze, recomputing both
+ * `policyHash` and the profile hash on the run row.
+ *
+ * Active policy values such as panel size come from the frozen profile, so a
+ * test that wants another configuration has to freeze one. Round counts are
+ * present but remain inactive until Task 9. Recomputing `policyHash` matters:
+ * the profile validity check refuses a profile whose recorded hash does not
+ * describe its own policy, so a lazy patch here would be refused rather than
+ * honoured.
+ */
+function freezePolicyInto(
+  store: Store,
+  root: string,
+  runId: number,
+  patch: Record<string, unknown>
+): void {
+  const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+  const profile = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  const policy = { ...(profile.policy as Record<string, unknown>), ...patch };
+  profile.policy = policy;
+  profile.policyHash = policyHash(policy as never);
+  const serialized = canonicalJson(profile);
+  writeFileSync(path, serialized);
+  store.setProfileRef(runId, sha256Hex(serialized));
+}
+
 function agentRunCounts(store: Store, runId: number): { author: number; reviewer: number } {
   const rows = store.query<{ stage_id: number; role: string }>(
     "SELECT ar.role FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ?",
@@ -115,6 +143,8 @@ function agentRunCounts(store: Store, runId: number): { author: number; reviewer
 
 test("happy path with one revision round: two stage rows, gate passes in round 2", async () => {
   await withRun(async ({ store, root, runId }) => {
+    // Task 9 has not activated configured panel-and-reconciliation cycles yet;
+    // this exercises the explicitly transitional legacy closure loop.
     const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, true);
     if (!result.ok) return;
@@ -147,15 +177,17 @@ test("blocked on budget exhaustion", async () => {
     );
     writeFileSync(scratch, source);
     freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    // The transitional legacy loop still has three closure passes. Task 9
+    // removes it when it activates the configured round budget.
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
-    assert.match(result.reason, /material findings remain open after 3 rounds/);
+    assert.match(result.reason, /material findings remain open after 3 legacy closure passes/);
     const chain = store.getStageChain(runId);
     assert.equal(chain[0].status, "passed");
     assert.equal(chain[1].status, "blocked");
     assert.equal(store.getRun(runId)!.status, "blocked");
-    assert.equal(agentRunCounts(store, runId).author, REMEDIATION_ROUNDS);
+    assert.equal(agentRunCounts(store, runId).author, 3);
   });
 });
 
@@ -254,23 +286,72 @@ test("a spec whose change_kind contradicts the run aborts terminally", async () 
   });
 });
 
-test("a high-risk spec convenes the full three-reviewer panel", async () => {
+test("the panel is sized by the frozen policy, and high risk does not enlarge it", async () => {
   await withRun(async ({ store, root, runId }) => {
+    // `src/agents/` is a protected path, so this spec scores high risk. Risk
+    // still binds the approval and is still recorded, but it stopped sizing
+    // the panel: the seated count must be the frozen floor either way.
     const scratch = join(root, "emit-spec-stage-high-risk.mjs");
-    const source = fixtureSource().replace("src/a1.ts", "src/agents/evil.ts");
+    const source = fixtureSource()
+      .replace("src/a1.ts", "src/agents/evil.ts")
+      .replace('const findings = stdin.includes("REVISED-spec")', "const findings = true");
     writeFileSync(scratch, source);
     freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
-    // The gate outcome depends on findings; the panel must never be the
-    // blocker — assert no incomplete-panel abort and three round-1 reviews.
-    if (!result.ok) {
-      assert.ok(!result.reason.includes("panel incomplete"), result.reason);
-    }
-    const rows = store.query<{ role: string }>(
-      "SELECT ar.role FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ?",
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    assert.equal(agentRunCounts(store, runId).reviewer, 2, "the frozen floor seats two, not three");
+    const gate = store.query<{ summary: string }>(
+      "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.gate.pass' ORDER BY id DESC LIMIT 1",
       [runId]
+    )[0]!;
+    assert.match(gate.summary, /risk=high/, "risk is still computed and still recorded");
+  });
+});
+
+test("configured required specialties enlarge the interim panel without touching risk", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-spec-stage-clean.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace('const findings = stdin.includes("REVISED-spec")', "const findings = true")
     );
-    assert.ok(rows.filter((r) => r.role === "reviewer").length >= 3, "three reviewers dispatched in round 1");
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    freezePolicyInto(store, root, runId, {
+      panelSizeMax: 3,
+      requiredSpecialties: ["requirements-traceability", "security", "consistency"],
+    });
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    assert.equal(
+      agentRunCounts(store, runId).reviewer,
+      3,
+      "every configured required specialty consumes a seat"
+    );
+  });
+});
+
+test("the stage honours frozen specialties and materiality instead of live defaults", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    freezePolicyInto(store, root, runId, {
+      requiredSpecialties: ["security"],
+      materialityThreshold: "critical",
+    });
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), {
+      runId,
+      requestedModel: "m",
+      rootDir: root,
+    });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    assert.equal(
+      agentRunCounts(store, runId).author,
+      1,
+      "the frozen critical threshold makes the fixture's high finding advisory"
+    );
+    const firstReviewer = store.query<{ agent: string }>(
+      "SELECT ar.agent FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? AND ar.role = 'reviewer' ORDER BY ar.id LIMIT 1",
+      [runId]
+    )[0]!;
+    assert.equal(firstReviewer.agent, "spec-reviewer-security");
   });
 });
 
@@ -296,9 +377,15 @@ test("a missing design document is refused before any dispatch", async () => {
 });
 
 test("the panel is sized from distinct artifacts, not repeated ones", async () => {
-  // 11 declared entries, 9 distinct. Deduplicated that is low risk (a panel of
-  // one); counted raw it is standard (a panel of two), and the approval would
-  // then bind a risk no panel of that size ever satisfied.
+  // 11 declared entries, 9 distinct. Deduplicated that is low risk; counted
+  // raw it is standard, and the approval binds the risk the gate recorded, so
+  // a miscount would bind the operator to a risk the run never computed.
+  //
+  // Panel size used to be the observable here. It no longer can be — the
+  // frozen policy sizes the panel and risk does not — so the recorded risk in
+  // the gate summary is what this asserts, which is the thing that actually
+  // matters. The seated count is asserted too, as the frozen floor, so a
+  // regression that reconnected risk to panel size would still fail here.
   await withRun(async ({ store, root, runId }) => {
     const scratch = join(root, "emit-spec-stage-duplicates.mjs");
     const source = fixtureSource()
@@ -317,7 +404,7 @@ test("the panel is sized from distinct artifacts, not repeated ones", async () =
       rootDir: root,
     });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
-    assert.equal(agentRunCounts(store, runId).reviewer, 1, "low risk seats one reviewer");
+    assert.equal(agentRunCounts(store, runId).reviewer, 2, "the frozen floor seats two at any risk");
     const gate = store.query<{ summary: string }>(
       "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.gate.pass' ORDER BY id DESC LIMIT 1",
       [runId]
@@ -405,5 +492,85 @@ test("an executor without the spec capability is refused before the stage row", 
     if (result.ok) return;
     assert.match(result.reason, /lacks the required capability "spec" for stage kind spec/);
     assert.equal(store.query("SELECT * FROM agent_run").length, 0, "nothing was spent");
+  });
+});
+
+test("the transitional legacy flow passes a clean panel in its first pass", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // A clean first panel does not need the legacy revision path.
+    const scratch = join(root, "emit-spec-stage-clean-default.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace('const findings = stdin.includes("REVISED-spec")', "const findings = true")
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const counts = agentRunCounts(store, runId);
+    assert.equal(counts.author, 1, "a clean panel needs no legacy revision");
+    assert.equal(counts.reviewer, 2);
+    const gate = store.query<{ summary: string }>(
+      "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.gate.pass' ORDER BY id DESC LIMIT 1",
+      [runId]
+    )[0]!;
+    assert.match(gate.summary, /gate passed in round 1/);
+  });
+});
+
+test("the frozen one-round budget stays inactive until reconciliation exists", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // The fixture clears its finding after the legacy author revision.
+    // Applying specReviewRounds=1 here would block before Task 9 provides the
+    // reconciliation dispatch that a configured round promises.
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const counts = agentRunCounts(store, runId);
+    assert.equal(counts.author, 2, "the legacy author revision remains available");
+    assert.equal(counts.reviewer, 4, "the legacy closure panel still confirms the revision");
+  });
+});
+
+test("a pre-Task-3 profile refuses the stage before any dispatch, and its evidence stays readable", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // Some history exists before the profile goes stale, because the claim
+    // being tested is that a refused run keeps what it already recorded.
+    appendAudit(store, {
+      runId,
+      stageId: null,
+      actor: "system",
+      actorType: "cli",
+      action: "run.create",
+      summary: "recorded before the policy shape changed",
+    });
+
+    // The superseded shape, hashed correctly at every level: the file hash
+    // matches the run row, and policyHash matches the policy. Only the shape
+    // is wrong.
+    const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+    const profile = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    const { specReviewRounds, planReviewRounds, panelSizeMin, panelSizeMax, ...carried } = buildPolicy();
+    const policy = { ...carried, panelSizes: { low: 1, standard: 2, high: 3 }, remediationRounds: 3 };
+    profile.policy = policy;
+    profile.policyHash = sha256Hex(canonicalJson(policy));
+    const serialized = canonicalJson(profile);
+    writeFileSync(path, serialized);
+    store.setProfileRef(runId, sha256Hex(serialized));
+
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false, "a superseded policy shape must not execute");
+    if (result.ok) return;
+    assert.match(result.reason, /cannot be executed/);
+
+    // Nothing was spent: no agent_run row, no retained raw output, no stage.
+    assert.equal(store.query("SELECT * FROM agent_run").length, 0, "no dispatch happened");
+    assert.ok(!existsSync(join(root, ".governance", "raw")), "no raw output means no spawn");
+    assert.equal(store.getStageChain(runId).length, 0, "the refusal precedes the stage row");
+
+    // And the run's own records are untouched and still verifiable, which is
+    // the half of the decision that says a refused run is evidence, not waste.
+    assert.equal(store.getRun(runId)!.id, runId);
+    // `verifyAuditChain` returns the break, or null when the chain holds.
+    assert.equal(verifyAuditChain(store), null, "the audit chain still verifies");
+    assert.equal(existsSync(path), true, "the frozen profile is still on disk to inspect");
   });
 });

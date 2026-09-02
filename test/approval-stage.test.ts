@@ -8,6 +8,7 @@ import { approvalPayload } from "../src/approval.ts";
 import { approveRun, buildBinding } from "../src/approval-stage.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { appendAudit, verifyAuditChain, type AuditRow } from "../src/audit.ts";
+import { policyHash } from "../src/policy.ts";
 import { freezeProfile } from "../src/profile.ts";
 import { openStore, type Store } from "../src/store.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
@@ -323,11 +324,18 @@ test("a profile altered after freezing is refused naming both hashes", () => {
 test("a policy changed since intake is refused, past the profile-hash check", () => {
   withFixture((f) => {
     const signature = signFor(f);
-    // A *self-consistent* stale profile: the profile-hash check runs first
-    // and would otherwise shadow this one.
+    // A *self-consistent* stale profile: it must survive both the
+    // profile-hash check and the profile validity check, or one of those would
+    // shadow this one and the test would prove the wrong refusal.
+    //
+    // So a real policy value changes and its hash is recomputed with it —
+    // exactly what a run frozen under a different but legal configuration
+    // looks like. Faking `policyHash` alone no longer reaches here: a hash
+    // that does not describe its own policy is refused as an invalid profile.
     const path = join(f.root, ".governance", "profiles", String(f.runId), "profile.json");
     const profile = JSON.parse(readFileSync(path, "utf8"));
-    profile.policyHash = "f".repeat(64);
+    profile.policy.specReviewRounds = profile.policy.specReviewRounds + 1;
+    profile.policyHash = policyHash(profile.policy);
     const serialized = canonicalJson(profile);
     writeFileSync(path, serialized);
     f.store.setProfileRef(f.runId, sha256Hex(serialized));
@@ -336,7 +344,7 @@ test("a policy changed since intake is refused, past the profile-hash check", ()
     assert.equal(r.ok, false);
     assert.match(
       (r as { reason: string }).reason,
-      /policy has changed since intake: profile f{64}, in force [0-9a-f]{64}/
+      /policy has changed since intake: profile [0-9a-f]{64}, in force [0-9a-f]{64}/
     );
     assertNothingWritten(f);
   });
@@ -694,4 +702,32 @@ test("a failure mid-approval leaves the run retryable, not wedged", () => {
     // The rolled-back audit inserts left no gap: the chain recomputes clean.
     assert.equal(verifyAuditChain(f.store), null);
   });
+});
+
+test("a profile predating approvalSigner is refused before the signer comparison", () => {
+  // The comparison below the refusal used to be written `!= null` so that an
+  // absent field read as "no key bound at intake". That tolerance is gone, and
+  // this is why it could go: the case it absorbed is refused upstream, so it
+  // can no longer reach the comparison at all. Removing the guard without
+  // proving the case is unreachable would have been the actual risk.
+  withFixture((f) => {
+    const signature = signFor(f);
+    const path = join(f.root, ".governance", "profiles", String(f.runId), "profile.json");
+    const profile = JSON.parse(readFileSync(path, "utf8"));
+    delete profile.approvalSigner;
+    const serialized = canonicalJson(profile);
+    writeFileSync(path, serialized);
+    f.store.setProfileRef(f.runId, sha256Hex(serialized));
+
+    const r = approveRun(f.store, f.root, { runId: f.runId, expiresAt: f.expiresAt, signature });
+    assert.equal(r.ok, false);
+    assert.match((r as { reason: string }).reason, /carries no approvalSigner/);
+    // Not the signer-mismatch message: the run never got that far, and a
+    // refusal naming the wrong cause is the failure mode this checks for.
+    assert.ok(
+      !(r as { reason: string }).reason.includes("is not the key frozen at run start"),
+      "the signer comparison must not be what refused it"
+    );
+    assertNothingWritten(f);
+  }, { bindSigner: true });
 });

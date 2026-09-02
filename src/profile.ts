@@ -5,7 +5,14 @@ import { loadPublicKey } from "./approval.ts";
 import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { CLAUDE_CODE, type ExecutorDefinition } from "./executor.ts";
 import { profileDir, profilePath } from "./paths.ts";
-import { SYSTEM_NAME, buildPolicy, policyHash, type Policy } from "./policy.ts";
+import {
+  SYSTEM_NAME,
+  buildPolicy,
+  invalidPolicyReason,
+  policyHash,
+  type Policy,
+} from "./policy.ts";
+import { staffingShortfall } from "./select.ts";
 import type { VerificationConfig } from "./governed-config.ts";
 
 /**
@@ -123,13 +130,35 @@ export function freezeProfile(
   runId: number,
   startingCommit: string | null,
   model: string,
-  verification: VerificationConfig
+  verification: VerificationConfig,
+  // A test seam, and the only one here: the seeded registry seats three
+  // distinct specialties and the configured maximum is two, so the staffing
+  // refusal below is unreachable with the real agents and could otherwise
+  // never be proven by breaking it. Callers pass nothing. The override feeds
+  // both the check and the frozen agent list, because a refusal has to be
+  // about the registry the run would actually work with.
+  deps: { agents?: readonly AgentDefinition[] } = {}
 ): { path: string; hash: string; profile: Profile } {
+  const agents = deps.agents ?? AGENTS;
   const modelError = validateModelName(model);
   if (modelError !== null) {
     throw new Error(modelError);
   }
   const policy = buildPolicy();
+  // Section 11's rule, applied to the panel: a configuration the registry
+  // cannot satisfy fails at configuration time, not at the dispatch that
+  // would have spent money discovering it. Checked against the agents this
+  // profile is about to freeze, so the refusal is about what the run would
+  // actually have to work with.
+  const shortfall = staffingShortfall(
+    agents,
+    policy.panelSizeMax,
+    policy.requiredSpecialties,
+    CLAUDE_CODE.id
+  );
+  if (shortfall !== null) {
+    throw new Error(`cannot freeze a profile for run ${runId}: ${shortfall}`);
+  }
   // A missing or unreadable key at run start is normal — most machines have
   // none — so this records null rather than failing run creation.
   const key = loadPublicKey(rootDir);
@@ -145,7 +174,7 @@ export function freezeProfile(
     approvalSigner: key.ok ? key.signer : null,
     verification,
     frozenAt: new Date().toISOString(),
-    agents: [...AGENTS].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+    agents: [...agents].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     executor: CLAUDE_CODE,
     policy,
     policyHash: policyHash(policy),
@@ -197,6 +226,82 @@ export function resolveStageModel(
 }
 
 /**
+ * Is this frozen profile one the code can execute a run against? Returns the
+ * reason it is not, or null when it is.
+ *
+ * The profile-level half of the same question `invalidPolicyReason` asks of
+ * the policy: not "how old is this" but "does it carry what the stages read".
+ * There is no migration, no defaulting, and no version discriminator here by
+ * design — hard rule 3 — and a profile that fails this is refused by name
+ * rather than repaired.
+ *
+ * `approvalSigner` must be *present*, and may be null. The two are not the
+ * same claim: null means no key was configured at intake, which is a real
+ * and supported state the approval gate records on the granted approval.
+ * Absent means the profile predates the field, which is a shape this code no
+ * longer executes.
+ */
+export function invalidProfileReason(profile: unknown): string | null {
+  if (profile === null || typeof profile !== "object" || Array.isArray(profile)) {
+    return "the frozen profile is not an object";
+  }
+  const p = profile as Record<string, unknown>;
+  if (!isPositiveInt(p.runId)) {
+    return `the frozen profile runId must be a positive integer, found ${JSON.stringify(p.runId)}`;
+  }
+  if (typeof p.systemName !== "string" || p.systemName === "") {
+    return `the frozen profile systemName must be a non-empty string, found ${JSON.stringify(p.systemName)}`;
+  }
+  if (typeof p.startingCommit !== "string" && p.startingCommit !== null) {
+    return `the frozen profile startingCommit must be a string or null, found ${JSON.stringify(p.startingCommit)}`;
+  }
+  if (!("approvalSigner" in p)) {
+    return "the frozen profile carries no approvalSigner: it predates the field, and a run frozen without it cannot bind a signer";
+  }
+  if (typeof p.approvalSigner !== "string" && p.approvalSigner !== null) {
+    return `the frozen profile approvalSigner must be a string or null, found ${JSON.stringify(p.approvalSigner)}`;
+  }
+  if (typeof p.frozenAt !== "string" || p.frozenAt === "") {
+    return `the frozen profile frozenAt must be a non-empty string, found ${JSON.stringify(p.frozenAt)}`;
+  }
+  if (typeof p.policyHash !== "string" || p.policyHash === "") {
+    return `the frozen profile policyHash must be a non-empty string, found ${JSON.stringify(p.policyHash)}`;
+  }
+  const modelMap = p.modelMap;
+  if (modelMap === null || typeof modelMap !== "object" || Array.isArray(modelMap)) {
+    return "the frozen profile carries no modelMap";
+  }
+  if (!Array.isArray(p.agents) || p.agents.length === 0) {
+    return "the frozen profile carries no agents";
+  }
+  if (p.executor === null || typeof p.executor !== "object") {
+    return "the frozen profile carries no executor";
+  }
+  const verification = p.verification as { commands?: unknown } | null | undefined;
+  if (
+    verification === null ||
+    typeof verification !== "object" ||
+    !Array.isArray(verification.commands)
+  ) {
+    return "the frozen profile carries no verification commands";
+  }
+  const policyReason = invalidPolicyReason(p.policy);
+  if (policyReason !== null) return policyReason;
+  // The recorded hash must describe the policy actually present. A profile
+  // whose bytes were never edited still fails this if it was written by code
+  // that hashed a different shape, which is precisely the pre-change case.
+  const inProfile = policyHash(p.policy as Policy);
+  if (p.policyHash !== inProfile) {
+    return `the frozen profile's policyHash ${p.policyHash} does not describe its own policy (${inProfile})`;
+  }
+  return null;
+}
+
+function isPositiveInt(v: unknown): boolean {
+  return typeof v === "number" && Number.isInteger(v) && v > 0;
+}
+
+/**
  * Load the frozen profile and prove it is the one the run froze.
  *
  * `loadProfile` returns the hash but leaves the comparison to its caller, and
@@ -223,6 +328,23 @@ export function loadVerifiedProfile(
     return {
       ok: false,
       reason: `profile for run ${run.id} has been modified since intake: frozen ${run.profile_ref}, on disk ${loaded.hash}`,
+    };
+  }
+  // Shape after tamper-evidence, in that order. A profile that fails the hash
+  // has a different problem, and reporting the shape of bytes that are not the
+  // ones the run froze would name the wrong defect.
+  //
+  // This is the single door the step 5b Task 3 decision chose: every execution
+  // and resume path loads the frozen profile through here, so the refusal
+  // cannot be enforced at one stage and forgotten at another — the same reason
+  // the hash comparison above lives here. Nothing that only reads the database,
+  // the retained evidence, or the audit chain comes through this function, so
+  // a refused run stays fully inspectable.
+  const invalid = invalidProfileReason(loaded.profile);
+  if (invalid !== null) {
+    return {
+      ok: false,
+      reason: `run ${run.id} cannot be executed: ${invalid}. It was frozen under a configuration this code no longer honours; its records and evidence remain readable, but the run cannot continue and must be replaced by a fresh one.`,
     };
   }
   return { ok: true, profile: loaded.profile, hash: loaded.hash };
