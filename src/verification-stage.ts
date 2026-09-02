@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { appendAudit } from "./audit.ts";
+import { verificationEvidenceDir } from "./paths.ts";
 import { loadVerifiedProfile } from "./profile.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
 import { runVerifyCommand, type CommandOutcome } from "./verify-command.ts";
@@ -192,7 +193,7 @@ export async function runVerificationStage(
     appendAudit(store, { runId, stageId, actor: "system", actorType: "cli", action, summary });
   };
 
-  const evidenceDir = join(rootDir, ".governance", "verification", String(runId));
+  const evidenceDir = verificationEvidenceDir(rootDir, runId);
   let stageId: number | null = null;
 
   try {

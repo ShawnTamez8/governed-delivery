@@ -1,3 +1,5 @@
+import { GOVERNANCE_PREFIX } from "./paths.ts";
+
 export interface ExecutorDefinition {
   id: string;
   command: string[];
@@ -63,7 +65,7 @@ export const CLAUDE_CODE: ExecutorDefinition = {
   },
   sandbox: {
     allowedPaths: ["docs/features/**"],
-    deniedPaths: [".governance/**"],
+    deniedPaths: [`${GOVERNANCE_PREFIX}**`],
     commandAllowlist: [],
     idleTimeoutSeconds: 600,
     absoluteTimeoutSeconds: 3600,

@@ -7,6 +7,7 @@ import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./
 import { dispatchOnce } from "./dispatch.ts";
 import { validateAgentResult, type ProposedPatch, type ProposedPatchFile } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
+import { worktreePath as governanceWorktreePath } from "./paths.ts";
 import { isPathInside, normalizePath, resolveExisting, touchesProtected } from "./scope.ts";
 import { buildImplementationAuthorPrompt } from "./prompts.ts";
 import { gatePatchPaths, movedPaths } from "./implementation-gate.ts";
@@ -206,7 +207,7 @@ export async function runImplementationStage(
 
   // Crash residue from a previous attempt must not silently reuse or corrupt
   // a leftover tree.
-  const worktreePath = join(rootDir, ".governance", "worktrees", String(runId));
+  const worktreePath = governanceWorktreePath(rootDir, runId);
   if (existsSync(worktreePath)) {
     return { ok: false, reason: `worktree path already exists for run ${runId}` };
   }

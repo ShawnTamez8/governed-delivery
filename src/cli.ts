@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { acquireLock } from "./lock.ts";
+import { GOVERNANCE_PREFIX } from "./paths.ts";
 import { requireRunInProgress, CHANGE_KINDS, GATE_RESULTS, ROLES, openStore, type Store } from "./store.ts";
 import { appendAudit, verifyAuditChain } from "./audit.ts";
 import { dispatchOnce } from "./dispatch.ts";
@@ -198,7 +199,10 @@ async function main(): Promise<void> {
           .filter((l) => l !== "")
           // Porcelain lines are `XY <path>`; the status letters are never a
           // path, so dropping the first token is enough to test the path.
-          .filter((l) => !/^..\s+"?\.governance\//.test(l));
+          .filter((l) => {
+            const entry = /^..\s+"?(.*)$/.exec(l);
+            return entry === null || !entry[1].startsWith(GOVERNANCE_PREFIX);
+          });
         if (dirty.length > 0) {
           console.error(
             `the working tree is not clean: a run starts from a committed state (section 7). ${dirty.length} path(s), first: ${dirty.slice(0, 3).join(", ")}`

@@ -8,6 +8,7 @@
 
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { GOVERNANCE_PREFIX } from "./paths.ts";
 
 /**
  * Resolve `p` through any symlink or junction, tolerating a path that does
@@ -91,7 +92,7 @@ export const PROTECTED_PATH_PREFIXES: readonly string[] = [
   "src/agents/",
   "src/executor.ts",
   "governed.yaml",
-  ".governance/",
+  GOVERNANCE_PREFIX,
 ];
 
 export function normalizePath(p: string): string {

@@ -1,10 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { AGENTS, type AgentDefinition } from "./agents.ts";
 import { loadPublicKey } from "./approval.ts";
 import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { CLAUDE_CODE, type ExecutorDefinition } from "./executor.ts";
+import { profileDir, profilePath } from "./paths.ts";
 import { SYSTEM_NAME, buildPolicy, policyHash, type Policy } from "./policy.ts";
 import type { VerificationConfig } from "./governed-config.ts";
 
@@ -69,10 +69,6 @@ export interface Profile {
   executor: ExecutorDefinition;
   policy: Policy;
   policyHash: string;
-}
-
-function profilePath(rootDir: string, runId: number): string {
-  return join(rootDir, ".governance", "profiles", String(runId), "profile.json");
 }
 
 /**
@@ -156,7 +152,7 @@ export function freezeProfile(
   };
   const serialized = canonicalJson(profile);
   const path = profilePath(rootDir, runId);
-  mkdirSync(join(rootDir, ".governance", "profiles", String(runId)), { recursive: true });
+  mkdirSync(profileDir(rootDir, runId), { recursive: true });
   writeFileSync(path, serialized);
   return { path, hash: sha256Hex(serialized), profile };
 }

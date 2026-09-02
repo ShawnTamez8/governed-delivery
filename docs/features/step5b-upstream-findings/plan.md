@@ -250,16 +250,61 @@ production code has changed.
 
 **Steps:**
 
-- [ ] Add `src/paths.ts` owning the governance directory name and one function per existing location: state database, lock directory, raw output (absolute and reference forms), profile directory and file, verification evidence, worktrees, and the new proposal evidence directory. The directory name is a constant in this module and is not configurable in this step.
-- [ ] Replace all nine production path constructions with calls into it, and derive the scope prefix, the executor denied path, and the clean-tree filter from the same constant rather than repeating the literal.
-- [ ] Add a test asserting the literal appears in exactly one production module, so a later addition cannot quietly reintroduce a tenth construction site.
-- [ ] Leave the layout under the directory byte-for-byte as shipped. This task changes where the name is written, not where anything is stored.
+- [x] Add `src/paths.ts` owning the governance directory name and one function per existing location: state database, lock directory, raw output (absolute and reference forms), profile directory and file, verification evidence, worktrees, and the new proposal evidence directory. The directory name is a constant in this module and is not configurable in this step.
+- [x] Replace all nine production path constructions with calls into it, and derive the scope prefix, the executor denied path, and the clean-tree filter from the same constant rather than repeating the literal.
+- [x] Add a test asserting the literal appears in exactly one production module, so a later addition cannot quietly reintroduce a tenth construction site.
+- [x] Leave the layout under the directory byte-for-byte as shipped. This task changes where the name is written, not where anything is stored.
 
 **Verify:** `npm test`; `npm run typecheck`; `npm run check:docs`; `git diff` shows no change to any stored path string.
 
 **Expected:** One module answers "where does governance state live", proposal evidence has a home to be added to, and external configuration of that location remains a deferred, separate decision.
 
 **Task completion evidence:** The single-source test green, the full suite green, and a diff showing path values unchanged.
+
+#### Completion record, 2026-09-01
+
+`src/paths.ts` owns `GOVERNANCE_DIR`, the `GOVERNANCE_PREFIX` form the
+comparison sites use, and one function per location: `lockDir`,
+`stateDbPath`, `rawOutputDir`, `rawOutputRef`, `profileDir`, `profilePath`,
+`verificationEvidenceDir`, `worktreePath`, and `proposalEvidenceDir`. The
+last has no caller — Task 8 decides what goes inside it; it is here so that
+adding a governance location stays an edit to one file.
+
+All twelve sites now import it: the nine constructions (`src/store.ts`,
+`src/lock.ts`, `src/profile.ts` twice, `src/raw-output.ts` twice,
+`src/verification-stage.ts`, `src/implementation-stage.ts`), plus the scope
+prefix (`src/scope.ts`), the executor denied glob (`src/executor.ts`), and
+the clean-tree filter (`src/cli.ts`). The filter stopped being a regexp with
+the name baked into it and became a capture of the porcelain path compared
+against the prefix, which needed no escaping and tests the same lines.
+`src/profile.ts` lost its private `profilePath` and its now-unused `join`
+import.
+
+`test/paths.test.ts` scans every `src/**/*.ts` for the literal outside
+comments. The scan is line-oriented on purpose: a real lexer is what a
+comment opener inside a string calls for, and this repository has one — the
+executor sandbox glob ending in `/**` — so a block-comment opener counts only
+when it starts a line, which keeps that string visible. Its bias is toward
+reporting a mention it cannot classify rather than hiding a construction
+behind a comment marker. The three prose mentions of `.governance/` that
+remain (`src/approval.ts`, `src/cli.ts`, `src/profile.ts`) are documentation
+and are left alone.
+
+The test files still spell the directory themselves and were not rewritten to
+import the module. A test that asked `stateDbPath` where the database is
+would pass through a rename; the expected value has to come from outside the
+code under test.
+
+**Verified:** `npm run typecheck` clean; `npm test` 449 tests, 448 pass, 1
+skip, 0 fail; `npm run check:docs` exit 0, `doc-check: clean`, warnings 41 →
+36 because the two files this task adds now exist. Every new guard proven by
+breaking them and restoring: a tenth construction site added to
+`src/audit.ts` failed the scan naming the offending line; the same string
+added to `src/executor.ts` *after* the `/**` glob also failed, which is the
+case a naive scanner would have gone blind to; and renaming `profiles/` to
+`profile/` in `paths.ts` failed the value pin. `scripts/doc-check.mjs` needed
+no change — its `.governance/` assertions are about the storage-layout fence
+in `ARCHITECTURE.md`, and the layout did not move.
 
 ### Task 3: Real review configuration in the frozen policy
 

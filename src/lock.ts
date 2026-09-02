@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { lockDir } from "./paths.ts";
 
-const LOCK_DIR = ".governance";
 const LOCK_FILE = "lock";
 
 function isAlive(pid: number): boolean {
@@ -22,8 +22,9 @@ function isAlive(pid: number): boolean {
  * gets taken over; an unreadable file fails fast rather than guessing.
  */
 export function acquireLock(rootDir: string = process.cwd()): () => void {
-  mkdirSync(join(rootDir, LOCK_DIR), { recursive: true });
-  const lockPath = join(rootDir, LOCK_DIR, LOCK_FILE);
+  const dir = lockDir(rootDir);
+  mkdirSync(dir, { recursive: true });
+  const lockPath = join(dir, LOCK_FILE);
   const token = `${process.pid}-${randomBytes(6).toString("hex")}`;
   for (let attempt = 1; ; attempt++) {
     try {

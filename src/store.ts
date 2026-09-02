@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyMigrations } from "./migrate.ts";
+import { stateDbPath } from "./paths.ts";
 import type { AuditRow } from "./audit.ts";
 
 export type ChangeKind = "feature" | "defect_fix";
@@ -157,7 +158,7 @@ export class Store {
   #db: DatabaseSync;
 
   constructor(rootDir: string) {
-    const dbPath = join(rootDir, ".governance", "state.db");
+    const dbPath = stateDbPath(rootDir);
     applyMigrations(dbPath, DEFAULT_MIGRATIONS_DIR);
     this.#db = new DatabaseSync(dbPath);
     this.#db.exec("PRAGMA foreign_keys = ON");
