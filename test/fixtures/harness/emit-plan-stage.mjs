@@ -25,7 +25,7 @@ function scopePaths() {
     .filter((line) => line !== "");
 }
 
-function planDoc({ revised = false, outOfScope = false, planFor = specHash } = {}) {
+function planDoc({ revised = false, selfCritiqued = false, outOfScope = false, planFor = specHash } = {}) {
   const paths = scopePaths();
   if (paths.length === 0) {
     // A scope scrape that finds nothing is a broken fixture, not an empty
@@ -40,7 +40,7 @@ plan_for: ${planFor}
 
 ## Tasks
 
-- Build the thing${revised ? " REVISED-plan" : ""}
+- Build the thing${revised ? " REVISED-plan" : ""}${selfCritiqued ? " SELFCRITIQUED" : ""}
 - Test the thing
 
 ## Coverage
@@ -65,7 +65,25 @@ function emit(agentResult) {
   );
 }
 
-if (stdin.includes("plan reviewer")) {
+// Checked before the author branch: the self-critique prompt carries the
+// author's role line too, so an author branch tested first would answer it
+// with a draft and the stage would refuse the missing selfCritique payload.
+if (stdin.includes("self-critique")) {
+  emit({
+    status: "proposed",
+    agent: "plan-author",
+    role: "author",
+    executor: "claude-code",
+    summary: "fixture plan self-critique",
+    proposedContentChanges: {
+      selfCritique: {
+        critique: ["the tasks do not say what proves them"],
+        artifact: planDoc({ selfCritiqued: true }),
+        panelRequest: { size: 2, specialties: ["security"] },
+      },
+    },
+  });
+} else if (stdin.includes("plan reviewer")) {
   const agentId = /plan reviewer ([a-z-]+)/.exec(stdin)?.[1] ?? "spec-reviewer-traceability";
   const findings = stdin.includes("REVISED-plan")
     ? []

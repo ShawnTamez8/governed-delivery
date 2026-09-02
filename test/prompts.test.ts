@@ -6,8 +6,10 @@ import {
   buildImplementationAuthorPrompt,
   buildPlanAuthorPrompt,
   buildPlanReviewPrompt,
+  buildPlanSelfCritiquePrompt,
   buildSpecAuthorPrompt,
   buildSpecReviewPrompt,
+  buildSpecSelfCritiquePrompt,
 } from "../src/prompts.ts";
 import { IMPLEMENTER } from "../src/agents/implementer.ts";
 import { PLAN_AUTHOR } from "../src/agents/plan-author.ts";
@@ -56,6 +58,24 @@ const CONSTRAINT_STRINGS = [
   // sentence is UX, not a guard — enforcement is the invocation boundary
   // and the cleanliness gate.
   "read-only",
+  // The self-critique contract's constrained fields (step 5b Task 4). The
+  // panel request is a model-returned value reaching deterministic code, so
+  // every rule it must obey is stated where it is requested.
+  "proposedContentChanges.selfCritique",
+  "panelRequest",
+  "critique:",
+  "artifact:",
+  "size:",
+  "specialties:",
+  "no more of them than the size you request",
+  "never an agent identity",
+  "registered specialties",
+  // Two behaviours, not shapes. The first is the no-invention rule the
+  // prototype watched an author break; the second says what happens to a
+  // self-critique that produces an invalid document, so the model is not
+  // told a fallback exists.
+  "may not add an obligation",
+  "fallback to your draft",
 ];
 
 test("every constrained field's constraint appears in the prompt source", () => {
@@ -170,4 +190,74 @@ test("the generated implementation author prompt states the patch contract", () 
   // `- <path>` line per entry.
   assert.ok(prompt.includes("- src/a1.ts"));
   assert.ok(prompt.includes("- test/a1.test.ts"));
+});
+
+test("the generated spec self-critique prompt states the contract and carries both governing inputs", () => {
+  // Both inputs travel: the design is the ceiling on what the author may
+  // require, the specification is what it is revising. A prompt with only one
+  // of them asks for a judgement the model has no basis to make.
+  const prompt = buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", [
+    "consistency",
+    "security",
+  ]);
+  for (const constraint of [
+    "proposedContentChanges.selfCritique",
+    "proposed, blocked, failed",
+    "panelRequest",
+    "no more of them than the size you request",
+    "never an agent identity",
+    "may not add an obligation",
+    "fallback to your draft",
+    "Output the JSON object",
+  ]) {
+    assert.ok(prompt.includes(constraint), `spec self-critique prompt missing: ${constraint}`);
+  }
+  assert.ok(prompt.includes("DESIGN-TEXT"), "the design is the governing input");
+  assert.ok(prompt.includes("SPEC-TEXT"), "the specification being critiqued travels with it");
+  // The registry's lenses are named. Not telling the author what can be
+  // staffed made the Task 1 prototype's author request an unstaffable
+  // specialty, and the run blocked by name on a request it had no way to get
+  // right.
+  assert.ok(prompt.includes("- consistency"));
+  assert.ok(prompt.includes("- security"));
+  assert.ok(!prompt.includes("data-privacy"), "no specialty the caller did not supply");
+});
+
+test("the spec self-critique prompt is not the author prompt", () => {
+  // Hazard 7 in the small: two dispatches under one agent and one model that
+  // sent the same bytes would be paying twice for one answer.
+  const author = buildSpecAuthorPrompt(SPEC_AUTHOR, "DESIGN-TEXT");
+  const critique = buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", ["security"]);
+  assert.notEqual(author, critique);
+  assert.ok(!author.includes("selfCritique"), "the draft prompt asks for a spec, not a critique");
+});
+
+test("the generated plan self-critique prompt restates the hash and the scope it must still satisfy", () => {
+  const specHash = "a".repeat(64);
+  const prompt = buildPlanSelfCritiquePrompt(
+    PLAN_AUTHOR,
+    "SPEC-TEXT",
+    "PLAN-TEXT",
+    specHash,
+    ["src/thing.ts", "test/thing.test.ts"],
+    ["security"]
+  );
+  for (const constraint of [
+    "proposedContentChanges.selfCritique",
+    "panelRequest",
+    "## Tasks",
+    "## Coverage",
+    "not_applicable requires both a rationale and an alternative verification",
+    "may not add an obligation",
+    "fallback to your draft",
+  ]) {
+    assert.ok(prompt.includes(constraint), `plan self-critique prompt missing: ${constraint}`);
+  }
+  assert.ok(prompt.includes("SPEC-TEXT"), "the approved specification is the governing input");
+  assert.ok(prompt.includes("PLAN-TEXT"), "the plan being critiqued travels with it");
+  // The revised plan is gated exactly like the draft, so the two values the
+  // gates bind are stated rather than left to be rediscovered.
+  assert.ok(prompt.includes(`plan_for must be exactly: ${specHash}`));
+  assert.ok(prompt.includes("- src/thing.ts"));
+  assert.ok(prompt.includes("- test/thing.test.ts"));
 });

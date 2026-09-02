@@ -9,10 +9,11 @@ import { extractJsonBody } from "./parse-output.ts";
 import { SEVERITIES, findingIdentity, normalizeLocation } from "./finding.ts";
 import { computeRisk, selectReviewers } from "./select.ts";
 import { computeScope, touchesProtected } from "./scope.ts";
-import { buildPlanAuthorPrompt, buildPlanReviewPrompt } from "./prompts.ts";
+import { buildPlanAuthorPrompt, buildPlanReviewPrompt, buildPlanSelfCritiquePrompt } from "./prompts.ts";
 import { validatePlanDoc, writePlanDoc, type PlanDoc } from "./plan-doc.ts";
 import { coverageFitsScope, coverageMeetsCriteria, planReviewGate } from "./plan-gate.ts";
 import { validateSpecDoc } from "./spec-doc.ts";
+import { validateSelfCritique } from "./self-critique.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
 
@@ -38,7 +39,8 @@ interface FindingShape {
  * from the approved `awaiting_approval` row.
  *
  * **On the duplication with `src/spec-stage.ts`.** The two orchestrators have
- * the same shape: author dispatch, envelope validation, content write, panel
+ * the same shape: author dispatch, envelope validation, content write, the
+ * author's self-critique phase and the re-gating of what it returns, panel
  * selection, findings, deterministic gate, bounded closure rounds. That is
  * deliberate and is not an oversight to be filed in review. Hard rule 4
  * forbids an abstraction before two real implementations exist, and this is
@@ -236,6 +238,18 @@ export async function runPlanStage(
     if (!author.outputs.includes("plan")) {
       return abort(planStage.id, "plan.author.failed", `configured agent ${author.id} does not allow plan output`);
     }
+    // Checked beside the draft's own capability, not beside the dispatch it
+    // guards. A run whose frozen author cannot self-critique can never
+    // complete this stage, and the rule every other capability check in this
+    // file follows is that a configuration failure fails before a paid
+    // invocation rather than after one.
+    if (!author.outputs.includes("plan-self-critique")) {
+      return abort(
+        planStage.id,
+        "plan.selfcritique.failed",
+        `configured agent ${author.id} does not allow plan-self-critique output`
+      );
+    }
     const authorDispatch = await dispatchOnce(
       store,
       executor,
@@ -312,6 +326,117 @@ export async function runPlanStage(
         `plan does not cover every acceptance criterion: ${complete.uncovered.join("; ")}`
       );
     }
+
+    // --- self-critique: the author's own pass, before any reviewer sees it ---
+    // One dispatch per artifact, under the author's frozen definition and the
+    // author's model mapping, recorded as its own agent_run. It is never a
+    // panel seat and never contributes to an independence claim (hazard 14).
+    // The lenses the frozen registry can actually seat on the frozen
+    // executor, which is what the prompt names. The Task 1 prototype recorded
+    // an author asking for an unstaffable specialty when it was not told.
+    const registeredSpecialties = [
+      ...new Set(
+        profile.agents
+          .filter(
+            (a) => a.role === "reviewer" && a.outputs.includes("findings") && a.executor === executor.id
+          )
+          .map((a) => a.specialty)
+          .filter((s): s is string => s !== null)
+      ),
+    ].sort();
+    const critiqueDispatch = await dispatchOnce(
+      store,
+      executor,
+      {
+        stageId: planStage.id,
+        agent: author.id,
+        role: "author",
+        requestedModel: model,
+        prompt: buildPlanSelfCritiquePrompt(
+          author,
+          specContent,
+          planContent,
+          specHash,
+          scope,
+          registeredSpecialties
+        ),
+      },
+      rootDir
+    );
+    if (!critiqueDispatch.ok) {
+      return abort(planStage.id, "plan.selfcritique.failed", critiqueDispatch.reason);
+    }
+    const critiqueBody = extractJsonBody(critiqueDispatch.envelope.resultText);
+    if (critiqueBody.kind === "refused") {
+      return abort(planStage.id, "plan.selfcritique.invalid", `plan self-critique body refused: ${critiqueBody.reason}`);
+    }
+    const critiqueResult = validateAgentResult(author.id, critiqueBody.value);
+    if (!critiqueResult.ok) {
+      return abort(planStage.id, "plan.selfcritique.invalid", `plan self-critique result refused: ${critiqueResult.reason}`);
+    }
+    if (critiqueResult.value.status !== "proposed") {
+      return abort(
+        planStage.id,
+        "plan.selfcritique.failed",
+        `plan author returned status ${critiqueResult.value.status}, not proposed`
+      );
+    }
+    const critiqueContent = critiqueResult.value.proposedContentChanges as
+      | { selfCritique?: unknown }
+      | undefined;
+    const critique = validateSelfCritique(critiqueContent?.selfCritique);
+    if (!critique.ok) {
+      return abort(planStage.id, "plan.selfcritique.invalid", `plan self-critique refused: ${critique.reason}`);
+    }
+    // Every mechanical gate the draft passed runs again on the revised plan,
+    // on the parsed candidate and before it can replace the document on disk.
+    // A self-critique that produces an invalid plan blocks the stage: it
+    // never falls back to the draft, because a silent fallback would make the
+    // phase optional in exactly the runs where it went wrong.
+    const critiqueParsed = validatePlanDoc(critique.value.artifact);
+    if (!critiqueParsed.ok) {
+      return abort(
+        planStage.id,
+        "plan.selfcritique.invalid",
+        `plan self-critique document refused: ${critiqueParsed.reason}`
+      );
+    }
+    const critiqueMismatch = planForCheck(critiqueParsed.value, planStage.id);
+    if (critiqueMismatch) return critiqueMismatch;
+    const critiqueCoverage = coverageFitsScope(critiqueParsed.value, scope);
+    if (!critiqueCoverage.ok) {
+      return abort(
+        planStage.id,
+        "plan.coverage.unkeepable",
+        `plan promises coverage outside the approved scope: ${critiqueCoverage.unkeepable.join("; ")}`
+      );
+    }
+    const critiqueComplete = coverageMeetsCriteria(critiqueParsed.value, specDoc.value.acceptanceCriteria);
+    if (!critiqueComplete.ok) {
+      return abort(
+        planStage.id,
+        "plan.coverage.incomplete",
+        `plan does not cover every acceptance criterion: ${critiqueComplete.uncovered.join("; ")}`
+      );
+    }
+    try {
+      written = writePlanDoc(rootDir, run.slug, critique.value.artifact);
+    } catch (err) {
+      return abort(planStage.id, "plan.selfcritique.invalid", (err as Error).message);
+    }
+    planContent = critique.value.artifact;
+    planPath = written.path;
+    audit(planStage.id, "plan.content.write", `wrote self-critique revision ${planPath}`);
+    // The panel request is validated and retained here, and deliberately does
+    // not reach selection: the frozen bounds, the union with the configured
+    // required specialties, and the staffing refusal are Task 5's. Wiring a
+    // validated value into the nearest similarly named selector is how a
+    // configuration change becomes a behaviour change nobody asked for.
+    audit(
+      planStage.id,
+      "plan.selfcritique.record",
+      `plan self-critique returned ${critique.value.critique.length} critique entries; panel request size ${critique.value.panelRequest.size}, specialties [${critique.value.panelRequest.specialties.join(", ")}]`
+    );
     store.completeStage(planStage.id, planPath, "pass");
 
     // --- plan_review stage: panel, findings, gate, closure ---

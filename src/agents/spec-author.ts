@@ -5,6 +5,6 @@ export const SPEC_AUTHOR: AgentDefinition = {
   role: "author",
   specialty: null,
   executor: "claude-code",
-  outputs: ["spec", "spec-revision"],
+  outputs: ["spec", "spec-revision", "spec-self-critique"],
   tools: [],
 };

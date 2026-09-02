@@ -43,6 +43,78 @@ ${designContent}`;
 }
 
 /**
+ * The spec self-critique prompt: the author's own pass over the draft it
+ * just wrote, before any independent reviewer sees it.
+ *
+ * Both governing inputs travel with it. The design is what the author may
+ * not exceed and the specification is what it revises, so a prompt carrying
+ * only one of them asks for a judgement the model has no basis to make. The
+ * Task 1 prototype recorded an author adding an atomicity requirement the
+ * design never states; the no-invention sentence is aimed at that, and no
+ * mechanical check in this step detects it when the sentence fails.
+ *
+ * The registered specialties are named for a measured reason. Not told what
+ * the registry can seat, the prototype's author requested `data-privacy` —
+ * structurally valid, unstaffable, and the run blocked by name. Told the
+ * registry, the same author requested `security`, which staffed. The named
+ * staffing refusal stays (step 5b Task 5); this keeps it a backstop rather
+ * than the ordinary outcome.
+ */
+export function buildSpecSelfCritiquePrompt(
+  agent: AgentDefinition,
+  designContent: string,
+  specContent: string,
+  registeredSpecialties: string[]
+): string {
+  return `you are the spec author ${agent.id}
+
+This is your own self-critique pass on the specification you just wrote. No
+independent reviewer has seen it yet, and no git operations are involved:
+you are revising a specification document, not code changes.
+
+Return exactly a JSON AgentResult object with this shape; your critique, the
+revised specification, and your panel request travel together in the
+AgentResult's proposedContentChanges.selfCritique:
+{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"selfCritique": {"critique": ["..."], "artifact": "<the full revised specification markdown>", "panelRequest": {"size": 2, "specialties": ["..."]}}}}
+
+status must be one of proposed, blocked, failed. Output the JSON object
+directly, with no surrounding prose, no markdown fences, and no commentary.
+
+The self-critique has:
+- critique: one non-empty entry per weakness you found in your own draft
+- artifact: the complete revised specification, not a diff. It must satisfy
+  the same document schema as the draft:
+  - frontmatter with feature and change_kind (one of feature, defect_fix)
+  - a ## Declared artifacts section: one repo-relative path per line
+  - an ## Acceptance criteria section: one criterion per list line
+  A revised specification that does not validate blocks the run. There is no
+  fallback to your draft.
+- panelRequest: the panel you propose for the independent review
+  - size: an integer, the number of reviewers to seat
+  - specialties: the specialty lenses this specification calls for. Unique
+    non-empty strings, no more of them than the size you request, and
+    never an agent identity — you propose lenses, the system picks the
+    reviewers.
+    The panel is staffed from these registered specialties:
+${registeredSpecialties.map((s) => `      - ${s}`).join("\n")}
+    A specialty outside that list cannot be staffed.
+
+You may not add an obligation the design below does not contain. Sharpening
+the specification, completing it, and making it consistent is the work;
+inventing a requirement the design never states is not, however reasonable
+that requirement looks. Where the design leaves a decision open, say that it
+is open rather than deciding it yourself.
+
+Design document:
+
+${designContent}
+
+The specification you wrote:
+
+${specContent}`;
+}
+
+/**
  * The reviewer prompt: role (naming the agent id and its specialty lens),
  * the spec content verbatim, and the finding contract with every
  * constrained field stated — severity values, location, and the intentKey
@@ -139,6 +211,88 @@ ${scope.map((p) => `- ${p}`).join("\n")}
 ${revision}Approved specification:
 
 ${specContent}`;
+}
+
+/**
+ * The plan self-critique prompt: the same pass on the plan side.
+ *
+ * It restates `plan_for` and the approved scope because the revised plan is
+ * gated exactly like the draft — the hash binding, the scope gate, and the
+ * coverage gate all run again on it. A prompt that asked for a revision
+ * without saying what the revision must still satisfy would be asking the
+ * model to rediscover the two values the operator's signature bound.
+ *
+ * The scope block's shape ("name only these:" followed by one `- <path>`
+ * line per entry) is the plan author prompt's, deliberately: the fixture
+ * executor scrapes that shape, and one document schema stated two ways is
+ * two schemas.
+ */
+export function buildPlanSelfCritiquePrompt(
+  agent: AgentDefinition,
+  specContent: string,
+  planContent: string,
+  specHash: string,
+  scope: string[],
+  registeredSpecialties: string[]
+): string {
+  return `you are the plan author ${agent.id}
+
+This is your own self-critique pass on the plan you just wrote. No
+independent reviewer has seen it yet, and no git operations are involved:
+you are revising a plan document, not code changes.
+
+Return exactly a JSON AgentResult object with this shape; your critique, the
+revised plan, and your panel request travel together in the AgentResult's
+proposedContentChanges.selfCritique:
+{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"selfCritique": {"critique": ["..."], "artifact": "<the full revised plan markdown>", "panelRequest": {"size": 2, "specialties": ["..."]}}}}
+
+status must be one of proposed, blocked, failed. Output the JSON object
+directly, with no surrounding prose, no markdown fences, and no commentary.
+
+The self-critique has:
+- critique: one non-empty entry per weakness you found in your own draft
+- artifact: the complete revised plan, not a diff. It must satisfy the same
+  document schema as the draft:
+  - frontmatter with feature and plan_for
+  - plan_for must be exactly: ${specHash}
+  - a ## Tasks section: one task per list line
+  - a ## Coverage section: one line per acceptance criterion, in one of two
+    forms:
+      <criterion> -> <artifact path>
+      <criterion> -> not_applicable: <rationale> / <alternative verification>
+    not_applicable requires both a rationale and an alternative verification.
+    An entry with only one of them is refused.
+  A revised plan that does not validate, drops a criterion's coverage, or
+  promises an artifact outside the approved scope blocks the run. There is no
+  fallback to your draft.
+- panelRequest: the panel you propose for the independent review
+  - size: an integer, the number of reviewers to seat
+  - specialties: the specialty lenses this plan calls for. Unique non-empty
+    strings, no more of them than the size you request, and
+    never an agent identity — you propose lenses, the system picks the
+    reviewers.
+    The panel is staffed from these registered specialties:
+${registeredSpecialties.map((s) => `      - ${s}`).join("\n")}
+    A specialty outside that list cannot be staffed.
+
+Every artifact path you name in ## Coverage must be one of the approved scope
+paths below. A plan promising an artifact outside the approved scope is
+refused by the gate, so name only these:
+
+${scope.map((p) => `- ${p}`).join("\n")}
+
+You may not add an obligation the approved specification below does not
+contain. Sharpening the plan, completing it, and making it consistent is the
+work; inventing a requirement the specification never states is not, however
+reasonable that requirement looks.
+
+Approved specification:
+
+${specContent}
+
+The plan you wrote:
+
+${planContent}`;
 }
 
 /**

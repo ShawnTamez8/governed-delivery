@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
 import { runPlanStage } from "../src/plan-stage.ts";
+import { AGENTS } from "../src/agents.ts";
 import { freezeProfile } from "../src/profile.ts";
 import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
@@ -739,7 +740,7 @@ test("the transitional legacy flow passes a clean panel in its first pass", asyn
     const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
     const counts = agentRunCounts(store, runId);
-    assert.equal(counts.author, 1, "a clean panel needs no legacy revision");
+    assert.equal(counts.author, 2, "draft and self-critique; a clean panel needs no legacy revision");
     assert.equal(counts.reviewer, 2, "the frozen floor seats two");
     assert.match(auditSummaries(store, runId, "plan.gate.pass")[0], /gate passed in round 1/);
   });
@@ -753,7 +754,142 @@ test("the frozen one-round budget stays inactive until reconciliation exists", a
     const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
     const counts = agentRunCounts(store, runId);
-    assert.equal(counts.author, 2, "the legacy author revision remains available");
+    assert.equal(counts.author, 3, "the legacy author revision remains available after self-critique");
     assert.equal(counts.reviewer, 4, "the legacy closure panel still confirms the revision");
+  });
+});
+
+// --- self-critique -----------------------------------------------------------
+
+test("exactly one self-critique runs per plan, and the panel reviews its output", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    // A clean panel, so the gate passes in round one and the document it
+    // approved is the one self-critique produced.
+    const scratch = join(root, "emit-plan-clean-critique.mjs");
+    writeFileSync(scratch, fixtureSource().replace('stdin.includes("REVISED-plan")', "true"));
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    if (!result.ok) return;
+    const recorded = auditSummaries(store, runId, "plan.selfcritique.record");
+    assert.equal(recorded.length, 1, "one self-critique per artifact");
+    assert.match(recorded[0], /1 critique entries; panel request size 2, specialties \[security\]/);
+    const onDisk = readFileSync(result.planPath, "utf8");
+    assert.ok(onDisk.includes("SELFCRITIQUED"), "the self-critiqued plan is what was written and gated");
+    // The panel is still the frozen floor: the request is validated and
+    // retained, and staffing against it is Task 5's.
+    assert.equal(agentRunCounts(store, runId).reviewer, 2);
+  });
+});
+
+test("a self-critique that drops a criterion's coverage blocks and leaves the gated draft on disk", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    // Every gate the draft passed runs again on the revised plan, and refuses
+    // before the revision can replace the document already on disk.
+    const scratch = join(root, "emit-plan-critique-drops-criterion.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace(
+        "- it stays working -> ${second}",
+        '${stdin.includes("self-critique") ? "" : "- it stays working -> " + second}'
+      )
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /does not cover every acceptance criterion/);
+    assert.match(result.reason, /it stays working/);
+    const onDisk = readFileSync(join(root, "docs", "features", SLUG, "plan.md"), "utf8");
+    assert.ok(!onDisk.includes("SELFCRITIQUED"), "the refused revision must not replace the draft");
+    assert.equal(agentRunCounts(store, runId).reviewer, 0, "the free gate refuses before the panel spends");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("a self-critique with an empty critique blocks before the panel", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-plan-empty-critique.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace('critique: ["the tasks do not say what proves them"],', "critique: [],")
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /plan self-critique refused: self-critique critique must be a non-empty array/);
+    assert.equal(agentRunCounts(store, runId).reviewer, 0);
+    assert.equal(store.getStageChain(runId).find((s) => s.kind === "plan")!.status, "blocked");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("an author whose frozen definition cannot self-critique blocks before the dispatch", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+    const profile = JSON.parse(readFileSync(path, "utf8")) as {
+      agents: { id: string; outputs: string[] }[];
+    };
+    const author = profile.agents.find((a) => a.id === "plan-author")!;
+    author.outputs = author.outputs.filter((o) => o !== "plan-self-critique");
+    const serialized = canonicalJson(profile);
+    writeFileSync(path, serialized);
+    store.setProfileRef(runId, sha256Hex(serialized));
+
+    const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /does not allow plan-self-critique output/);
+    // The refusal precedes every dispatch: a run that cannot complete this
+    // stage must not pay for a draft first.
+    assert.equal(agentRunCounts(store, runId).author, 0, "nothing was spent");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("the self-critique prompt names the specialties the frozen registry can seat", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    // The spec stage has the same assertion, and it has to exist twice: the
+    // builder's own test proves the list renders when it is passed, and only
+    // a stage test proves the stage passes it. Revision A of the Task 1
+    // prototype binds both sides — an author not told what the registry seats
+    // requests a lens nobody can staff, which turns Task 5's named staffing
+    // refusal into the ordinary outcome at the cost of a panel per run.
+    const scratch = join(root, "emit-plan-registry-echo.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource()
+        .replace(
+          'panelRequest: { size: 2, specialties: ["security"] },',
+          "panelRequest: { size: 2, specialties: [registeredLens()] },"
+        )
+        .replace(
+          "function planDoc({",
+          `function registeredLens() {
+  const block = stdin.split("registered specialties:")[1] ?? "";
+  const listed = block.split("A specialty outside")[0] ?? "";
+  const lenses = listed
+    .split("- ")
+    .slice(1)
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+  return lenses[0] ?? "none-listed";
+}
+
+function planDoc({`
+        )
+        .replace('stdin.includes("REVISED-plan")', "true")
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const recorded = auditSummaries(store, runId, "plan.selfcritique.record")[0]!;
+    const named = /specialties \[([a-z-]*)\]/.exec(recorded)![1];
+    assert.notEqual(named, "none-listed", "the prompt listed no registered specialty at all");
+    const seatable = AGENTS.filter((a) => a.role === "reviewer" && a.outputs.includes("findings")).map(
+      (a) => a.specialty
+    );
+    assert.ok(seatable.includes(named), `${named} is not a specialty the registry seats`);
   });
 });

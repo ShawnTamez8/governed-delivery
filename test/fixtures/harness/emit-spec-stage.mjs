@@ -78,7 +78,33 @@ function emit(agentResult) {
   );
 }
 
-if (stdin.includes("spec reviewer")) {
+// The document the author would write, shared by the draft, the legacy
+// revision, and the self-critique branches. A test that swaps the spec has to
+// swap it everywhere the fixture emits one, or the self-critique would hand
+// the review stage a different document than the draft did.
+function authoredSpec() {
+  return stdin.includes("## Revision") ? REVISED_SPEC : BASE_SPEC;
+}
+
+// Checked before the author branch: the self-critique prompt carries the
+// author's role line too, so an author branch tested first would answer it
+// with a draft and the stage would refuse the missing selfCritique payload.
+if (stdin.includes("self-critique")) {
+  emit({
+    status: "proposed",
+    agent: "spec-author",
+    role: "author",
+    executor: "claude-code",
+    summary: "fixture self-critique",
+    proposedContentChanges: {
+      selfCritique: {
+        critique: ["the acceptance criterion does not say how it is observed"],
+        artifact: authoredSpec().replace("- the thing works", "- the thing works SELFCRITIQUED"),
+        panelRequest: { size: 2, specialties: ["security"] },
+      },
+    },
+  });
+} else if (stdin.includes("spec reviewer")) {
   const agentId = /spec reviewer ([a-z-]+)/.exec(stdin)?.[1] ?? "spec-reviewer-traceability";
   const findings = stdin.includes("REVISED-spec")
     ? []
@@ -105,7 +131,7 @@ if (stdin.includes("spec reviewer")) {
     proposedContentChanges: { findings },
   });
 } else if (stdin.includes("spec author")) {
-  const spec = stdin.includes("## Revision") ? REVISED_SPEC : BASE_SPEC;
+  const spec = authoredSpec();
   emit({
     status: "proposed",
     agent: "spec-author",

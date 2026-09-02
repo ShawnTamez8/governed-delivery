@@ -7,6 +7,7 @@ import { openStore, type Store } from "../src/store.ts";
 import { verifyAuditChain, appendAudit } from "../src/audit.ts";
 import { freezeProfile } from "../src/profile.ts";
 import { runSpecStage } from "../src/spec-stage.ts";
+import { AGENTS } from "../src/agents.ts";
 import { buildPolicy, policyHash } from "../src/policy.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
@@ -157,7 +158,8 @@ test("happy path with one revision round: two stage rows, gate passes in round 2
     assert.ok(spec.includes("REVISED-spec"), "the revision was written");
     assert.equal(store.getRun(runId)!.status, "in_progress");
     const counts = agentRunCounts(store, runId);
-    assert.equal(counts.author, 2);
+    // Draft, self-critique, and the one legacy revision.
+    assert.equal(counts.author, 3);
     assert.equal(counts.reviewer, 4);
     const findings = store.getFindings(chain[1].id);
     assert.equal(findings.length, 2);
@@ -187,7 +189,7 @@ test("blocked on budget exhaustion", async () => {
     assert.equal(chain[0].status, "passed");
     assert.equal(chain[1].status, "blocked");
     assert.equal(store.getRun(runId)!.status, "blocked");
-    assert.equal(agentRunCounts(store, runId).author, 3);
+    assert.equal(agentRunCounts(store, runId).author, 4, "draft, self-critique, and two legacy revisions");
   });
 });
 
@@ -206,9 +208,13 @@ test("dedup: two reviewers reporting the same identity produce one row", async (
 test("an invalid author result aborts terminally and writes no spec", async () => {
   await withRun(async ({ store, root, runId }) => {
     const scratch = join(root, "emit-spec-stage-bogus.mjs");
+    // Anchored on the author branch's own summary line: the self-critique
+    // branch emits the same status and agent lines and is checked first. A
+    // duplicate key in an object literal is legal and the last one wins,
+    // which is how the plan-stage tests reach one branch's status.
     const source = fixtureSource().replace(
-      '    status: "proposed",\n    agent: "spec-author",',
-      '    status: "bogus",\n    agent: "spec-author",'
+      '    summary: "fixture spec",',
+      '    summary: "fixture spec",\n    status: "bogus",'
     );
     writeFileSync(scratch, source);
     freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
@@ -344,8 +350,8 @@ test("the stage honours frozen specialties and materiality instead of live defau
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
     assert.equal(
       agentRunCounts(store, runId).author,
-      1,
-      "the frozen critical threshold makes the fixture's high finding advisory"
+      2,
+      "the frozen critical threshold makes the fixture's high finding advisory: draft and self-critique only"
     );
     const firstReviewer = store.query<{ agent: string }>(
       "SELECT ar.agent FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? AND ar.role = 'reviewer' ORDER BY ar.id LIMIT 1",
@@ -389,9 +395,12 @@ test("the panel is sized from distinct artifacts, not repeated ones", async () =
   await withRun(async ({ store, root, runId }) => {
     const scratch = join(root, "emit-spec-stage-duplicates.mjs");
     const source = fixtureSource()
+      // Swapped at the shared helper, so the self-critique branch returns
+      // the same document: the panel is sized from the artifact the stage
+      // actually gated, which is the self-critiqued one.
       .replace(
-        'const spec = stdin.includes("## Revision") ? REVISED_SPEC : BASE_SPEC;',
-        "const spec = DUPLICATE_SPEC;"
+        'return stdin.includes("## Revision") ? REVISED_SPEC : BASE_SPEC;',
+        "return DUPLICATE_SPEC;"
       )
       // Clean review, so the run reaches the gate in one round and the
       // reviewer count is the panel size rather than a multiple of it.
@@ -507,7 +516,7 @@ test("the transitional legacy flow passes a clean panel in its first pass", asyn
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
     const counts = agentRunCounts(store, runId);
-    assert.equal(counts.author, 1, "a clean panel needs no legacy revision");
+    assert.equal(counts.author, 2, "draft and self-critique; a clean panel needs no legacy revision");
     assert.equal(counts.reviewer, 2);
     const gate = store.query<{ summary: string }>(
       "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.gate.pass' ORDER BY id DESC LIMIT 1",
@@ -525,7 +534,7 @@ test("the frozen one-round budget stays inactive until reconciliation exists", a
     const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
     const counts = agentRunCounts(store, runId);
-    assert.equal(counts.author, 2, "the legacy author revision remains available");
+    assert.equal(counts.author, 3, "the legacy author revision remains available after self-critique");
     assert.equal(counts.reviewer, 4, "the legacy closure panel still confirms the revision");
   });
 });
@@ -572,5 +581,190 @@ test("a pre-Task-3 profile refuses the stage before any dispatch, and its eviden
     // `verifyAuditChain` returns the break, or null when the chain holds.
     assert.equal(verifyAuditChain(store), null, "the audit chain still verifies");
     assert.equal(existsSync(path), true, "the frozen profile is still on disk to inspect");
+  });
+});
+
+// --- self-critique -----------------------------------------------------------
+
+test("exactly one self-critique runs per artifact, and the panel reviews its output", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // The default fixture needs a legacy revision round, so this run has two
+    // author-written specifications in it. The self-critique still happens
+    // once: it belongs to the artifact the stage authored, not to a round.
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const recorded = store.query<{ summary: string }>(
+      "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.selfcritique.record'",
+      [runId]
+    );
+    assert.equal(recorded.length, 1, "one self-critique per artifact, whatever the round budget does");
+    // The record is one event; the dispatch budget is what makes it one
+    // invocation. Draft, self-critique, and the single legacy revision.
+    assert.equal(agentRunCounts(store, runId).author, 3, "no second self-critique dispatch");
+    assert.match(recorded[0].summary, /1 critique entries; panel request size 2, specialties \[security\]/);
+    // Recorded, and deliberately not acted on: staffing against the request
+    // is Task 5's, so the panel is still the frozen floor.
+    assert.equal(agentRunCounts(store, runId).reviewer, 4, "two reviewers across two legacy passes");
+  });
+});
+
+test("the panel reviews the self-critiqued specification, not the draft", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // A clean panel, so the run passes in round one and the document the
+    // gate approved is the one self-critique produced.
+    const scratch = join(root, "emit-spec-stage-clean-critique.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace('const findings = stdin.includes("REVISED-spec")', "const findings = true")
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    if (!result.ok) return;
+    const onDisk = readFileSync(result.specPath, "utf8");
+    assert.ok(onDisk.includes("SELFCRITIQUED"), "the self-critiqued document is what was written and gated");
+    const gate = store.query<{ summary: string }>(
+      "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.gate.pass' ORDER BY id DESC LIMIT 1",
+      [runId]
+    )[0]!;
+    assert.match(gate.summary, new RegExp(`specHash=${sha256Hex(normalizeText(onDisk))}`));
+  });
+});
+
+test("an author whose frozen definition cannot self-critique blocks before the dispatch", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // The capability is read from the frozen profile, not the live registry
+    // (hard rule 6), so this is the refusal a run configured without the
+    // output would hit.
+    const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+    const profile = JSON.parse(readFileSync(path, "utf8")) as {
+      agents: { id: string; outputs: string[] }[];
+    };
+    const author = profile.agents.find((a) => a.id === "spec-author")!;
+    author.outputs = author.outputs.filter((o) => o !== "spec-self-critique");
+    const serialized = canonicalJson(profile);
+    writeFileSync(path, serialized);
+    store.setProfileRef(runId, sha256Hex(serialized));
+
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /does not allow spec-self-critique output/);
+    // The refusal precedes every dispatch: a run that cannot complete this
+    // stage must not pay for a draft first.
+    assert.equal(store.query("SELECT * FROM agent_run").length, 0, "nothing was spent");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("a self-critique missing its panel request blocks, and no reviewer sees the draft", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-spec-stage-no-panel-request.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace('        panelRequest: { size: 2, specialties: ["security"] },\n', "")
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /spec self-critique refused: self-critique panelRequest must be an object/);
+    assert.equal(agentRunCounts(store, runId).reviewer, 0, "the panel must not review a phase that failed");
+    assert.equal(store.getStageChain(runId)[0].status, "blocked");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("a self-critique requesting one lens twice blocks by name", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-spec-stage-duplicate-lens.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace(
+        'panelRequest: { size: 2, specialties: ["security"] },',
+        'panelRequest: { size: 2, specialties: ["security", "security"] },'
+      )
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /specialties contain duplicates: security/);
+    assert.equal(agentRunCounts(store, runId).reviewer, 0);
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("a self-critique whose document does not validate blocks instead of falling back to the draft", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-spec-stage-invalid-critique-doc.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace(
+        'artifact: authoredSpec().replace("- the thing works", "- the thing works SELFCRITIQUED"),',
+        'artifact: "this is not a specification",'
+      )
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /spec self-critique document refused/);
+    // The draft is still the file on disk — the invalid revision never
+    // replaced it — but the run is blocked. Nothing continued on the draft:
+    // that is what "no fallback" means here.
+    const onDisk = readFileSync(join(root, "docs", "features", "demo", "spec.md"), "utf8");
+    assert.ok(!onDisk.includes("this is not a specification"));
+    assert.equal(agentRunCounts(store, runId).reviewer, 0, "the panel never reviewed the draft");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("the self-critique prompt names the specialties the frozen registry can seat", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // Revision A from the Task 1 prototype: an author that is not told what
+    // the registry seats requests a lens nobody can staff. The builder's own
+    // test proves the list is rendered; this proves the stage supplies it,
+    // which is the half a prompt-only test cannot see. The fixture answers
+    // with whatever lens the prompt actually listed, so an empty list would
+    // come back as `none-listed`.
+    const scratch = join(root, "emit-spec-stage-registry-echo.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource()
+        .replace(
+          'panelRequest: { size: 2, specialties: ["security"] },',
+          "panelRequest: { size: 2, specialties: [registeredLens()] },"
+        )
+        .replace(
+          "function authoredSpec() {",
+          `function registeredLens() {
+  const block = stdin.split("registered specialties:")[1] ?? "";
+  const listed = block.split("A specialty outside")[0] ?? "";
+  const lenses = listed
+    .split("- ")
+    .slice(1)
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+  return lenses[0] ?? "none-listed";
+}
+
+function authoredSpec() {`
+        )
+        .replace('const findings = stdin.includes("REVISED-spec")', "const findings = true")
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const recorded = store.query<{ summary: string }>(
+      "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.selfcritique.record'",
+      [runId]
+    )[0]!;
+    const named = /specialties \[([a-z-]*)\]/.exec(recorded.summary)![1];
+    assert.notEqual(named, "none-listed", "the prompt listed no registered specialty at all");
+    const seatable = AGENTS.filter((a) => a.role === "reviewer" && a.outputs.includes("findings")).map(
+      (a) => a.specialty
+    );
+    assert.ok(seatable.includes(named), `${named} is not a specialty the registry seats`);
   });
 });

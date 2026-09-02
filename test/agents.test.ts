@@ -81,3 +81,33 @@ test("the implementer allows patches output, nothing else, and never reviews", (
     "the seed must staff an implementation dispatch"
   );
 });
+
+test("each author allows its own self-critique output and never the other's", () => {
+  // Section 9 again: the dispatcher derives the required output from the
+  // performer, so the self-critique phase has to be a capability the author
+  // definition carries. Without it the stage would be asking an agent for a
+  // result kind its definition never allowed.
+  const specAuthor = agentById("spec-author")!;
+  const planAuthor = agentById("plan-author")!;
+  assert.ok(specAuthor.outputs.includes("spec-self-critique"), "the spec author critiques its own spec");
+  assert.ok(planAuthor.outputs.includes("plan-self-critique"), "the plan author critiques its own plan");
+  assert.ok(
+    !specAuthor.outputs.includes("plan-self-critique"),
+    "the spec author must not be able to self-critique a plan"
+  );
+  assert.ok(
+    !planAuthor.outputs.includes("spec-self-critique"),
+    "the plan author must not be able to self-critique a spec"
+  );
+});
+
+test("no reviewer can produce either self-critique result kind", () => {
+  // Hazard 14: self-critique is an author dispatch. A reviewer that could
+  // return one would be a panel seat producing the artifact's own defence,
+  // which is the independence claim collapsing quietly.
+  for (const agent of AGENTS.filter((a) => a.role === "reviewer")) {
+    for (const forbidden of ["spec-self-critique", "plan-self-critique"]) {
+      assert.ok(!agent.outputs.includes(forbidden), `${agent.id} must not allow ${forbidden} output`);
+    }
+  }
+});

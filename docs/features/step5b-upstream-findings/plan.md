@@ -433,18 +433,61 @@ a nonterminal result.
 
 **Steps:**
 
-- [ ] Define one self-critique result shape carrying the critique, revised artifact, and panel request. Validate it fail closed: a missing critique, missing or invalid artifact, duplicate or over-capacity specialties, or absent panel request aborts with a named error and never falls back to the draft.
-- [ ] Add explicit `spec-self-critique` and `plan-self-critique` output capabilities to the two author definitions and assert that reviewers cannot produce either result kind.
-- [ ] Write the self-critique prompt for both authors. It states that this is the author's own pass before independent review, that the revised artifact must still satisfy the same document validation as the draft, and that the author may not add obligations the governing input does not contain. Supply design plus specification for the spec path, and approved specification plus plan for the plan path.
-- [ ] Dispatch self-critique as a separate `agent_run` under the author's frozen definition and model mapping, exactly once per artifact, before any reviewer dispatch. Retain its raw output like any other invocation.
-- [ ] Rerun the mechanical artifact gates on the revised artifact. A self-critique that produces an invalid document blocks; it does not silently fall back.
-- [ ] Extend the hazard-3 source scan and the generated-prompt assertions so the self-critique prompt's constraints are pinned where they are requested.
+- [x] Define one self-critique result shape carrying the critique, revised artifact, and panel request. Validate it fail closed: a missing critique, missing or invalid artifact, duplicate or over-capacity specialties, or absent panel request aborts with a named error and never falls back to the draft.
+- [x] Add explicit `spec-self-critique` and `plan-self-critique` output capabilities to the two author definitions and assert that reviewers cannot produce either result kind.
+- [x] Write the self-critique prompt for both authors. It states that this is the author's own pass before independent review, that the revised artifact must still satisfy the same document validation as the draft, and that the author may not add obligations the governing input does not contain. Supply design plus specification for the spec path, and approved specification plus plan for the plan path.
+- [x] Dispatch self-critique as a separate `agent_run` under the author's frozen definition and model mapping, exactly once per artifact, before any reviewer dispatch. Retain its raw output like any other invocation.
+- [x] Rerun the mechanical artifact gates on the revised artifact. A self-critique that produces an invalid document blocks; it does not silently fall back.
+- [x] Extend the hazard-3 source scan and the generated-prompt assertions so the self-critique prompt's constraints are pinned where they are requested.
 
 **Verify:** `node --test test/prompts.test.ts test/agents.test.ts test/spec-stage.test.ts test/plan-stage.test.ts`; `npm run typecheck`.
 
 **Expected:** Exactly one self-critique per artifact, recorded as its own dispatch, gated like any other artifact, and never counted as review.
 
 **Task completion evidence:** The dispatch-count assertion, author-output capability tests, governing-input assertion, invalid-critique block, and prompt-scan test failing when the constraint sentence is removed.
+
+
+#### Outcome, 2026-09-02
+
+Implemented on `master`, uncommitted at the operator's instruction. New:
+`src/self-critique.ts` (the shape and its validator) and
+`test/self-critique.test.ts`. The plan's file list named no new module; one
+result shape shared by both stages needs somewhere to live, and putting it in
+`agent-result.ts` would have mixed the envelope contract with a payload
+schema.
+
+**Revision A applied, though this task's step list never carried it.** The
+accepted Task 1 exit decision binds Task 4 to supply the frozen registry's
+specialty list to the self-critique prompt; the steps above were not rewritten
+when the operator accepted that result. Both prompts name the lenses the frozen
+profile's eligible reviewers can seat on the frozen executor, and both stage
+suites prove the stage supplies them rather than only that the builder renders
+them.
+
+**The panel request is validated and retained, and deliberately does not reach
+selection.** Structure only: the fields are present, typed, unique, and ask for
+no more lenses than seats. The `[2, panelSizeMax]` bound, the union with the
+configured required specialties, and the staffing refusal are Task 5's steps,
+stated there. This is the boundary Task 3 crossed by wiring a frozen value into
+the nearest similarly named loop, and the same reasoning applies: a value that
+is validated is not thereby active.
+
+**Both authors gained one output each**, `spec-self-critique` and
+`plan-self-critique`; neither may produce the other's, and no reviewer may
+produce either (hazard 14). The capability is read from the frozen profile and
+refused before any dispatch, so a misconfigured author costs nothing.
+
+**Verified:** `npm run typecheck` clean; `npm test` 524 tests, 523 pass, 1
+skip, 0 fail (494/493/1 at `5d63726`); `npm run check:docs` exit 0, 36
+warnings, unchanged. Eleven break-and-restore mutations against the new guards:
+nine detected first time, two only after the attack itself was corrected — one
+had mutated a line downstream of the guard it meant to remove, and one had run
+only the whole-file source scan, which cannot localize a sentence both prompts
+carry. Independent review in `2026-09-02-code-review.md`: three findings, all
+applied, each proven by the mutation that exposed it.
+
+**Not done here, by scope:** nothing reads the retained panel request, no round
+count was activated, and `LEGACY_CLOSURE_PASSES` is untouched.
 
 ### Task 5: Author-proposed panel, deterministic staffing
 
