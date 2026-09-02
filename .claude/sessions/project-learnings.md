@@ -48,8 +48,10 @@ Each has an auto-memory file with line numbers and reproduction.
 
 **Open and deferred:**
 
-- `974eec0`, `578d0eb`, and `afbbfef` are unpushed. Pushing was offered and
-  not requested.
+- **Nothing has been pushed since `5d63726`**, which is where `origin/master`
+  still points. Every commit above it is local. Pushing was offered and not
+  requested; a compaction commit cannot name its own hash, so count with
+  `git log origin/master..master` rather than trusting a list here.
 - `docs/features/step6-trust-boundary/plan.md` names
   `.claude/sessions/2026-08-31-debug-implementer-mutates-worktree.md` in four
   places, including "committed as the evidence record". That file was never
