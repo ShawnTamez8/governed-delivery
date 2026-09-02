@@ -3,24 +3,12 @@ import type { AgentDefinition } from "./agents.ts";
 /**
  * The author prompt: role, the design document verbatim, the AgentResult
  * contract with every constrained field stated, and the spec document
- * schema. The revision variant opens with a `## Revision` heading carrying
- * the open material findings. A pure function of its inputs.
+ * schema. The draft only — revision is the reconciliation dispatch's job
+ * (step 5b Task 6), which carries the findings with their reports and asks
+ * for typed decisions rather than a bare rewrite. A pure function of its
+ * inputs.
  */
-export function buildSpecAuthorPrompt(
-  agent: AgentDefinition,
-  designContent: string,
-  context?: { findingsSummary?: string }
-): string {
-  const revision = context?.findingsSummary
-    ? `## Revision
-
-The previous spec was reviewed and these material findings remain open. Address
-or dispute each one in the revised spec:
-
-${context.findingsSummary}
-
-`
-    : "";
+export function buildSpecAuthorPrompt(agent: AgentDefinition, designContent: string): string {
   return `you are the spec author
 
 Produce the specification document for the design below. No git operations
@@ -37,7 +25,7 @@ The specification document schema is:
 - a ## Declared artifacts section: one repo-relative path per line
 - an ## Acceptance criteria section: one criterion per list line
 
-${revision}Design document:
+Design document:
 
 ${designContent}`;
 }
@@ -176,30 +164,55 @@ ${specContent}`;
 
 /**
  * The reviewer prompt: role (naming the agent id and its specialty lens),
- * the spec content verbatim, and the finding contract with every
- * constrained field stated — severity values, location, and the intentKey
- * shape (lowercase kebab-case, at most 64 characters). Findings travel in
- * the AgentResult's proposedContentChanges.findings.
+ * both governing documents verbatim, and the finding contract with every
+ * constrained field stated — severity values, classification, the
+ * classification-dependent location syntax, and the intentKey shape
+ * (lowercase kebab-case, at most 64 characters). Findings travel in the
+ * AgentResult's proposedContentChanges.findings.
+ *
+ * The specialty boundary is stated as a report-only rule, not a lens hint:
+ * a reviewer told to read "through" its lens still reports everything it
+ * notices, and the panel's independence claim is per-specialty. The
+ * reconciler's ability to reject an out-of-specialty report is the
+ * backstop, not the primary control (step 5b Task 6).
  */
-export function buildSpecReviewPrompt(agent: AgentDefinition, specContent: string): string {
+export function buildSpecReviewPrompt(
+  agent: AgentDefinition,
+  designContent: string,
+  specContent: string
+): string {
   return `you are the spec reviewer ${agent.id} with specialty ${agent.specialty ?? "general review"}
 
-Review the specification below through your specialty lens.
+Report only findings within your specialty: ${agent.specialty ?? "general review"}. Judge the specification below against the design document it was written from. A concern outside your specialty must not be reported; other lenses will review it. An empty findings array is a valid result when you have no findings within your specialty.
 
 Return exactly a JSON AgentResult object with this shape; your findings
 travel in the AgentResult's proposedContentChanges.findings:
-{"status": "proposed", "agent": "${agent.id}", "role": "reviewer", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"findings": [{"severity": "...", "location": "...", "intentKey": "...", "subject": "..."}]}}
+{"status": "proposed", "agent": "${agent.id}", "role": "reviewer", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"findings": [{"severity": "...", "classification": "...", "location": "...", "intentKey": "...", "subject": "..."}]}}
 
 Each finding has:
 - severity one of low, medium, high, critical
-- location: a section heading or artifact path from the spec
+- classification: current_artifact when the defect is in the specification
+  below; upstream when the specification cannot be corrected because its
+  governing design leaves the decision unmade
+- location, by classification:
+  - current_artifact: a real section heading or declared artifact path from
+    the specification below
+  - upstream: exactly upstream:design:<decision-key>, where <decision-key>
+    is lowercase kebab-case within 64 characters and names the absent
+    decision or obligation — never require or invent a heading for an
+    omission, and never use an upstream location for a current_artifact
+    concern
 - intentKey: lowercase kebab-case, at most 64 characters, describing the
   concern type
 - subject: one sentence naming the concern
 
 Output the JSON object directly, with no surrounding prose, no markdown
-fences, and no commentary. Concerns you do not have are represented by an
-empty findings array, not by prose.
+fences, and no commentary. Concerns within your specialty that you do not
+have are represented by an empty findings array, not by prose.
+
+Design document:
+
+${designContent}
 
 Specification:
 
@@ -225,19 +238,8 @@ export function buildPlanAuthorPrompt(
   agent: AgentDefinition,
   specContent: string,
   specHash: string,
-  scope: string[],
-  context?: { findingsSummary?: string }
+  scope: string[]
 ): string {
-  const revision = context?.findingsSummary
-    ? `## Revision
-
-The previous plan was reviewed and these material findings remain open. Address
-or dispute each one in the revised plan:
-
-${context.findingsSummary}
-
-`
-    : "";
   return `you are the plan author ${agent.id}
 
 Produce the implementation plan for the approved specification below.
@@ -268,7 +270,7 @@ refused by the gate, so name only these:
 
 ${scope.map((p) => `- ${p}`).join("\n")}
 
-${revision}Approved specification:
+Approved specification:
 
 ${specContent}`;
 }
@@ -358,11 +360,13 @@ ${planContent}`;
 
 /**
  * The plan reviewer prompt: role, both documents, and the finding contract
- * with every constrained field stated.
+ * with every constrained field stated — severity values, classification, the
+ * classification-dependent location syntax, and the intentKey shape.
  *
  * The full envelope shape is spelled out because the step-3 smoke showed a
  * reviewer returns a bare findings object until the prompt states the whole
- * thing.
+ * thing. The specialty boundary is the same report-only rule the spec
+ * reviewer prompt states, for the same reason.
  */
 export function buildPlanReviewPrompt(
   agent: AgentDefinition,
@@ -371,24 +375,32 @@ export function buildPlanReviewPrompt(
 ): string {
   return `you are the plan reviewer ${agent.id} with specialty ${agent.specialty ?? "general review"}
 
-Review the plan below against the specification it was written from, through
-your specialty lens. Judge whether the plan's tasks and coverage actually
-deliver the specification's acceptance criteria.
+Report only findings within your specialty: ${agent.specialty ?? "general review"}. Review the plan below against the specification it was written from, and judge whether the plan's tasks and coverage actually deliver the specification's acceptance criteria. A concern outside your specialty must not be reported; other lenses will review it. An empty findings array is a valid result when you have no findings within your specialty.
 
 Return exactly a JSON AgentResult object with this shape; your findings
 travel in the AgentResult's proposedContentChanges.findings:
-{"status": "proposed", "agent": "${agent.id}", "role": "reviewer", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"findings": [{"severity": "...", "location": "...", "intentKey": "...", "subject": "..."}]}}
+{"status": "proposed", "agent": "${agent.id}", "role": "reviewer", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"findings": [{"severity": "...", "classification": "...", "location": "...", "intentKey": "...", "subject": "..."}]}}
 
 Each finding has:
 - severity one of low, medium, high, critical
-- location: a section heading, task, or artifact path from the plan
+- classification: current_artifact when the defect is in the plan below;
+  upstream when the plan cannot be corrected because its governing
+  specification leaves the decision unmade
+- location, by classification:
+  - current_artifact: a real section heading, task, or artifact path from
+    the plan below
+  - upstream: exactly upstream:specification:<decision-key>, where
+    <decision-key> is lowercase kebab-case within 64 characters and names
+    the absent decision or obligation — never require or invent a heading
+    for an omission, and never use an upstream location for a
+    current_artifact concern
 - intentKey: lowercase kebab-case, at most 64 characters, describing the
   concern type
 - subject: one sentence naming the concern
 
 Output the JSON object directly, with no surrounding prose, no markdown
-fences, and no commentary. Concerns you do not have are represented by an
-empty findings array, not by prose.
+fences, and no commentary. Concerns within your specialty that you do not
+have are represented by an empty findings array, not by prose.
 
 Plan:
 
@@ -397,6 +409,262 @@ ${planContent}
 Specification:
 
 ${specContent}`;
+}
+
+/**
+ * The findings a reconciliation dispatch answers: the canonical finding id
+ * and every immutable per-reviewer report that sits on it, with each
+ * report's severity and classification intact. The stage builds this from
+ * the round's panel output; the builder renders it.
+ */
+export interface ReconciliationFindingInput {
+  findingId: number;
+  reports: {
+    reviewerId: string;
+    severity: string;
+    classification: string;
+    location: string;
+    intentKey: string;
+    subject: string;
+  }[];
+}
+
+/**
+ * The findings block both reconciliation prompts carry. The block shape is a
+ * contract: the harness fixtures scrape `finding <id>` and the per-report
+ * `severity <x>, classification <y>` pairs out of it, so a rendering change
+ * changes the fixtures. An empty round renders the none-line, which the
+ * fixtures read the same way they read zero ids.
+ */
+function renderFindingsBlock(findings: ReconciliationFindingInput[]): string {
+  if (findings.length === 0) {
+    return `none were reported this round.`;
+  }
+  return findings
+    .map(
+      (finding) =>
+        `- finding ${finding.findingId}\n${finding.reports
+          .map(
+            (report) =>
+              `  - report from ${report.reviewerId}: severity ${report.severity}, classification ${report.classification}, location ${report.location}, intentKey ${report.intentKey}, subject ${report.subject}`
+          )
+          .join("\n")}`
+    )
+    .join("\n");
+}
+
+/**
+ * The decision contract both reconciliation prompts state, parameterized by
+ * the governing source's name and the artifact's normative nodes. One block,
+ * two callers — the two prompts differ in which document they reconcile, not
+ * in what a decision is. Hazard 3: every constrained field the validator
+ * enforces is stated where it is requested, including which fields are
+ * forbidden on which dispositions.
+ *
+ * `exampleDecisions` is rendered from the round's own findings — an example
+ * `"findingId": 1` in a round whose canonical ids do not include 1 is a value
+ * the validator is guaranteed to refuse, which is the same defect the panel
+ * size example carried until Task 5 fixed it. One structural entry is
+ * advertised per canonical finding: an array showing only the first id in a
+ * multi-finding round would be an incomplete envelope the validator refuses
+ * for every omitted id, and the model copies the array it is shown. A round
+ * with no findings advertises an empty decisions list, which is the only
+ * envelope that validates against zero canonical ids.
+ */
+function reconciliationDecisionContract(
+  sourceName: string,
+  normativeNodes: string,
+  exampleDecisions: string
+): string {
+  return `The decisions list has exactly one entry per finding id listed below, no
+more and no fewer. Each decision has:
+- findingId: the finding id it answers
+- disposition: one of addressed, rejected_with_rationale, upstream_follow_up,
+  upstream_blocking, cannot_determine
+- rationale: what artifact change addresses the finding, or why the cited
+  source defeats it. The system checks your citations textually and the
+  artifact mechanically; your explanation is retained as evidence of the
+  judgement those checks cannot make.
+- changedLocations: the locations in the revised artifact you changed to
+  answer this finding (section headings, task lines, or artifact paths).
+  Empty when you change nothing, as for cannot_determine.
+
+For disposition rejected_with_rationale you must also supply:
+- grounding: {"source": "${sourceName}", "location": "<heading in the ${sourceName} document>", "excerpt": "<that document's exact words>"}
+  source is always ${sourceName} — the artifact under review cannot ground
+  its own rejection. The system checks that the excerpt occurs verbatim in
+  the ${sourceName} document below; it does not check whether the excerpt
+  logically supports your rejection.
+
+For disposition addressed you must also supply, for every ${normativeNodes}
+your revision adds or replaces, exactly one entry in:
+- normativeChanges: [{"artifactLocation": "<the section heading>", "artifactText": "<the added node's exact text>", "grounding": {...}}]
+  The system derives the set of added normative nodes itself. A node that is
+  missing, duplicated, or not in that set, or whose grounding does not occur
+  in the ${sourceName} document, makes the decision cannot_determine. The
+  added half of a replacement counts as an added node.
+
+For disposition upstream_follow_up or upstream_blocking you must also supply:
+- proposal: {"title": "...", "problem": "...", "whyUpstream": "..."}
+  A concern whose cause is the ${sourceName} document goes upstream. The
+  system derives the impact from your disposition: upstream_blocking blocks the run, upstream_follow_up does not. Do not return an impact field.
+
+grounding is allowed only on rejected_with_rationale; normativeChanges is
+allowed only on addressed; proposal is allowed only on upstream_follow_up and
+upstream_blocking. Return none of those fields on any other disposition, and
+return no field at all that your disposition does not list.
+
+cannot_determine carries none of grounding, normativeChanges, or proposal.`;
+}
+
+/**
+ * The example decisions array both reconciliation prompts advertise: one
+ * structural entry per canonical finding id of the round, or an empty array
+ * when the round has none. The complete array is the only envelope a model
+ * can copy that still validates — every id it names is one the validator
+ * accepts, and no canonical id is omitted.
+ */
+function exampleDecisionsFor(findings: ReconciliationFindingInput[]): string {
+  return findings.length > 0
+    ? `[${findings
+        .map(
+          (finding) =>
+            `{"findingId": ${finding.findingId}, "disposition": "...", "rationale": "...", "changedLocations": ["..."]}`
+        )
+        .join(", ")}]`
+    : `[]`;
+}
+
+/**
+ * The spec reconciliation prompt: the governing design, the complete
+ * specification, the round's canonical finding ids with every immutable
+ * per-reviewer report, and the decision contract. The author's answer is the
+ * revised artifact plus one typed decision per finding.
+ *
+ * The no-invention rule is aimed at the measured defect: the Task 1
+ * prototype's author answered a current_artifact finding by adding an
+ * acceptance criterion the design never states, and passed the artifact
+ * gate. The normative-delta grounding contract is the deterministic
+ * mitigation (operator finding E), and this prompt is where the author
+ * learns what it must supply for the checks to accept the answer.
+ */
+export function buildSpecReconcilePrompt(
+  agent: AgentDefinition,
+  designContent: string,
+  specContent: string,
+  findings: ReconciliationFindingInput[]
+): string {
+  const exampleDecisions = exampleDecisionsFor(findings);
+  return `you are the spec author ${agent.id}
+
+Reconcile the findings below against the specification you wrote. No git
+operations are involved: you are revising a specification document, not code
+changes.
+
+Return exactly a JSON AgentResult object with this shape; the revised
+specification and your decisions travel together in the AgentResult's
+proposedContentChanges:
+{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"spec": "<the full revised specification markdown>", "decisions": ${exampleDecisions}}}
+
+status must be one of proposed, blocked, failed. Output the JSON object
+directly, with no surrounding prose, no markdown fences, and no commentary.
+
+${reconciliationDecisionContract("design", "declared artifact or acceptance criterion", exampleDecisions)}
+
+You may address a finding only by a change whose added normative nodes you
+can ground in the design below. A reviewer calling a concern current_artifact
+does not authorize you to add an obligation the design does not contain.
+Sharpening the specification, completing it, and making it consistent is the
+work; inventing a requirement the design never states is not, however
+reasonable that requirement looks. Where the design leaves a decision open,
+route the concern upstream with a complete proposal candidate, or return
+cannot_determine.
+
+The revised specification must satisfy the same document schema as before:
+- frontmatter with feature and change_kind (one of feature, defect_fix)
+- a ## Declared artifacts section: one repo-relative path per line
+- an ## Acceptance criteria section: one criterion per list line
+A revised specification that does not validate blocks the run.
+
+Design document:
+
+${designContent}
+
+The specification under review:
+
+${specContent}
+
+Findings to reconcile:
+
+${renderFindingsBlock(findings)}`;
+}
+
+/**
+ * The plan reconciliation prompt: the approved specification, the complete
+ * plan, the findings, and the same decision contract with the plan's
+ * governing source and normative nodes. It restates `plan_for` and the
+ * approved scope for the same reason the self-critique prompt does — the
+ * reconciled plan is gated exactly like the draft.
+ */
+export function buildPlanReconcilePrompt(
+  agent: AgentDefinition,
+  specContent: string,
+  planContent: string,
+  specHash: string,
+  scope: string[],
+  findings: ReconciliationFindingInput[]
+): string {
+  const exampleDecisions = exampleDecisionsFor(findings);
+  return `you are the plan author ${agent.id}
+
+Reconcile the findings below against the plan you wrote. No git operations
+are involved: you are revising a plan document, not code changes.
+
+Return exactly a JSON AgentResult object with this shape; the revised plan
+and your decisions travel together in the AgentResult's
+proposedContentChanges:
+{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"plan": "<the full revised plan markdown>", "decisions": ${exampleDecisions}}}
+
+status must be one of proposed, blocked, failed. Output the JSON object
+directly, with no surrounding prose, no markdown fences, and no commentary.
+
+${reconciliationDecisionContract("specification", "task or coverage line", exampleDecisions)}
+
+You may address a finding only by a change whose added normative nodes you
+can ground in the approved specification below. A reviewer calling a concern
+current_artifact does not authorize you to add an obligation the
+specification does not contain. Sharpening the plan, completing it, and
+making it consistent is the work; inventing a requirement the specification
+never states is not, however reasonable that requirement looks. Where the
+specification leaves a decision open, route the concern upstream with a
+complete proposal candidate, or return cannot_determine.
+
+The revised plan must satisfy the same document schema as before:
+- frontmatter with feature and plan_for
+- plan_for must be exactly: ${specHash}
+- a ## Tasks section: one task per list line
+- a ## Coverage section: one line per acceptance criterion, in one of two
+  forms:
+    <criterion> -> <artifact path>
+    <criterion> -> not_applicable: <rationale> / <alternative verification>
+  not_applicable requires both a rationale and an alternative verification.
+Every artifact path you name in ## Coverage must be one of the approved scope
+paths below. A plan promising an artifact outside the approved scope is
+refused by the gate, so name only these:
+
+${scope.map((p) => `- ${p}`).join("\n")}
+
+Approved specification:
+
+${specContent}
+
+The plan under review:
+
+${planContent}
+
+Findings to reconcile:
+
+${renderFindingsBlock(findings)}`;
 }
 
 /**

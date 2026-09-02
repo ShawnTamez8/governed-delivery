@@ -43,7 +43,7 @@ These were settled during reconciliation of the four review records and are bind
 - **Self-critique and reconciliation are `agent_run` rows.** "Same author" means the same frozen agent definition and the same author model mapping, dispatched separately and retained separately. It is never a hidden continuation, an unrecorded prompt, or a reused transcript.
 - **The panel request rides on the self-critique result.** One dispatch returns critique, revised artifact, and panel request as one shape, because a second dispatch would spend money to carry three fields. The request is a constrained model-returned field: an integer within `[2, panelSizeMax]` and a unique list of specialty strings. Configured required specialties count inside the requested size; the unique union of required and requested specialties may not exceed it. Missing, duplicate, non-string, out-of-range, or over-capacity values abort the stage; they never clamp, truncate, or default.
 - **Reviewers are not expected to return zero findings.** The existing behaviour that resolves findings absent from a later panel round has no meaning under a default of one round and is removed rather than left dormant.
-- **Findings are round-scoped canonical identities with immutable reports.** Identity is `(stage_id, round, intent_key, location)`. Every panel member's report is a separate immutable child carrying that report's severity, classification, subject, and `agent_run`; the author supplies one decision keyed to the canonical finding id. No classification, severity, or subject ratchets across rounds or panel members.
+- **Findings are round-scoped canonical identities with immutable reports.** Identity is `(stage_id, round, intent_key, location)`. Every panel member's report is a separate immutable child carrying that report's severity, classification, subject, and `agent_run`; the author supplies one decision keyed to the canonical finding id. No classification, severity, or subject ratchets across rounds or panel members. Deduplication requires the same location. Classification determines the location shape — a heading for `current_artifact`, the exact token for `upstream` — so a pair that splits one concern by classification cannot share one identity: it is two canonical findings with two decisions, and both reports reach the same reconciliation dispatch unfused (operator decision, 2026-09-02).
 - **Severity stops gating the review stages.** `MATERIAL_THRESHOLD` is read today only by `specReviewGate` (`src/spec-stage.ts:30`) and `planReviewGate` (`src/plan-gate.ts:19`). When reconciliation completeness replaces both, nothing consults it, and section 9 says a value nothing enforces does not belong. Task 3 removes it from `policy.ts` and `buildPolicy()`, or names the surviving consumer that keeps it. Either way the frozen policy shape and its hash change, and that consequence is recorded rather than absorbed.
 - **The disposition vocabulary is `addressed`, `rejected_with_rationale`, `upstream_follow_up`, `upstream_blocking`, and `cannot_determine`.** `addressed` advances only after its normative-delta grounding is complete and the reconciled artifact passes its mechanical gates; hashes and gate results prove what changed and that the artifact is structurally valid, not that the reported concern was semantically cured. `rejected_with_rationale` advances only with a governing source document, location, and exact excerpt that deterministic code matches after normalizing the BOM, CRLF, and runs of whitespace on both sides — the document validator's `normalizeText` alone is not enough, because every governing document here is hard-wrapped and the Task 1 prototype recorded a correct citation failing purely because it spanned a line break; the current artifact is not an accepted grounding source, and a missing or failed match is treated as `cannot_determine`. Exact matching proves textual occurrence, not semantic sufficiency. `upstream_follow_up` requires a proposal candidate, writes a non-binding proposal, and advances. `upstream_blocking` requires the same candidate, writes it, and blocks because filing the missing decision does not make the approved specification implementable. `cannot_determine` forbids a claimed proposal and blocks for a human. No closure panel independently confirms an addressed change or a textually grounded rejection; that residual semantic risk is the explicit cost of the selected author-led flow.
 - **Normative reconciliation deltas are derived, not model-declared.** For a specification, the parsed normative nodes are `declaredArtifacts` and `acceptanceCriteria`; for a plan, they are `tasks` and `coverage`. Deterministic code set-diffs the validated before/after nodes after the same normalization their document parsers use. Every added node — including the added half of a replacement — must appear exactly once in an `addressed` decision's `normativeChanges`, carrying the exact artifact node and `grounding: { source, location, excerpt }`. The current artifact is never an authority source. Deletion-only and prose-only changes do not create a normative node, but their declared changed locations and before/after hashes remain retained. An extra, omitted, duplicated, wrongly sourced, or unmatched normative change is handled as `cannot_determine`; code does not invent a proposal the author failed to supply.
@@ -600,22 +600,100 @@ which is the whole of what Task 5 promised.
 
 **Steps:**
 
-- [ ] Define the reviewer-report result before reconciliation depends on it. Each report carries canonical `location` and `intentKey`, plus that reviewer's `severity`, `classification: current_artifact | upstream`, and `subject`. Reject duplicate canonical identities within one reviewer's result. Preserve the complete report with its producing `agent_run`; do not upsert one reviewer's fields over another's.
-- [ ] Change both reviewer prompts from “through your specialty lens” to “report only findings within specialty `<specialty>`”. State that an empty in-specialty result is valid and that out-of-specialty concerns must not be reported. Pin the exact boundary in source and generated-prompt tests; the reconciler's ability to reject an out-of-specialty report remains a backstop, not the primary control.
-- [ ] Supply the governing upstream input everywhere it is needed: `buildSpecReviewPrompt` receives design plus specification, and specification reconciliation receives both; plan review and reconciliation continue to receive approved specification plus plan. This is the evidence used by the no-invention prompt and both addressed-change and rejection-grounding validators.
-- [ ] Define `location` beside `classification` in both reviewer prompts. `current_artifact` uses a real heading, task, or artifact path from the artifact under review. `upstream` uses exactly `upstream:design:<decision-key>` for specification review or `upstream:specification:<decision-key>` for plan review; `<decision-key>` is lowercase kebab-case within 64 characters and names the absent decision or obligation. Never require or invent a heading for an omission.
-- [ ] Add explicit `spec-reconciliation` and `plan-reconciliation` output capabilities to the two author definitions and assert that reviewers cannot produce either result kind.
-- [ ] Define the reconciliation result: the revised artifact plus exactly one decision per canonical finding id, using the five-value vocabulary. Every decision requires a rationale and changed locations. `rejected_with_rationale` also requires `grounding: { source, location, excerpt }`. An `addressed` decision also requires `normativeChanges: [{ artifactLocation, artifactText, grounding }]` exactly when the deterministic before/after parse adds or replaces a normative node. `source` is exactly `design` for specification reconciliation and `specification` for plan reconciliation, never the current artifact. Deterministic code collapses whitespace, exact-matches the source excerpt, and set-compares the returned `artifactText` values with every added parsed node. An incorrect source, missing excerpt, failed match, or extra/omitted/duplicate node is handled as `cannot_determine`, not accepted as prose. Name validators according to those textual and structural guarantees and do not claim they verify that an excerpt semantically supports a change.
-- [ ] Define a conditional `proposal` candidate inside each decision. It is required exactly for `upstream_follow_up` and `upstream_blocking`, forbidden for the other dispositions, and carries title, problem statement, and why the concern is upstream. Impact is not model output: code derives `follow_up` from `upstream_follow_up` and `blocking_dependency` from `upstream_blocking`. Refuse extras, duplicates, omissions, unknown dispositions, misplaced proposal fields, and incomplete grounding with named errors.
-- [ ] Write the reconciliation prompt with the governing input, complete artifact, canonical finding ids, and every immutable per-reviewer report with its severity and classification intact. State that the author may address only a change whose added normative nodes it can ground, ground a rejection, route an unsupported obligation upstream with a complete proposal candidate, or return `cannot_determine`. State explicitly that a reviewer calling a concern `current_artifact` does not authorize the author to add an obligation absent from the governing input. Require the author to explain what artifact change addresses a finding or why the cited source defeats it, while keeping that explanation as retained semantic evidence rather than mislabeling it as deterministic proof.
-- [ ] Rerun the mechanical artifact gates on the reconciled artifact, and record before and after artifact hashes on the reconciliation event exactly as `plan.gate.pass` already records `planHash=` (`src/plan-stage.ts:433`), so the evidence survives a later run overwriting the file.
-- [ ] Preserve report pairs. Add the mixed case — one reviewer reporting `critical` on the current artifact, another reporting `low` upstream on the same canonical concern — and prove one canonical finding plus two immutable reports reach the reconciler unfused, and that no stored value pairs a severity with a classification no reviewer returned.
+- [x] Define the reviewer-report result before reconciliation depends on it. Each report carries canonical `location` and `intentKey`, plus that reviewer's `severity`, `classification: current_artifact | upstream`, and `subject`. Reject duplicate canonical identities within one reviewer's result. Preserve the complete report with its producing `agent_run`; do not upsert one reviewer's fields over another's.
+- [x] Change both reviewer prompts from “through your specialty lens” to “report only findings within specialty `<specialty>`”. State that an empty in-specialty result is valid and that out-of-specialty concerns must not be reported. Pin the exact boundary in source and generated-prompt tests; the reconciler's ability to reject an out-of-specialty report remains a backstop, not the primary control.
+- [x] Supply the governing upstream input everywhere it is needed: `buildSpecReviewPrompt` receives design plus specification, and specification reconciliation receives both; plan review and reconciliation continue to receive approved specification plus plan. This is the evidence used by the no-invention prompt and both addressed-change and rejection-grounding validators.
+- [x] Define `location` beside `classification` in both reviewer prompts. `current_artifact` uses a real heading, task, or artifact path from the artifact under review. `upstream` uses exactly `upstream:design:<decision-key>` for specification review or `upstream:specification:<decision-key>` for plan review; `<decision-key>` is lowercase kebab-case within 64 characters and names the absent decision or obligation. Never require or invent a heading for an omission.
+- [x] Add explicit `spec-reconciliation` and `plan-reconciliation` output capabilities to the two author definitions and assert that reviewers cannot produce either result kind.
+- [x] Define the reconciliation result: the revised artifact plus exactly one decision per canonical finding id, using the five-value vocabulary. Every decision requires a rationale and changed locations. `rejected_with_rationale` also requires `grounding: { source, location, excerpt }`. An `addressed` decision also requires `normativeChanges: [{ artifactLocation, artifactText, grounding }]` exactly when the deterministic before/after parse adds or replaces a normative node. `source` is exactly `design` for specification reconciliation and `specification` for plan reconciliation, never the current artifact. Deterministic code collapses whitespace, exact-matches the source excerpt, and set-compares the returned `artifactText` values with every added parsed node. An incorrect source, missing excerpt, failed match, or extra/omitted/duplicate node is handled as `cannot_determine`, not accepted as prose. Name validators according to those textual and structural guarantees and do not claim they verify that an excerpt semantically supports a change.
+- [x] Define a conditional `proposal` candidate inside each decision. It is required exactly for `upstream_follow_up` and `upstream_blocking`, forbidden for the other dispositions, and carries title, problem statement, and why the concern is upstream. Impact is not model output: code derives `follow_up` from `upstream_follow_up` and `blocking_dependency` from `upstream_blocking`. Refuse extras, duplicates, omissions, unknown dispositions, misplaced proposal fields, and incomplete grounding with named errors.
+- [x] Write the reconciliation prompt with the governing input, complete artifact, canonical finding ids, and every immutable per-reviewer report with its severity and classification intact. State that the author may address only a change whose added normative nodes it can ground, ground a rejection, route an unsupported obligation upstream with a complete proposal candidate, or return `cannot_determine`. State explicitly that a reviewer calling a concern `current_artifact` does not authorize the author to add an obligation absent from the governing input. Require the author to explain what artifact change addresses a finding or why the cited source defeats it, while keeping that explanation as retained semantic evidence rather than mislabeling it as deterministic proof.
+- [x] Rerun the mechanical artifact gates on the reconciled artifact, and record before and after artifact hashes on the reconciliation event exactly as `plan.gate.pass` already records `planHash=` (`src/plan-stage.ts:433`), so the evidence survives a later run overwriting the file.
+- [x] Preserve report pairs. Deduplication requires the same location (operator decision, 2026-09-02): a same-location pair with differing severities is one canonical finding with two immutable reports, and the mixed case — one reviewer reporting `critical` on the current artifact, another reporting `low` upstream on the same concern — is two canonical findings and two decisions, because classification determines the location shape. Prove both arrive at the reconciler unfused, and that no stored value pairs a severity with a classification no reviewer returned.
 
 **Verify:** `node --test test/prompts.test.ts test/spec-stage.test.ts test/plan-stage.test.ts`; `npm run typecheck`.
 
 **Expected:** Every canonical finding id has every reviewer report and exactly one retained typed decision; every added parsed normative node is claimed once by an `addressed` decision and textually grounded in the governing input; malformed, ungrounded, unaccounted, or conditionally incomplete reconciliation fails closed; every actor receives the governing input; no prompt authorizes minting an obligation; no aggregation invents or erases a report; and tests and names do not overstate textual or mechanical checks as semantic verification.
 
 **Task completion evidence:** The extras/duplicates/omissions/unknown and conditional-field refusals; exact-set addressed-node checks; addressed and rejection grounding matches and mismatches; the design-present spec-review assertion; mixed-pair preservation; and each prompt-scan test failing when its sentence is removed.
+
+#### Completion record, 2026-09-02
+
+The reconciliation contract and its prompts shipped on `master`, uncommitted:
+`src/reconciliation.ts` (new — the plan's file list names no new module; Task 4
+set the precedent and one shape shared by both stages needs somewhere to
+live), both reviewer prompts rewritten to the specialty-only boundary with
+classification and the classification-dependent location syntax, both
+reconciliation prompts, `spec-reconciliation` / `plan-reconciliation` on the
+author definitions, and both stages running panel → reconciliation → gate once
+per legacy pass with before/after artifact hashes retained on
+`spec.reconcile.record` / `plan.reconcile.record`. No dispatch was paid for:
+every test runs against the fixture executors.
+
+**The refusal/convert boundary.** Structure errors — a missing or misplaced
+field, an unknown disposition, a decision for a finding that does not exist or
+missing for one that does — refuse with a named cause. Content failures — a
+grounding whose excerpt does not occur in the governing input, a normative
+claim that is extra, duplicated, or unmatched — rewrite the decision to
+`cannot_determine`, drop the conditional fields that no longer apply, append a
+bracketed note to the author's retained rationale, and record the conversion
+on the event. That is this plan's "missing or unmatched grounding becomes
+`cannot_determine`" made precise, and the line between step 6's conversion
+list and step 7's refusal list that the plan leaves implicit.
+
+**The changed-locations requirement.** The plan binds `changedLocations` on
+every decision though the Task 1 prototype never returned one and its
+validator never checked one. This implementation requires it and the prompt
+requests it; `cannot_determine` may carry an empty list — it changes nothing.
+
+**The mixed pair cannot share one canonical identity through the report flow —
+operator decision, 2026-09-02.** A report's classification determines its
+location, so a mixed-classification pair is always two canonical findings with
+two decisions; deduplication requires the same location. The stage-level tests
+prove both halves the operator's decision requires: a same-location pair with
+differing severities (one canonical row, two reports) and the
+mixed-classification split (two rows, two reports), both arriving at the
+reconciler unfused with no fused severity/classification pair anywhere in the
+record. Task 7 proves the same at the storage layer and **never constructs a
+one-canonical-two-mixed-report row** — the report contract cannot produce that
+state, and a fixture asserting it would prove a shape no run can reach (hazard
+4). Section 13 and this plan's Task 6 step 10, assumption 46, and Task 7 steps
+were amended accordingly.
+
+**One reconciliation per legacy pass, even a clean one.** The phase order is
+panel → reconciliation → gate per round, so the reconciler is the actor that
+confirms an empty findings set; Task 9's dispatch assertions have the same
+shape. Clean-round dispatch counts moved by one, and the tests state it.
+
+**The legacy severity gate still decides the run.** Decisions are validated,
+converted where the deterministic checks fail, and retained on the reconcile
+event; blocking on `cannot_determine` and `upstream_blocking` is Task 9's
+gate, and the unclaimed-node count is audited for it to read.
+
+**Independent review in `2026-09-02-task6-code-review.md`: two findings, both
+applied and proven by reintroducing each defect.** Finding 1: both
+reconciliation prompts advertised a fixed example `"findingId": 1`, a value
+the validator refuses whenever the round's canonical ids do not include 1 —
+reproduced against `validateReconciliation` before it was accepted. The
+example is now derived from the round's own findings, an empty round
+advertises the only envelope that validates against zero canonical ids, and a
+test pins both. Finding 2: the base fixtures gave every decision the same
+normative claim, so the happy path silently carried a converted decision that
+no test observed — also reproduced. The fixtures now claim once and only when
+they actually revise, and both happy paths assert the round-1 reconcile record
+carries no conversions and no unclaimed nodes.
+
+**Verified:** `npm run typecheck` clean; `npm test` 600 tests, 599 pass, 1
+recorded skip, 0 fail (552/551/1 at Task 5); `npm run check:docs` exit 0 with
+36 warnings, unchanged. Thirty-three break-and-restore mutations across
+`src/reconciliation.ts`, `src/prompts.ts`, `src/agents/`, `src/spec-stage.ts`,
+`src/plan-stage.ts`, and the two harness fixtures, each detected by its mapped
+test and restored byte-identical by hash.
+
+**Not done here, by scope:** no round count was activated and both
+`LEGACY_CLOSURE_PASSES` constants are untouched; findings, reports, and
+decisions are not stored yet (Task 7); the gate still decides by severity;
+and no proposal record exists (Task 8).
 
 ### Task 7: Canonical finding, reviewer-report, and reconciliation storage
 
@@ -632,7 +710,7 @@ which is the whole of what Task 5 promised.
 
 - [ ] Replace the lossy `insertFinding` contract with two writes. `upsertCanonicalFinding(stageId, round, intentKey, location)` returns the exact canonical row using `RETURNING id` or identity re-select. `insertFindingReport(findingId, agentRunId, severity, classification, subject)` inserts immutable evidence and refuses a duplicate `(finding_id, agent_run_id)`. Add the three-insert regression against the canonical return path because the two-insert case passes by coincidence.
 - [ ] Give the three entities one responsibility each. `finding` owns `(stage_id, round, intent_key, location)` and a stable id; `finding_report` owns reviewer `agent_run_id`, severity, classification, and subject; `finding_decision` owns one reconciling `agent_run_id`, disposition, rationale, conditional grounding, and before/after artifact hashes. Task 8's proposal record links upstream candidate content to its decision and source finding ids. Enforce `UNIQUE (stage_id, round, intent_key, location)`, `UNIQUE (finding_id, agent_run_id)`, and `UNIQUE (finding_id)` respectively.
-- [ ] Read canonical findings together with all reports before reconciliation. Assert one canonical row and two report rows for the mixed case, and separate canonical rows for the same identity in rounds one and two. Never use an insert return as proof that no second report was created.
+- [ ] Read canonical findings together with all reports before reconciliation. Assert one canonical row and two report rows for a same-location pair whose severities differ, two canonical rows for the mixed-classification pair, and separate canonical rows for the same identity in rounds one and two. Never use an insert return as proof that no second report was created. Do not construct a one-canonical-two-mixed-classification-report row: the report contract cannot produce that state, and a fixture asserting it would prove a shape no run can reach (hazard 4; operator decision, 2026-09-02).
 - [ ] Validate severity, classification, disposition, and conditional-field vocabularies before SQL, importing each from the module that owns it so validators and constraints cannot drift. Do not rank or combine severity in SQL; immutable migration text cannot import `SEVERITY_ORDER` and a fourth copy would go stale silently.
 - [ ] Scope the finding, report, and decision constraint assertions to their final table bodies in both `test/schema.test.ts` and `scripts/doc-check.mjs`, using the pattern already at `test/schema.test.ts:98`, so a rebuild cannot pass on dead migration text.
 - [ ] If the migration rebuilds `finding`: rename, recreate with the new round-scoped identity and every surviving constraint, copy rows with explicit ids under the legacy-row mapping Task 1 recorded, populate their immutable report evidence without manufacturing a second reviewer, drop the old table, and set the user version. Note that explicit-id copying restores the `AUTOINCREMENT` sequence correctly only because nothing in `src/` deletes findings. Do not edit an existing migration or add a permanent default for a field new writes must supply.

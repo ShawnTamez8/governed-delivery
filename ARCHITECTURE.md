@@ -594,9 +594,16 @@ concern. Do not build a behaviour that depends on it.
 **The gate is deterministic, so consensus is not required.** A gate does not ask
 whether reviewers agreed; it asks whether every canonical finding carries
 exactly one retained typed decision whose conditional content is complete and
-valid. Contradictory recommendations from two reviewers are two immutable
-reports on one canonical finding, and the single decision answers both without
-either report being rewritten.
+valid. Contradictory recommendations from two reviewers at the same location
+are two immutable reports on one canonical finding, and the single decision
+answers both without either report being rewritten. Classification determines
+the location shape — `current_artifact` carries a real heading, `upstream` the
+exact token — so a pair that splits one concern by classification cannot share
+a canonical identity: it is two canonical findings with two decisions, and
+every report reaches the same reconciliation dispatch unfused, whatever
+finding it sits on. The storage layer never fabricates a one-canonical
+two-mixed-classification-report row, because the report contract cannot
+produce that state (operator decision, 2026-09-02).
 
 **Nothing resolves its own finding.** The author supplies the disposition and
 the artifact revision; whether that advances the run belongs to the

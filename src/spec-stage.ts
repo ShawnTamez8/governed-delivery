@@ -7,11 +7,23 @@ import { dispatchOnce } from "./dispatch.ts";
 import { validateAgentResult } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import type { AgentDefinition } from "./agents.ts";
-import { SEVERITIES, SEVERITY_ORDER, findingIdentity, normalizeLocation } from "./finding.ts";
+import { SEVERITY_ORDER, findingIdentity } from "./finding.ts";
 import { computeRisk, selectReviewers, staffingShortfall, validatePanelRequest } from "./select.ts";
 import { computeScope, touchesProtected } from "./scope.ts";
-import { buildSpecAuthorPrompt, buildSpecReviewPrompt, buildSpecSelfCritiquePrompt } from "./prompts.ts";
-import { writeSpecDoc, type SpecDoc } from "./spec-doc.ts";
+import {
+  buildSpecAuthorPrompt,
+  buildSpecReconcilePrompt,
+  buildSpecReviewPrompt,
+  buildSpecSelfCritiquePrompt,
+  type ReconciliationFindingInput,
+} from "./prompts.ts";
+import { validateSpecDoc, writeSpecDoc, type SpecDoc } from "./spec-doc.ts";
+import {
+  specNormativeNodes,
+  upstreamPrefixFor,
+  validateReconciliation,
+  validateReviewerReports,
+} from "./reconciliation.ts";
 import { validateSelfCritique } from "./self-critique.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
@@ -42,13 +54,6 @@ export function specReviewGate(
   return openMaterial.length === 0
     ? { pass: true }
     : { pass: false, openMaterialIds: openMaterial.map((f) => f.id) };
-}
-
-interface FindingShape {
-  location?: unknown;
-  intentKey?: unknown;
-  severity?: unknown;
-  subject?: unknown;
 }
 
 /**
@@ -195,6 +200,13 @@ export async function runSpecStage(
         specStage.id,
         "spec.selfcritique.failed",
         `configured agent ${author.id} does not allow spec-self-critique output`
+      );
+    }
+    if (!author.outputs.includes("spec-reconciliation")) {
+      return abort(
+        specStage.id,
+        "spec.reconcile.failed",
+        `configured agent ${author.id} does not allow spec-reconciliation output`
       );
     }
     const authorDispatch = await dispatchOnce(
@@ -407,6 +419,12 @@ export async function runSpecStage(
     const rounds: number = LEGACY_CLOSURE_PASSES;
     for (let round = 1; round <= rounds; round++) {
       const reportedIdentities = new Set<string>();
+      // This round's reports, keyed by canonical identity, in panel order.
+      // They travel to the reconciler unfused: two reviewers reporting one
+      // identity are two reports on one canonical finding, each keeping its
+      // own severity and classification (section 13's no-fusion rule, applied
+      // at the dispatch boundary until Task 7 gives reports their own rows).
+      const roundReports = new Map<string, ReconciliationFindingInput["reports"]>();
       for (const reviewer of panel) {
         if (!reviewer.outputs.includes("findings")) {
           return abort(reviewStage.id, "spec.reviewer.failed", `configured agent ${reviewer.id} does not allow findings output`);
@@ -419,7 +437,7 @@ export async function runSpecStage(
             agent: reviewer.id,
             role: "reviewer",
             requestedModel: reviewModel,
-            prompt: buildSpecReviewPrompt(reviewer, specContent),
+            prompt: buildSpecReviewPrompt(reviewer, design, specContent),
           },
           rootDir
         );
@@ -449,45 +467,38 @@ export async function runSpecStage(
             `reviewer ${reviewer.id} result is missing proposedContentChanges.findings`
           );
         }
-        for (const entry of reviewerContent.findings as unknown[]) {
-          if (entry === null || typeof entry !== "object") {
-            return abort(reviewStage.id, "spec.reviewer.failed", `reviewer ${reviewer.id} finding entry is not an object`);
-          }
-          const f = entry as FindingShape;
-          if (typeof f.location !== "string" || f.location === "") {
-            return abort(reviewStage.id, "spec.reviewer.failed", `reviewer ${reviewer.id} finding is missing a non-empty location`);
-          }
-          if (typeof f.intentKey !== "string" || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(f.intentKey) || f.intentKey.length > 64) {
-            return abort(
-              reviewStage.id,
-              "spec.reviewer.failed",
-              `reviewer ${reviewer.id} finding intentKey ${String(f.intentKey)} is not lowercase kebab-case within 64 characters`
-            );
-          }
-          if (typeof f.severity !== "string" || !SEVERITIES.includes(f.severity)) {
-            return abort(
-              reviewStage.id,
-              "spec.reviewer.failed",
-              `reviewer ${reviewer.id} finding severity ${String(f.severity)} is not one of ${SEVERITIES.join(", ")}`
-            );
-          }
-          if (typeof f.subject !== "string" || f.subject === "") {
-            return abort(reviewStage.id, "spec.reviewer.failed", `reviewer ${reviewer.id} finding is missing a non-empty subject`);
-          }
-          // Store the normalized location: identity derives from the
+        const reports = validateReviewerReports(reviewerContent.findings, {
+          agentId: reviewer.id,
+          upstreamPrefix: upstreamPrefixFor("design"),
+        });
+        if (!reports.ok) {
+          return abort(reviewStage.id, "spec.reviewer.failed", `reviewer ${reviewer.id} result refused: ${reports.reason}`);
+        }
+        for (const report of reports.value) {
+          // The validator normalizes the location: identity derives from the
           // normalized form (section 8), so the DB and the resolution pass
           // key on the same string.
-          const normalized = normalizeLocation(f.location);
           store.insertFinding({
             stageId: reviewStage.id,
             agentRunId: dispatch.agentRunId,
-            severity: f.severity,
-            intentKey: f.intentKey,
-            subject: f.subject,
-            location: normalized,
+            severity: report.severity,
+            intentKey: report.intentKey,
+            subject: report.subject,
+            location: report.location,
           });
-          audit(reviewStage.id, "spec.finding.record", `recorded finding at ${normalized} (${f.intentKey})`);
-          reportedIdentities.add(findingIdentity(f.location, f.intentKey));
+          audit(reviewStage.id, "spec.finding.record", `recorded finding at ${report.location} (${report.intentKey})`);
+          const identity = findingIdentity(report.location, report.intentKey);
+          reportedIdentities.add(identity);
+          const list = roundReports.get(identity) ?? [];
+          list.push({
+            reviewerId: reviewer.id,
+            severity: report.severity,
+            classification: report.classification,
+            location: report.location,
+            intentKey: report.intentKey,
+            subject: report.subject,
+          });
+          roundReports.set(identity, list);
         }
       }
       // Resolution: the panel's re-review resolves, never the author's claim.
@@ -496,6 +507,114 @@ export async function runSpecStage(
           store.updateFindingDisposition(finding.id, "resolved");
           audit(reviewStage.id, "spec.finding.resolved", `finding ${finding.id} resolved by re-review`);
         }
+      }
+      // --- reconciliation: the author's typed answer to this round's findings ---
+      // The phase order (section 12) is panel, then reconciliation, then the
+      // gate, once per round. The legacy severity gate below is still what
+      // decides; the reconciliation dispatch, its validated decisions, and its
+      // retained hashes are what Task 9's decision gate will read.
+      const reconcileFindings: ReconciliationFindingInput[] = [];
+      {
+        const rowsByIdentity = new Map<string, FindingRow>();
+        for (const row of store.getFindings(reviewStage.id)) {
+          rowsByIdentity.set(findingIdentity(row.location, row.intent_key), row);
+        }
+        for (const [identity, reports] of roundReports) {
+          const row = rowsByIdentity.get(identity);
+          if (!row) {
+            return abort(reviewStage.id, "spec.reconcile.failed", `recorded finding for ${identity} is missing from the store`);
+          }
+          reconcileFindings.push({ findingId: row.id, reports });
+        }
+      }
+      const beforeContent = specContent;
+      const reconcileDispatch = await dispatchOnce(
+        store,
+        executor,
+        {
+          stageId: specStage.id,
+          agent: author.id,
+          role: "author",
+          requestedModel: model,
+          prompt: buildSpecReconcilePrompt(author, design, specContent, reconcileFindings),
+        },
+        rootDir
+      );
+      if (!reconcileDispatch.ok) {
+        return abort(reviewStage.id, "spec.reconcile.failed", reconcileDispatch.reason);
+      }
+      const reconcileBody = extractJsonBody(reconcileDispatch.envelope.resultText);
+      if (reconcileBody.kind === "refused") {
+        return abort(reviewStage.id, "spec.reconcile.invalid", `reconciliation body refused: ${reconcileBody.reason}`);
+      }
+      const reconcileResult = validateAgentResult(author.id, reconcileBody.value);
+      if (!reconcileResult.ok) {
+        return abort(reviewStage.id, "spec.reconcile.invalid", `reconciliation result refused: ${reconcileResult.reason}`);
+      }
+      if (reconcileResult.value.status !== "proposed") {
+        return abort(
+          reviewStage.id,
+          "spec.reconcile.failed",
+          `spec author returned status ${reconcileResult.value.status}, not proposed`
+        );
+      }
+      const reconcileContent = reconcileResult.value.proposedContentChanges as
+        | { spec?: unknown; decisions?: unknown }
+        | undefined;
+      if (typeof reconcileContent?.spec !== "string") {
+        return abort(reviewStage.id, "spec.reconcile.invalid", "reconciliation result is missing proposedContentChanges.spec");
+      }
+      const reconciledDoc = validateSpecDoc(reconcileContent.spec);
+      if (!reconciledDoc.ok) {
+        return abort(
+          reviewStage.id,
+          "spec.reconcile.invalid",
+          `spec reconciliation document refused: ${reconciledDoc.reason}`
+        );
+      }
+      const reconciliation = validateReconciliation(reconcileContent.decisions, {
+        canonicalFindingIds: reconcileFindings.map((f) => f.findingId),
+        governingSource: "design",
+        governingText: design,
+        beforeNormativeNodes: specNormativeNodes(written.doc),
+        afterNormativeNodes: specNormativeNodes(reconciledDoc.value),
+      });
+      if (!reconciliation.ok) {
+        return abort(reviewStage.id, "spec.reconcile.invalid", `spec reconciliation refused: ${reconciliation.reason}`);
+      }
+      if (reconciledDoc.value.changeKind !== run.change_kind) {
+        return abort(
+          reviewStage.id,
+          "spec.reconcile.invalid",
+          `spec change_kind ${reconciledDoc.value.changeKind} does not match run change_kind ${run.change_kind}`
+        );
+      }
+      try {
+        written = writeSpecDoc(rootDir, run.slug, reconcileContent.spec);
+      } catch (err) {
+        return abort(reviewStage.id, "spec.reconcile.invalid", (err as Error).message);
+      }
+      specContent = reconcileContent.spec;
+      specPath = written.path;
+      audit(specStage.id, "spec.content.write", `wrote reconciliation revision ${specPath}`);
+      // Machine-readable, in the shape the gate events use: the before and
+      // after hashes are retained on the event itself, so the evidence
+      // survives a later run overwriting the file (hazard 2), and the
+      // per-finding dispositions and changed locations are the retained
+      // record of the decisions until Task 7 stores them.
+      {
+        const decisionParts = reconcileFindings.map((f) => {
+          const decision = reconciliation.value.decisions.find((d) => d.findingId === f.findingId)!;
+          return `d${f.findingId}=${decision.disposition}; loc${f.findingId}=${decision.changedLocations.join("+")}`;
+        });
+        const conversionParts = reconciliation.value.conversions
+          .map((c) => `${c.findingId}:${c.from}->cannot_determine`)
+          .join(",");
+        audit(
+          reviewStage.id,
+          "spec.reconcile.record",
+          `spec reconcile round ${round}: specHashBefore=${sha256Hex(normalizeText(beforeContent))}; specHashAfter=${sha256Hex(normalizeText(specContent))}; decisions=${reconciliation.value.decisions.length}; findings=${reconcileFindings.map((f) => f.findingId).join(",")}; ${decisionParts.join(" ")}; conversions=${conversionParts}; unclaimed=${reconciliation.value.unclaimedNodes.length}`
+        );
       }
       const gate = specReviewGate(
         store.getFindings(reviewStage.id),
@@ -520,57 +639,6 @@ export async function runSpecStage(
           `spec_review blocked: material findings remain open after ${rounds} legacy closure passes: ${gate.openMaterialIds.join(", ")}`
         );
       }
-      // Revision round: the author addresses the open material findings.
-      const findingsSummary = store
-        .getFindings(reviewStage.id)
-        .filter((f) => gate.openMaterialIds.includes(f.id))
-        .map((f) => `finding ${f.id} (${f.severity}) ${f.subject}`)
-        .join("\n");
-      const revisionDispatch = await dispatchOnce(
-        store,
-        executor,
-        {
-          stageId: specStage.id,
-          agent: author.id,
-          role: "author",
-          requestedModel: model,
-          prompt: buildSpecAuthorPrompt(author, design, { findingsSummary }),
-        },
-        rootDir
-      );
-      if (!revisionDispatch.ok) {
-        return abort(reviewStage.id, "spec.author.failed", revisionDispatch.reason);
-      }
-      const revisionBody = extractJsonBody(revisionDispatch.envelope.resultText);
-      if (revisionBody.kind === "refused") {
-        return abort(reviewStage.id, "spec.content.invalid", `revision body refused: ${revisionBody.reason}`);
-      }
-      const revisionResult = validateAgentResult(author.id, revisionBody.value);
-      if (!revisionResult.ok) {
-        return abort(reviewStage.id, "spec.content.invalid", `revision result refused: ${revisionResult.reason}`);
-      }
-      if (revisionResult.value.status !== "proposed") {
-        return abort(reviewStage.id, "spec.author.failed", `spec author returned status ${revisionResult.value.status}, not proposed`);
-      }
-      const revisionContent = revisionResult.value.proposedContentChanges as { spec?: unknown } | undefined;
-      if (typeof revisionContent?.spec !== "string") {
-        return abort(reviewStage.id, "spec.content.invalid", "revision result is missing proposedContentChanges.spec");
-      }
-      try {
-        written = writeSpecDoc(rootDir, run.slug, revisionContent.spec);
-      } catch (err) {
-        return abort(reviewStage.id, "spec.content.invalid", (err as Error).message);
-      }
-      if (written.doc.changeKind !== run.change_kind) {
-        return abort(
-          reviewStage.id,
-          "spec.content.invalid",
-          `spec change_kind ${written.doc.changeKind} does not match run change_kind ${run.change_kind}`
-        );
-      }
-      specContent = revisionContent.spec;
-      specPath = written.path;
-      audit(specStage.id, "spec.content.write", `wrote revision ${specPath}`);
     }
     return abort(
       reviewStage.id,

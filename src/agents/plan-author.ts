@@ -5,6 +5,6 @@ export const PLAN_AUTHOR: AgentDefinition = {
   role: "author",
   specialty: null,
   executor: "claude-code",
-  outputs: ["plan", "plan-revision", "plan-self-critique"],
+  outputs: ["plan", "plan-revision", "plan-self-critique", "plan-reconciliation"],
   tools: [],
 };

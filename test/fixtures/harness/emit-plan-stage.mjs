@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 
-// One fixture serves the plan author, the reviewers, and the revision rounds
-// in runPlanStage's single-executor dispatch. It dispatches on the prompt's
-// role text and echoes the reviewer's agent id (validateAgentResult's identity
-// check requires it).
+// One fixture serves the plan author, the reviewers, the self-critique, and
+// the reconciliation in runPlanStage's single-executor dispatch. It dispatches
+// on the prompt's role text and echoes the reviewer's agent id
+// (validateAgentResult's identity check requires it).
 //
 // The plan document is built *from the prompt*, not from a literal: the
 // `plan_for` hash and the approved scope paths are read back out of the
@@ -12,7 +12,8 @@ import { readFileSync } from "node:fs";
 // which is the failure mode hazard 4 names.
 const stdin = readFileSync(0, "utf8");
 
-// `plan_for must be exactly: <64 hex>` — stated by buildPlanAuthorPrompt.
+// `plan_for must be exactly: <64 hex>` — stated by buildPlanAuthorPrompt,
+// buildPlanSelfCritiquePrompt, and buildPlanReconcilePrompt alike.
 const specHash = /plan_for must be exactly: ([0-9a-f]{64})/.exec(stdin)?.[1] ?? "0".repeat(64);
 
 // The scope block: `- <path>` lines between the "name only these:" line and
@@ -65,9 +66,60 @@ function emit(agentResult) {
   );
 }
 
+// The artifact the reconciliation prompt embeds, scraped between the builder's
+// markers. A clean round must return the plan unchanged — rewriting it would
+// replace the self-critiqued plan the clean-run tests assert on.
+function currentArtifact() {
+  const block = stdin.split("The plan under review:")[1] ?? "";
+  return (block.split("Findings to reconcile:")[0] ?? "").trim();
+}
+
+// The reconciler's answer: revise when the round reported findings (so the
+// next panel sees the REVISED marker and reports clean), otherwise hand the
+// plan back unchanged. When it revises, exactly one decision claims the task
+// line the revision replaces — the stage derives the added node from the
+// before/after parse, a second claim of one node is a duplicate and converts
+// its decision, and an unclaimed node fails the accounting. A round that
+// already reviews the revised plan revises nothing and claims nothing. The
+// grounding excerpt is the criterion text from the approved spec, which the
+// plan reconcile prompt embeds as the governing input.
+function reconcile() {
+  const ids = [...stdin.matchAll(/finding (\d+)/g)].map((m) => Number(m[1]));
+  const current = currentArtifact();
+  const revising = ids.length > 0 && !current.includes("REVISED-plan");
+  const artifact = revising ? planDoc({ revised: true }) : current;
+  const decisions = ids.map((id, index) => ({
+    findingId: id,
+    disposition: "addressed",
+    rationale: "fixture addressed the finding",
+    changedLocations: ["## Tasks"],
+    normativeChanges:
+      revising && index === 0
+        ? [
+            {
+              artifactLocation: "## Tasks",
+              artifactText: "Build the thing REVISED-plan",
+              grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
+            },
+          ]
+        : [],
+  }));
+  emit({
+    status: "proposed",
+    agent: "plan-author",
+    role: "author",
+    executor: "claude-code",
+    summary: "fixture reconcile",
+    proposedContentChanges: { plan: artifact, decisions },
+  });
+}
+
 // Checked before the author branch: the self-critique prompt carries the
 // author's role line too, so an author branch tested first would answer it
 // with a draft and the stage would refuse the missing selfCritique payload.
+// The reconcile branch is checked after the reviewer branch and before the
+// author branch: its prompt carries the author's role line as well, and only
+// the "reconcile" word distinguishes it.
 if (stdin.includes("self-critique")) {
   emit({
     status: "proposed",
@@ -92,12 +144,14 @@ if (stdin.includes("self-critique")) {
           location: "## Coverage",
           intentKey: "coverage-gap",
           severity: "high",
+          classification: "current_artifact",
           subject: "a criterion has no convincing coverage",
         },
         {
           location: "## Tasks",
           intentKey: "nit-pick",
           severity: "low",
+          classification: "current_artifact",
           subject: "tasks could be ordered better",
         },
       ];
@@ -109,6 +163,8 @@ if (stdin.includes("self-critique")) {
     summary: "fixture plan review",
     proposedContentChanges: { findings },
   });
+} else if (stdin.includes("reconcile")) {
+  reconcile();
 } else if (stdin.includes("plan author")) {
   emit({
     status: "proposed",
@@ -116,7 +172,7 @@ if (stdin.includes("self-critique")) {
     role: "author",
     executor: "claude-code",
     summary: "fixture plan",
-    proposedContentChanges: { plan: planDoc({ revised: stdin.includes("## Revision") }) },
+    proposedContentChanges: { plan: planDoc() },
   });
 } else {
   emit({

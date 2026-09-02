@@ -158,13 +158,28 @@ test("happy path with one revision round: two stage rows, gate passes in round 2
     assert.ok(spec.includes("REVISED-spec"), "the revision was written");
     assert.equal(store.getRun(runId)!.status, "in_progress");
     const counts = agentRunCounts(store, runId);
-    // Draft, self-critique, and the one legacy revision.
-    assert.equal(counts.author, 3);
+    // Draft, self-critique, and one reconciliation per legacy pass.
+    assert.equal(counts.author, 4);
     assert.equal(counts.reviewer, 4);
     const findings = store.getFindings(chain[1].id);
     assert.equal(findings.length, 2);
     const material = findings.find((f) => f.intent_key === "missing-traceability");
     assert.equal(material?.disposition, "resolved");
+    // The round-1 reconciliation's decisions arrived valid: each finding's
+    // decision kept its disposition, nothing was converted, and the fixture's
+    // single claim matched the derived node exactly.
+    const reconcileRecords = store
+      .query<{ summary: string }>(
+        "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.reconcile.record' ORDER BY id",
+        [runId]
+      )
+      .map((r) => r.summary);
+    const round1 = reconcileRecords[0];
+    assert.ok(!round1.includes("->cannot_determine"), "no happy-path decision was converted");
+    assert.match(round1, /unclaimed=0/);
+    for (const finding of findings) {
+      assert.match(round1, new RegExp(`d${finding.id}=addressed`), `finding ${finding.id} kept its addressed disposition`);
+    }
   });
 });
 
@@ -189,7 +204,7 @@ test("blocked on budget exhaustion", async () => {
     assert.equal(chain[0].status, "passed");
     assert.equal(chain[1].status, "blocked");
     assert.equal(store.getRun(runId)!.status, "blocked");
-    assert.equal(agentRunCounts(store, runId).author, 4, "draft, self-critique, and two legacy revisions");
+    assert.equal(agentRunCounts(store, runId).author, 5, "draft, self-critique, and one reconciliation per legacy pass");
   });
 });
 
@@ -507,8 +522,8 @@ test("the stage honours frozen specialties and materiality instead of live defau
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
     assert.equal(
       agentRunCounts(store, runId).author,
-      2,
-      "the frozen critical threshold makes the fixture's high finding advisory: draft and self-critique only"
+      3,
+      "the frozen critical threshold makes the fixture's high finding advisory: draft and self-critique plus one reconciliation"
     );
     const firstReviewer = store.query<{ agent: string }>(
       "SELECT ar.agent FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? AND ar.role = 'reviewer' ORDER BY ar.id LIMIT 1",
@@ -555,10 +570,7 @@ test("the panel is sized from distinct artifacts, not repeated ones", async () =
       // Swapped at the shared helper, so the self-critique branch returns
       // the same document: the panel is sized from the artifact the stage
       // actually gated, which is the self-critiqued one.
-      .replace(
-        'return stdin.includes("## Revision") ? REVISED_SPEC : BASE_SPEC;',
-        "return DUPLICATE_SPEC;"
-      )
+      .replace("return BASE_SPEC;", "return DUPLICATE_SPEC;")
       // Clean review, so the run reaches the gate in one round and the
       // reviewer count is the panel size rather than a multiple of it.
       .replace('const findings = stdin.includes("REVISED-spec")', "const findings = true");
@@ -673,7 +685,10 @@ test("the transitional legacy flow passes a clean panel in its first pass", asyn
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
     const counts = agentRunCounts(store, runId);
-    assert.equal(counts.author, 2, "draft and self-critique; a clean panel needs no legacy revision");
+    // Draft, self-critique, and one reconciliation — the phase order runs a
+    // reconciliation per round even when the panel reported nothing, so the
+    // reconciler is the actor that confirms an empty findings set.
+    assert.equal(counts.author, 3, "draft and self-critique plus one reconciliation");
     assert.equal(counts.reviewer, 2);
     const gate = store.query<{ summary: string }>(
       "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.gate.pass' ORDER BY id DESC LIMIT 1",
@@ -691,7 +706,7 @@ test("the frozen one-round budget stays inactive until reconciliation exists", a
     const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
     const counts = agentRunCounts(store, runId);
-    assert.equal(counts.author, 3, "the legacy author revision remains available after self-critique");
+    assert.equal(counts.author, 4, "draft and self-critique plus one reconciliation per legacy pass");
     assert.equal(counts.reviewer, 4, "the legacy closure panel still confirms the revision");
   });
 });
@@ -756,8 +771,9 @@ test("exactly one self-critique runs per artifact, and the panel reviews its out
     );
     assert.equal(recorded.length, 1, "one self-critique per artifact, whatever the round budget does");
     // The record is one event; the dispatch budget is what makes it one
-    // invocation. Draft, self-critique, and the single legacy revision.
-    assert.equal(agentRunCounts(store, runId).author, 3, "no second self-critique dispatch");
+    // invocation. Draft, self-critique, and one reconciliation per legacy
+    // pass — never a second self-critique.
+    assert.equal(agentRunCounts(store, runId).author, 4, "no second self-critique dispatch");
     assert.match(recorded[0].summary, /1 critique entries; panel request size 2, specialties \[security\]/);
     // Recorded, and deliberately not acted on: staffing against the request
     // is Task 5's, so the panel is still the frozen floor.
@@ -923,5 +939,262 @@ function authoredSpec() {`
       (a) => a.specialty
     );
     assert.ok(seatable.includes(named), `${named} is not a specialty the registry seats`);
+  });
+});
+
+// --- reconciliation ------------------------------------------------------------
+
+test("the spec reviewer's prompt carries the design document", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // A design carrying a sentinel, and a reviewer that reports a finding
+    // only when it saw the sentinel — the finding row is the observable.
+    writeFileSync(join(root, "docs", "features", "demo", "design.md"), "# design DESIGN-SENTINEL\n");
+    const scratch = join(root, "emit-spec-stage-design-sentinel.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace(
+        '    ? []\n    : [\n        {\n          location: "## Acceptance criteria",',
+        '    ? []\n    : stdin.includes("DESIGN-SENTINEL")\n    ? [{ location: "## Acceptance criteria", intentKey: "design-present", severity: "low", classification: "current_artifact", subject: "the design reached the reviewer" }]\n    : [\n        {\n          location: "## Acceptance criteria",'
+      )
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const reviewStage = store.getStageChain(runId)[1];
+    const findings = store.getFindings(reviewStage.id);
+    assert.ok(
+      findings.some((f) => f.intent_key === "design-present"),
+      "the reviewer saw the design document the stage supplied"
+    );
+  });
+});
+
+test("an author whose frozen definition cannot reconcile blocks before the dispatch", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // The capability is read from the frozen profile, not the live registry
+    // (hard rule 6), so this is the refusal a run configured without the
+    // output would hit. The check sits beside the draft's own capability
+    // check: a run that can never complete its stage must not pay for a
+    // draft first.
+    const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+    const profile = JSON.parse(readFileSync(path, "utf8")) as {
+      agents: { id: string; outputs: string[] }[];
+    };
+    const author = profile.agents.find((a) => a.id === "spec-author")!;
+    author.outputs = author.outputs.filter((o) => o !== "spec-reconciliation");
+    const serialized = canonicalJson(profile);
+    writeFileSync(path, serialized);
+    store.setProfileRef(runId, sha256Hex(serialized));
+
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /does not allow spec-reconciliation output/);
+    assert.equal(store.query("SELECT * FROM agent_run").length, 0, "nothing was spent");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("a reconciliation whose document does not validate blocks instead of overwriting the gated spec", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-spec-stage-invalid-reconcile.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace(
+        "proposedContentChanges: { spec: artifact, decisions },",
+        'proposedContentChanges: { spec: "not a specification", decisions },'
+      )
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /spec reconciliation document refused/);
+    // The refusal happened before the write: the gated document is still the
+    // file on disk, not the never-approved reconciliation.
+    const onDisk = readFileSync(join(root, "docs", "features", "demo", "spec.md"), "utf8");
+    assert.ok(!onDisk.includes("not a specification"));
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("a reconciliation missing a decision for a reported finding blocks by name", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-spec-stage-missing-decision.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace("const decisions = ids.map((id, index) => ({", "const decisions = ids.slice(1).map((id, index) => ({")
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /spec reconciliation refused: reconciliation is incomplete: no decision for canonical finding id\(s\)/);
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("an added node no decision claims is recorded as unclaimed on the reconcile event", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // The fixture revises the criterion but claims nothing: the derived
+    // added node has no owner, so it surfaces in the audit record — the
+    // evidence Task 9's gate will block on. The decision itself stays
+    // addressed: nothing about it failed, the accounting is what is short.
+    const scratch = join(root, "emit-spec-stage-unclaimed.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace("    normativeChanges:\n      revising && index === 0", "    normativeChanges:\n      false")
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const reviewStage = store.getStageChain(runId)[1];
+    const rows = store.getFindings(reviewStage.id);
+    const records = store
+      .query<{ summary: string }>(
+        "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.reconcile.record' ORDER BY id",
+        [runId]
+      )
+      .map((r) => r.summary);
+    assert.match(records[0], /unclaimed=1/, "the unclaimed node is retained on the event");
+    for (const row of rows) {
+      assert.match(records[0], new RegExp(`d${row.id}=addressed`), "the decision itself was not converted");
+    }
+  });
+});
+
+test("mixed reports reach the reconciler unfused: pairs stay pairs, classifications stay split", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // The two reviewers share one canonical identity (dup-concern) and split
+    // another concern by classification (shared-concern). The reconciler
+    // fixture echoes the severity/classification pairs it scraped from the
+    // prompt into each decision's changedLocations, so the reconcile audit
+    // event is the observable: the pair arrives as two reports on one
+    // finding, and no fused pair appears that no reviewer returned.
+    const scratch = join(root, "emit-spec-stage-mixed-pair.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource()
+        .replace(
+          "function emit(agentResult) {",
+          `function mixedFindings(agentId) {
+  if (agentId === "spec-reviewer-security") {
+    return [
+      {
+        location: "## Acceptance criteria",
+        intentKey: "shared-concern",
+        severity: "critical",
+        classification: "current_artifact",
+        subject: "severe in-artifact concern",
+      },
+      {
+        location: "## Declared artifacts",
+        intentKey: "dup-concern",
+        severity: "critical",
+        classification: "current_artifact",
+        subject: "the same concern twice",
+      },
+    ];
+  }
+  return [
+    {
+      location: "upstream:design:shared-concern",
+      intentKey: "shared-concern",
+      severity: "low",
+      classification: "upstream",
+      subject: "mild upstream concern",
+    },
+    {
+      location: "## Declared artifacts",
+      intentKey: "dup-concern",
+      severity: "low",
+      classification: "current_artifact",
+      subject: "the same concern twice",
+    },
+  ];
+}
+
+function reportPairs(id) {
+  const after = stdin.split(\`finding \${id}\\n\`)[1] ?? "";
+  const block = after.split("\\n- finding")[0] ?? "";
+  const pairs = [...block.matchAll(/severity (\\w+), classification (\\w+)/g)].map((m) => \`\${m[1]}/\${m[2]}\`);
+  return pairs.length > 0 ? pairs : ["none"];
+}
+
+function emit(agentResult) {`
+        )
+        .replace(
+          '    ? []\n    : [\n        {\n          location: "## Acceptance criteria",\n          intentKey: "missing-traceability",\n          severity: "high",\n          classification: "current_artifact",\n          subject: "criterion lacks a traceable origin",\n        },\n        {\n          location: "## Declared artifacts",\n          intentKey: "nit-pick",\n          severity: "low",\n          classification: "current_artifact",\n          subject: "artifact list could be grouped",\n        },\n      ];',
+          '    ? []\n    : mixedFindings(agentId);'
+        )
+        .replace(
+          '  const decisions = ids.map((id, index) => ({\n    findingId: id,\n    disposition: "addressed",\n    rationale: "fixture addressed the finding",\n    changedLocations: ["## Acceptance criteria"],',
+          '  const decisions = ids.map((id, index) => ({\n    findingId: id,\n    disposition: "addressed",\n    rationale: "fixture addressed the finding",\n    changedLocations: reportPairs(id),'
+        )
+        .replace(
+          "    normativeChanges:\n      ids.length > 0",
+          "    normativeChanges:\n      index === 0 && ids.length > 0"
+        )
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const reviewStage = store.getStageChain(runId)[1];
+    const findings = store.getFindings(reviewStage.id);
+    const dup = findings.find((f) => f.intent_key === "dup-concern");
+    const sharedCurrent = findings.find(
+      (f) => f.intent_key === "shared-concern" && f.location === "## Acceptance criteria"
+    );
+    const sharedUpstream = findings.find(
+      (f) => f.intent_key === "shared-concern" && f.location === "upstream:design:shared-concern"
+    );
+    assert.ok(dup, "the shared identity deduplicates to one canonical row");
+    assert.ok(sharedCurrent && sharedUpstream, "the classification split is two canonical findings");
+    const records = store
+      .query<{ summary: string }>(
+        "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.reconcile.record' ORDER BY id",
+        [runId]
+      )
+      .map((r) => r.summary);
+    // Panel order seats the required traceability lens first, so its low
+    // report precedes the security reviewer's critical one.
+    assert.match(
+      records[0],
+      new RegExp(`loc${dup.id}=low/current_artifact\\+critical/current_artifact`),
+      "both reports on the shared identity arrive, each with its own severity and classification"
+    );
+    assert.match(records[0], new RegExp(`loc${sharedCurrent.id}=critical/current_artifact`));
+    assert.match(records[0], new RegExp(`loc${sharedUpstream.id}=low/upstream`));
+    assert.ok(
+      !records[0].includes("critical/upstream"),
+      "no stored pair fuses a severity with a classification no reviewer returned"
+    );
+  });
+});
+
+test("the reconciliation prompt carries the design document", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // The reconciler's answer embeds what it saw: the fixture echoes whether
+    // the sentinel reached it into the decision's changedLocations, and the
+    // reconcile event is where the stage test reads it back.
+    writeFileSync(join(root, "docs", "features", "demo", "design.md"), "# design DESIGN-SENTINEL\n");
+    const scratch = join(root, "emit-spec-stage-reconcile-design.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace(
+        'changedLocations: ["## Acceptance criteria"],',
+        'changedLocations: [stdin.includes("DESIGN-SENTINEL") ? "design-seen" : "design-missing"],'
+      )
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const records = store
+      .query<{ summary: string }>(
+        "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.reconcile.record' ORDER BY id",
+        [runId]
+      )
+      .map((r) => r.summary);
+    assert.ok(records[0].includes("design-seen"), "the reconciler saw the governing design");
   });
 });

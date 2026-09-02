@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 
-// One fixture serves both roles in runSpecStage's single-executor dispatch.
-// It dispatches on the prompt's role text and echoes the reviewer's agent id
+// One fixture serves the author, the self-critique, the reviewers, and the
+// reconciliation in runSpecStage's single-executor dispatch. It dispatches on
+// the prompt's role text and echoes the reviewer's agent id
 // (validateAgentResult's identity check requires it). The spec declares 11
 // artifacts so computeRisk yields standard risk and the panel reaches its
 // full size of two. Output wraps the AgentResult in a claude-shaped envelope,
@@ -78,17 +79,67 @@ function emit(agentResult) {
   );
 }
 
-// The document the author would write, shared by the draft, the legacy
-// revision, and the self-critique branches. A test that swaps the spec has to
-// swap it everywhere the fixture emits one, or the self-critique would hand
-// the review stage a different document than the draft did.
+// The document the author would write, shared by the draft and the
+// self-critique branches. A test that swaps the spec has to swap it
+// everywhere the fixture emits one, or the self-critique would hand the
+// review stage a different document than the draft did.
 function authoredSpec() {
-  return stdin.includes("## Revision") ? REVISED_SPEC : BASE_SPEC;
+  return BASE_SPEC;
+}
+
+// The artifact the reconciliation prompt embeds, scraped between the builder's
+// markers. A clean round must return the document unchanged — rewriting it
+// would replace the self-critiqued document the clean-run tests assert on.
+function currentArtifact() {
+  const block = stdin.split("The specification under review:")[1] ?? "";
+  return (block.split("Findings to reconcile:")[0] ?? "").trim();
+}
+
+// The reconciler's answer: revise when the round reported findings (so the
+// next panel sees the REVISED marker and reports clean), otherwise hand the
+// artifact back unchanged. When it revises, exactly one decision claims the
+// criterion the revision replaces — the stage derives the added node from
+// the before/after parse, a second claim of one node is a duplicate and
+// converts its decision, and an unclaimed node fails the accounting. A round
+// that already reviews the revised document revises nothing and claims
+// nothing.
+function reconcile() {
+  const ids = [...stdin.matchAll(/finding (\d+)/g)].map((m) => Number(m[1]));
+  const current = currentArtifact();
+  const revising = ids.length > 0 && !current.includes("REVISED-spec");
+  const artifact = revising ? REVISED_SPEC : current;
+  const decisions = ids.map((id, index) => ({
+    findingId: id,
+    disposition: "addressed",
+    rationale: "fixture addressed the finding",
+    changedLocations: ["## Acceptance criteria"],
+    normativeChanges:
+      revising && index === 0
+        ? [
+            {
+              artifactLocation: "## Acceptance criteria",
+              artifactText: "the thing works REVISED-spec",
+              grounding: { source: "design", location: "# design", excerpt: "design" },
+            },
+          ]
+        : [],
+  }));
+  emit({
+    status: "proposed",
+    agent: "spec-author",
+    role: "author",
+    executor: "claude-code",
+    summary: "fixture reconcile",
+    proposedContentChanges: { spec: artifact, decisions },
+  });
 }
 
 // Checked before the author branch: the self-critique prompt carries the
 // author's role line too, so an author branch tested first would answer it
 // with a draft and the stage would refuse the missing selfCritique payload.
+// The reconcile branch is checked after the reviewer branch and before the
+// author branch: its prompt carries the author's role line as well, and only
+// the "reconcile" word distinguishes it.
 if (stdin.includes("self-critique")) {
   emit({
     status: "proposed",
@@ -113,12 +164,14 @@ if (stdin.includes("self-critique")) {
           location: "## Acceptance criteria",
           intentKey: "missing-traceability",
           severity: "high",
+          classification: "current_artifact",
           subject: "criterion lacks a traceable origin",
         },
         {
           location: "## Declared artifacts",
           intentKey: "nit-pick",
           severity: "low",
+          classification: "current_artifact",
           subject: "artifact list could be grouped",
         },
       ];
@@ -130,6 +183,8 @@ if (stdin.includes("self-critique")) {
     summary: "fixture review",
     proposedContentChanges: { findings },
   });
+} else if (stdin.includes("reconcile")) {
+  reconcile();
 } else if (stdin.includes("spec author")) {
   const spec = authoredSpec();
   emit({

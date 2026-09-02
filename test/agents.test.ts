@@ -111,3 +111,34 @@ test("no reviewer can produce either self-critique result kind", () => {
     }
   }
 });
+
+test("each author allows its own reconciliation output and never the other's", () => {
+  // Section 9 again, on the other new result kind: reconciliation is the
+  // author's answer phase, so the dispatcher must find the capability on the
+  // author definition that produces it — and an author that reconciles both
+  // artifacts would be one capability crossing the artifact boundary.
+  const specAuthor = agentById("spec-author")!;
+  const planAuthor = agentById("plan-author")!;
+  assert.ok(specAuthor.outputs.includes("spec-reconciliation"), "the spec author reconciles its spec");
+  assert.ok(planAuthor.outputs.includes("plan-reconciliation"), "the plan author reconciles its plan");
+  assert.ok(
+    !specAuthor.outputs.includes("plan-reconciliation"),
+    "the spec author must not be able to reconcile a plan"
+  );
+  assert.ok(
+    !planAuthor.outputs.includes("spec-reconciliation"),
+    "the plan author must not be able to reconcile a spec"
+  );
+});
+
+test("no reviewer can produce either reconciliation result kind", () => {
+  // The same boundary as self-critique: reconciliation is an author dispatch,
+  // and a reviewer that could return one would be a panel seat answering its
+  // own findings, which is section 13's "nothing resolves its own finding"
+  // collapsed quietly.
+  for (const agent of AGENTS.filter((a) => a.role === "reviewer")) {
+    for (const forbidden of ["spec-reconciliation", "plan-reconciliation"]) {
+      assert.ok(!agent.outputs.includes(forbidden), `${agent.id} must not allow ${forbidden} output`);
+    }
+  }
+});

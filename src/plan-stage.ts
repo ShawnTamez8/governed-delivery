@@ -6,13 +6,25 @@ import { dispatchOnce } from "./dispatch.ts";
 import type { AgentDefinition } from "./agents.ts";
 import { validateAgentResult } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
-import { SEVERITIES, findingIdentity, normalizeLocation } from "./finding.ts";
+import { findingIdentity } from "./finding.ts";
 import { computeRisk, selectReviewers, staffingShortfall, validatePanelRequest } from "./select.ts";
 import { computeScope, touchesProtected } from "./scope.ts";
-import { buildPlanAuthorPrompt, buildPlanReviewPrompt, buildPlanSelfCritiquePrompt } from "./prompts.ts";
+import {
+  buildPlanAuthorPrompt,
+  buildPlanReconcilePrompt,
+  buildPlanReviewPrompt,
+  buildPlanSelfCritiquePrompt,
+  type ReconciliationFindingInput,
+} from "./prompts.ts";
 import { validatePlanDoc, writePlanDoc, type PlanDoc } from "./plan-doc.ts";
 import { coverageFitsScope, coverageMeetsCriteria, planReviewGate } from "./plan-gate.ts";
 import { validateSpecDoc } from "./spec-doc.ts";
+import {
+  planNormativeNodes,
+  upstreamPrefixFor,
+  validateReconciliation,
+  validateReviewerReports,
+} from "./reconciliation.ts";
 import { validateSelfCritique } from "./self-critique.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
@@ -26,13 +38,6 @@ const LEGACY_CLOSURE_PASSES = 3;
 export type PlanStageResult =
   | { ok: true; stageIds: { plan: number; planReview: number }; planPath: string }
   | { ok: false; reason: string };
-
-interface FindingShape {
-  location?: unknown;
-  intentKey?: unknown;
-  severity?: unknown;
-  subject?: unknown;
-}
 
 /**
  * The plan and plan_review stages, as two rows continuing section 5's chain
@@ -249,6 +254,13 @@ export async function runPlanStage(
         planStage.id,
         "plan.selfcritique.failed",
         `configured agent ${author.id} does not allow plan-self-critique output`
+      );
+    }
+    if (!author.outputs.includes("plan-reconciliation")) {
+      return abort(
+        planStage.id,
+        "plan.reconcile.failed",
+        `configured agent ${author.id} does not allow plan-reconciliation output`
       );
     }
     const authorDispatch = await dispatchOnce(
@@ -514,6 +526,12 @@ export async function runPlanStage(
     const rounds: number = LEGACY_CLOSURE_PASSES;
     for (let round = 1; round <= rounds; round++) {
       const reportedIdentities = new Set<string>();
+      // This round's reports, keyed by canonical identity, in panel order.
+      // They travel to the reconciler unfused: two reviewers reporting one
+      // identity are two reports on one canonical finding, each keeping its
+      // own severity and classification (section 13's no-fusion rule, applied
+      // at the dispatch boundary until Task 7 gives reports their own rows).
+      const roundReports = new Map<string, ReconciliationFindingInput["reports"]>();
       for (const reviewer of panel) {
         if (!reviewer.outputs.includes("findings")) {
           return abort(reviewStage.id, "plan.reviewer.failed", `configured agent ${reviewer.id} does not allow findings output`);
@@ -556,42 +574,38 @@ export async function runPlanStage(
             `reviewer ${reviewer.id} result is missing proposedContentChanges.findings`
           );
         }
-        for (const entry of reviewerContent.findings as unknown[]) {
-          if (entry === null || typeof entry !== "object") {
-            return abort(reviewStage.id, "plan.reviewer.failed", `reviewer ${reviewer.id} finding entry is not an object`);
-          }
-          const f = entry as FindingShape;
-          if (typeof f.location !== "string" || f.location === "") {
-            return abort(reviewStage.id, "plan.reviewer.failed", `reviewer ${reviewer.id} finding is missing a non-empty location`);
-          }
-          if (typeof f.intentKey !== "string" || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(f.intentKey) || f.intentKey.length > 64) {
-            return abort(
-              reviewStage.id,
-              "plan.reviewer.failed",
-              `reviewer ${reviewer.id} finding intentKey ${String(f.intentKey)} is not lowercase kebab-case within 64 characters`
-            );
-          }
-          if (typeof f.severity !== "string" || !SEVERITIES.includes(f.severity)) {
-            return abort(
-              reviewStage.id,
-              "plan.reviewer.failed",
-              `reviewer ${reviewer.id} finding severity ${String(f.severity)} is not one of ${SEVERITIES.join(", ")}`
-            );
-          }
-          if (typeof f.subject !== "string" || f.subject === "") {
-            return abort(reviewStage.id, "plan.reviewer.failed", `reviewer ${reviewer.id} finding is missing a non-empty subject`);
-          }
-          const normalized = normalizeLocation(f.location);
+        const reports = validateReviewerReports(reviewerContent.findings, {
+          agentId: reviewer.id,
+          upstreamPrefix: upstreamPrefixFor("specification"),
+        });
+        if (!reports.ok) {
+          return abort(reviewStage.id, "plan.reviewer.failed", `reviewer ${reviewer.id} result refused: ${reports.reason}`);
+        }
+        for (const report of reports.value) {
+          // The validator normalizes the location: identity derives from the
+          // normalized form (section 8), so the DB and the resolution pass
+          // key on the same string.
           store.insertFinding({
             stageId: reviewStage.id,
             agentRunId: dispatch.agentRunId,
-            severity: f.severity,
-            intentKey: f.intentKey,
-            subject: f.subject,
-            location: normalized,
+            severity: report.severity,
+            intentKey: report.intentKey,
+            subject: report.subject,
+            location: report.location,
           });
-          audit(reviewStage.id, "plan.finding.record", `recorded finding at ${normalized} (${f.intentKey})`);
-          reportedIdentities.add(findingIdentity(f.location, f.intentKey));
+          audit(reviewStage.id, "plan.finding.record", `recorded finding at ${report.location} (${report.intentKey})`);
+          const identity = findingIdentity(report.location, report.intentKey);
+          reportedIdentities.add(identity);
+          const list = roundReports.get(identity) ?? [];
+          list.push({
+            reviewerId: reviewer.id,
+            severity: report.severity,
+            classification: report.classification,
+            location: report.location,
+            intentKey: report.intentKey,
+            subject: report.subject,
+          });
+          roundReports.set(identity, list);
         }
       }
       // Resolution: the panel's re-review resolves a finding. The author's
@@ -602,6 +616,126 @@ export async function runPlanStage(
           store.updateFindingDisposition(finding.id, "resolved");
           audit(reviewStage.id, "plan.finding.resolved", `finding ${finding.id} resolved by re-review`);
         }
+      }
+      // --- reconciliation: the author's typed answer to this round's findings ---
+      // The phase order (section 12) is panel, then reconciliation, then the
+      // gate, once per round. The legacy severity gate below is still what
+      // decides; the reconciliation dispatch, its validated decisions, and its
+      // retained hashes are what Task 9's decision gate will read.
+      const reconcileFindings: ReconciliationFindingInput[] = [];
+      {
+        const rowsByIdentity = new Map<string, FindingRow>();
+        for (const row of store.getFindings(reviewStage.id)) {
+          rowsByIdentity.set(findingIdentity(row.location, row.intent_key), row);
+        }
+        for (const [identity, reports] of roundReports) {
+          const row = rowsByIdentity.get(identity);
+          if (!row) {
+            return abort(reviewStage.id, "plan.reconcile.failed", `recorded finding for ${identity} is missing from the store`);
+          }
+          reconcileFindings.push({ findingId: row.id, reports });
+        }
+      }
+      const beforeContent = planContent;
+      const reconcileDispatch = await dispatchOnce(
+        store,
+        executor,
+        {
+          stageId: planStage.id,
+          agent: author.id,
+          role: "author",
+          requestedModel: model,
+          prompt: buildPlanReconcilePrompt(author, specContent, planContent, specHash, scope, reconcileFindings),
+        },
+        rootDir
+      );
+      if (!reconcileDispatch.ok) {
+        return abort(reviewStage.id, "plan.reconcile.failed", reconcileDispatch.reason);
+      }
+      const reconcileBody = extractJsonBody(reconcileDispatch.envelope.resultText);
+      if (reconcileBody.kind === "refused") {
+        return abort(reviewStage.id, "plan.reconcile.invalid", `reconciliation body refused: ${reconcileBody.reason}`);
+      }
+      const reconcileResult = validateAgentResult(author.id, reconcileBody.value);
+      if (!reconcileResult.ok) {
+        return abort(reviewStage.id, "plan.reconcile.invalid", `reconciliation result refused: ${reconcileResult.reason}`);
+      }
+      if (reconcileResult.value.status !== "proposed") {
+        return abort(
+          reviewStage.id,
+          "plan.reconcile.failed",
+          `plan author returned status ${reconcileResult.value.status}, not proposed`
+        );
+      }
+      const reconcileContent = reconcileResult.value.proposedContentChanges as
+        | { plan?: unknown; decisions?: unknown }
+        | undefined;
+      if (typeof reconcileContent?.plan !== "string") {
+        return abort(reviewStage.id, "plan.reconcile.invalid", "reconciliation result is missing proposedContentChanges.plan");
+      }
+      // The reconciled plan is checked *before* it overwrites the gated
+      // document, on the parsed candidate — a plan that fails any binding
+      // must never replace the one the gate approved on disk, which is the
+      // same rule the legacy revision path followed.
+      const reconciledParsed = validatePlanDoc(reconcileContent.plan);
+      if (!reconciledParsed.ok) {
+        return abort(reviewStage.id, "plan.reconcile.invalid", `plan reconciliation document refused: ${reconciledParsed.reason}`);
+      }
+      const reconciledDoc = reconciledParsed.value;
+      const reconcileMismatch = planForCheck(reconciledDoc, reviewStage.id);
+      if (reconcileMismatch) return reconcileMismatch;
+      const reconcileCoverage = coverageFitsScope(reconciledDoc, scope);
+      if (!reconcileCoverage.ok) {
+        return abort(
+          reviewStage.id,
+          "plan.coverage.unkeepable",
+          `plan promises coverage outside the approved scope: ${reconcileCoverage.unkeepable.join("; ")}`
+        );
+      }
+      const reconcileComplete = coverageMeetsCriteria(reconciledDoc, specDoc.value.acceptanceCriteria);
+      if (!reconcileComplete.ok) {
+        return abort(
+          reviewStage.id,
+          "plan.coverage.incomplete",
+          `plan does not cover every acceptance criterion: ${reconcileComplete.uncovered.join("; ")}`
+        );
+      }
+      const reconciliation = validateReconciliation(reconcileContent.decisions, {
+        canonicalFindingIds: reconcileFindings.map((f) => f.findingId),
+        governingSource: "specification",
+        governingText: specContent,
+        beforeNormativeNodes: planNormativeNodes(written.doc),
+        afterNormativeNodes: planNormativeNodes(reconciledDoc),
+      });
+      if (!reconciliation.ok) {
+        return abort(reviewStage.id, "plan.reconcile.invalid", `plan reconciliation refused: ${reconciliation.reason}`);
+      }
+      try {
+        written = writePlanDoc(rootDir, run.slug, reconcileContent.plan);
+      } catch (err) {
+        return abort(reviewStage.id, "plan.reconcile.invalid", (err as Error).message);
+      }
+      planContent = reconcileContent.plan;
+      planPath = written.path;
+      audit(planStage.id, "plan.content.write", `wrote reconciliation revision ${planPath}`);
+      // Machine-readable, in the shape the gate events use: the before and
+      // after hashes are retained on the event itself, so the evidence
+      // survives a later run overwriting the file (hazard 2), and the
+      // per-finding dispositions and changed locations are the retained
+      // record of the decisions until Task 7 stores them.
+      {
+        const decisionParts = reconcileFindings.map((f) => {
+          const decision = reconciliation.value.decisions.find((d) => d.findingId === f.findingId)!;
+          return `d${f.findingId}=${decision.disposition}; loc${f.findingId}=${decision.changedLocations.join("+")}`;
+        });
+        const conversionParts = reconciliation.value.conversions
+          .map((c) => `${c.findingId}:${c.from}->cannot_determine`)
+          .join(",");
+        audit(
+          reviewStage.id,
+          "plan.reconcile.record",
+          `plan reconcile round ${round}: planHashBefore=${sha256Hex(normalizeText(beforeContent))}; planHashAfter=${sha256Hex(normalizeText(planContent))}; decisions=${reconciliation.value.decisions.length}; findings=${reconcileFindings.map((f) => f.findingId).join(",")}; ${decisionParts.join(" ")}; conversions=${conversionParts}; unclaimed=${reconciliation.value.unclaimedNodes.length}`
+        );
       }
       const gate = planReviewGate(
         store.getFindings(reviewStage.id),
@@ -626,86 +760,6 @@ export async function runPlanStage(
           `plan_review blocked: material findings remain open after ${rounds} legacy closure passes: ${gate.openMaterialIds.join(", ")}`
         );
       }
-      // Revision round: the author addresses the open material findings, so
-      // the retry varies (hazard 7 — a retry that varies nothing is a slower
-      // failure with a larger bill).
-      const findingsSummary = store
-        .getFindings(reviewStage.id)
-        .filter((f) => gate.openMaterialIds.includes(f.id))
-        .map((f) => `finding ${f.id} (${f.severity}) ${f.subject}`)
-        .join("\n");
-      const revisionDispatch = await dispatchOnce(
-        store,
-        executor,
-        {
-          stageId: planStage.id,
-          agent: author.id,
-          role: "author",
-          requestedModel: model,
-          prompt: buildPlanAuthorPrompt(author, specContent, specHash, scope, { findingsSummary }),
-        },
-        rootDir
-      );
-      if (!revisionDispatch.ok) {
-        return abort(reviewStage.id, "plan.author.failed", revisionDispatch.reason);
-      }
-      const revisionBody = extractJsonBody(revisionDispatch.envelope.resultText);
-      if (revisionBody.kind === "refused") {
-        return abort(reviewStage.id, "plan.content.invalid", `revision body refused: ${revisionBody.reason}`);
-      }
-      const revisionResult = validateAgentResult(author.id, revisionBody.value);
-      if (!revisionResult.ok) {
-        return abort(reviewStage.id, "plan.content.invalid", `revision result refused: ${revisionResult.reason}`);
-      }
-      if (revisionResult.value.status !== "proposed") {
-        return abort(
-          reviewStage.id,
-          "plan.author.failed",
-          `plan author returned status ${revisionResult.value.status}, not proposed`
-        );
-      }
-      const revisionContent = revisionResult.value.proposedContentChanges as { plan?: unknown } | undefined;
-      if (typeof revisionContent?.plan !== "string") {
-        return abort(reviewStage.id, "plan.content.invalid", "revision result is missing proposedContentChanges.plan");
-      }
-      // Every revision is checked *before* it overwrites the gated document.
-      // A plan that fails any binding must never replace the one the gate
-      // approved on disk, and the checks run on the parsed candidate so a
-      // refused revision leaves the last approved plan untouched.
-      const revisionParsed = validatePlanDoc(revisionContent.plan);
-      if (!revisionParsed.ok) {
-        return abort(reviewStage.id, "plan.content.invalid", revisionParsed.reason);
-      }
-      const revisionDoc = revisionParsed.value;
-      const revisionMismatch = planForCheck(revisionDoc, reviewStage.id);
-      if (revisionMismatch) return revisionMismatch;
-      const revisionCoverage = coverageFitsScope(revisionDoc, scope);
-      if (!revisionCoverage.ok) {
-        return abort(
-          reviewStage.id,
-          "plan.coverage.unkeepable",
-          `plan promises coverage outside the approved scope: ${revisionCoverage.unkeepable.join("; ")}`
-        );
-      }
-      // The completeness gate runs on every revision exactly as on the first
-      // write: a revised plan that drops a criterion's coverage line must not
-      // pass the deterministic gate by covering only what it kept.
-      const revisionComplete = coverageMeetsCriteria(revisionDoc, specDoc.value.acceptanceCriteria);
-      if (!revisionComplete.ok) {
-        return abort(
-          reviewStage.id,
-          "plan.coverage.incomplete",
-          `plan does not cover every acceptance criterion: ${revisionComplete.uncovered.join("; ")}`
-        );
-      }
-      try {
-        written = writePlanDoc(rootDir, run.slug, revisionContent.plan);
-      } catch (err) {
-        return abort(reviewStage.id, "plan.content.invalid", (err as Error).message);
-      }
-      planContent = revisionContent.plan;
-      planPath = written.path;
-      audit(planStage.id, "plan.content.write", `wrote revision ${planPath}`);
     }
     return abort(
       reviewStage.id,

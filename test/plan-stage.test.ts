@@ -272,6 +272,16 @@ test("the happy path chains plan and plan_review from the approved stage", async
     assert.ok(plan.includes("REVISED-plan"), "the revision round was written");
     assert.equal(verifyAuditChain(store), null);
     assert.equal(store.getRun(runId)!.status, "in_progress");
+    // The round-1 reconciliation's decisions arrived valid: each finding's
+    // decision kept its disposition, nothing was converted, and the fixture's
+    // single claim matched the derived node exactly.
+    const records = auditSummaries(store, runId, "plan.reconcile.record");
+    const round1 = records[0];
+    assert.ok(!round1.includes("->cannot_determine"), "no happy-path decision was converted");
+    assert.match(round1, /unclaimed=0/);
+    for (const finding of store.getFindings(reviewStage.id)) {
+      assert.match(round1, new RegExp(`d${finding.id}=addressed`), `finding ${finding.id} kept its addressed disposition`);
+    }
   });
 });
 
@@ -461,7 +471,7 @@ test("coverage outside the approved scope blocks before any reviewer is dispatch
     writeFileSync(
       scratch,
       fixtureSource().replace(
-        "proposedContentChanges: { plan: planDoc({ revised: stdin.includes(\"## Revision\") }) },",
+        "proposedContentChanges: { plan: planDoc() },",
         "proposedContentChanges: { plan: planDoc({ outOfScope: true }) },"
       )
     );
@@ -724,19 +734,19 @@ test("the plan panel seats the lens the author asked for", async () => {
   });
 });
 
-test("a revision that drops a criterion's coverage blocks and leaves the gated plan on disk", async () => {
+test("a reconciliation that drops a criterion's coverage blocks and leaves the gated plan on disk", async () => {
   await withApprovedRun(async ({ store, root, runId }) => {
 
-    // The revision variant drops the "it stays working" line. The
-    // completeness gate must run on revisions exactly as on the first write,
-    // and it must refuse *before* the revision overwrites the document the
-    // gate already approved.
+    // The reconciliation variant drops the "it stays working" line. The
+    // completeness gate must run on the reconciled plan exactly as on the
+    // first write, and it must refuse *before* the reconciliation overwrites
+    // the document the gate already approved.
     const scratch = join(root, "emit-dropped-criterion-revision.mjs");
     writeFileSync(
       scratch,
       fixtureSource().replace(
         "- it stays working -> ${second}",
-        '${stdin.includes("## Revision") ? "" : "- it stays working -> " + second}'
+        '${stdin.includes("reconcile") ? "" : "- it stays working -> " + second}'
       )
     );
     freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
@@ -879,7 +889,10 @@ test("the transitional legacy flow passes a clean panel in its first pass", asyn
     const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
     const counts = agentRunCounts(store, runId);
-    assert.equal(counts.author, 2, "draft and self-critique; a clean panel needs no legacy revision");
+    // Draft, self-critique, and one reconciliation — the phase order runs a
+    // reconciliation per round even when the panel reported nothing, so the
+    // reconciler is the actor that confirms an empty findings set.
+    assert.equal(counts.author, 3, "draft and self-critique plus one reconciliation");
     assert.equal(counts.reviewer, 2, "the author asked for two");
     assert.match(auditSummaries(store, runId, "plan.gate.pass")[0], /gate passed in round 1/);
   });
@@ -893,7 +906,7 @@ test("the frozen one-round budget stays inactive until reconciliation exists", a
     const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
     const counts = agentRunCounts(store, runId);
-    assert.equal(counts.author, 3, "the legacy author revision remains available after self-critique");
+    assert.equal(counts.author, 4, "draft and self-critique plus one reconciliation per legacy pass");
     assert.equal(counts.reviewer, 4, "the legacy closure panel still confirms the revision");
   });
 });
@@ -1030,5 +1043,190 @@ function planDoc({`
       (a) => a.specialty
     );
     assert.ok(seatable.includes(named), `${named} is not a specialty the registry seats`);
+  });
+});
+
+// --- reconciliation ------------------------------------------------------------
+
+test("an author whose frozen definition cannot reconcile blocks before the dispatch", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    // The plan-side copy of the spec-side assertion, and it has to exist
+    // twice: the two orchestrators are duplicated on purpose, so nothing
+    // structural notices a capability checked on one side and only tested on
+    // the other.
+    const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+    const profile = JSON.parse(readFileSync(path, "utf8")) as {
+      agents: { id: string; outputs: string[] }[];
+    };
+    const author = profile.agents.find((a) => a.id === "plan-author")!;
+    author.outputs = author.outputs.filter((o) => o !== "plan-reconciliation");
+    const serialized = canonicalJson(profile);
+    writeFileSync(path, serialized);
+    store.setProfileRef(runId, sha256Hex(serialized));
+
+    const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /does not allow plan-reconciliation output/);
+    assert.equal(agentRunCounts(store, runId).author, 0, "nothing was spent");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("a reconciliation whose plan does not validate blocks instead of overwriting the gated plan", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-plan-invalid-reconcile.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace(
+        "proposedContentChanges: { plan: artifact, decisions },",
+        'proposedContentChanges: { plan: "not a plan", decisions },'
+      )
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /plan reconciliation document refused/);
+    const onDisk = readFileSync(join(root, "docs", "features", SLUG, "plan.md"), "utf8");
+    assert.ok(!onDisk.includes("not a plan"));
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("a reconciliation missing a decision for a reported finding blocks by name", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-plan-missing-decision.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace("const decisions = ids.map((id, index) => ({", "const decisions = ids.slice(1).map((id, index) => ({")
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /plan reconciliation refused: reconciliation is incomplete: no decision for canonical finding id\(s\)/);
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("mixed reports reach the plan reconciler unfused: pairs stay pairs, classifications stay split", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    // The plan-side copy of the spec-side mixed-pair proof: one shared
+    // identity with two reports, one classification split across two
+    // canonical findings, and no fused severity/classification pair.
+    const scratch = join(root, "emit-plan-mixed-pair.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource()
+        .replace(
+          "function emit(agentResult) {",
+          `function mixedFindings(agentId) {
+  if (agentId === "spec-reviewer-security") {
+    return [
+      {
+        location: "## Coverage",
+        intentKey: "shared-concern",
+        severity: "critical",
+        classification: "current_artifact",
+        subject: "severe in-artifact concern",
+      },
+      {
+        location: "## Tasks",
+        intentKey: "dup-concern",
+        severity: "critical",
+        classification: "current_artifact",
+        subject: "the same concern twice",
+      },
+    ];
+  }
+  return [
+    {
+      location: "upstream:specification:shared-concern",
+      intentKey: "shared-concern",
+      severity: "low",
+      classification: "upstream",
+      subject: "mild upstream concern",
+    },
+    {
+      location: "## Tasks",
+      intentKey: "dup-concern",
+      severity: "low",
+      classification: "current_artifact",
+      subject: "the same concern twice",
+    },
+  ];
+}
+
+function reportPairs(id) {
+  const after = stdin.split(\`finding \${id}\\n\`)[1] ?? "";
+  const block = after.split("\\n- finding")[0] ?? "";
+  const pairs = [...block.matchAll(/severity (\\w+), classification (\\w+)/g)].map((m) => \`\${m[1]}/\${m[2]}\`);
+  return pairs.length > 0 ? pairs : ["none"];
+}
+
+function emit(agentResult) {`
+        )
+        .replace(
+          '    ? []\n    : [\n        {\n          location: "## Coverage",\n          intentKey: "coverage-gap",\n          severity: "high",\n          classification: "current_artifact",\n          subject: "a criterion has no convincing coverage",\n        },\n        {\n          location: "## Tasks",\n          intentKey: "nit-pick",\n          severity: "low",\n          classification: "current_artifact",\n          subject: "tasks could be ordered better",\n        },\n      ];',
+          '    ? []\n    : mixedFindings(agentId);'
+        )
+        .replace(
+          '  const decisions = ids.map((id, index) => ({\n    findingId: id,\n    disposition: "addressed",\n    rationale: "fixture addressed the finding",\n    changedLocations: ["## Tasks"],',
+          '  const decisions = ids.map((id, index) => ({\n    findingId: id,\n    disposition: "addressed",\n    rationale: "fixture addressed the finding",\n    changedLocations: reportPairs(id),'
+        )
+        .replace(
+          "    normativeChanges:\n      ids.length > 0",
+          "    normativeChanges:\n      index === 0 && ids.length > 0"
+        )
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const reviewStage = store.getStageChain(runId).find((s) => s.kind === "plan_review")!;
+    const findings = store.getFindings(reviewStage.id);
+    const dup = findings.find((f) => f.intent_key === "dup-concern");
+    const sharedCurrent = findings.find(
+      (f) => f.intent_key === "shared-concern" && f.location === "## Coverage"
+    );
+    const sharedUpstream = findings.find(
+      (f) => f.intent_key === "shared-concern" && f.location === "upstream:specification:shared-concern"
+    );
+    assert.ok(dup, "the shared identity deduplicates to one canonical row");
+    assert.ok(sharedCurrent && sharedUpstream, "the classification split is two canonical findings");
+    const records = auditSummaries(store, runId, "plan.reconcile.record");
+    assert.match(
+      records[0],
+      new RegExp(`loc${dup.id}=low/current_artifact\\+critical/current_artifact`),
+      "both reports on the shared identity arrive, each with its own severity and classification"
+    );
+    assert.match(records[0], new RegExp(`loc${sharedCurrent.id}=critical/current_artifact`));
+    assert.match(records[0], new RegExp(`loc${sharedUpstream.id}=low/upstream`));
+    assert.ok(
+      !records[0].includes("critical/upstream"),
+      "no stored pair fuses a severity with a classification no reviewer returned"
+    );
+  });
+});
+
+test("the plan reconciliation prompt carries the approved specification", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    // The reconciler's answer embeds what it saw: the fixture echoes whether
+    // the approved spec's frontmatter reached it into the decision's
+    // changedLocations. `change_kind` appears only in the specification, not
+    // in the plan, so the echo discriminates the two documents.
+    const scratch = join(root, "emit-plan-reconcile-spec.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace(
+        'changedLocations: ["## Tasks"],',
+        'changedLocations: [stdin.includes("change_kind: feature") ? "spec-seen" : "spec-missing"],'
+      )
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const records = auditSummaries(store, runId, "plan.reconcile.record");
+    assert.ok(records[0].includes("spec-seen"), "the reconciler saw the approved specification");
   });
 });
