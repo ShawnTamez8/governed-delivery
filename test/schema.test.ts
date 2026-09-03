@@ -7,15 +7,30 @@ import { join } from "node:path";
 // copy to prove the assertions have teeth. All committed migration files are
 // concatenated so the checks cover every table.
 const MIGRATIONS_DIR = join(process.cwd(), "src", "migrations");
-const sql = readdirSync(MIGRATIONS_DIR)
-  .filter((f) => f.endsWith(".sql"))
-  .sort()
-  .map((f) =>
-    f === "001_init.sql" && process.env.MIGRATION_FILE
-      ? readFileSync(process.env.MIGRATION_FILE, "utf8")
-      : readFileSync(join(MIGRATIONS_DIR, f), "utf8")
-  )
-  .join("\n");
+
+// A `--` line comment can contain the exact text of a constraint the table no
+// longer has, and can contain unbalanced parentheses that would throw off
+// `migrationTables`' paren-depth scan for a `CREATE TABLE` body's end. A Task
+// 11 break-it mutation proved the first case: a comment explaining a dropped
+// `UNIQUE` clause still satisfied `body.includes(constraint)`. Strip comments
+// from the concatenated source once, before any structural parsing runs, so
+// dead text in a comment can affect neither check. Migrations here use only
+// `--` comments, never `/* */`.
+function stripLineComments(sql: string): string {
+  return sql.replace(/--.*$/gm, "");
+}
+
+const sql = stripLineComments(
+  readdirSync(MIGRATIONS_DIR)
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .map((f) =>
+      f === "001_init.sql" && process.env.MIGRATION_FILE
+        ? readFileSync(process.env.MIGRATION_FILE, "utf8")
+        : readFileSync(join(MIGRATIONS_DIR, f), "utf8")
+    )
+    .join("\n")
+);
 
 const ARCHITECTURE = join(process.cwd(), "ARCHITECTURE.md");
 

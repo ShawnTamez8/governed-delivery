@@ -170,3 +170,35 @@ persistence) and have the stage assert the worktree is clean before and
 after the dispatch, blocking the run and naming the paths when anything
 changed. A prompt-level instruction is a request; the tree is checked, not
 trusted.
+
+## 16. A remediation loop aimed at the wrong artifact cannot repair an upstream omission
+
+A reviewer's finding is sometimes correct about a concern the artifact under
+review cannot itself fix, because the missing decision sits upstream of it.
+Routing that finding back to the same author for another revision round asks
+the author to correct a document that has nothing wrong with it, and the
+author can only comply by inventing something to change. Two observations,
+not a rate: the plan-stage smoke's 2026-08-30 round-2 finding caught the plan
+inventing a rejection requirement the specification never stated, and step
+5b's Task 1 prototype recorded an author responding to a security finding by
+adding an acceptance criterion — a "single atomic exclusive-create
+operation" — that the design never stated, marking the finding `addressed`,
+and the artifact gate passed. No run record in this repository describes a
+complete wrong-artifact remediation loop end to end;
+both are observations of this pattern's precursor, and this entry says so
+rather than implying a filed incident that never happened.
+
+Require every added or replaced normative node a reconciliation introduces to
+be claimed by exactly one decision and grounded in an excerpt from the
+governing upstream input. A decision that claims a node with a duplicated or
+ungrounded citation converts to a blocking `cannot_determine`; a node no
+decision claims at all — Task 1's actual retained case, replayed against the
+shipped validator on 2026-09-03 — is never silently accepted as `addressed`
+either, but surfaces as unclaimed and blocks the whole round rather than
+converting one decision, because no decision exists to convert. Either path
+gives a genuinely upstream concern a route other than another revision of the
+wrong artifact. This mitigation proves textual occurrence — that the cited
+words are in the governing input, in that order — never that they logically
+support what was added or rejected; neither the grounding match nor the
+mechanical artifact gates are evidence of semantic correctness, and no panel
+independently confirms either.

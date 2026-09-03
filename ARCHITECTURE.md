@@ -647,6 +647,17 @@ active work is `git mv` into `docs/features/<slug>/design.md`. There is no
 transition to validate because nothing downstream depends on a proposal's status
 being correct.
 
+**A run-raised proposal reaches the backlog through two human steps, never a
+run write.** When `spec_review` or `plan_review` routes a finding upstream
+(section 13), the run stores the proposal as run state — title, problem
+statement, why the concern is upstream, and the disposition-derived route —
+with its full candidate and the reconciler's rationale retained as evidence
+under `.governance/proposals/<run>/`. `bw proposal-export` is the first human
+step: it renders one stored proposal into a new file under `docs/proposals/`,
+refusing to overwrite one that already exists there. The second step is the
+promotion above, `git mv` into `docs/features/<slug>/design.md`, unchanged and
+unaware of whether the file it moves came from a human or a run.
+
 **Active work.** One directory per unit of work:
 
 ```
@@ -694,6 +705,13 @@ report lives there.
   profiles/<run>/   the frozen profile snapshot for a run
   verification/<run>/  retained command output, one file per command, plus the
                        structured result record handed to delivery_check
+  proposals/<run>/  retained upstream-proposal evidence, one file per
+                    candidate; proposal.evidence_ref references only the
+                    creating candidate's file — a later candidate that
+                    dedups onto the same proposal row gets its own evidence
+                    file here too, but that file is reachable only through
+                    the audit summary recorded for that link, not through
+                    any structured column
 ```
 
 **What is git-tracked and what is not.** The database and raw output are
@@ -914,7 +932,7 @@ block.
 
 ## 22. Known hazards
 
-`docs/hazards.md` states fifteen failure modes this kind of system is subject
+`docs/hazards.md` states sixteen failure modes this kind of system is subject
 to and what each requires. They are requirements, not an appendix: model output
 in shapes the schema refuses, discarded output being undiagnosable, constrained
 fields whose constraint the prompt never states, fixtures and code agreeing
@@ -922,8 +940,10 @@ while both are wrong, completion without delivery, promises a later stage cannot
 keep, retries that vary nothing, executable resolution, unverified hook
 interpreters, exact-match model acceptance against moving aliases, a default
 install that cannot complete a run, configuration divergence between targets,
-specifications inventing obligations, independence that cannot be proven, and
-proposal subprocesses that are requested rather than enforced to be read-only.
+specifications inventing obligations, independence that cannot be proven,
+proposal subprocesses that are requested rather than enforced to be read-only,
+and a remediation loop aimed at the wrong artifact that cannot repair an
+upstream omission.
 
 When a new failure mode is found, add it there rather than here. Two lists drift
 apart, and the one that drifts is the one people stop trusting.

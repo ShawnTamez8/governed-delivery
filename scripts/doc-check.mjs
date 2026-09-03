@@ -37,6 +37,16 @@ const warn = (check, file, line, message) => warnings.push({ check, file, line, 
 const read = (rel) => readFileSync(join(REPO_ROOT, rel), "utf8");
 const lineOf = (text, index) => text.slice(0, index).split("\n").length;
 
+// A `--` line comment can contain the exact text of a constraint the table no
+// longer has, and can contain unbalanced parentheses that would throw off the
+// paren-depth scan for a `CREATE TABLE` body's end. A Task 11 break-it
+// mutation proved the first case: a comment explaining a dropped `UNIQUE`
+// clause still satisfied `body.includes(constraint)`. Strip comments from the
+// concatenated migration source once, before any structural parsing runs, so
+// dead text in a comment can affect neither check. Migrations here use only
+// `--` comments, never `/* */`.
+const stripLineComments = (sql) => sql.replace(/--.*$/gm, "");
+
 // A mismatch is reported against the document that carries the claim, so the
 // reader is taken to the line they have to edit.
 function mismatch(check, file, line, label, expected, found) {
@@ -160,13 +170,16 @@ function derive() {
   }
 
   const storageLayoutFence = fence(storageSection, "storage layout", (f) => f.includes(".governance/"));
+  const hazardsSection = section("Known hazards");
+  const hazardsMd = read("docs/hazards.md");
+  const hazardHeadings = [...hazardsMd.matchAll(/^## (\d+)\./gm)].map((m) => Number(m[1]));
 
   // The migrations are source, and source outranks the document.
   const migrationFiles = readdirSync(join(REPO_ROOT, "src/migrations"))
     .filter((f) => f.endsWith(".sql"))
     .sort();
   if (migrationFiles.length === 0) throw new Error("no .sql files found under src/migrations");
-  const migrationSql = migrationFiles.map((f) => read(`src/migrations/${f}`)).join("\n");
+  const migrationSql = stripLineComments(migrationFiles.map((f) => read(`src/migrations/${f}`)).join("\n"));
 
   // A table's *final* body: later `CREATE TABLE <name> (...)` occurrences
   // overwrite earlier ones with the same name, so a table a later migration
@@ -204,6 +217,9 @@ function derive() {
     storageSection,
     contractSection,
     storageLayoutFence,
+    hazardsSection,
+    hazardsMd,
+    hazardHeadings,
     stageSequence,
     deferredStages,
     archTables,
@@ -214,6 +230,35 @@ function derive() {
     migrationTableBodies,
   };
 }
+
+// section 22 states the hazard count in prose ("states sixteen failure
+// modes"), matching this document's style for small counts elsewhere
+// (section 2's "Three structural mistakes", section 5's "Twelve stages").
+// Mapping the word rather than asking for a digit keeps that prose style
+// intact while still letting the checker compare it against
+// `docs/hazards.md`'s own heading count.
+const NUMBER_WORDS = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+};
 
 // ---------------------------------------------------------------------------
 // Pins.
@@ -414,6 +459,46 @@ function checkContract(facts) {
   }
 }
 
+// Section 22 states the hazard count in words; `docs/hazards.md`'s own
+// `## N.` headings are the source of truth. This is the enforced form of
+// section 22's own closing line — "when a new failure mode is found, add it
+// there rather than here" — since prose alone cannot catch the two lists
+// drifting apart the way this check can.
+function checkHazardCount(facts) {
+  const line = lineIn(facts.architectureMd, "## 22.");
+  const stated = /states (\w+) failure modes/.exec(facts.hazardsSection);
+  if (!stated) {
+    err(
+      "hazardCount",
+      "ARCHITECTURE.md",
+      line,
+      "section 22 no longer states the hazard count in the expected 'states <word> failure modes' shape"
+    );
+    return;
+  }
+  const statedCount = NUMBER_WORDS[stated[1].toLowerCase()];
+  if (statedCount === undefined) {
+    err(
+      "hazardCount",
+      "ARCHITECTURE.md",
+      line,
+      `section 22 states a hazard count word doc-check cannot parse: '${stated[1]}'`
+    );
+    return;
+  }
+  const actualCount = facts.hazardHeadings.length;
+  if (statedCount !== actualCount) {
+    mismatch(
+      "hazardCount",
+      "ARCHITECTURE.md",
+      line,
+      "hazard count",
+      `${actualCount} (docs/hazards.md '## N.' headings)`,
+      `${statedCount} (section 22 states '${stated[1]}')`
+    );
+  }
+}
+
 // `docs/hazards.md` is a requirements list, but consulting it was prose-only
 // guidance, so a plan or a reconciliation could silently skip it. Silence is
 // the failure mode: an omitted entry and a considered-and-irrelevant entry look
@@ -479,6 +564,7 @@ const CHECKS = {
   constraints: checkConstraints,
   layout: checkLayout,
   contract: checkContract,
+  hazardCount: checkHazardCount,
   hazards: checkHazards,
   paths: checkPaths,
 };

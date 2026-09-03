@@ -1,6 +1,6 @@
 # Step 5b Author-Led Review and Upstream Proposal Implementation Plan
 
-**Status:** Reconciled
+**Status:** Implemented
 
 **Goal:** Replace the recursive closure-review loop in `spec_review` and `plan_review` with an author-led flow, and give an upstream concern a destination other than another author round. The artifact's own author self-critiques once, a bounded panel of specialist reviewers reports findings, and that same author reconciles every finding and amends the artifact. Completion stops meaning "reviewers eventually returned an empty list" and starts meaning "every finding carries a retained typed decision and every deterministic artifact gate passes". A concern whose cause is upstream of the reviewed artifact becomes a BuildWorks proposal: a non-blocking follow-up lets the run continue, a blocking dependency writes the proposal and blocks, and an indeterminate case blocks for a human. This is corrective Step 5b work inside the two shipped review stages. It adds no runtime stage: delivery check remains architecture step 8 and deliberate stop remains step 9.
 
@@ -916,18 +916,82 @@ review). This plan's `**Status:**` line stays `Reconciled`.
 
 **Steps:**
 
-- [ ] Add hazard 16, `A remediation loop aimed at the wrong artifact cannot repair an upstream omission`. Record both observations: the plan-stage smoke's round-2 invented-requirement catch and Task 1's ungrounded atomic exclusive-create criterion admitted through `addressed`. State plainly that no full wrong-artifact loop is separately recorded in this repository. Record the normative-delta grounding mitigation and its remaining limit: textual occurrence is auditable but is not semantic proof.
-- [ ] Verify the sections 12 and 13 authority change accepted in Task 1 still matches the implemented flow, including its explicit distinction between deterministic normative-delta/textual/mechanical validation and author-owned semantic judgment. Do not postpone or rewrite that decision here to fit accidental code; a mismatch returns to implementation or requires a new explicit operator decision.
-- [ ] Update section 15's schema block and storage layout for canonical findings, immutable reviewer reports, finding decisions, proposals, and the proposal evidence directory, naming exact column positions. Update section 20 for the new configured limits, section 14 for the two-step proposal flow, and section 22's hazard count and summary.
-- [ ] Add a hazard-count check to `scripts/doc-check.mjs` comparing the `^## \d+\.` heading count in `docs/hazards.md` against section 22's count, so that step is enforced rather than remembered.
-- [ ] Run the checker after each edit. Exit 2 means code, migration, and checker facts disagree and must be fixed at the source; do not weaken a pin or rewrite a historical document to suppress it.
-- [ ] Update `README.md` to describe the shipped flow. Do not claim delivery check is implemented and do not rename or renumber a step.
+- [x] Add hazard 16, `A remediation loop aimed at the wrong artifact cannot repair an upstream omission`. Record both observations: the plan-stage smoke's round-2 invented-requirement catch and Task 1's ungrounded atomic exclusive-create criterion admitted through `addressed`. State plainly that no full wrong-artifact loop is separately recorded in this repository. Record the normative-delta grounding mitigation and its remaining limit: textual occurrence is auditable but is not semantic proof.
+- [x] Verify the sections 12 and 13 authority change accepted in Task 1 still matches the implemented flow, including its explicit distinction between deterministic normative-delta/textual/mechanical validation and author-owned semantic judgment. Do not postpone or rewrite that decision here to fit accidental code; a mismatch returns to implementation or requires a new explicit operator decision.
+- [x] Update section 15's schema block and storage layout for canonical findings, immutable reviewer reports, finding decisions, proposals, and the proposal evidence directory, naming exact column positions. Update section 20 for the new configured limits, section 14 for the two-step proposal flow, and section 22's hazard count and summary.
+- [x] Add a hazard-count check to `scripts/doc-check.mjs` comparing the `^## \d+\.` heading count in `docs/hazards.md` against section 22's count, so that step is enforced rather than remembered.
+- [x] Run the checker after each edit. Exit 2 means code, migration, and checker facts disagree and must be fixed at the source; do not weaken a pin or rewrite a historical document to suppress it.
+- [x] Update `README.md` to describe the shipped flow. Do not claim delivery check is implemented and do not rename or renumber a step.
 
 **Verify:** `npm run check:docs`; `node --test test/schema.test.ts`; `git diff -- ARCHITECTURE.md docs/hazards.md README.md scripts/doc-check.mjs`.
 
 **Expected:** The current documentation, migrations, and checker pins state one rule; the four reconciled review records and every other historical feature document are untouched during implementation; Task 1's approved sections 12 and 13 decision remains intact; section 5 and `STAGE_SEQUENCE` are byte-for-byte unchanged.
 
 **Task completion evidence:** Doc-check exit 0, the new hazard-count check failing on a deliberate miscount, and a diff assertion showing no stage-sequence change.
+
+#### Completion record, 2026-09-02
+
+Hazard 16 added to `docs/hazards.md`, naming both observations Task 1
+recorded — the plan-stage smoke's round-2 invented-rejection-requirement
+catch and the Task 1 prototype's ungrounded atomic-exclusive-create criterion
+admitted through `addressed` — stating plainly that no complete
+wrong-artifact remediation loop is separately recorded here, and recording
+the normative-delta grounding mitigation with its residual limit: textual
+occurrence is auditable, not semantic proof.
+
+**Sections 12 and 13 needed no content change.** Read against the shipped
+`src/plan-gate.ts`, `src/spec-stage.ts`, `src/plan-stage.ts`, and
+`src/reconciliation.ts`, both sections already state the implemented flow —
+five phases, the author-proposed panel with named staffing refusal, the
+decision-completeness gate evaluated with `store.getFindingDecisions` over
+every round a stage ran rather than the last one, and the authority-boundary
+and residual-semantic-limit wording matching `src/reconciliation.ts`'s module
+comment word for word. This task's own verification step is therefore
+satisfied by confirmation, not by an edit.
+
+**Section 15** gained the `proposals/<run>/` line the storage-layout tree was
+missing — `src/paths.ts`'s `proposalEvidenceDir`, one file per candidate,
+already referenced from `proposal.evidence_ref` but never named in the tree.
+Its schema block already carried `finding`, `finding_report`,
+`finding_decision`, `proposal`, and `proposal_source` from the Tasks 7-9
+mechanical sync and needed no further change. **Section 14** gained the
+two-step proposal-flow paragraph section 13 already pointed readers to but
+section 14 never itself stated: a run writes proposal evidence under
+`.governance/proposals/<run>/`, `bw proposal-export` is the first human step,
+and the existing `git mv` promotion is the second. **Section 20** was checked
+against `profile.policy.{specReviewRounds,planReviewRounds}` and found
+already accurate from Task 1's amendment; no change. **Section 22's** count
+moved from fifteen to sixteen with hazard 16's one-line summary appended to
+the list.
+
+**`scripts/doc-check.mjs`** gained `checkHazardCount`: it counts
+`docs/hazards.md`'s `## N.` headings and compares that against the word
+section 22 states (`"states sixteen failure modes"`), mapped through a small
+number-word table so the document keeps its existing prose-number style
+instead of switching to a digit. Proven by breaking it: reverting section 22
+to `fifteen` failed with `hazard count — expected 16 (docs/hazards.md '##
+N.' headings), found 15 (section 22 states 'fifteen')`; restored and
+reverified clean.
+
+**`README.md`'s** status paragraph no longer describes spec-review as
+running "the review panel and the deterministic gate with closure rounds" —
+that loop is gone — and its step 5b paragraph moved from "planned and not
+built" to what shipped, naming Tasks 11-13 as what remains rather than
+claiming all thirteen are done. Delivery check is still not claimed
+implemented; the stage sequence and step numbering are untouched.
+
+**Verified:** `npm run typecheck` clean; `npm test` 625 tests, 624 pass, 1
+pre-existing skip, 0 fail (unchanged from the Tasks 7-9 tranche); `npm run
+check:docs` exit 0, `doc-check: clean`, 36 pre-existing path warnings
+(unchanged); `node --test test/schema.test.ts` 8/8 pass, no pin moved. `git
+diff -- ARCHITECTURE.md docs/hazards.md README.md scripts/doc-check.mjs`
+touches only sections 14, 15, and 22; section 5, `STAGE_SEQUENCE`, and all
+four reconciled review records are untouched.
+
+**Not done here, by scope:** no break-and-restore sweep beyond the one
+hazard-count guard proven above (Task 11); no production smoke (Task 12); no
+independent review of this diff and no plan status change to `Implemented`
+(Task 13, which covers this task's diff along with every other task's).
 
 ### Task 11: Break and restore every new guard
 
@@ -939,33 +1003,142 @@ review). This plan's `**Status:**` line stays `Reconciled`.
 
 **Steps:**
 
-- [ ] Remove the panel-request range validation: the out-of-range test must fail.
-- [ ] Make an unstaffable panel shrink instead of blocking: the named-block test must fail.
-- [ ] Accept a reconciliation missing one canonical finding id or one reviewer report: the completeness test must fail.
-- [ ] Accept an unknown disposition: the vocabulary test must fail.
-- [ ] Let an unmatched `rejected_with_rationale` grounding advance: the grounding test must fail.
-- [ ] Replay Task 1's retained atomic exclusive-create change as `addressed` without governing-source grounding: the normative-delta test must fail. Then omit, duplicate, or attach the wrong artifact node in `normativeChanges`: the exact-set tests must fail. Restore a grounded fixture and prove it advances without an extra dispatch.
-- [ ] Omit a proposal candidate from an upstream disposition, or attach one to a non-upstream disposition: the conditional-shape tests must fail.
-- [ ] Let `upstream_blocking` advance: the blocking-route test must fail.
-- [ ] Let `cannot_determine` advance: the human-routing test must fail.
-- [ ] Revert canonical-finding upsert to return by `lastInsertRowid`: the three-insert return regression must fail.
-- [ ] Upsert a second reviewer's report over the first: the one-finding/two-report preservation test must fail.
-- [ ] Remove `round` from canonical identity: the configured-two-round recurrence test must fail.
-- [ ] Drop a constraint from any rebuilt finding, report, or decision table: the scoped schema test must fail — this is the guard review 1 proved could not fail before Task 7.
-- [ ] Remove the self-critique dispatch: the exactly-one-self-critique and dispatch-count tests must fail.
-- [ ] Fuse the mixed `critical`/`current_artifact` and `low`/upstream pair, or discard either report: the report-pair preservation test must fail.
-- [ ] Omit `design.md` from the specification-review or reconciliation prompt: the governing-input test must fail.
-- [ ] Allow duplicate specialties, an over-capacity required/requested union, or two selected reviewers with the same specialty: the panel validation tests must fail.
-- [ ] Remove each new prompt sentence — the no-invention rule, upstream `location` syntax, proposal candidate constraints, grounding contract, and specialty-only boundary — one at a time: the matching source-scan test must fail.
-- [ ] Have a stage read a live review-policy constant instead of the frozen policy: the no-live-constant test must fail.
-- [ ] Write a proposal into `docs/proposals/` during a run: the scope test must fail.
-- [ ] Restore after every break and rerun the named test green. Record every observed failure and restoration; a test that stays green has not proven its guard and must be strengthened before the task closes.
+- [x] Remove the panel-request range validation: the out-of-range test must fail.
+- [x] Make an unstaffable panel shrink instead of blocking: the named-block test must fail.
+- [x] Accept a reconciliation missing one canonical finding id or one reviewer report: the completeness test must fail.
+- [x] Accept an unknown disposition: the vocabulary test must fail.
+- [x] Let an unmatched `rejected_with_rationale` grounding advance: the grounding test must fail.
+- [x] Replay Task 1's retained atomic exclusive-create change as `addressed` without governing-source grounding: the normative-delta test must fail. Then omit, duplicate, or attach the wrong artifact node in `normativeChanges`: the exact-set tests must fail. Restore a grounded fixture and prove it advances without an extra dispatch.
+- [x] Omit a proposal candidate from an upstream disposition, or attach one to a non-upstream disposition: the conditional-shape tests must fail.
+- [x] Let `upstream_blocking` advance: the blocking-route test must fail.
+- [x] Let `cannot_determine` advance: the human-routing test must fail.
+- [x] Revert canonical-finding upsert to return by `lastInsertRowid`: the three-insert return regression must fail.
+- [x] Upsert a second reviewer's report over the first: the one-finding/two-report preservation test must fail.
+- [x] Remove `round` from canonical identity: the configured-two-round recurrence test must fail.
+- [x] Drop a constraint from any rebuilt finding, report, or decision table: the scoped schema test must fail — this is the guard review 1 proved could not fail before Task 7.
+- [x] Remove the self-critique dispatch: the exactly-one-self-critique and dispatch-count tests must fail.
+- [x] Fuse the mixed `critical`/`current_artifact` and `low`/upstream pair, or discard either report: the report-pair preservation test must fail.
+- [x] Omit `design.md` from the specification-review or reconciliation prompt: the governing-input test must fail.
+- [x] Allow duplicate specialties, an over-capacity required/requested union, or two selected reviewers with the same specialty: the panel validation tests must fail.
+- [x] Remove each new prompt sentence — the no-invention rule, upstream `location` syntax, proposal candidate constraints, grounding contract, and specialty-only boundary — one at a time: the matching source-scan test must fail.
+- [x] Have a stage read a live review-policy constant instead of the frozen policy: the no-live-constant test must fail.
+- [x] Write a proposal into `docs/proposals/` during a run: the scope test must fail.
+- [x] Restore after every break and rerun the named test green. Record every observed failure and restoration; a test that stays green has not proven its guard and must be strengthened before the task closes.
 
 **Verify:** the named focused test after each break and restore, then `npm run typecheck && npm test && npm run check:docs`.
 
 **Expected:** Every new decision boundary has an independent executable test that detects its removal or inversion.
 
 **Task completion evidence:** A break-it table naming the mutation, the failing test and assertion, and the green restoration for every entry.
+
+#### Completion record, 2026-09-02
+
+Validated in a scratch worktree (`git worktree add` from `master` at `54ee29b`,
+`node_modules` copied in, no `npm install`) — never the working tree. Every
+mutation below was applied with `Edit`, run against its named focused test,
+restored with `git checkout -- <file>`, and confirmed by an empty `git diff
+--stat` before the next mutation began. All twenty distinct guards this
+task's steps name proved real: each mutation failed its named test on the
+first attempt, except item 13 (below), whose first-attempt pass exposed a
+real guard weakness rather than proving one.
+
+| # | Mutation | File:line | Named test | Failing assertion |
+|---|---|---|---|---|
+| 1 | Removed the panel-size range check | `select.ts` `validatePanelRequest` | `select.test.ts` "a size outside the frozen bounds is refused by name at either end" | size outside bounds no longer refused |
+| 2 | Removed both `staffingShortfall`/`panel.length` abort blocks in `runSpecStage` | `spec-stage.ts` ~372-397 | `spec-stage.test.ts` unstaffable-panel test | stage completed instead of blocking `spec.panel.unstaffable` |
+| 3 | Removed the `missing.length > 0` completeness refusal | `reconciliation.ts` ~563-566 | `reconciliation.test.ts` structural refusals (table-driven) | missing finding id/report no longer refused |
+| 4 | Removed the `DISPOSITIONS.includes` vocabulary check | `reconciliation.ts` ~420-424 | `reconciliation.test.ts` structural refusals | unknown disposition no longer refused |
+| 5 | Removed the `rejected_with_rationale` grounding `convert()` call | `reconciliation.ts` ~466-473 | `reconciliation.test.ts` grounding-mismatch case | unmatched grounding advanced instead of converting |
+| 6a | Removed the per-entry `normativeChanges` grounding-failure `convert()` | `reconciliation.ts` ~516-520 | `reconciliation.test.ts` normative-delta case | ungrounded added node advanced as `addressed` |
+| 6b | Removed the `available <= 0` claim-exhaustion check | `reconciliation.ts` ~578-585 | `reconciliation.test.ts` exact-set accounting case | duplicate/extra claim no longer refused |
+| 6c | Replayed, unmutated — Task 1's actual retained round-2 decision adding the atomic-exclusive-create criterion, with zero `normativeChanges` claims | `reconciliation.ts` ~573-598, the unclaimed-node accounting | one-off read-only script importing `reconciliation.ts`/`spec-doc.ts` against the real retained evidence — not a permanent test, see below | criterion surfaced in `unclaimedNodes`; the calling stage's `unclaimedNodes.length > 0 && conversions.length === 0` rule aborts the round |
+| 7 | Removed both missing/misplaced proposal-candidate refusals in one edit | `reconciliation.ts` ~530-533, 554-557 | `reconciliation.test.ts` conditional-shape cases | omitted/misplaced proposal no longer refused |
+| 8 | `BLOCKING_DISPOSITIONS` reduced to `["cannot_determine"]` | `plan-gate.ts:5` | `plan-gate.test.ts` blocking-route case | `upstream_blocking` passed the gate |
+| 9 | `BLOCKING_DISPOSITIONS` reduced to `["upstream_blocking"]` | `plan-gate.ts:5` | `plan-gate.test.ts` human-routing case | `cannot_determine` passed the gate |
+| 10 | Reverted `upsertCanonicalFinding` to `INSERT ... ON CONFLICT DO UPDATE` + `lastInsertRowid` | `store.ts` ~480-492 | `store.test.ts` "returns the row it wrote, not the most recently inserted row" | third call returned `second`'s row, not `first`'s |
+| 11 | Added a `DELETE FROM finding_report` before the insert | `store.ts` `insertFindingReport` | `store.test.ts` "a same-location pair with differing severities is one canonical finding with two immutable reports" | second reviewer's report overwrote the first |
+| 12 | Dropped `round` from the identity `SELECT` | `store.ts` `upsertCanonicalFinding` | `store.test.ts` "the same identity in a later round gets a separate canonical row" | round-2 call returned round-1's row |
+| 13 | Dropped `UNIQUE (finding_id, agent_run_id)` from `finding_report` | `migrations/005_finding_report_decision.sql` | `schema.test.ts` "finding_report one report per reviewer" | see below — first attempt false-passed |
+| 14 | Replaced the self-critique `dispatchOnce` call with a hardcoded result | `spec-stage.ts` ~268-309 | `spec-stage.test.ts` "exactly one self-critique runs per artifact, and the panel reviews its output" | `agentRunCounts(store, runId).author` was 2, not 3 |
+| 15 | Dropped `location` from the identity `SELECT` (mixed-classification case) | `store.ts` `upsertCanonicalFinding` | `store.test.ts` "a mixed-classification pair is two canonical findings, each with its own report, never fused" | `currentArtifact.id === upstream.id` |
+| 16 | Removed the "Design document:" block from the spec reconciliation prompt | `prompts.ts` `buildSpecReconcilePrompt` | `prompts.test.ts` "the generated spec reconciliation prompt carries the decision contract and every report unfused" | "the design is the governing input" |
+| 17 | Removed the `usedSpecialties.has()` guard in `seat()` | `select.ts` `selectReviewers` | `select.test.ts` "the selector never seats the same specialty twice" | panel seated 2 distinct specialties, not 3 |
+| 18a | Removed both no-invention sentences (spec + plan self-critique) | `prompts.ts` ~150, ~347 | `prompts.test.ts` "every constrained field's constraint appears in the prompt source" | missing "may not add an obligation" |
+| 18b | Removed the upstream `location` syntax sentence | `prompts.ts` ~200 (spec reviewer prompt) | same source-scan test | missing "upstream:design:" |
+| 18c/18d | Removed the grounding/proposal conditional-field allow-list sentence | `prompts.ts` `reconciliationDecisionContract` ~512-515 | same source-scan test | missing "grounding is allowed only on rejected_with_rationale" |
+| 18e | Removed the specialty-only boundary clause (both reviewer prompts) | `prompts.ts` ~186, ~378 | same source-scan test | missing "must not be reported" |
+| 19 | Added `import { PANEL_SIZE_MAX } from "./policy.ts"` to a stage module | `spec-stage.ts` | `policy.test.ts` "no stage reads a review-policy constant directly: it comes from the frozen profile" | offender list named `spec-stage.ts imports PANEL_SIZE_MAX` |
+| 20 | `writeProposalEvidence` writes into `docs/proposals/` instead of the governance directory | `proposal.ts` `writeProposalEvidence` | `spec-stage.test.ts` "upstream_follow_up stores a proposal, names every source finding, and does not block" | "proposal evidence was retained" failed (the governance-relative `evidence_ref` no longer existed) |
+
+**Item 13's first attempt exposed a real guard weakness, not a scratch-only
+authoring mistake — corrected on reconciliation of the Tasks 10-12 code
+review (finding 1, P1, 2026-09-03).** The removal comment quoted the exact
+dropped clause — `-- UNIQUE (finding_id, agent_run_id) removed: reports may
+now supersede each other` — and both `test/schema.test.ts`'s and
+`scripts/doc-check.mjs`'s constraint check did a raw substring search over
+the table body, comments included, so the check passed on a guard that no
+longer existed. This is a realistic authoring pattern, not a contrived one:
+a comment explaining a real removed constraint is exactly what a genuine
+future change would leave behind, and the original write-up's framing —
+that swapping to a quieter comment "fixed" the proof — left the actual
+checkers unfixed and vulnerable to the identical realistic case. Both
+checkers now strip `--` comments from the concatenated migration source
+before any structural parsing, in `stripLineComments` (added to both files),
+applied before the `CREATE TABLE` paren-depth scan runs — not only before the
+`.includes()` match, since a comment's own unbalanced parentheses could
+otherwise throw off where a table body is judged to end. Re-run with the
+exact same realistic comment above: both `test/schema.test.ts` and
+`scripts/doc-check.mjs --only=constraints` now fail, naming
+`finding_report`'s missing `UNIQUE (finding_id, agent_run_id)`; restored via
+`git checkout --` and reverified byte-identical (`git diff --stat` empty) and
+green. No other item false-passed.
+
+**Twenty distinct guards, not twenty-one.** The plan's steps list twenty
+bullets; the twentieth ("Restore after every break...") is the sweep's own
+procedural instruction, not its own mutation — it is what every row above
+already did. Items 2 and 7 each combine two named sub-mutations behind one
+bullet, as the plan's own wording does ("or"), and item 6 combines three (6a,
+6b, 6c), all recorded as single rows for that reason. Every named test failed its mutation on first attempt except item 13, whose
+guard was genuinely weak rather than a scratch-only authoring mistake — see
+below for the fix and re-proof, closed on reconciliation of the Tasks 10-12
+code review (finding 1, P1, 2026-09-03).
+
+**Item 6's retained-replay sub-clause, closed on reconciliation of the
+Tasks 10-12 code review (finding 2, 2026-09-03).** The original completion
+record left this sub-clause unattempted, marking item 6 complete regardless —
+an inconsistency the review caught. Closed for real, not merely
+re-worded: Task 1's actual retained round-2 reconciliation output
+(`step5b-task1-prototype/evidence/11-reconcile2.result.json`) — finding 8's
+real `addressed` decision adding the ungrounded "single atomic exclusive-create
+operation" criterion, with zero `normativeChanges` entries — was replayed
+against the shipped, **unmutated** `validateReconciliation`, using the real
+retained round-1 and round-2 spec text and the real design text extracted
+from `11-reconcile2.prompt.txt`. Read-only script, no file in this repository
+or the prototype bundle changed.
+
+**The result names a second guard path 6a never exercised.** Decision 8 is
+*not* converted to `cannot_determine` — it stays `addressed` with
+`normativeChanges: []`, because the model claimed nothing for the criterion it
+added. The criterion instead surfaces in `unclaimedNodes`, and because this
+round's `conversions` is empty, the calling stage's
+`unclaimedNodes.length > 0 && conversions.length === 0` rule aborts the round
+with "reconciliation left normative node(s) unclaimed by any decision" — the
+same fail-closed outcome hazard 16 requires, reached by the unclaimed-node
+path rather than the per-decision conversion path 6a proves. 6a proves a
+decision that *claims* a change with bad grounding converts; 6c proves a
+decision that claims *nothing* for an added node aborts the round instead —
+two different branches of the same guard, both now proven. Hazard 16's own
+text overstated this as a single "converts to `cannot_determine`" path; it is
+corrected in the same pass (`docs/hazards.md`).
+
+**Verified, in the scratch worktree, before removal:** `npm run typecheck`
+clean; `npm test` 625 tests, 624 pass, 1 pre-existing skip, 0 fail (identical
+to Task 10's count, confirming byte-identical restoration); `npm run
+check:docs` exit 0, `doc-check: clean`. `git status --porcelain` and `git
+diff` against `master` both empty immediately before the worktree was
+removed with `git worktree remove`. Re-run in the real repository afterward
+for the same three commands, confirming this task's plan and learnings edits
+are docs-only and safe: identical results.
 
 ### Task 12: Bounded production smoke and learning record
 
@@ -978,16 +1151,138 @@ review). This plan's `**Status:**` line stays `Reconciled`.
 
 **Steps:**
 
-- [ ] Create one fresh governed scratch run whose approved specification intentionally leaves a product decision unresolved while making it necessary for an implementable plan. Drive it through the real author, self-critique, panel, and reconciliation using the shipped executor and model configuration. Do not edit the upstream artifact mid-run and do not retry a blocked run.
-- [ ] Inspect the retained raw output and stored rows. Confirm exactly one self-critique dispatch, a panel matching the validated required/requested specialty union, canonical findings with every immutable report, one decision per canonical finding, exact textual grounding for every rejection, and — if the reconciler routes upstream — a stored proposal rendered from its candidate with the derived route, source finding ids, and validated audit chain. Record that this inspection cannot establish the semantic correctness of every author disposition from one sample.
-- [ ] Record the run id, requested and effective model per dispatch, dispatch count, actual cost, duration, canonical finding and reviewer-report counts before and after self-critique, decisions by value, grounding results, proposal outcome, stage and run result, and audit result. If no upstream concern surfaces, record that one-sample limitation plainly; deterministic tests remain the route's proof and no repeated spend is authorized to obtain a preferred sample.
-- [ ] Append the entry to `.claude/sessions/project-learnings.md`, separating what fixtures and break-it tests prove from what the real output demonstrated.
+- [x] Create one fresh governed scratch run whose approved specification intentionally leaves a product decision unresolved while making it necessary for an implementable plan. Drive it through the real author, self-critique, panel, and reconciliation using the shipped executor and model configuration. Do not edit the upstream artifact mid-run and do not retry a blocked run.
+- [x] Inspect the retained raw output and stored rows. Confirm exactly one self-critique dispatch, a panel matching the validated required/requested specialty union, canonical findings with every immutable report, one decision per canonical finding, exact textual grounding for every rejection, and — if the reconciler routes upstream — a stored proposal rendered from its candidate with the derived route, source finding ids, and validated audit chain. Record that this inspection cannot establish the semantic correctness of every author disposition from one sample.
+- [x] Record the run id, requested and effective model per dispatch, dispatch count, actual cost, duration, canonical finding and reviewer-report counts before and after self-critique, decisions by value, grounding results, proposal outcome, stage and run result, and audit result. If no upstream concern surfaces, record that one-sample limitation plainly; deterministic tests remain the route's proof and no repeated spend is authorized to obtain a preferred sample.
+- [x] Append the entry to `.claude/sessions/project-learnings.md`, separating what fixtures and break-it tests prove from what the real output demonstrated.
 
 **Verify:** the relevant `bw` commands in the scratch repository; `bw verify-audit` for the smoke run; then `npm run check:docs` and read the new entry back.
 
 **Expected:** One bounded real sample with retained evidence, actual cost, and no retry to green.
 
 **Task completion evidence:** The retained run evidence and the appended learning record, with measured rather than estimated numbers.
+
+#### Completion record, 2026-09-03
+
+One real, bounded, paid run — no retry, first attempt kept regardless of
+outcome. Design: a scratch-only *scripts/merge-config.mjs* merging two config objects,
+requiring conflicting same-key values to be "resolved safely rather than
+silently picking one side's value" without ever naming a mechanism —
+a genuine unresolved product decision, not a manufactured one. Driven
+directly against the real `bw` CLI (migrate, new-run, spec, approval-request
++ sign + approve, plan, verify-audit) from a one-off script outside the
+repository and outside the `run-buildworks` skill, which this task leaves
+untouched. Run 1, project `step5b-task12-smoke`, slug `config-merge`,
+model `claude-sonnet-5` requested and effective on every dispatch, no
+fallback recorded on any.
+
+**Both review stages passed in round 1.** `spec_review` gate: `spec.gate.pass`
+after 1 round, risk `low`. `plan_review` gate: `plan.gate.pass` after 1
+round, risk `low`. Run status `in_progress` — correct per section 12's
+deferred milestones: delivery_check is unbuilt, so no run reaches
+`completed` yet. `bw verify-audit` reported `chain valid` over the whole
+run.
+
+**Ten dispatches, exactly one self-critique per artifact, panel matching the
+requested union both times.**
+
+| # | Stage | Agent | Role | Requested→effective model | Tokens out | Cost | Duration |
+|---|---|---|---|---|---|---|---|
+| 1 | spec | spec-author (draft) | author | claude-sonnet-5→claude-sonnet-5 | 414 | $0.01616 | 5.7s |
+| 2 | spec | spec-author (self-critique) | author | claude-sonnet-5→claude-sonnet-5 | 4018 | $0.05190 | 42.3s |
+| 3 | spec_review | spec-reviewer-traceability | reviewer | claude-sonnet-5→claude-sonnet-5 | 281 | $0.01329 | 5.4s |
+| 4 | spec_review | spec-reviewer-consistency | reviewer | claude-sonnet-5→claude-sonnet-5 | 138 | $0.01181 | 3.5s |
+| 5 | spec | spec-author (reconcile) | author | claude-sonnet-5→claude-sonnet-5 | 1514 | $0.02992 | 15.9s |
+| 6 | plan | plan-author (draft) | author | claude-sonnet-5→claude-sonnet-5 | 889 | $0.01771 | 8.5s |
+| 7 | plan | plan-author (self-critique) | author | claude-sonnet-5→claude-sonnet-5 | 4123 | $0.05588 | 43.4s |
+| 8 | plan_review | spec-reviewer-traceability | reviewer | claude-sonnet-5→claude-sonnet-5 | 285 | $0.01632 | 5.0s |
+| 9 | plan_review | spec-reviewer-consistency | reviewer | claude-sonnet-5→claude-sonnet-5 | 5705 | $0.07048 | 59.7s |
+| 10 | plan | plan-author (reconcile) | author | claude-sonnet-5→claude-sonnet-5 | 4714 | $0.08201 | 48.6s |
+
+**Total cost $0.36548, total dispatch duration 238s (≈4 minutes).** All ten
+`independence` values `configured_standalone`; all ten raw responses
+retained under `.governance/raw/1/` (confirmed by directory listing, ten
+files). The self-critique panel request (audit `spec.selfcritique.record` /
+`plan.selfcritique.record`) asked for size 2, specialties
+`[requirements-traceability, consistency]` both times, and both panels
+seated exactly those two reviewers — the same two agents serve both stages,
+as the registry allows.
+
+**Three canonical findings, one report each, one decision each — no report
+pairs this round.** Neither reviewer duplicated the other's concern at the
+same location, so pair-preservation is not exercised by this sample (it
+remains proven by fixture and break-it, per Task 6/7/11).
+
+**Before-self-critique canonical/report count: zero, by construction, not by
+measurement — corrected on reconciliation of the Tasks 10-12 code review
+(finding 7, P2, 2026-09-03).** The shipped five-phase order runs exactly one
+self-critique per artifact before any reviewer is dispatched (Task 6), so no
+panel exists yet at that point and no canonical finding or reviewer report
+can be outstanding before it. The three canonical findings and three reports
+above are the after-panel count in full; there is no separate
+before-panel figure this sample could have measured.
+
+| Finding | Stage | Classification | Severity | Decision | Grounded? |
+|---|---|---|---|---|---|
+| 1 `upstream:design:conflict-resolution-mechanism` | spec_review | upstream | medium | `upstream_follow_up` | n/a (proposal, not grounding) |
+| 2 (plan location, deep-equality task) | plan_review | current_artifact | low | `addressed` | yes — real `normativeChanges` entry, source `specification`, excerpt matched |
+| 3 `Coverage` | plan_review | current_artifact | low | `rejected_with_rationale` | yes — source `specification`, location `Acceptance criteria`, excerpt matched verbatim |
+
+**All three disposition families exercised for real in one sample:
+`upstream_follow_up`, `addressed` with a genuine normative-delta grounding,
+and `rejected_with_rationale` with a genuine textual grounding.**
+`cannot_determine` and `upstream_blocking` did not surface — recorded as a
+one-sample limitation, not a defect; both remain proven only by fixture and
+Task 11's break-it evidence, and no further spend is authorized to chase a
+sample containing them.
+
+**The `upstream_follow_up` case, in full.** The spec-reviewer-traceability
+report (finding 1) stated the design requires values to be resolved
+"safely" without ever naming a mechanism. The spec-author's reconciliation
+did not invent one — its rationale states plainly that choosing a mechanism
+"would add a requirement the design never states, which is outside the spec
+author's authority" — and instead produced a proposal candidate: title
+"Decide the conflict-resolution mechanism for mergeConfig", route
+`follow_up` (derived from `upstream_follow_up`, not model-returned). Stored
+as `proposal` row 1, linked via `proposal_source` to finding 1, evidence
+retained at `.governance/proposals/1/finding-1.json` (read back in full:
+candidate, route, rationale, and both artifact hashes present and
+consistent with the decision row). `spec.proposal.record` and
+`spec.reconcile.record` both carry it. No run wrote into `docs/proposals/`.
+
+**What this sample can and cannot establish.** It demonstrates that the
+shipped code executes the full five-phase flow against the real harness and
+model, produces well-formed contracts on every dispatch (zero parse
+failures), and that the upstream-routing and normative-delta-grounding
+mechanisms fire correctly against real, unscripted model output — not only
+fixtures. It does **not** establish that the plan-author's `addressed` and
+`rejected_with_rationale` reasoning here was semantically correct: the
+`rejected_with_rationale` decision's argument (that a Coverage entry must
+restate an acceptance criterion verbatim "regardless of which specific
+mechanism the Tasks section chose") is a plausible reading, textually
+grounded, and unverifiable beyond that by any deterministic check this
+system runs. Finding 2's `addressed` decision has the identical shape: its
+grounding excerpt from the approved specification states only that a
+same-valued key "appears once in the output with that value" — it does not
+itself select which input's observable reference identity is returned, so
+the decision's specific choice to copy `base`'s reference is structurally
+complete and textually matched, with the semantic support for that choice
+unverified by the grounding check — corrected on reconciliation of the
+Tasks 10-12 code review (finding 3, P2, 2026-09-03). Both are exactly the
+residual semantic judgment section 12 states plainly rather than closes.
+
+**Verified:** `bw verify-audit` — chain valid. `npm run check:docs`, measured
+directly (`--json`) at each step, corrected on reconciliation of the Tasks
+10-12 code review (finding 4, P2, 2026-09-03): the original text here
+estimated one new warning ("37") when it actually produced five, measuring
+41 against the pre-existing 36 — this record's own scratch-only filename
+citations were backtick-quoted, and a backtick-quoted scratch path is itself
+a historical-tier path warning regardless of what it illustrates. Those
+citations are rendered without backticks, as above, which removes all five
+self-inflicted warnings; the tree now measures clean at 36, the same count
+as before Task 12's records existed. The scratch target is retained (not
+cleaned up, matching the architecture's "retain the worktree/evidence" rule)
+at the path recorded in the session-learnings entry below.
 
 ### Task 13: Completion gate and independent review
 
@@ -1000,15 +1295,70 @@ review). This plan's `**Status:**` line stays `Reconciled`.
 
 **Steps:**
 
-- [ ] From the repository root run `npm run typecheck`, `npm test`, and `npm run check:docs`, recording exact counts and any pre-existing skip. Verify the diff introduces no requirement-ID system, no stage-sequence change, no automatic edit of a design or specification, no run write into `docs/proposals/`, and no unrelated file.
-- [ ] Have an independent reviewer assess the implemented diff against this plan, all four reconciled review records, the Task 1-approved sections 12 and 13 amendment, hazard 16, migration safety, and the break-it evidence. The reviewer must flag any claim that exact source matching or mechanical artifact gates establish semantic correctness. A material review finding is closed under this same grounded reconciliation rule; an upstream review finding becomes a proposal rather than being absorbed into the implementation note.
-- [ ] Only after a clean gate and a clean independent review, set this plan to `Implemented` and append a dated implementation note with shipped behaviour, deviations from this plan, exact test counts, the smoke outcome, and remaining limitations.
+- [x] From the repository root run `npm run typecheck`, `npm test`, and `npm run check:docs`, recording exact counts and any pre-existing skip. Verify the diff introduces no requirement-ID system, no stage-sequence change, no automatic edit of a design or specification, no run write into `docs/proposals/`, and no unrelated file.
+- [x] Have an independent reviewer assess the implemented diff against this plan, all four reconciled review records, the Task 1-approved sections 12 and 13 amendment, hazard 16, migration safety, and the break-it evidence. The reviewer must flag any claim that exact source matching or mechanical artifact gates establish semantic correctness. A material review finding is closed under this same grounded reconciliation rule; an upstream review finding becomes a proposal rather than being absorbed into the implementation note.
+- [x] Only after a clean gate and a clean independent review, set this plan to `Implemented` and append a dated implementation note with shipped behaviour, deviations from this plan, exact test counts, the smoke outcome, and remaining limitations.
 
 **Verify:** `npm run typecheck && npm test && npm run check:docs`; the review artifact present; the working-tree diff reviewed.
 
 **Expected:** Step 5b ships and is independently reviewed without renumbering the architecture, introducing requirement IDs, letting a model mint an obligation, or letting a run write outside the signed scope.
 
 **Task completion evidence:** Full gate output, the review disposition, the final diff scope, and the dated implementation note.
+
+#### Completion record, 2026-09-03
+
+**Gate, measured from the repository root.** `npm run typecheck`: clean, exit
+0. `npm test`: 625 tests, 624 pass, 1 pre-existing skip, 0 fail; `git log
+--oneline -5` and `git status --short` immediately before and after the run
+showed no stray commit and no stray file — the intermittent
+`test/verification-stage.test.ts` repository leak project learnings records
+did not recur this run. `npm run check:docs --json`: 0 errors, 36 warnings —
+the same count as before Task 12's records existed.
+
+**Diff scope, confirmed against the plan's own negative list.** `git diff
+HEAD --stat`: seven files (`.claude/sessions/project-learnings.md`,
+`ARCHITECTURE.md`, `README.md`,
+`docs/features/step5b-upstream-findings/plan.md`, `docs/hazards.md`,
+`scripts/doc-check.mjs`, `test/schema.test.ts`) plus one new untracked
+review record. No `src/` file appears in the diff at all, which rules out a
+stage-sequence change, a requirement-ID scheme, or any runtime behavior
+change by construction. `git diff HEAD -- ARCHITECTURE.md` touches only
+sections 14, 15, and 22 — section 5 is absent. No `design.md`, `spec.md`, or
+path under `docs/proposals/` appears anywhere in the diff. The four
+plan-level reconciled review records
+(`2026-08-31-plan-review.md`, `2026-08-31-plan-review-2.md`,
+`2026-09-01-plan-review-3.md`, `2026-09-01-plan-review-3-review.md`) carry no
+commit since before this diff existed and show no modification in
+`git status`.
+
+**Independent review: `2026-09-03-task13-completion-review.md`, reconciled,
+no findings.** Run as an in-session subagent, not a separately spawned
+process — the operator chose this over the billed, genuinely
+`configured_standalone` `/code-review ultra` alternative when offered both,
+so per hazard 14 this review's independence is recorded as
+`unverified_self_attestation`, the same distinction the architecture
+requires of every reviewer in the system it describes. Within that
+limitation, the review did not take the prior reconciliation on narrative
+trust: it reproduced three of Task 11's twenty break-it mutations live
+(items 9, 13, and 17 — mutate, run the named test, confirm the failing
+assertion, restore, confirm an empty diff), queried the retained Task 12
+smoke database directly with `node:sqlite` and reproduced every stored count,
+cost, and duration exactly, and read the retained Task 1 prototype evidence
+file to corroborate hazard 16's and item 6c's description of the
+ungrounded-`addressed` case. It independently re-derived the "four reconciled
+review records" reading from the plan's own Source line rather than taking
+the prior session's reading on faith, and confirmed the Tasks 10-12
+reconciliation's corrected wording ("structurally complete and textually
+matched, with the semantic support ... unverified") is genuinely present
+everywhere the instruction to flag semantic overclaiming applies. No finding
+was raised; none was manufactured to fill the format.
+
+**Deviation from this plan, recorded rather than absorbed silently.** Step 2
+names a choice this plan itself does not resolve — which kind of
+"independent" review to run — and the operator was asked rather than the
+choice being made silently, since it materially changes the independence
+guarantee Task 13's evidence can claim. No upstream review finding
+surfaced, so the proposal path this step also describes was not exercised.
 
 ---
 
@@ -1029,3 +1379,109 @@ Step 5b is complete only when all of the following are true:
 - Hazard 16, architecture sections 12, 13, 14, 15, 20, and 22, the README, the migrations, the tests, and the doc-check pins agree; the new hazard-count check is enforced; architecture section 5 and runtime `STAGE_SEQUENCE` are unchanged; all four reconciled review records are untouched during implementation.
 - Every new guard has a recorded break-and-restore proof; the full typecheck, test, and doc-check gate is green; one bounded production sample is recorded honestly with measured cost.
 - No requirement-ID scheme, reverse-traceability redesign, in-place reapproval, automatic design or specification mutation, delivery-check implementation, governance-path configuration, or new runtime stage entered the diff.
+
+---
+
+## Implementation note
+
+**Date:** 2026-09-03
+
+**Shipped:** the five-phase review-stage rewrite this plan set out to build —
+draft, one self-critique per artifact, an author-proposed specialist panel,
+author reconciliation with textual-grounding enforcement, and one
+deterministic gate over every configured review round — replacing the old
+closure-round loop in both `spec_review` and `plan_review`. Tasks 1-9
+(prototype evidence and the operator-accepted architecture amendment; the
+five-phase stages themselves; the panel-request and selection contract; the
+canonical-finding/report/decision storage rebuild; proposal persistence and
+export) are committed to `master` at `54ee29b`. Tasks 10-13 — the final
+architecture/hazard/README/hazard-count-checker documentation, the
+twenty-guard break-and-restore sweep, one bounded real production run, and
+this completion gate — are complete in the working tree and not yet
+committed; see each task's own completion record above for what it shipped
+in full, and the reconciled review file it closed against.
+
+**Deviations from this plan:**
+
+- **Item 6's atomic-exclusive-create replay is a one-off script, not a
+  permanent test.** It imports `src/reconciliation.ts` and `src/spec-doc.ts`
+  directly and replays Task 1's actual retained round-2 decision (the
+  ungrounded "single atomic exclusive-create operation" criterion) against
+  the shipped, unmutated validator. Hazard 4 forbids a hand-written fixture
+  from defining correctness; the retained prototype JSON is real evidence,
+  not a fixture, but committing it as a permanent test input would freeze a
+  historical artifact from outside this repository into the suite. Kept as a
+  one-off, run-and-recorded replay instead (Task 11, item 6c).
+- **Hazard 16's text needed a mid-implementation correction.** It originally
+  described one conversion path; the shipped validator has two distinct
+  fail-closed paths — a decision that claims an ungrounded node converts to
+  `cannot_determine`, and a node no decision claims at all surfaces in
+  `unclaimedNodes` and aborts the round instead, because no decision exists
+  to convert. Found and corrected during reconciliation of the Tasks 10-12
+  code review, not anticipated by the original plan text.
+- **Task 13's independent review is `unverified_self_attestation`, not
+  `configured_standalone`, by operator choice.** The plan does not itself
+  resolve which kind of "independent" review to run. Asked directly: an
+  in-session subagent (free, immediate, but running inside the same harness
+  session that produced the diff) against `/code-review ultra` (a
+  separately spawned, billed process, closer to `configured_standalone`).
+  The operator chose the in-session subagent; the review file and the Task
+  13 completion record say so plainly rather than implying a stronger
+  guarantee.
+- **The doc-check warning count took two corrections to land.** Task 12's
+  first estimate ("37") and a first attempted fix ("41") were both wrong,
+  the second because the fix itself introduced new backtick-quoted
+  scratch-only filenames that are themselves historical-tier path warnings.
+  The actual, currently stable count is 36 — identical to before Task 12's
+  records existed — recorded honestly with the correction history rather
+  than silently overwritten.
+
+**Exact test counts (this session's gate run, 2026-09-03):** `npm run
+typecheck` clean. `npm test`: 625 tests, 624 pass, 1 pre-existing skip, 0
+fail, with no repository leak observed before or after (a known intermittent
+defect in `test/verification-stage.test.ts`, still untraced, did not
+recur). `node --test test/schema.test.ts`: 8/8, reproved repeatedly through
+the break-it sweep. `npm run check:docs --json`: 0 errors, 36 warnings.
+
+**The smoke outcome:** Task 12's one real, bounded, paid production run — 10
+dispatches, $0.36548, `claude-sonnet-5` requested and effective throughout —
+exercised all three non-blocking disposition families for real against
+unscripted model output: `upstream_follow_up` (a genuine stored proposal),
+`addressed` (structurally complete and textually matched; the semantic
+support for its specific base-reference choice is unverified by the
+grounding check, not established by it), and `rejected_with_rationale` (a
+genuine textual grounding, with the same semantic caveat). `cannot_determine`
+and `upstream_blocking` did not occur; that stays a one-sample limitation
+proven only by fixture and by Task 11's break-it evidence, and no further
+spend is authorized to chase a sample containing them.
+
+**Review and reconciliation trail:** `2026-09-02-task5-code-review.md`,
+`2026-09-02-task6-code-review.md` / `-2`, and `2026-09-02-task7-9-code-review.md`
+cover Tasks 1-9 (six findings on the Tasks 7-9 tranche, all accepted).
+`2026-09-02-task10-12-code-review.md` covers Tasks 10-12 (seven findings, all
+accepted — most seriously, a constraint-check guard that stayed vulnerable to
+a realistic false pass after its own break-it proof, closed by stripping SQL
+comments before structural parsing in both `test/schema.test.ts` and
+`scripts/doc-check.mjs`). `2026-09-03-task13-completion-review.md` covers
+this task: no findings, backed by three live break-it reproductions, a direct
+query of the retained Task 12 production database, and a direct read of the
+retained Task 1 evidence, not a re-reading of this plan's own narrative. All
+four plan-level review records this plan itself is built on
+(`2026-08-31-plan-review.md`, `2026-08-31-plan-review-2.md`,
+`2026-09-01-plan-review-3.md`, `2026-09-01-plan-review-3-review.md`) are
+untouched by any of it.
+
+**Remaining limitations, stated rather than closed over:**
+
+- Every review behind this plan, including Task 13's own, ran inside this
+  repository's Claude Code harness session. None has exercised
+  `configured_standalone` independence — this is `unverified_self_attestation`
+  throughout, per hazard 14, not a gap unique to this task.
+- `cannot_determine` and `upstream_blocking` remain unexercised by real,
+  unscripted model output; both are proven only by fixture and by Task 11's
+  break-it mutations.
+- `npm test`'s intermittent repository-leak defect in
+  `test/verification-stage.test.ts` remains untraced. It did not recur in
+  either full-suite run this session, but its root cause is still open.
+- Step 8 (delivery_check) and every later build-order step remain unbuilt.
+  Step 5b corrects the two review stages; it does not build past them.
