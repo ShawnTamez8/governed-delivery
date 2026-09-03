@@ -11,6 +11,7 @@ import { worktreePath as governanceWorktreePath } from "./paths.ts";
 import { isPathInside, normalizePath, resolveExisting, touchesProtected } from "./scope.ts";
 import { buildImplementationAuthorPrompt } from "./prompts.ts";
 import { gatePatchPaths, movedPaths } from "./implementation-gate.ts";
+import { formatImplementationGate } from "./handoff.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
 import { SYSTEM_NAME } from "./policy.ts";
@@ -650,7 +651,10 @@ export async function runImplementationStage(
     }
     const finalHead = finalHeadResult.stdout.trim();
     store.completeStage(stage.id, worktreePath, "pass");
-    audit(stage.id, "implementation.gate.pass", `head=${finalHead}`);
+    // The handoff carries both commits (step 8, task 2): the base the
+    // implementer's patches bound to and the final head. Verification and
+    // delivery parse this one canonical shape.
+    audit(stage.id, "implementation.gate.pass", formatImplementationGate({ base: headAtProposal, head: finalHead }));
     return { ok: true, stageId: stage.id, worktreePath };
   } catch (err) {
     // The wedge guard: an unexpected throw must produce the same terminal

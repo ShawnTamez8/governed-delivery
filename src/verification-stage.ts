@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { appendAudit } from "./audit.ts";
+import { parseImplementationGate } from "./handoff.ts";
 import { verificationEvidenceDir } from "./paths.ts";
 import { loadVerifiedProfile } from "./profile.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
@@ -40,7 +41,16 @@ interface VerificationRecord {
   runId: number;
   stageId: number;
   worktreePath: string;
+  /** The commit verification proved: the branch tip implementation left. */
   verifiedCommit: string;
+  /**
+   * The branch head the implementer's patches bound to — the commit
+   * implementation read after its projections commit and before its first
+   * apply. Delivery (step 8) diffs `patchBase..verifiedCommit` for the
+   * changed paths, so the record carries the base rather than letting the
+   * next stage guess where projections end and applied patches begin.
+   */
+  patchBase: string;
   outcome: "pass" | "block";
   blockingCommand: string | null;
   commands: RecordedCommand[];
@@ -139,11 +149,12 @@ export async function runVerificationStage(
     };
   }
 
-  // The commit the implementation stage actually left on the branch. It lives
-  // in that stage's own `implementation.gate.pass` event and nowhere else, so
-  // reading it couples two stages through an audit summary; the guard against
-  // that coupling is a strict anchored pattern and a refusal when it does not
-  // match. Refuse what cannot be verified — never skip the check.
+  // The commits the implementation stage actually made on the branch. They
+  // live in that stage's own `implementation.gate.pass` event and nowhere
+  // else, so reading them couples two stages through an audit summary; the
+  // coupling is now the one canonical shape `src/handoff.ts` defines, and the
+  // guard is a strict parse and a refusal when it does not match. Refuse what
+  // cannot be verified — never skip the check.
   const gateEvent = store
     .getAuditEvents(runId)
     .filter((e) => e.action === "implementation.gate.pass")
@@ -151,17 +162,18 @@ export async function runVerificationStage(
   if (!gateEvent) {
     return {
       ok: false,
-      reason: `run ${runId} has no implementation.gate.pass audit event: the implementation stage never recorded the head it committed`,
+      reason: `run ${runId} has no implementation.gate.pass audit event: the implementation stage never recorded the commits it made`,
     };
   }
-  const recordedHead = /^head=([0-9a-f]{40}|[0-9a-f]{64})$/.exec(gateEvent.summary.trim());
-  if (!recordedHead) {
+  const handoff = parseImplementationGate(gateEvent.summary);
+  if (!handoff.ok) {
     return {
       ok: false,
-      reason: `run ${runId}'s implementation.gate.pass event does not record a commit: ${JSON.stringify(gateEvent.summary)}`,
+      reason: `run ${runId}'s implementation.gate.pass event ${handoff.reason}`,
     };
   }
-  const verifiedCommit = recordedHead[1];
+  const verifiedCommit = handoff.value.head;
+  const patchBase = handoff.value.base;
 
   // Section 4 makes the branch the deliverable, so the stage proves it is
   // about to test exactly what implementation committed. A suite run against
@@ -299,6 +311,7 @@ export async function runVerificationStage(
       stageId: stage.id,
       worktreePath,
       verifiedCommit,
+      patchBase,
       outcome,
       blockingCommand,
       commands: recorded,

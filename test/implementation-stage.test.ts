@@ -17,6 +17,7 @@ import { runImplementationStage } from "../src/implementation-stage.ts";
 import { freezeProfile } from "../src/profile.ts";
 import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
+import { parseImplementationGate } from "../src/handoff.ts";
 import { validateAgentResult } from "../src/agent-result.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
@@ -791,4 +792,34 @@ test("the ok fixture body passes the same contract real output is held to", () =
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
+});
+
+test("the gate event records the handoff: the projections commit as base, the applied head as head", async () => {
+  // Step 8 task 2: the `implementation.gate.pass` event carries both commits
+  // in the one canonical shape — the base the patches bound to (the head
+  // after the projections commit, before any apply) and the final head.
+  // Delivery diffs `base..head` for the changed paths, so a wrong base here
+  // would silently re-admit or exclude whole sets of changes.
+  await withApprovedRun(async ({ store, root, runId, head, worktreePath }) => {
+    const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    if (!result.ok) return;
+    const event = store
+      .query<{ summary: string }>(
+        "SELECT summary FROM audit WHERE run_id = ? AND action = 'implementation.gate.pass' ORDER BY id DESC LIMIT 1",
+        [runId]
+      )[0]!;
+    const parsed = parseImplementationGate(event.summary);
+    assert.equal(parsed.ok, true, parsed.ok ? "" : parsed.reason);
+    if (!parsed.ok) return;
+    const final = git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim();
+    const projections = git(worktreePath, ["rev-parse", "HEAD~1"]).stdout.trim();
+    assert.equal(parsed.value.head, final, "head is the branch tip after the applied patch");
+    assert.equal(
+      parsed.value.base,
+      projections,
+      "base is the post-projection commit the patches bound to"
+    );
+    assert.notEqual(parsed.value.base, head, "the base is never the starting commit: projections precede it");
+  });
 });

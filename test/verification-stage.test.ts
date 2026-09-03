@@ -50,9 +50,9 @@ interface Ctx {
 
 interface Opts {
   commands?: VerifyCommand[];
-  /** Skip the recorded head event entirely. */
+  /** Skip the recorded gate event entirely. */
   gateEvent?: false;
-  /** Write a summary that the anchored pattern must refuse. */
+  /** Write a summary that the handoff parse must refuse. */
   gateSummary?: string;
   /** Leave the implementation stage in this status instead of passing it. */
   implementationStatus?: "blocked";
@@ -114,7 +114,10 @@ function withImplementedRun(fn: (ctx: Ctx) => Promise<void>, opts: Opts = {}): P
         actor: "system",
         actorType: "cli",
         action: "implementation.gate.pass",
-        summary: opts.gateSummary ?? `head=${head}`,
+        // The one canonical handoff shape (step 8, task 2): base and head.
+        // The fixture's base equals its head because verification parses the
+        // shape and refuses malformed ones; base semantics are delivery's.
+        summary: opts.gateSummary ?? `base=${head}; head=${head}`,
       });
     }
 
@@ -158,6 +161,7 @@ function readRecord(root: string, resultRef: string) {
   return JSON.parse(readFileSync(join(root, resultRef), "utf8")) as {
     worktreePath: string;
     verifiedCommit: string;
+    patchBase: string;
     outcome: string;
     blockingCommand: string | null;
     commands: { name: string; evidenceRef: string; blockedBecause: string | null }[];
@@ -182,6 +186,10 @@ test("the pass path records the worktree, the verified commit, and every command
     const record = readRecord(ctx.root, result.resultRef);
     assert.equal(record.worktreePath, ctx.worktreePath);
     assert.equal(record.verifiedCommit, ctx.head);
+    // The handoff's base travels with the record: delivery (step 8) diffs
+    // `patchBase..verifiedCommit`, so the base must survive the handoff, not
+    // be guessed by the next stage.
+    assert.equal(record.patchBase, ctx.head);
     assert.equal(record.outcome, "pass");
     assert.equal(record.blockingCommand, null);
     assert.deepEqual(record.commands.map((c) => c.name), ["ok"]);
@@ -347,17 +355,35 @@ test("a missing implementation.gate.pass event refuses rather than skipping the 
   );
 });
 
-test("an implementation.gate.pass summary that does not match the pattern refuses", async () => {
+test("an implementation.gate.pass summary that does not match the handoff shape refuses", async () => {
   await withImplementedRun(
     async (ctx) => {
       const result = await runVerificationStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
       assert.equal(result.ok, false);
       assert.match(
         (result as { ok: false; reason: string }).reason,
-        /does not record a commit/
+        /does not record the implementation handoff as base=<commit>; head=<commit>/
       );
     },
     { gateSummary: "implementation passed" }
+  );
+});
+
+test("the pre-step-8 head-only summary shape refuses by name, never defaulted", async () => {
+  // Nothing has shipped, so no compatibility branch exists for the old
+  // `head=<sha>` form the implementation stage wrote before task 2: a run
+  // whose gate event lacks the base cannot be verified into a delivery.
+  await withImplementedRun(
+    async (ctx) => {
+      const result = await runVerificationStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+      assert.equal(result.ok, false);
+      assert.match(
+        (result as { ok: false; reason: string }).reason,
+        /does not record the implementation handoff as base=<commit>; head=<commit>/
+      );
+      assert.equal(ctx.store.getStageChain(ctx.runId).some((s) => s.kind === "verification"), false);
+    },
+    { gateSummary: `head=${"a".repeat(40)}` }
   );
 });
 
