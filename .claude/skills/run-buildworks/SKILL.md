@@ -104,6 +104,22 @@ stages: spec=passed spec_review=passed awaiting_approval=passed plan=passed plan
 run 1 (clamp): in_progress
 ```
 
+Verified run, 2026-09-03, `claude-sonnet-5`, all eight stages passed, the
+run completed:
+
+```
+dispatches: 11   total cost: $0.25019
+stages: spec=passed spec_review=passed awaiting_approval=passed plan=passed plan_review=passed implementation=passed verification=passed delivery_check=passed
+run 1 (clamp): completed
+```
+
+The step-8 driver asserts the terminal state (`delivery_check=passed`,
+`run=completed`), that the delivery record's declared set equals the signed
+approval scope, and that `verify-audit` validates the chain including the
+`delivery.gate.pass` event. One earlier attempt that day blocked at the spec
+dispatch spending nothing: the `claude` binary's OAuth session had expired,
+and the stage failed closed with the retained envelope naming the cause.
+
 The implementer produced a correct `clamp.mjs` in the scratch worktree's
 scripts directory, on branch `gov/clamp/1`, and `verify` recorded
 `"outcome": "pass"` over the two frozen commands. Nothing is written into this

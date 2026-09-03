@@ -269,7 +269,7 @@ function paidChain() {
     const state = `delivery_check=${stage?.status ?? "absent"} run=${run?.status ?? "absent"}`;
     return { code: state === "delivery_check=passed run=completed" ? 0 : 1, out: state };
   });
-  step("delivery record covers the signed artifacts", { exit: 0, match: /scopeMatch=yes missing=\[\], outcome=pass/ }, () => {
+  step("delivery record covers the signed artifacts", { exit: 0, match: /scopeMatch=yes declared=\d+ delivered=\d+ missing=\[\], outcome=pass/ }, () => {
     const rec = JSON.parse(readFileSync(
       join(target.repo, ".governance", "delivery", String(runId), "result.json"), "utf8"));
     // The comparison that makes the step an evidence gate rather than an

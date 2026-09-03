@@ -277,14 +277,26 @@ than scope changes:**
 
 **Deferred items, stated rather than closed over:**
 
-- **The paid end-to-end run has not been executed.** The driver sequence
-  that reaches `delivery_check=passed` with `run=completed` against the real
-  `claude` binary is wired and asserted, but the run itself was deferred at
-  the operator's explicit spend stop. When authorized: `node
-  .claude/skills/run-buildworks/driver.mjs paid --yes`, then append the
-  cost and terminal state to this note. Step 9's milestone — one complete run
-  with queryable cost — is still the deliberate stop and has not been
-  reached.
+- **The paid end-to-end run has been executed — step 9's milestone is
+  reached.** Run on 2026-09-03 under explicit spend authorization (`node
+  .claude/skills/run-buildworks/driver.mjs paid --yes`, scratch target
+  `%LOCALAPPDATA%\Temp\bw-run-skill\1788419068845\target`): 11 dispatches,
+  `claude-sonnet-5` throughout, **$0.25019** total; all eight stages passed
+  (`spec=passed spec_review=passed awaiting_approval=passed plan=passed
+  plan_review=passed implementation=passed verification=passed
+  delivery_check=passed`) and `run 1 (clamp): completed`; the delivery
+  record's declared set matches the signed approval scope with zero missing;
+  `verify-audit` validates the chain including the `delivery.gate.pass`
+  event. The first attempt on the same day spent $0.00 and blocked at the
+  spec dispatch because the `claude` binary's OAuth session had expired —
+  the failure was retained raw, audited by name, and the run blocked, which
+  is the designed behaviour for an invocation that cannot authenticate. One
+  driver-assertion defect surfaced on the successful run (its expected-output
+  regex could not match the summary its own step prints; the comparison
+  itself passed) and was corrected; the step was replayed green against the
+  retained run without respending. Step 9's stop — one complete run with
+  queryable cost — has now been reached; the deliberate stop says do not
+  build past it without an explicit decision.
 - **The duration ceiling at cost-free stages** (finding F3's architectural
   half) and **the three stage-local git helpers** (finding F12's extraction,
   now permitted by hard rule 4) are recorded with triggers in the review

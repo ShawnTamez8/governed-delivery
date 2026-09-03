@@ -51,14 +51,15 @@ projections commit, missing verification.gate.pass — all remediated in
 
 **Open and deferred:**
 
-- **The paid end-to-end run is the one remaining step-8 evidence item** —
-  deferred at the operator's explicit spend stop. When authorized: `node
-  .claude/skills/run-buildworks/driver.mjs paid --yes`; the driver asserts
-  `delivery_check=passed`, `run=completed`, the record matches the signed
-  scope, and `verify-audit` over the delivery event. Append cost and
-  terminal state to the plan's Implementation note. Step 9's milestone —
-  one complete run with queryable cost — is still the deliberate stop and
-  has not been reached; do not build past it without a decision.
+- **Step 9's milestone has been reached.** The paid end-to-end run
+  (2026-09-03, operator-authorized) completed: 11 dispatches,
+  `claude-sonnet-5`, $0.25019, all eight stages passed, `delivery_check=
+  passed`, `run=completed`, delivery record matching the signed scope, chain
+  valid. Evidence: the plan's Implementation note and SKILL.md. One earlier
+  attempt that day spent $0.00 and blocked at the spec dispatch on an
+  expired `claude` OAuth session — retained, audited, fail-closed, exactly
+  as designed. Step 9 is the deliberate stop: do not build past it without
+  an explicit decision.
 - Architectural half of review finding F3 (whether the run-duration ceiling
   should bind cost-free stages at all) and finding F12 (the three
   stage-local git helpers may now be extracted under hard rule 4 — but
@@ -118,8 +119,9 @@ standalone review's twelve findings, `configured_standalone` — the
 operator's first billed review choice; all eleven fixable findings landed
 with named regressions, one deferred with a trigger). Final state: 682
 tests (one pre-existing skip), typecheck clean, smoke 12/12, doc-check
-0/36. Plan `Implemented`; the paid end-to-end run remains deferred at the
-operator's spend stop and is the last step-8 evidence item.
+0/36. Plan `Implemented`; the paid end-to-end run then completed under
+operator authorization (11 dispatches, $0.25019, all eight stages passed,
+`run=completed`) — step 9's milestone reached.
 
 #### Decisions and assumptions
 
