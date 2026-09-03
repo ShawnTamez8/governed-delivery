@@ -7,26 +7,21 @@ disagree, Current state wins.
 
 ## Current state (2026-09-03)
 
-**Shipped and committed:** build order steps 1-7 and step 5b Tasks 1 through 9.
-`master` is the only local branch and equals `origin/master` at `54ee29b` —
-nothing unpushed. Read the head with `git log -1` rather than trusting a
-commit id written here. Tasks 7, 8, and 9 shipped as one atomic commit
-(canonical finding/report/decision storage, proposal persistence and export,
-orchestrator/gate rewiring); independently reviewed and reconciled before
-commit (six findings, all accepted) — see the Task 7-9 session record below.
-
-**Step 5b's plan is `Status: Implemented` — all 13 tasks complete — but
-Tasks 10-13 are uncommitted.** They are documentation, one checker script,
-and one test file only (no `src/` file): hazard 16 and `ARCHITECTURE.md`
-sections 14/15/22, a `checkHazardCount` doc-check rule, a twenty-guard
+**Shipped and committed:** build order steps 1-7 and all of step 5b (Tasks 1
+through 13 — the plan is `Status: Implemented`). `master` is the only local
+branch, one commit ahead of `origin/master` at `39d5432` (not pushed; the
+operator has not asked). Read the head with `git log -1` rather than
+trusting a commit id written here. Tasks 7, 8, and 9 shipped as one atomic
+commit at `54ee29b`; Tasks 10-13 (hazard 16 and `ARCHITECTURE.md` sections
+14/15/22, a `checkHazardCount` doc-check rule, a twenty-guard
 break-and-restore sweep, one real $0.36548 production smoke, and the
-completion gate with an independent review. Full detail lives in the plan's
-own per-task completion records and its dated Implementation note
+completion gate with an independent review) shipped as one further atomic
+commit at `39d5432` — documentation, one checker script, and one test file
+only, no `src/` change. Full detail lives in the plan's own per-task
+completion records and its dated Implementation note
 (`docs/features/step5b-upstream-findings/plan.md`), and in its review files
 — `2026-09-02-task{5,6,6-2,7-9,10-12}-code-review.md` and
-`2026-09-03-task13-completion-review.md`, all reconciled. `git status --short`
-shows exactly 7 modified files + 2 new untracked review files; the operator
-has not asked for a commit.
+`2026-09-03-task13-completion-review.md`, all reconciled.
 
 **The round-activation boundary is gone — the reversal to know before
 touching a stage.** `LEGACY_CLOSURE_PASSES` no longer exists in `src/`. Both
@@ -65,10 +60,10 @@ the two gates cannot drift.
   configuration is deferred out of 5b.
 - The build order stops at step 9. Do not build past it without a decision.
 
-**Next up:** step 5b is fully `Implemented` in the working tree but nothing
-from Tasks 10-13 is committed — decide whether to commit, and whether step 5b
-or step 8 (delivery check) goes first (never explicitly decided; step 5b has
-now shipped ahead of it by practice, in full).
+**Next up:** step 5b is fully `Implemented` and committed at `39d5432`, one
+commit ahead of `origin/master` (not pushed). Whether step 5b or step 8
+(delivery check) goes first was never explicitly decided; step 5b has now
+shipped ahead of it by practice, in full.
 
 ## Diagnostics quick-reference
 
