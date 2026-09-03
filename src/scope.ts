@@ -6,6 +6,7 @@
  * now and not before).
  */
 
+import { spawnSync } from "node:child_process";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { GOVERNANCE_PREFIX } from "./paths.ts";
@@ -129,4 +130,69 @@ export function computeScope(declaredArtifacts: string[]): string[] {
   return [...new Set(declaredArtifacts.map(normalizePath))].sort((a, b) =>
     a < b ? -1 : a > b ? 1 : 0
   );
+}
+
+/**
+ * Which declared artifacts name a directory that exists in `commit`'s tree.
+ * Delivery (architecture step 8) proves each declared artifact by exact
+ * equality with a committed file path, and a directory can never equal one,
+ * so the gates refuse the shape before a run pays for it. Called against the
+ * starting commit frozen at run start (`profile.startingCommit`), so the
+ * answer is stable across every specification revision — the tree never
+ * includes this run's own projections. A path that names nothing in the
+ * commit is a future file the implementation is expected to create, and
+ * passes: its intended type cannot be inferred deterministically, and
+ * refusing it would make every new-code run unplannable.
+ *
+ * `git` failure refuses rather than passing (fail closed): a tree that
+ * cannot be read cannot prove a path is not a directory, and the callers
+ * are gates.
+ */
+export function artifactDirectoryRefusals(
+  rootDir: string,
+  commit: string,
+  artifacts: readonly string[]
+): { ok: true; directories: string[] } | { ok: false; reason: string } {
+  if (artifacts.length === 0) {
+    return { ok: true, directories: [] };
+  }
+  // One spawn per artifact, not one spawn with every path: git's pathspec
+  // handling turns a multi-path call containing any slash-carrying path into
+  // a traversal that suppresses sibling bare-directory matches (verified:
+  // `ls-tree HEAD -- src src/exists.ts` returns only the blob). A declared
+  // artifact list is small, so per-path queries cost nothing measurable.
+  const directories = new Set<string>();
+  for (const artifact of artifacts) {
+    let result;
+    try {
+      // `--literal-pathspecs` is a global git option and must precede the
+      // subcommand: a declared artifact is a literal path, never a glob, so
+      // `*` and `?` must not be treated as patterns by git.
+      result = spawnSync(
+        "git",
+        ["--literal-pathspecs", "ls-tree", "-z", commit, "--", artifact],
+        { cwd: rootDir, encoding: "utf8" }
+      );
+    } catch (err) {
+      return { ok: false, reason: `cannot inspect the starting commit tree: ${(err as Error).message}` };
+    }
+    if (result.status !== 0) {
+      return {
+        ok: false,
+        reason: `cannot inspect the starting commit tree at ${commit}: ${(result.stderr ?? "").trim()}`,
+      };
+    }
+    // A single literal pathspec yields zero or one record:
+    // "<mode> <type> <sha>\t<name>", NUL-terminated. A tree (directory)
+    // entry is the only refusal case; a blob or no match passes.
+    for (const record of (result.stdout ?? "").split("\0")) {
+      if (record === "") continue;
+      const tab = record.indexOf("\t");
+      const type = tab === -1 ? "" : record.slice(0, tab).split(" ")[1] ?? "";
+      if (type === "tree") {
+        directories.add(artifact);
+      }
+    }
+  }
+  return { ok: true, directories: [...directories].sort() };
 }

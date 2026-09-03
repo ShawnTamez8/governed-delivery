@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { normalizeText } from "./canonical.ts";
+import { artifactDirectoryRefusals } from "./scope.ts";
 
 export interface SpecDoc {
   feature: string;
@@ -50,6 +51,16 @@ export function validateSpecDoc(
     if (path.includes("..") || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("/")) {
       return { ok: false, reason: `declared artifact must be a repo-relative path: ${path}` };
     }
+    // A trailing slash marks a directory scope, and delivery (step 8) proves
+    // each declared artifact by exact equality with a committed file path —
+    // a directory can never equal one. Refuse the shape here rather than
+    // letting a spec pass the gates and block at the last stage.
+    if (/[\\/]$/.test(path)) {
+      return {
+        ok: false,
+        reason: `declared artifact must be an exact file path, not a directory: ${path}`,
+      };
+    }
   }
   const criteriaSection = section(text, "Acceptance criteria");
   if (criteriaSection === null) {
@@ -87,11 +98,35 @@ function section(content: string, title: string): string | null {
  * validation pass, overwriting any previous revision — the gate decides
  * whether the replacement stands. Returns the path and the parsed document
  * so callers never validate twice.
+ *
+ * `startingCommit` is the tree rule's repository context: when supplied, a
+ * declared artifact that names a directory in that commit's tree refuses —
+ * delivery (architecture step 8) proves artifacts by exact equality with
+ * committed file paths, and a directory can never equal one. The frozen
+ * starting commit never includes this run's own projections, so the answer
+ * is stable across every revision. A pure text parse must not see a git
+ * commit, so the caller passes it only where one exists.
  */
-export function writeSpecDoc(rootDir: string, slug: string, content: string): { path: string; doc: SpecDoc } {
+export function writeSpecDoc(
+  rootDir: string,
+  slug: string,
+  content: string,
+  startingCommit?: string | null
+): { path: string; doc: SpecDoc } {
   const result = validateSpecDoc(content);
   if (!result.ok) {
     throw new Error(result.reason);
+  }
+  if (startingCommit !== undefined && startingCommit !== null) {
+    const tree = artifactDirectoryRefusals(rootDir, startingCommit, result.value.declaredArtifacts);
+    if (!tree.ok) {
+      throw new Error(tree.reason);
+    }
+    if (tree.directories.length > 0) {
+      throw new Error(
+        `declared artifact names a directory in the starting commit tree: ${tree.directories.join(", ")}`
+      );
+    }
   }
   const path = join(rootDir, "docs", "features", slug, "spec.md");
   mkdirSync(dirname(path), { recursive: true });

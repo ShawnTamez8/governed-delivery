@@ -1,6 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PROTECTED_PATH_PREFIXES, computeScope, normalizePath, touchesProtected } from "../src/scope.ts";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  PROTECTED_PATH_PREFIXES,
+  artifactDirectoryRefusals,
+  computeScope,
+  normalizePath,
+  touchesProtected,
+} from "../src/scope.ts";
 import { computeRisk } from "../src/select.ts";
 
 test("normalizePath folds backslashes and a leading ./", () => {
@@ -81,4 +91,68 @@ test("risk counts distinct artifacts, not repeated ones", () => {
     computeRisk("feature", withDuplicates.length, false),
     computeRisk("feature", computeScope(withDuplicates).length, false)
   );
+});
+
+function gitRepoWith(srcFile: string): { root: string; head: string } {
+  const root = mkdtempSync(join(tmpdir(), "bw-scope-tree-"));
+  const git = (args: string[]): { status: number; stdout: string; stderr: string } => {
+    const r = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    return { status: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  };
+  try {
+    assert.equal(git(["init", "-q"]).status, 0, "git init failed");
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(join(root, "src", srcFile), "x");
+    writeFileSync(join(root, "base.txt"), "base");
+    assert.equal(git(["add", "-A"]).status, 0, "git add failed");
+    const commit = git(["-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "-m", "base"]);
+    assert.equal(commit.status, 0, `git commit failed: ${commit.stderr}`);
+    return { root, head: git(["rev-parse", "HEAD"]).stdout.trim() };
+  } catch (err) {
+    rmSync(root, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+test("artifactDirectoryRefusals names declared paths that are directories in the commit tree", () => {
+  const { root, head } = gitRepoWith("exists.ts");
+  try {
+    // An existing directory refuses; an existing file and a nonexistent
+    // future file pass.
+    assert.deepEqual(artifactDirectoryRefusals(root, head, ["src", "src/exists.ts", "src/future.ts"]), {
+      ok: true,
+      directories: ["src"],
+    });
+    // A directory deeper in the tree refuses the same way.
+    assert.deepEqual(artifactDirectoryRefusals(root, head, ["src/future.ts"]), {
+      ok: true,
+      directories: [],
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("artifactDirectoryRefusals refuses when the tree cannot be read (fail closed)", () => {
+  const { root } = gitRepoWith("exists.ts");
+  try {
+    const result = artifactDirectoryRefusals(root, "c".repeat(40), ["src/future.ts"]);
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.match(result.reason, /cannot inspect the starting commit tree/);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("artifactDirectoryRefusals treats declared globs as literal paths", () => {
+  const { root, head } = gitRepoWith("exists.ts");
+  try {
+    // `--literal-pathspecs`: a declared artifact is a literal path, never a
+    // pattern, so `*` must not expand to `src/exists.ts`.
+    assert.deepEqual(artifactDirectoryRefusals(root, head, ["src/*.ts"]), { ok: true, directories: [] });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

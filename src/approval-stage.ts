@@ -10,7 +10,7 @@ import {
 import { canonicalJson, normalizeText, sha256Hex } from "./canonical.ts";
 import { APPROVAL_MAX_LIFETIME_SECONDS, buildPolicy, policyHash } from "./policy.ts";
 import { loadVerifiedProfile } from "./profile.ts";
-import { computeScope, touchesProtected } from "./scope.ts";
+import { artifactDirectoryRefusals, computeScope, touchesProtected } from "./scope.ts";
 import { computeRisk } from "./select.ts";
 import { validateSpecDoc } from "./spec-doc.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
@@ -97,6 +97,25 @@ export function buildBinding(
   if (doc.value.changeKind !== run.change_kind) {
     return no(
       `the approved spec declares change_kind ${doc.value.changeKind}, but run ${runId} is ${run.change_kind}`
+    );
+  }
+  // The tree rule, re-run where the starting commit is frozen (the spec
+  // stage's check reads the same commit from the profile, but a spec edited
+  // afterwards can add a directory declaration — this gate re-checks it the
+  // way it re-checks change_kind, before the operator's signature binds it).
+  // `loaded.profile.startingCommit` is non-null here: the refusal above
+  // returned before this point when it was null.
+  const tree = artifactDirectoryRefusals(
+    rootDir,
+    loaded.profile.startingCommit!,
+    doc.value.declaredArtifacts
+  );
+  if (!tree.ok) {
+    return no(tree.reason);
+  }
+  if (tree.directories.length > 0) {
+    return no(
+      `declared artifact names a directory in the starting commit tree: ${tree.directories.join(", ")}`
     );
   }
   const specHash = sha256Hex(normalizeText(content));

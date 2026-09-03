@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { validateSpecDoc, writeSpecDoc } from "../src/spec-doc.ts";
@@ -90,4 +91,61 @@ test("a spec saved with a BOM or CRLF line endings still validates", () => {
   assert.deepEqual(validateSpecDoc(`﻿${spec}`), expected);
   assert.deepEqual(validateSpecDoc(spec.replace(/\n/g, "\r\n")), expected);
   assert.deepEqual(validateSpecDoc(`﻿${spec.replace(/\n/g, "\r\n")}`), expected);
+});
+
+test("a declared artifact spelled with a trailing slash refuses as a directory scope", () => {
+  // Delivery (architecture step 8) proves each declared artifact by exact
+  // equality with a committed file path; a trailing slash marks a directory
+  // scope that can never equal one, so it refuses here rather than letting
+  // the spec pass the gates and block at the last stage.
+  const directory = validSpec().replace("src/parser.ts", "scripts/");
+  assert.deepEqual(validateSpecDoc(directory), {
+    ok: false,
+    reason: "declared artifact must be an exact file path, not a directory: scripts/",
+  });
+  const fileWithSlash = validSpec().replace("src/parser.ts", "src/parser.ts/");
+  assert.deepEqual(validateSpecDoc(fileWithSlash), {
+    ok: false,
+    reason: "declared artifact must be an exact file path, not a directory: src/parser.ts/",
+  });
+});
+
+function gitCommitBase(root: string): string {
+  const git = (args: string[]): { status: number; stdout: string; stderr: string } => {
+    const r = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    return { status: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  };
+  assert.equal(git(["init", "-q"]).status, 0, "git init failed");
+  mkdirSync(join(root, "src"));
+  writeFileSync(join(root, "src", "exists.ts"), "existing content");
+  writeFileSync(join(root, "base.txt"), "base");
+  assert.equal(git(["add", "-A"]).status, 0, "git add failed");
+  const commit = git(["-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "-m", "base"]);
+  assert.equal(commit.status, 0, `git commit failed: ${commit.stderr}`);
+  return git(["rev-parse", "HEAD"]).stdout.trim();
+}
+
+test("writeSpecDoc refuses a declared artifact that names a directory in the starting commit", () => {
+  const root = mkdtempSync(join(tmpdir(), "bw-specdoc-tree-"));
+  try {
+    const head = gitCommitBase(root);
+    // An existing directory never satisfies delivery's exact-equality check.
+    const declaresDir = validSpec().replace("src/parser.ts", "src");
+    assert.throws(
+      () => writeSpecDoc(root, "my-feature", declaresDir, head),
+      /declared artifact names a directory in the starting commit tree: src/
+    );
+    // An existing file stays a legal declared artifact (modify case).
+    const existingFile = validSpec().replace("src/parser.ts", "src/exists.ts");
+    writeSpecDoc(root, "my-feature", existingFile, head);
+    // A path nothing in the starting tree names is a future file the
+    // implementation is expected to create, and passes.
+    const futureFile = validSpec().replace("src/parser.ts", "src/future.ts");
+    writeSpecDoc(root, "my-feature", futureFile, head);
+    // Without a starting commit the tree rule does not run (the parse rules
+    // still do — the trailing-slash case above is independent of git).
+    writeSpecDoc(root, "my-feature", declaresDir);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

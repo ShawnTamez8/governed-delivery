@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -15,7 +16,6 @@ import type { VerificationConfig } from "../src/governed-config.ts";
 
 /** One minimal frozen configuration; this stage does not read it. */
 const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
-const COMMIT = "b".repeat(40);
 const SLUG = "s";
 
 const SPEC = `feature: Thing
@@ -64,6 +64,8 @@ interface Fixture {
   expiresAt: string;
   /** The fingerprint frozen at intake, or null when `bindSigner: false`. */
   frozenSigner: string | null;
+  /** The base commit the run's profile froze. */
+  head: string;
 }
 
 /**
@@ -77,12 +79,35 @@ function withFixture(fn: (f: Fixture) => void, opts: {
     risk?: string;
     gateSummary?: string | null;
     bindSigner?: boolean;
+    baseDirs?: string[];
   } = {}): void {
   const root = mkdtempSync(join(tmpdir(), "bw-approve-"));
   const keyDir = mkdtempSync(join(tmpdir(), "bw-approve-key-"));
   const before = process.env.BW_APPROVAL_PUBLIC_KEY;
   const store = openStore(root);
   try {
+    // The approval gate now reads the starting commit's tree to refuse
+    // declared artifacts that name directories (step 8's exact-equality
+    // delivery), so the fixture runs in a real repository — a fake commit
+    // would make every tree read fail closed. `baseDirs` lets a regression
+    // commit an existing directory (git tracks no empty directory, so each
+    // carries a `.keep`).
+    const git = (args: string[]): { status: number; stdout: string; stderr: string } => {
+      const r = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+      return { status: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+    };
+    const init = git(["init", "-q"]);
+    assert.equal(init.status, 0, `git init failed: ${init.stderr}`);
+    writeFileSync(join(root, "base.txt"), "base");
+    for (const dir of opts.baseDirs ?? []) {
+      mkdirSync(join(root, dir), { recursive: true });
+      writeFileSync(join(root, dir, ".keep"), "x");
+    }
+    const add = git(["add", "-A"]);
+    assert.equal(add.status, 0, `git add failed: ${add.stderr}`);
+    const commit = git(["-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "-m", "base"]);
+    assert.equal(commit.status, 0, `git commit failed: ${commit.stderr}`);
+    const head = git(["rev-parse", "HEAD"]).stdout.trim();
     const run = store.insertRun("p", "f-1", SLUG, "feature");
     const specPath = join(root, "docs", "features", SLUG, "spec.md");
     mkdirSync(dirname(specPath), { recursive: true });
@@ -127,7 +152,7 @@ function withFixture(fn: (f: Fixture) => void, opts: {
     if (opts.bindSigner === false) process.env.BW_APPROVAL_PUBLIC_KEY = join(keyDir, "no-such-key.pub");
     else process.env.BW_APPROVAL_PUBLIC_KEY = pubPath;
 
-    const frozen = freezeProfile(root, run.id, opts.commit === undefined ? COMMIT : opts.commit, "test-model", VERIFICATION);
+    const frozen = freezeProfile(root, run.id, opts.commit === undefined ? head : opts.commit, "test-model", VERIFICATION);
     store.setProfileRef(run.id, frozen.hash);
     // A bound-path fixture that froze null proves nothing about the trust
     // anchor: the ordering or the key setup broke, silently. One assertion
@@ -149,6 +174,7 @@ function withFixture(fn: (f: Fixture) => void, opts: {
       privateKey: privateKey.export({ format: "pem", type: "pkcs8" }) as string,
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),
       frozenSigner: frozen.profile.approvalSigner,
+      head,
     });
   } finally {
     store.close();
@@ -193,7 +219,7 @@ test("a verified authorization records the approval and passes the stage", () =>
     const approval = f.store.getApproval(f.runId)!;
     assert.equal(approval.feature_id, "f-1");
     assert.equal(approval.spec_hash, sha256Hex(normalizeText(readFileSync(f.specPath, "utf8"))));
-    assert.equal(approval.starting_commit, COMMIT);
+    assert.equal(approval.starting_commit, f.head);
     assert.equal(approval.profile_hash, f.store.getRun(f.runId)!.profile_ref);
     assert.equal(approval.risk, "low");
     assert.equal(approval.scope, canonicalJson(["src/thing.ts", "test/thing.test.ts"]));
@@ -730,4 +756,28 @@ test("a profile predating approvalSigner is refused before the signer comparison
     );
     assertNothingWritten(f);
   }, { bindSigner: true });
+});
+
+test("a spec edited to declare a directory refuses at the gate, before the operator's signature binds it", () => {
+  // The spec stage refuses the shape at write time, but a spec edited
+  // afterwards can add a directory declaration — and a directory can never
+  // satisfy delivery's exact-equality check, so the approval gate re-checks
+  // the tree the way it re-checks change_kind, before signing.
+  const dirSpec = SPEC.replace("src/thing.ts", "src");
+  withFixture(
+    (f) => {
+      const r = approveRun(f.store, f.root, {
+        runId: f.runId,
+        expiresAt: f.expiresAt,
+        signature: Buffer.alloc(64).toString("base64"),
+      });
+      assert.equal(r.ok, false);
+      assert.match(
+        (r as { reason: string }).reason,
+        /declared artifact names a directory in the starting commit tree: src/
+      );
+      assertNothingWritten(f);
+    },
+    { spec: dirSpec, baseDirs: ["src"] }
+  );
 });

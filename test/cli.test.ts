@@ -508,8 +508,10 @@ test("request, sign, and approve walk end to end through the CLI", () => {
     assert.equal(newRun.status, 0, newRun.stderr);
     const runId = Number(newRun.stdout.trim());
 
-    // Park the run where the gate expects it, and give it a starting commit
-    // the same way a real run would have one.
+    // Park the run where the gate expects it. `new-run` froze the repository's
+    // real HEAD as the starting commit (the profile test above asserts that),
+    // and the approval gate now reads that commit's tree to refuse declared
+    // artifacts that name directories — so the frozen commit must stay real.
     const specPath = join(cwd, "docs", "features", "s", "spec.md");
     mkdirSync(dirname(specPath), { recursive: true });
     writeFileSync(
@@ -533,12 +535,6 @@ test("request, sign, and approve walk end to end through the CLI", () => {
         normalizeText(readFileSync(specPath, "utf8"))
       )}; risk=low`,
     });
-    const profilePath = join(cwd, ".governance", "profiles", String(runId), "profile.json");
-    const profile = JSON.parse(readFileSync(profilePath, "utf8"));
-    profile.startingCommit = "b".repeat(40);
-    const serialized = canonicalJson(profile);
-    writeFileSync(profilePath, serialized);
-    store.setProfileRef(runId, sha256Hex(serialized));
     store.close();
 
     // One expiry value, passed explicitly to both commands: never scraped

@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -85,23 +86,54 @@ function freezeExecutorIntoProfile(
   store.setProfileRef(runId, sha256Hex(serialized));
 }
 
-function withRun(fn: (ctx: Ctx) => Promise<void>): Promise<void> {
+function withRun(
+  fn: (ctx: Ctx) => Promise<void>,
+  opts: { baseDirs?: string[] } = {}
+): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "bw-spec-stage-"));
   const store = openStore(root);
-  const run = store.insertRun("p", "f-1", "demo", "feature");
-  // The stage resolves its model from the frozen profile now, so a run
-  // without one cannot reach a dispatch at all.
-  const frozen = freezeProfile(root, run.id, "b".repeat(40), "m", VERIFICATION);
-  store.setProfileRef(run.id, frozen.hash);
-  // The run's frozen executor *is* the fixture the tests hand by default;
-  // scratch-executor tests freeze their own right before the stage call.
-  freezeExecutorIntoProfile(store, root, run.id, fixtureExecutor(FIXTURE));
-  mkdirSync(join(root, "docs", "features", "demo"), { recursive: true });
-  writeFileSync(join(root, "docs", "features", "demo", "design.md"), "# design\n");
-  return Promise.resolve(fn({ store, root, runId: run.id })).finally(() => {
+  // The spec stage now reads the starting commit's tree to refuse declared
+  // artifacts that name directories (step 8's exact-equality delivery), so a
+  // run needs a real commit in a real repository — a fake 40-hex string makes
+  // every tree read fail closed. `baseDirs` lets a regression commit an
+  // existing directory (git tracks no empty directory, so each carries a
+  // `.keep`).
+  const git = (args: string[]): { status: number; stdout: string; stderr: string } => {
+    const r = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    return { status: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  };
+  try {
+    const init = git(["init", "-q"]);
+    assert.equal(init.status, 0, `git init failed: ${init.stderr}`);
+    writeFileSync(join(root, "base.txt"), "base");
+    for (const dir of opts.baseDirs ?? []) {
+      mkdirSync(join(root, dir), { recursive: true });
+      writeFileSync(join(root, dir, ".keep"), "x");
+    }
+    const add = git(["add", "-A"]);
+    assert.equal(add.status, 0, `git add failed: ${add.stderr}`);
+    const commit = git(["-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "-m", "base"]);
+    assert.equal(commit.status, 0, `git commit failed: ${commit.stderr}`);
+    const head = git(["rev-parse", "HEAD"]).stdout.trim();
+    const run = store.insertRun("p", "f-1", "demo", "feature");
+    // The stage resolves its model from the frozen profile now, so a run
+    // without one cannot reach a dispatch at all.
+    const frozen = freezeProfile(root, run.id, head, "m", VERIFICATION);
+    store.setProfileRef(run.id, frozen.hash);
+    // The run's frozen executor *is* the fixture the tests hand by default;
+    // scratch-executor tests freeze their own right before the stage call.
+    freezeExecutorIntoProfile(store, root, run.id, fixtureExecutor(FIXTURE));
+    mkdirSync(join(root, "docs", "features", "demo"), { recursive: true });
+    writeFileSync(join(root, "docs", "features", "demo", "design.md"), "# design\n");
+    return Promise.resolve(fn({ store, root, runId: run.id })).finally(() => {
+      store.close();
+      rmSync(root, { recursive: true, force: true });
+    });
+  } catch (err) {
     store.close();
     rmSync(root, { recursive: true, force: true });
-  });
+    throw err;
+  }
 }
 
 /**
@@ -1511,4 +1543,69 @@ test("the reconciliation prompt carries the design document", async () => {
       .map((r) => r.summary);
     assert.ok(records[0].includes("design-seen"), "the reconciler saw the governing design");
   });
+});
+
+// --- declared artifacts are exact file paths (step 8 task 1) -----------------
+
+test("a spec whose declared artifact names a directory in the starting tree blocks at the draft write", async () => {
+  await withRun(
+    async ({ store, root, runId }) => {
+      // `src/` exists in the base commit; the draft declares it. Delivery
+      // proves artifacts by exact equality with committed file paths, so the
+      // spec gate refuses the shape before the run pays for the revision.
+      const scratch = join(root, "emit-spec-stage-dir-artifact.mjs");
+      writeFileSync(scratch, fixtureSource().replace("- src/a1.ts", "- src"));
+      freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+      const result = await runSpecStage(store, fixtureExecutor(scratch), {
+        runId,
+        requestedModel: "m",
+        rootDir: root,
+      });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(
+        result.reason,
+        /declared artifact names a directory in the starting commit tree: src/
+      );
+      assert.equal(store.getStageChain(runId)[0].status, "blocked");
+      assert.equal(store.getRun(runId)!.status, "blocked");
+    },
+    { baseDirs: ["src"] }
+  );
+});
+
+test("a self-critique revision that declares a directory blocks instead of replacing the gated draft", async () => {
+  await withRun(
+    async ({ store, root, runId }) => {
+      // The draft declares ordinary files and passes the tree rule; the
+      // self-critique revision swaps the first artifact for the `src/`
+      // directory that exists in the base commit. Every revision goes through
+      // the same write-time rule, so the revision refuses by name and the
+      // draft stays the file on disk (no fallback, no replacement).
+      const scratch = join(root, "emit-spec-stage-critique-dir.mjs");
+      writeFileSync(
+        scratch,
+        fixtureSource().replace(
+          'artifact: authoredSpec().replace("- the thing works", "- the thing works SELFCRITIQUED"),',
+          'artifact: authoredSpec().replace("- src/a1.ts", "- src"),'
+        )
+      );
+      freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+      const result = await runSpecStage(store, fixtureExecutor(scratch), {
+        runId,
+        requestedModel: "m",
+        rootDir: root,
+      });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(
+        result.reason,
+        /spec self-critique document refused: declared artifact names a directory in the starting commit tree: src/
+      );
+      const onDisk = readFileSync(join(root, "docs", "features", "demo", "spec.md"), "utf8");
+      assert.ok(onDisk.includes("src/a1.ts"), "the draft, not the refused revision, is the file on disk");
+      assert.equal(store.getRun(runId)!.status, "blocked");
+    },
+    { baseDirs: ["src"] }
+  );
 });

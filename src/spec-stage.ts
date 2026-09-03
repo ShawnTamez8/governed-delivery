@@ -234,7 +234,7 @@ export async function runSpecStage(
     let specContent = authorContent.spec;
     let written: { path: string; doc: SpecDoc };
     try {
-      written = writeSpecDoc(rootDir, run.slug, specContent);
+      written = writeSpecDoc(rootDir, run.slug, specContent, profile.startingCommit);
     } catch (err) {
       return abort(specStage.id, "spec.content.invalid", (err as Error).message);
     }
@@ -312,7 +312,7 @@ export async function runSpecStage(
     // it never falls back to the draft, because a silent fallback would make
     // the phase optional in exactly the runs where it went wrong.
     try {
-      written = writeSpecDoc(rootDir, run.slug, critique.value.artifact);
+      written = writeSpecDoc(rootDir, run.slug, critique.value.artifact, profile.startingCommit);
     } catch (err) {
       return abort(
         specStage.id,
@@ -597,7 +597,7 @@ export async function runSpecStage(
         );
       }
       try {
-        written = writeSpecDoc(rootDir, run.slug, reconcileContent.spec);
+        written = writeSpecDoc(rootDir, run.slug, reconcileContent.spec, profile.startingCommit);
       } catch (err) {
         return abort(reviewStage.id, "spec.reconcile.invalid", (err as Error).message);
       }
