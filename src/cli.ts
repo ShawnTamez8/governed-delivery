@@ -11,6 +11,7 @@ import { runSpecStage } from "./spec-stage.ts";
 import { runPlanStage } from "./plan-stage.ts";
 import { runImplementationStage } from "./implementation-stage.ts";
 import { runVerificationStage } from "./verification-stage.ts";
+import { runDeliveryStage } from "./delivery-stage.ts";
 import { freezeProfile, loadVerifiedProfile, requireFrozenBinding, resolveStageModel, resolveStartingCommit, validateModelName } from "./profile.ts";
 import { approvalPayload, validateExpiry } from "./approval.ts";
 import { approveRun, buildBinding } from "./approval-stage.ts";
@@ -29,12 +30,15 @@ commands:
   plan --run <id> [--model <name>]       run the plan and plan_review stages
   implement --run <id> [--model <name>]   run the implementation stage
   verify --run <id>                      run the verification stage
+  deliver --run <id>                     run the delivery check (step 8): prove
+                                         every declared artifact was committed,
+                                         then complete or block the run
   approval-request --run <id> [--expires <iso>]
                                          print the payload for the operator to sign
   approve --run <id> --expires <iso> --signature <base64>
                                          verify and record the authorization
   verify-audit                           recompute the whole audit chain
-                                         (unrelated to verify above)
+                                         (unrelated to verify and deliver above)
   proposal-export --proposal <id> [--name <slug>]
                                          materialize a stored proposal into
                                          docs/proposals/ as an explicit
@@ -129,6 +133,7 @@ async function main(): Promise<void> {
     "plan",
     "implement",
     "verify",
+    "deliver",
     "approval-request",
     "approve",
     "verify-audit",
@@ -481,6 +486,23 @@ async function main(): Promise<void> {
         // progress comes from the stage, so nothing is printed here but the
         // result path.
         const result = await runVerificationStage(store, {
+          runId: numeric(args, "run"),
+          rootDir: process.cwd(),
+        });
+        if (result.ok) {
+          console.log(result.resultRef);
+        } else {
+          console.error(result.reason);
+          process.exitCode = 1;
+        }
+        break;
+      }
+      case "deliver": {
+        // The delivery check (step 8) dispatches nothing and resolves no
+        // model, exactly like verify. Success prints only the delivery result
+        // reference; a refusal — including a delivery that blocks the run on
+        // missing artifacts — prints the named reason and exits 1.
+        const result = runDeliveryStage(store, {
           runId: numeric(args, "run"),
           rootDir: process.cwd(),
         });

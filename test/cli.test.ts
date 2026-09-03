@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { acquireLock } from "../src/lock.ts";
+import { deliveryEvidenceRef } from "../src/paths.ts";
 import { openStore } from "../src/store.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { appendAudit } from "../src/audit.ts";
@@ -1107,6 +1108,295 @@ test("the usage text distinguishes verify from verify-audit", () => {
     assert.equal(r.status, 2);
     assert.match(r.stderr, /verify --run <id> +run the verification stage/);
     assert.match(r.stderr, /verify-audit +recompute the whole audit chain/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+// --- deliver (step 8, the terminal stage) ------------------------------------
+
+test("the usage text introduces deliver as the step-8 terminal check", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "not-a-command");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /deliver --run <id> +run the delivery check \(step 8\)/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("deliver without --run is a usage error", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "deliver");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /missing required option --run/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("deliver with a nonexistent run exits 1 naming the run and writes nothing", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "deliver", "--run", "9999");
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /run 9999 does not exist/);
+    assert.ok(
+      !existsSync(join(cwd, ".governance", "delivery")),
+      "no delivery record directory was created"
+    );
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("deliver refuses a run whose last stage is not a passed verification", () => {
+  const cwd = tempCwd();
+  try {
+    const newRun = runCli(cwd, ...NEW_RUN_ARGS);
+    assert.equal(newRun.status, 0, newRun.stderr);
+    const r = runCli(cwd, "deliver", "--run", newRun.stdout.trim());
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /last stage is none, not a passed verification/);
+    assert.ok(
+      !existsSync(join(cwd, ".governance", "delivery")),
+      "no delivery record directory was created"
+    );
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Drive a CLI-created run to a passed verification the way the shipped stages
+ * would, crossing the dispatch boundary by hand. There is no executor
+ * injection seam (hard rule 4), so the implementer dispatch cannot run here;
+ * everything delivery reads is real: the spec document, the stage rows and
+ * hash-chained gate events, a real worktree on the run branch at the frozen
+ * starting commit with the declared files committed on it, the typed
+ * implementation gate event — and the deterministic `bw verify` (frozen
+ * commands only, nothing dispatched) writing the record delivery re-reads.
+ */
+function parkVerifiedRun(
+  cwd: string,
+  runId: number,
+  scope: string[],
+  commitFiles: string[] = scope
+): { worktreePath: string; verifiedCommit: string; startingCommit: string; specStageId: number } {
+  const slug = "s";
+  const spec = [
+    "feature: thing",
+    "change_kind: feature",
+    "",
+    "## Declared artifacts",
+    "",
+    ...scope.map((p) => `- ${p}`),
+    "",
+    "## Acceptance criteria",
+    "",
+    "- the artifact is committed",
+    "",
+  ].join("\n");
+  const specPath = join(cwd, "docs", "features", slug, "spec.md");
+  mkdirSync(dirname(specPath), { recursive: true });
+  writeFileSync(specPath, spec);
+  const specHash = sha256Hex(normalizeText(spec));
+
+  const profile = JSON.parse(
+    readFileSync(join(cwd, ".governance", "profiles", String(runId), "profile.json"), "utf8")
+  ) as { startingCommit: string };
+  const startingCommit = profile.startingCommit;
+
+  const store = openStore(cwd);
+  const specStage = store.insertStage(runId, "spec", null);
+  store.completeStage(specStage.id, specPath, "pass");
+  const reviewStage = store.insertStage(runId, "spec_review", specStage.id);
+  store.completeStage(reviewStage.id, specPath, "pass");
+  appendAudit(store, {
+    runId,
+    stageId: reviewStage.id,
+    actor: "system",
+    actorType: "cli",
+    action: "spec.gate.pass",
+    summary: `spec_review gate passed in round 1; specHash=${specHash}; risk=low`,
+  });
+  const approvalStage = store.insertStage(runId, "awaiting_approval", reviewStage.id);
+  store.completeStage(approvalStage.id, specPath, "pass");
+  store.insertApproval({
+    runId,
+    featureId: "f-1",
+    specHash,
+    startingCommit,
+    profileHash: store.getRun(runId)!.profile_ref!,
+    risk: "low",
+    scope: canonicalJson(scope),
+    expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+    signature: "sig",
+    signer: "signer",
+  });
+
+  const worktreePath = join(cwd, ".governance", "worktrees", String(runId));
+  const added = git(cwd, ["worktree", "add", "-q", worktreePath, "-b", `gov/${slug}/${runId}`, startingCommit]);
+  assert.equal(added.status, 0, `git worktree add failed: ${added.stderr}`);
+  for (const file of commitFiles) {
+    const target = join(worktreePath, file);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, `content of ${file}\n`);
+  }
+  const addPatch = git(worktreePath, ["add", "--", ...commitFiles]);
+  assert.equal(addPatch.status, 0, `git add failed: ${addPatch.stderr}`);
+  const commitPatch = git(worktreePath, [
+    "-c",
+    "user.email=t@example.invalid",
+    "-c",
+    "user.name=t",
+    "commit",
+    "-q",
+    "-m",
+    `bw run ${runId}: apply patch`,
+  ]);
+  assert.equal(commitPatch.status, 0, `git commit failed: ${commitPatch.stderr}`);
+  const verifiedCommit = git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim();
+
+  const implementationStage = store.insertStage(runId, "implementation", approvalStage.id);
+  store.completeStage(implementationStage.id, worktreePath, "pass");
+  appendAudit(store, {
+    runId,
+    stageId: implementationStage.id,
+    actor: "system",
+    actorType: "cli",
+    action: "implementation.gate.pass",
+    summary: `base=${startingCommit}; head=${verifiedCommit}`,
+  });
+  store.close();
+
+  const verify = runCli(cwd, "verify", "--run", String(runId));
+  assert.equal(verify.status, 0, verify.stderr);
+  return { worktreePath, verifiedCommit, startingCommit, specStageId: specStage.id };
+}
+
+test("deliver prints the result reference, completes the run, and the terminal run refuses all work", () => {
+  const cwd = tempCwd();
+  try {
+    const newRun = runCli(cwd, ...NEW_RUN_ARGS);
+    assert.equal(newRun.status, 0, newRun.stderr);
+    const runId = Number(newRun.stdout.trim());
+    const ctx = parkVerifiedRun(cwd, runId, ["src/a1.ts"]);
+
+    const r = runCli(cwd, "deliver", "--run", String(runId));
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim(), deliveryEvidenceRef(runId, "result.json"));
+    const record = JSON.parse(
+      readFileSync(join(cwd, ".governance", "delivery", String(runId), "result.json"), "utf8")
+    );
+    assert.deepEqual(record.declared, ["src/a1.ts"]);
+    assert.deepEqual(record.delivered, ["src/a1.ts"]);
+    assert.deepEqual(record.missing, []);
+    assert.equal(record.outcome, "pass");
+    assert.equal(record.patchBase, ctx.startingCommit);
+    assert.equal(record.verifiedCommit, ctx.verifiedCommit);
+    assert.ok(existsSync(join(cwd, ".governance", "delivery", String(runId), "report.md")));
+
+    const store = openStore(cwd);
+    const chain = store.getStageChain(runId);
+    assert.equal(store.getRun(runId)!.status, "completed");
+    const deliveryStage = chain.find((s) => s.kind === "delivery_check")!;
+    assert.equal(deliveryStage.status, "passed");
+    store.close();
+
+    const audit = runCli(cwd, "verify-audit");
+    assert.equal(audit.status, 0, audit.stderr);
+    assert.equal(audit.stdout.trim(), "chain valid");
+
+    // Completed is terminal: every work surface refuses by name, and the
+    // low-level commands refuse with the same guard the stages use.
+    const again = runCli(cwd, "deliver", "--run", String(runId));
+    assert.equal(again.status, 1);
+    assert.match(again.stderr, /is completed, not in_progress/);
+
+    const addStage = runCli(cwd, "stage-add", "--run", String(runId), "--kind", "spec");
+    assert.equal(addStage.status, 1);
+    assert.match(addStage.stderr, /is completed, not in_progress/);
+    const afterAdd = openStore(cwd);
+    try {
+      assert.equal(
+        afterAdd.query("SELECT * FROM stage").length,
+        chain.length,
+        "a refused stage-add must create no stage row"
+      );
+    } finally {
+      afterAdd.close();
+    }
+
+    const dispatched = runCli(
+      cwd,
+      "dispatch",
+      "--stage",
+      String(ctx.specStageId),
+      "--agent",
+      "a",
+      "--role",
+      "author",
+      "--model",
+      "test-model",
+      "--prompt-file",
+      "whatever.txt"
+    );
+    assert.equal(dispatched.status, 1);
+    assert.match(dispatched.stderr, /is completed, not in_progress/);
+    const afterDispatch = openStore(cwd);
+    try {
+      assert.equal(
+        afterDispatch.query<{ n: number }>("SELECT COUNT(*) AS n FROM agent_run")[0]!.n,
+        0,
+        "nothing was spent"
+      );
+    } finally {
+      afterDispatch.close();
+    }
+    assert.ok(!existsSync(join(cwd, ".governance", "raw")), "no raw output means no spawn");
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("a declared artifact never committed blocks the stage and the run through the CLI", () => {
+  const cwd = tempCwd();
+  try {
+    const newRun = runCli(cwd, ...NEW_RUN_ARGS);
+    assert.equal(newRun.status, 0, newRun.stderr);
+    const runId = Number(newRun.stdout.trim());
+    parkVerifiedRun(cwd, runId, ["src/a1.ts", "test/a1.test.ts"], ["src/a1.ts"]);
+
+    const r = runCli(cwd, "deliver", "--run", String(runId));
+    assert.equal(r.status, 1);
+    assert.equal(r.stdout, "", "a blocked delivery prints nothing on stdout");
+    assert.match(
+      r.stderr,
+      /delivery blocked: declared artifact\(s\) never appear in the committed changes: test\/a1\.test\.ts/
+    );
+    const record = JSON.parse(
+      readFileSync(join(cwd, ".governance", "delivery", String(runId), "result.json"), "utf8")
+    );
+    assert.deepEqual(record.delivered, ["src/a1.ts"]);
+    assert.deepEqual(record.missing, ["test/a1.test.ts"]);
+    assert.equal(record.outcome, "block");
+
+    const store = openStore(cwd);
+    assert.equal(store.getRun(runId)!.status, "blocked");
+    const deliveryStage = store.getStageChain(runId).find((s) => s.kind === "delivery_check")!;
+    assert.equal(deliveryStage.status, "blocked");
+    store.close();
+
+    const audit = runCli(cwd, "verify-audit");
+    assert.equal(audit.status, 0, audit.stderr);
+    assert.equal(audit.stdout.trim(), "chain valid");
+
+    const again = runCli(cwd, "deliver", "--run", String(runId));
+    assert.equal(again.status, 1);
+    assert.match(again.stderr, /is blocked, not in_progress/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

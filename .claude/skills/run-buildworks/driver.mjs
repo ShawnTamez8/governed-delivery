@@ -10,7 +10,7 @@
 // scratch repo is left on disk; its path is the last line of output.
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -253,7 +253,34 @@ function paidChain() {
     bw(["implement", "--run", runId]));
   step("verify (frozen commands)", { exit: 0, match: /result\.json/ }, () =>
     bw(["verify", "--run", runId]));
-  step("verify-audit", { exit: 0, match: /chain valid/ }, () => bw(["verify-audit"]));
+  // Step 8: the delivery check is what makes `completed` reachable from the
+  // default paid workflow (hazard 11) — a chain that never reaches it has no
+  // record that delivery ever happened. Success prints the result reference;
+  // blocking output would print the named missing artifacts and exit 1.
+  step("deliver (step 8 delivery check)", { exit: 0, match: /result\.json/ }, () =>
+    bw(["deliver", "--run", runId]));
+  step("delivery terminal state", { exit: 0, match: /delivery_check=passed run=completed/ }, () => {
+    const db = new DatabaseSync(join(target.repo, ".governance", "state.db"), { readOnly: true });
+    const stage = db.prepare(
+      "SELECT status FROM stage WHERE kind = ? ORDER BY id DESC LIMIT 1"
+    ).get("delivery_check");
+    const run = db.prepare("SELECT status FROM run WHERE id = ?").get(runId);
+    db.close();
+    const state = `delivery_check=${stage?.status ?? "absent"} run=${run?.status ?? "absent"}`;
+    return { code: state === "delivery_check=passed run=completed" ? 0 : 1, out: state };
+  });
+  step("delivery record covers the signed artifacts", { exit: 0, match: /missing=\[\], outcome=pass/ }, () => {
+    const rec = JSON.parse(readFileSync(
+      join(target.repo, ".governance", "delivery", String(runId), "result.json"), "utf8"));
+    const summary = `declared=${rec.declared.length} delivered=${rec.delivered.length} ` +
+                    `missing=${JSON.stringify(rec.missing)}, outcome=${rec.outcome}`;
+    return {
+      code: rec.missing.length === 0 && rec.outcome === "pass" ? 0 : 1,
+      out: summary,
+    };
+  });
+  step("verify-audit over the completed chain", { exit: 0, match: /chain valid/ }, () =>
+    bw(["verify-audit"]));
 
   // Never between the run and its summary: a paid chain costs real money, and
   // a reporting bug here once threw away the record of one that had already
