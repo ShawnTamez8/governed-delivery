@@ -11,7 +11,7 @@ validation.
 
 ## Status
 
-Build order steps 1-7 implemented: run store, stage chain, and audit chain
+Build order steps 1-8 implemented: run store, stage chain, and audit chain
 over SQLite; the concrete harness adapter (`bw dispatch` spawns the `claude`
 CLI, parses its envelope, retains raw output, and persists `agent_run` rows);
 the spec and spec-review stages (`bw spec` runs the author, one self-critique
@@ -35,7 +35,13 @@ named environment passthrough and bounded per-command time and output limits,
 proving the worktree still holds the commit implementation left and is clean
 before and after every command, retaining each command's complete output, and
 handing the next stage a structured record naming the worktree and the
-verified commit). The model each stage uses is frozen
+verified commit); and the delivery stage (`bw deliver` — the final
+deterministic gate, no dispatch and no model: it re-reads the verification
+record and the retained worktree, diffs the patch range between the recorded
+base and the verified commit, and completes the run only when every declared
+artifact the operator signed for appears there as an exact changed path —
+otherwise it blocks the run naming what is missing). The model each stage
+uses is frozen
 at `bw new-run --model` and every spend entry point checks it. Plus the
 documentation checker. Commands: see [`CLAUDE.md`](CLAUDE.md).
 
@@ -49,10 +55,13 @@ destination other than another author round: `upstream_follow_up` writes a
 stored, non-binding proposal and the run continues; `upstream_blocking` writes
 one and blocks. No run writes into `docs/proposals/`; `bw proposal-export` is
 the explicit human command that materializes a stored proposal there, and
-promotion to active work stays a human `git mv`. Of its thirteen tasks,
-Tasks 10 through 12 are complete but uncommitted; the independent completion
-gate and review in Task 13 remain. Step 8, the delivery check, remains the
-next build-order step.
+promotion to active work stays a human `git mv`. Step 8 shipped next:
+[`docs/features/delivery-check/plan.md`](docs/features/delivery-check/plan.md)
+implemented the terminal delivery check described above — the delivery_check
+stage, `bw deliver`, and the audit events that transition a run to
+`completed` or `blocked`. All eight build-order stages now exist; step 9's
+stop is the milestone itself: one feature run that reaches `completed` with
+queryable per-stage cost.
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the design, and its binding
   constraints.

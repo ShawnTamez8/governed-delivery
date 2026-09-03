@@ -533,12 +533,21 @@ signature.
 **`verification`.** Fails closed when commands are missing or do not pass.
 Bounded remediation rounds are the retry budget; exhausting one blocks.
 
-**`delivery_check`.** Before a run
-may complete, every artifact the spec declared must appear in the changed paths
-of an applied patch. Scope enforcement answers "may this stage write here";
-this answers "did anyone write it at all". Without it, a run can route work to a
-later stage, mark it done, and report success having delivered nothing. A suite
-whose fixtures declare one path and write another will not notice.
+**`delivery_check`.** Before a run may complete, every declared artifact must
+be delivered by exact normalized equality, never by containment. The delivery
+stage diffs the patch range — between the recorded patch base and the verified
+commit, both bound by the signed starting commit — and a declared artifact is
+delivered only when a changed path equals it exactly: separators and a leading
+`./` normalized, compared case-sensitively. The previous prefix-tolerant
+wording ("must appear in the changed paths of an applied patch") allowed a
+directory declaration to be satisfied by any path merely beneath it; that
+reading is gone. A declared path is an exact future file, and the spec and
+approval gates refuse declarations that already name a directory outright, so
+nothing directory-shaped survives to this stage. Scope enforcement answers
+"may this stage write here"; this answers "did anyone write it at all".
+Without it, a run can route work to a later stage, mark it done, and report
+success having delivered nothing. A suite whose fixtures declare one path and
+write another will not notice.
 
 **Refuse promises that cannot be kept.** If a criterion's artifacts
 are all produced by a later stage, the plan may not promise test coverage for it
@@ -712,6 +721,10 @@ report lives there.
                     file here too, but that file is reachable only through
                     the audit summary recorded for that link, not through
                     any structured column
+  delivery/<run>/   the retained delivery record: result.json (declared,
+                    delivered, and missing sets) and its human-readable
+                    report.md companion; the delivery_check stage's
+                    output_ref references the structured record
 ```
 
 **What is git-tracked and what is not.** The database and raw output are

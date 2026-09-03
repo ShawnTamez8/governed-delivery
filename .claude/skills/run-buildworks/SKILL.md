@@ -1,6 +1,6 @@
 ---
 name: run-buildworks
-description: Run, drive, and smoke-test the BuildWorks bw CLI against a throwaway target repository. Use to run or start bw, launch a governed run end to end, exercise the stage chain and its gates, check what a run cost, or reproduce a stage failure outside this repository. Covers migrate, new-run, spec, approval-request, approve, plan, implement, verify, and verify-audit.
+description: Run, drive, and smoke-test the BuildWorks bw CLI against a throwaway target repository. Use to run or start bw, launch a governed run end to end, exercise the stage chain and its gates, check what a run cost, or reproduce a stage failure outside this repository. Covers migrate, new-run, spec, approval-request, approve, plan, implement, verify, deliver, and verify-audit.
 ---
 
 # Running BuildWorks
@@ -83,10 +83,13 @@ node .claude/skills/run-buildworks/driver.mjs paid --yes
 
 Without `--yes` it refuses. It drives the full sequence — `migrate`,
 `new-run`, `spec`, `approval-request` → `sign` → `approve`, `plan`,
-`implement`, `verify`, `verify-audit` — against the real `claude` binary,
-then prints the per-dispatch cost from the store.
+`implement`, `verify`, `deliver`, `verify-audit` — against the real `claude`
+binary, then asserts the terminal state and prints the per-dispatch cost from
+the store.
 
-Verified run, 2026-08-31, `claude-sonnet-5`, all seven stages passed:
+Verified run, 2026-08-31, `claude-sonnet-5`, all seven stages passed. This
+record predates step 8, so the run ends `in_progress` and `deliver` was not
+called:
 
 ```
 dispatches: 7   total cost: $0.15556
@@ -112,8 +115,15 @@ three findings were resolved by re-review. Budget one to three remediation
 rounds. Earlier records in `docs/features/verification-stage/plan.md`: $0.07618
 and $0.06595 for 5-dispatch runs, $0.5021 for one that blocked.
 
-**The run ends `in_progress`, and that is correct.** Verification passing is
-the last built stage; step 8 (delivery check) does not exist yet.
+**The run now ends `completed`, and the cost is queryable.** Step 8 (the
+delivery check) exists and the paid chain drives it: after `verify` the
+driver calls `deliver`, which proves every declared artifact appears in the
+committed changes over the recorded patch range and then atomically passes
+the delivery_check stage and completes the run — or blocks the run naming
+what is missing. The driver asserts `delivery_check=passed`, `run=completed`,
+and that the delivery record covers every signed artifact, then runs
+`verify-audit` over the chain including the delivery event. The 2026-08-31
+record above ends `in_progress` because it predates step 8.
 
 ## Driving it by hand
 
@@ -165,9 +175,11 @@ Then any command from `bw`'s usage. Keep `BW_APPROVAL_PUBLIC_KEY` set on
 - **Exit codes carry meaning: 2 is a usage error, 1 is a refusal, 0 is
   success.** Do not read them through a pipe — `cmd | grep` reports grep's
   status.
-- **`verify` and `verify-audit` are unrelated.** The first runs the frozen
-  verification commands for one run; the second recomputes the whole audit
-  hash chain.
+- **`verify`, `deliver`, and `verify-audit` are unrelated.** `verify` runs the
+  frozen verification commands for one run; `deliver` (step 8) is the
+  deterministic terminal check that completes or blocks the run against the
+  signed declared artifacts; `verify-audit` recomputes the whole audit hash
+  chain.
 - Every invocation prints `ExperimentalWarning: SQLite is an experimental
   feature` on stderr. It is noise; the driver strips it.
 
