@@ -12,7 +12,7 @@ import { APPROVAL_MAX_LIFETIME_SECONDS, buildPolicy, policyHash } from "./policy
 import { loadVerifiedProfile } from "./profile.ts";
 import { artifactDirectoryRefusals, computeScope, touchesProtected } from "./scope.ts";
 import { computeRisk } from "./select.ts";
-import { validateSpecDoc } from "./spec-doc.ts";
+import { runDocumentRefusals, validateSpecDoc } from "./spec-doc.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
 
 export type BindingResult =
@@ -116,6 +116,16 @@ export function buildBinding(
   if (tree.directories.length > 0) {
     return no(
       `declared artifact names a directory in the starting commit tree: ${tree.directories.join(", ")}`
+    );
+  }
+  // The run-document rule, re-run where the signature binds: a spec edited
+  // after the spec gate can declare the run's own design, spec, or plan
+  // document, which the implementation stage writes before the patch range
+  // and can never deliver — the same re-check the tree rule performs.
+  const runDocuments = runDocumentRefusals(run.slug, doc.value.declaredArtifacts);
+  if (runDocuments.length > 0) {
+    return no(
+      `declared artifact names a document the run itself writes (design, spec, or plan under docs/features/${run.slug}/): ${runDocuments.join(", ")}`
     );
   }
   const specHash = sha256Hex(normalizeText(content));

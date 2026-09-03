@@ -53,6 +53,7 @@ const CONSTRAINT_STRINGS = [
   "defect_fix",
   "## Declared artifacts",
   "## Acceptance criteria",
+  "the run itself writes",
   "low",
   "medium",
   "high",
@@ -153,6 +154,7 @@ test("the generated author prompt states the schema constraints", () => {
   for (const constraint of [
     "proposed, blocked, failed",
     "## Declared artifacts",
+    "the run itself writes",
     "feature, defect_fix",
     "No git operations",
     "Output the JSON object",
@@ -280,6 +282,7 @@ test("the generated spec self-critique prompt states the contract and carries bo
   for (const constraint of [
     "proposedContentChanges.selfCritique",
     "proposed, blocked, failed",
+    "the run itself writes",
     "panelRequest",
     "never an agent identity",
     "may not add an obligation",
@@ -481,6 +484,7 @@ test("the generated spec reconciliation prompt carries the decision contract and
     "return no field at all that your disposition does not list",
     // The document schema the reconciled artifact must still satisfy.
     "## Declared artifacts",
+    "the run itself writes",
     "## Acceptance criteria",
     "Output the JSON object",
   ]) {

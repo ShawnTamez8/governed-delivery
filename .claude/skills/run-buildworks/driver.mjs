@@ -269,13 +269,23 @@ function paidChain() {
     const state = `delivery_check=${stage?.status ?? "absent"} run=${run?.status ?? "absent"}`;
     return { code: state === "delivery_check=passed run=completed" ? 0 : 1, out: state };
   });
-  step("delivery record covers the signed artifacts", { exit: 0, match: /missing=\[\], outcome=pass/ }, () => {
+  step("delivery record covers the signed artifacts", { exit: 0, match: /scopeMatch=yes missing=\[\], outcome=pass/ }, () => {
     const rec = JSON.parse(readFileSync(
       join(target.repo, ".governance", "delivery", String(runId), "result.json"), "utf8"));
-    const summary = `declared=${rec.declared.length} delivered=${rec.delivered.length} ` +
+    // The comparison that makes the step an evidence gate rather than an
+    // internal-consistency check: the record's declared set must equal the
+    // scope the operator actually signed (both sides normalized and sorted by
+    // the shipped code, so the string comparison is the set comparison).
+    const db = new DatabaseSync(join(target.repo, ".governance", "state.db"), { readOnly: true });
+    const approval = db.prepare("SELECT scope FROM approval WHERE run_id = ?").get(runId);
+    db.close();
+    const signed = JSON.parse(approval.scope).sort();
+    const scopeOk = JSON.stringify(rec.declared) === JSON.stringify(signed);
+    const summary = `scopeMatch=${scopeOk ? "yes" : `no (signed=${JSON.stringify(signed)})`} ` +
+                    `declared=${rec.declared.length} delivered=${rec.delivered.length} ` +
                     `missing=${JSON.stringify(rec.missing)}, outcome=${rec.outcome}`;
     return {
-      code: rec.missing.length === 0 && rec.outcome === "pass" ? 0 : 1,
+      code: scopeOk && rec.missing.length === 0 && rec.outcome === "pass" ? 0 : 1,
       out: summary,
     };
   });

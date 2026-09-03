@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { normalizeText } from "./canonical.ts";
-import { artifactDirectoryRefusals } from "./scope.ts";
+import { artifactDirectoryRefusals, normalizePath } from "./scope.ts";
 
 export interface SpecDoc {
   feature: string;
@@ -84,6 +84,23 @@ export function validateSpecDoc(
   };
 }
 
+/**
+ * A declared artifact naming one of the run's own documents can never be
+ * delivered. `docs/features/<slug>/design.md` is the run's protected input,
+ * and `spec.md` and `plan.md` are projections the implementation stage
+ * commits before the recorded patch base — every one of them sits outside
+ * the range `delivery_check` certifies, so a spec declaring one would pass
+ * the gates and then block terminally at the last stage. Refuse the names
+ * wherever a spec is written and wherever it is re-read before the
+ * operator's signature binds it.
+ */
+export function runDocumentRefusals(slug: string, artifacts: readonly string[]): string[] {
+  const runDocuments = ["design.md", "spec.md", "plan.md"].map(
+    (name) => normalizePath(`docs/features/${slug}/${name}`)
+  );
+  return artifacts.filter((path) => runDocuments.includes(normalizePath(path)));
+}
+
 function section(content: string, title: string): string | null {
   const re = new RegExp(`^## ${title}\\s*\\n`, "m");
   const m = re.exec(content);
@@ -127,6 +144,17 @@ export function writeSpecDoc(
         `declared artifact names a directory in the starting commit tree: ${tree.directories.join(", ")}`
       );
     }
+  }
+  // The tree rule answers "what exists"; this answers "who writes it". A
+  // declaration of the run's own design, spec, or plan document passes the
+  // tree rule (an existing file, or a future file in the starting tree) and
+  // still can never be delivered in the patch range. Independent of git:
+  // whoever writes the spec, the names are undeliverable.
+  const runDocuments = runDocumentRefusals(slug, result.value.declaredArtifacts);
+  if (runDocuments.length > 0) {
+    throw new Error(
+      `declared artifact names a document the run itself writes (design, spec, or plan under docs/features/${slug}/): ${runDocuments.join(", ")}`
+    );
   }
   const path = join(rootDir, "docs", "features", slug, "spec.md");
   mkdirSync(dirname(path), { recursive: true });

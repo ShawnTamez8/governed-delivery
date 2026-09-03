@@ -1184,7 +1184,13 @@ function parkVerifiedRun(
   runId: number,
   scope: string[],
   commitFiles: string[] = scope
-): { worktreePath: string; verifiedCommit: string; startingCommit: string; specStageId: number } {
+): {
+  worktreePath: string;
+  verifiedCommit: string;
+  startingCommit: string;
+  patchBase: string;
+  specStageId: number;
+} {
   const slug = "s";
   const spec = [
     "feature: thing",
@@ -1240,6 +1246,30 @@ function parkVerifiedRun(
   const worktreePath = join(cwd, ".governance", "worktrees", String(runId));
   const added = git(cwd, ["worktree", "add", "-q", worktreePath, "-b", `gov/${slug}/${runId}`, startingCommit]);
   assert.equal(added.status, 0, `git worktree add failed: ${added.stderr}`);
+
+  // The run's own projections, committed before the implementer sees the
+  // branch — the real chain's shape, where the recorded base is the starting
+  // commit's child and delivery's strict-descent requirement is satisfiable.
+  for (const file of [`docs/features/${slug}/spec.md`, `docs/features/${slug}/plan.md`]) {
+    const target = join(worktreePath, file);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, `projected ${file}\n`);
+  }
+  const addProjections = git(worktreePath, ["add", "--", `docs/features/${slug}/spec.md`, `docs/features/${slug}/plan.md`]);
+  assert.equal(addProjections.status, 0, `git add failed: ${addProjections.stderr}`);
+  const commitProjections = git(worktreePath, [
+    "-c",
+    "user.email=t@example.invalid",
+    "-c",
+    "user.name=t",
+    "commit",
+    "-q",
+    "-m",
+    `bw run ${runId}: project spec and plan`,
+  ]);
+  assert.equal(commitProjections.status, 0, `git commit failed: ${commitProjections.stderr}`);
+  const patchBase = git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim();
+
   for (const file of commitFiles) {
     const target = join(worktreePath, file);
     mkdirSync(dirname(target), { recursive: true });
@@ -1268,13 +1298,13 @@ function parkVerifiedRun(
     actor: "system",
     actorType: "cli",
     action: "implementation.gate.pass",
-    summary: `base=${startingCommit}; head=${verifiedCommit}`,
+    summary: `base=${patchBase}; head=${verifiedCommit}`,
   });
   store.close();
 
   const verify = runCli(cwd, "verify", "--run", String(runId));
   assert.equal(verify.status, 0, verify.stderr);
-  return { worktreePath, verifiedCommit, startingCommit, specStageId: specStage.id };
+  return { worktreePath, verifiedCommit, startingCommit, patchBase, specStageId: specStage.id };
 }
 
 test("deliver prints the result reference, completes the run, and the terminal run refuses all work", () => {
@@ -1295,8 +1325,9 @@ test("deliver prints the result reference, completes the run, and the terminal r
     assert.deepEqual(record.delivered, ["src/a1.ts"]);
     assert.deepEqual(record.missing, []);
     assert.equal(record.outcome, "pass");
-    assert.equal(record.patchBase, ctx.startingCommit);
+    assert.equal(record.patchBase, ctx.patchBase);
     assert.equal(record.verifiedCommit, ctx.verifiedCommit);
+    assert.notEqual(ctx.patchBase, ctx.startingCommit, "the projections commit separates the base from the starting commit");
     assert.ok(existsSync(join(cwd, ".governance", "delivery", String(runId), "report.md")));
 
     const store = openStore(cwd);

@@ -23,8 +23,9 @@ directly, with no surrounding prose, no markdown fences, and no commentary.
 The specification document schema is:
 - frontmatter with feature and change_kind (one of feature, defect_fix)
 - a ## Declared artifacts section: one concrete, exact, repo-relative file
-  path per line — never a directory scope or a glob: delivery proves each
-  declared artifact by its exact committed path
+  path per line — never a directory scope or a glob, and never a document
+  the run itself writes (the design, spec, or plan under docs/features/):
+  delivery proves each declared artifact by its exact committed path
 - an ## Acceptance criteria section: one criterion per list line
 
 Design document:
@@ -136,8 +137,10 @@ The self-critique has:
   the same document schema as the draft:
   - frontmatter with feature and change_kind (one of feature, defect_fix)
   - a ## Declared artifacts section: one concrete, exact, repo-relative
-    file path per line — never a directory scope or a glob: delivery proves
-    each declared artifact by its exact committed path
+    file path per line — never a directory scope or a glob, and never a
+    document the run itself writes (the design, spec, or plan under
+    docs/features/): delivery proves each declared artifact by its exact
+    committed path
   - an ## Acceptance criteria section: one criterion per list line
   A revised specification that does not validate blocks the run. There is no
   fallback to your draft.
@@ -587,8 +590,9 @@ cannot_determine.
 The revised specification must satisfy the same document schema as before:
 - frontmatter with feature and change_kind (one of feature, defect_fix)
 - a ## Declared artifacts section: one concrete, exact, repo-relative file
-  path per line — never a directory scope or a glob: delivery proves each
-  declared artifact by its exact committed path
+  path per line — never a directory scope or a glob, and never a document
+  the run itself writes (the design, spec, or plan under docs/features/):
+  delivery proves each declared artifact by its exact committed path
 - an ## Acceptance criteria section: one criterion per list line
 A revised specification that does not validate blocks the run.
 

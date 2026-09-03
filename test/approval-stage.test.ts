@@ -781,3 +781,28 @@ test("a spec edited to declare a directory refuses at the gate, before the opera
     { spec: dirSpec, baseDirs: ["src"] }
   );
 });
+
+test("a spec edited to declare the run's own document refuses at the gate, before the signature binds it", () => {
+  // The spec stage refuses the names at write time, but a spec edited
+  // afterwards can declare the run's own design, spec, or plan document —
+  // which the implementation stage writes before the patch range and can
+  // never deliver — so the approval gate re-checks the identity the way it
+  // re-checks change_kind and the tree, before signing.
+  const runDocSpec = SPEC.replace("src/thing.ts", "docs/features/s/spec.md");
+  withFixture(
+    (f) => {
+      const r = approveRun(f.store, f.root, {
+        runId: f.runId,
+        expiresAt: f.expiresAt,
+        signature: Buffer.alloc(64).toString("base64"),
+      });
+      assert.equal(r.ok, false);
+      assert.match(
+        (r as { reason: string }).reason,
+        /declared artifact names a document the run itself writes \(design, spec, or plan under docs\/features\/s\/\): docs\/features\/s\/spec\.md/
+      );
+      assertNothingWritten(f);
+    },
+    { spec: runDocSpec }
+  );
+});

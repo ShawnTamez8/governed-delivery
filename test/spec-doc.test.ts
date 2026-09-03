@@ -125,6 +125,33 @@ function gitCommitBase(root: string): string {
   return git(["rev-parse", "HEAD"]).stdout.trim();
 }
 
+test("writeSpecDoc refuses a declared artifact that names the run's own document", () => {
+  // design.md is the run's protected input and spec.md/plan.md are
+  // projections the implementation stage commits before the recorded patch
+  // base — all three sit outside the range delivery_check certifies, so a
+  // declaration naming one would pass every tree rule and still block
+  // terminally at the last stage. The rule is independent of git: it fires
+  // even with no starting commit in play.
+  const root = mkdtempSync(join(tmpdir(), "bw-specdoc-doc-"));
+  try {
+    for (const name of ["design.md", "spec.md", "plan.md"]) {
+      const declares = validSpec().replace("src/parser.ts", `docs/features/my-feature/${name}`);
+      assert.throws(
+        () => writeSpecDoc(root, "my-feature", declares),
+        (err: unknown) =>
+          (err as Error).message ===
+          `declared artifact names a document the run itself writes (design, spec, or plan under docs/features/my-feature/): docs/features/my-feature/${name}`,
+        `${name} must refuse by name`
+      );
+    }
+    // A sibling document under the same directory is an ordinary future file.
+    const sibling = validSpec().replace("src/parser.ts", "docs/features/my-feature/notes.md");
+    writeSpecDoc(root, "my-feature", sibling);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("writeSpecDoc refuses a declared artifact that names a directory in the starting commit", () => {
   const root = mkdtempSync(join(tmpdir(), "bw-specdoc-tree-"));
   try {

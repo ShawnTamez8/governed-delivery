@@ -1609,3 +1609,70 @@ test("a self-critique revision that declares a directory blocks instead of repla
     { baseDirs: ["src"] }
   );
 });
+
+test("a draft declaring the run's own plan document refuses before the run pays for a revision", async () => {
+  // design.md, spec.md, and plan.md under docs/features/<slug>/ are written
+  // by the system itself (spec/plan are projections committed before the
+  // recorded patch base), so none can ever appear in the range delivery
+  // certifies. The spec gate refuses the declaration by name instead of
+  // letting the run block terminally at the last stage.
+  await withRun(
+    async ({ store, root, runId }) => {
+      const scratch = join(root, "emit-spec-stage-run-doc.mjs");
+      writeFileSync(
+        scratch,
+        fixtureSource().replace("- src/a1.ts", "- docs/features/demo/plan.md")
+      );
+      freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+      const result = await runSpecStage(store, fixtureExecutor(scratch), {
+        runId,
+        requestedModel: "m",
+        rootDir: root,
+      });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(
+        result.reason,
+        /declared artifact names a document the run itself writes \(design, spec, or plan under docs\/features\/demo\/\): docs\/features\/demo\/plan\.md/
+      );
+      assert.equal(store.getStageChain(runId)[0].status, "blocked");
+      assert.equal(store.getRun(runId)!.status, "blocked");
+    },
+    { baseDirs: ["src"] }
+  );
+});
+
+test("a self-critique revision that declares the run's own plan document blocks instead of replacing the gated draft", async () => {
+  await withRun(
+    async ({ store, root, runId }) => {
+      // The draft declares ordinary files and passes; the self-critique
+      // revision swaps the first artifact for the run's own plan document.
+      // Every revision goes through the same write-time rule, so the revision
+      // refuses by name and the draft stays the file on disk.
+      const scratch = join(root, "emit-spec-stage-critique-run-doc.mjs");
+      writeFileSync(
+        scratch,
+        fixtureSource().replace(
+          'artifact: authoredSpec().replace("- the thing works", "- the thing works SELFCRITIQUED"),',
+          'artifact: authoredSpec().replace("- src/a1.ts", "- docs/features/demo/plan.md"),'
+        )
+      );
+      freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+      const result = await runSpecStage(store, fixtureExecutor(scratch), {
+        runId,
+        requestedModel: "m",
+        rootDir: root,
+      });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(
+        result.reason,
+        /spec self-critique document refused: declared artifact names a document the run itself writes \(design, spec, or plan under docs\/features\/demo\/\): docs\/features\/demo\/plan\.md/
+      );
+      const onDisk = readFileSync(join(root, "docs", "features", "demo", "spec.md"), "utf8");
+      assert.ok(onDisk.includes("src/a1.ts"), "the draft, not the refused revision, is the file on disk");
+      assert.equal(store.getRun(runId)!.status, "blocked");
+    },
+    { baseDirs: ["src"] }
+  );
+});

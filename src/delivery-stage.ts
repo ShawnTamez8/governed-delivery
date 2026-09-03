@@ -34,13 +34,15 @@ interface VerificationHandoff {
  * event in one transaction.
  *
  * **Every check runs before the stage row exists.** Profile, handoff, git,
- * scope, cleanliness, and coverage checks all refuse by name up front; the
- * only mutations are the deterministic record write and the single
- * `Store.transaction` that re-reads the run and chain, requires the run
- * still `in_progress` with no `delivery_check`, inserts and completes the
- * stage, transitions the run to `completed` or `blocked`, and appends the
- * audit event. A crash anywhere leaves `bw deliver` retryable: a record file
- * orphaned by a rollback is deterministic and safely overwritten on retry.
+ * scope, cleanliness, coverage, and existence checks all refuse by name up
+ * front; the only mutation is the single `Store.transaction` that re-reads
+ * the run and chain, requires the run still `in_progress` with no
+ * `delivery_check`, inserts the stage, writes the deterministic record
+ * (carrying the stage's own id), completes the stage, transitions the run to
+ * `completed` or `blocked`, and appends the audit event. A crash anywhere
+ * rolls the transaction back and leaves `bw deliver` retryable: a record
+ * file orphaned by a rollback is deterministic and safely overwritten on
+ * retry.
  *
  * This stage dispatches nothing and resolves no model — it is deterministic
  * system code, the way `bw verify` is.
@@ -71,9 +73,19 @@ export function runDeliveryStage(
   ): { status: number; stdout: string; stderr: string } => {
     let result;
     try {
-      result = spawnSync("git", args, { cwd, encoding: "utf8" });
+      // The changed-path diff is the largest git output in the chain; the
+      // spawn default of 1 MiB would kill it with ENOBUFS on a very large
+      // run. The ceiling is bounded like verification's output budget, far
+      // above anything a path listing needs.
+      result = spawnSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     } catch (err) {
       return { status: -1, stdout: "", stderr: (err as Error).message };
+    }
+    // A spawn failure lands on `error`, not in a throw, with `status` null —
+    // ENOBUFS above the buffer ceiling is exactly that shape. Reading it is
+    // what keeps a size overflow from being reported as a git failure.
+    if (result.error !== undefined) {
+      return { status: -1, stdout: "", stderr: result.error.message };
     }
     return { status: result.status ?? -1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
   };
@@ -118,7 +130,7 @@ export function runDeliveryStage(
   if (ageSeconds > profile.policy.runDurationLimitSeconds) {
     return {
       ok: false,
-      reason: `run ${runId} has exceeded the run-duration limit of ${profile.policy.runDurationLimitSeconds} seconds`,
+      reason: `run ${runId} has exceeded the run-duration limit of ${profile.policy.runDurationLimitSeconds} seconds: the run is stale by the policy frozen at run start, so every stage refuses it from here — start a fresh run; the branch, worktree, and verification evidence are retained`,
     };
   }
 
@@ -146,10 +158,21 @@ export function runDeliveryStage(
 
   // The verification record, re-read and validated strictly. It lives at the
   // passed stage's output_ref and is the only authoritative statement of what
-  // was verified; a record edited after verification refuses by name.
+  // was verified; a record edited after verification refuses by name. A
+  // *missing* record gets its own named refusal: `bw verify` cannot re-run a
+  // stage that exists, so the repair is restoring the retained evidence or a
+  // fresh run — and the message says so, rather than folding the loss into
+  // the tampering refusal.
+  const recordPath = join(rootDir, last.output_ref);
   let record: VerificationHandoff;
+  if (!existsSync(recordPath)) {
+    return {
+      ok: false,
+      reason: `run ${runId}'s verification record at ${last.output_ref} is missing: restore it from the verification evidence or start a fresh run (the branch and worktree are retained; a verification stage cannot be re-run)`,
+    };
+  }
   try {
-    const parsed = JSON.parse(readFileSync(join(rootDir, last.output_ref), "utf8")) as Record<
+    const parsed = JSON.parse(readFileSync(recordPath, "utf8")) as Record<
       string,
       unknown
     >;
@@ -181,6 +204,24 @@ export function runDeliveryStage(
   }
   const { worktreePath, verifiedCommit, patchBase } = record;
 
+  // The audit trail must carry the verdict delivery is about to extend.
+  // Verification completes its stage and appends `verification.gate.pass` as
+  // separate writes, so a crash between them can leave a passed stage whose
+  // outcome is absent from the chain — and a run completing without that
+  // event would carry a delivery verdict over an audit that never records
+  // verification passing. (One verification stage exists per run, so the
+  // action alone identifies the event.)
+  const verifiedEvent = store
+    .getAuditEvents(runId)
+    .filter((e) => e.action === "verification.gate.pass")
+    .pop();
+  if (!verifiedEvent) {
+    return {
+      ok: false,
+      reason: `run ${runId}'s passed verification stage ${verificationStageId} has no verification.gate.pass audit event: the audit trail does not record the verification outcome — start a fresh run; the branch and evidence are retained`,
+    };
+  }
+
   // --- the git re-reads ---
   if (!existsSync(worktreePath)) {
     return { ok: false, reason: `the worktree for run ${runId} is missing at ${worktreePath}` };
@@ -198,8 +239,10 @@ export function runDeliveryStage(
   // Clean means tracked state: the branch is the deliverable (section 4), so
   // uncommitted tracked changes are the only dirt that could leave the branch
   // holding bytes nobody verified. Untracked files are excluded — they cannot
-  // enter the deliverable, and verification commands may legitimately leave
-  // them because containment is unbuilt.
+  // enter the deliverable. (Verification itself leaves none: it refuses any
+  // post-command dirt, untracked included, so the only untracked files
+  // delivery can ever see are ones appearing between verify and deliver,
+  // which are tolerated precisely because they cannot enter the branch.)
   const trackedDirty = gitRaw(["diff", "--quiet", "HEAD"], worktreePath);
   if (trackedDirty.status === 128 || trackedDirty.status === -1) {
     return {
@@ -215,6 +258,21 @@ export function runDeliveryStage(
     return {
       ok: false,
       reason: `the worktree has tracked changes since the verified commit: ${detail}`,
+    };
+  }
+  // The base must be a *proper* descendant of the signed starting commit.
+  // `merge-base --is-ancestor` answers yes to equality, and a base equal to
+  // the starting commit would widen the certified range backwards over the
+  // run's own projections commit — the exact widening an edited record could
+  // sneak in, turning a projection document into a "delivered" artifact. The
+  // projections commit always separates an honest base from the starting
+  // commit (the implementation stage records the head after its own commit,
+  // so the base is the starting commit's child), which makes equality
+  // tampering or a bug, never a legitimate run.
+  if (patchBase === approval.starting_commit) {
+    return {
+      ok: false,
+      reason: `the patch base ${patchBase} is the starting commit, not a proper descendant of it: the certified range must begin after the run's projections commit`,
     };
   }
   // The patch base must be an ancestor of the verified commit (the range is
@@ -251,40 +309,48 @@ export function runDeliveryStage(
   }
   const changedPaths = changedResult.stdout.split("\0").filter((p) => p !== "");
 
-  // --- the pure comparison ---
+  // --- the pure comparison, then existence at the verified commit ---
   const coverage = deliveryCoverage(scope, changedPaths);
-  const missing = coverage.missing;
 
-  // --- the deterministic record, written before the final transaction ---
-  // A file orphaned by a rollback is deterministic enough to overwrite on
-  // retry: nothing references it until the transaction commits.
+  // `git diff --name-only` cannot tell an add or modify from a deletion: a
+  // declared path deleted inside the range still appears in the listing, so
+  // changed-in-range alone would certify an artifact that no longer exists at
+  // the verified commit (and rename handling flips on repository
+  // configuration). Delivery therefore also requires every declared artifact
+  // to exist as a file in the verified commit's tree — a path whose only
+  // in-range change removed it joins the missing set. The scope is exact
+  // file paths, so one `ls-tree` per artifact is small and the parse needs
+  // no normalization.
+  const existsAtHead: Record<string, boolean> = {};
+  for (const artifact of coverage.declared) {
+    const entry = gitRaw(["ls-tree", verifiedCommit, "--", artifact], worktreePath);
+    if (entry.status === 128 || entry.status === -1) {
+      return {
+        ok: false,
+        reason: `cannot read the verified commit tree for ${artifact}: ${entry.stderr.trim() || "git ls-tree failed"}`,
+      };
+    }
+    existsAtHead[artifact] = entry.stdout
+      .split(/\r?\n/)
+      .some((line) => line !== "" && line.split("\t")[0].split(" ")[1] === "blob");
+  }
+  const delivered = coverage.delivered.filter((p) => existsAtHead[p]);
+  const missing = [...coverage.missing, ...coverage.delivered.filter((p) => !existsAtHead[p])].sort();
+
+  // --- the final operation: one transaction or nothing ---
+  // The deterministic record is written inside the same transaction that
+  // creates the stage, so the record's stage id is the delivery_check row —
+  // the sibling convention every record follows (the verification record
+  // names its producing stage). A file orphaned by a rollback is
+  // deterministic and safely overwritten on retry: nothing references it
+  // until the transaction commits. The run and chain are re-read inside the
+  // transaction, so a concurrent invocation that slipped past the pre-checks
+  // cannot double-finalize: a run that gained a delivery_check or left
+  // in_progress since the checks refuses here, and every database write
+  // rolls back together on a throw.
   const evidenceDir = deliveryEvidenceDir(rootDir, runId);
   mkdirSync(evidenceDir, { recursive: true });
   const resultRef = deliveryEvidenceRef(runId, "result.json");
-  const recordDocument = {
-    runId,
-    stageId: verificationStageId,
-    worktreePath,
-    patchBase,
-    verifiedCommit,
-    declared: coverage.declared,
-    changed: coverage.changed,
-    delivered: coverage.delivered,
-    missing,
-    outcome: missing.length === 0 ? "pass" : "block",
-    createdAt: new Date().toISOString(),
-  };
-  writeFileSync(join(rootDir, resultRef), `${JSON.stringify(recordDocument, null, 2)}\n`);
-  writeFileSync(
-    join(rootDir, deliveryEvidenceRef(runId, "report.md")),
-    buildDeliveryReport(recordDocument)
-  );
-
-  // --- the final operation: one transaction or nothing ---
-  // The run and chain are re-read inside the transaction, so a concurrent
-  // invocation that slipped past the pre-checks cannot double-finalize: a
-  // run that gained a delivery_check or left in_progress since the checks
-  // refuses here, and every database write rolls back together on a throw.
   let finalized: { ok: true; stageId: number } | { ok: false; reason: string };
   try {
     finalized = store.transaction(() => {
@@ -305,6 +371,24 @@ export function runDeliveryStage(
       };
     }
     const stage = store.insertStage(runId, "delivery_check", verificationStageId);
+    const recordDocument = {
+      runId,
+      stageId: stage.id,
+      worktreePath,
+      patchBase,
+      verifiedCommit,
+      declared: coverage.declared,
+      changed: coverage.changed,
+      delivered,
+      missing,
+      outcome: missing.length === 0 ? "pass" : "block",
+      createdAt: new Date().toISOString(),
+    };
+    writeFileSync(join(rootDir, resultRef), `${JSON.stringify(recordDocument, null, 2)}\n`);
+    writeFileSync(
+      join(rootDir, deliveryEvidenceRef(runId, "report.md")),
+      buildDeliveryReport(recordDocument)
+    );
     if (missing.length === 0) {
       store.completeStage(stage.id, resultRef, "pass");
       store.setRunStatus(runId, "completed");
@@ -314,7 +398,7 @@ export function runDeliveryStage(
         actor: "system",
         actorType: "cli",
         action: "delivery.gate.pass",
-        summary: `delivery passed over ${patchBase}..${verifiedCommit}; delivered ${coverage.delivered.length} artifact(s): ${coverage.delivered.join(", ")}`,
+        summary: `delivery passed over ${patchBase}..${verifiedCommit}; delivered ${delivered.length} artifact(s): ${delivered.join(", ")}`,
       });
       return { ok: true as const, stageId: stage.id };
     }

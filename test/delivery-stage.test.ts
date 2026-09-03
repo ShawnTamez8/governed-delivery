@@ -33,8 +33,10 @@ interface Ctx {
   store: Store;
   root: string;
   runId: number;
-  head: string;
+  /** The signed starting commit the run branch was created at. */
+  startingCommit: string;
   verifiedCommit: string;
+  /** The pre-apply head the gate event recorded — the starting commit's child. */
   patchBase: string;
   worktreePath: string;
   implementationStageId: number;
@@ -47,6 +49,14 @@ interface Opts {
   commitFiles?: string[];
   /** Extra files left untracked in the worktree after verification. */
   untracked?: string[];
+  /** Files removed (committed deletions) inside the range after the patch commit. */
+  deleteFiles?: string[];
+  /**
+   * Complete the verification stage by hand without its gate event — the
+   * only state in which the missing-event refusal is reachable, since the
+   * real stage always appends the event.
+   */
+  noGateEvent?: boolean;
 }
 
 function git(cwd: string, args: string[]): { status: number; stdout: string; stderr: string } {
@@ -70,11 +80,13 @@ function commitIn(cwd: string, message: string): void {
 
 /**
  * A run parked at the delivery boundary through the real stages: real git
- * repository, real worktree on the run branch, an implementation stage passed
- * at the pre-apply head, one commit of the declared files on the branch, the
- * gate event recording both commits, and a real verification stage run to
- * completion so the record delivery reads exists and was written by the
- * shipped code. Nothing is dispatched anywhere.
+ * repository, real worktree on the run branch, the run's spec and plan
+ * projections committed on the branch first (so the pre-apply head the gate
+ * event records is the starting commit's child — the shape every honest run
+ * has), a commit of the declared files on the branch, the gate event
+ * recording both commits, and a real verification stage run to completion so
+ * the record delivery reads exists and was written by the shipped code.
+ * Nothing is dispatched anywhere.
  */
 async function withDeliveryRun(fn: (ctx: Ctx) => Promise<void>, opts: Opts = {}): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "bw-delivery-"));
@@ -140,7 +152,27 @@ ${scope.map((p) => `- ${p}`).join("\n")}
     const added = git(root, ["worktree", "add", "-q", worktreePath, "-b", `gov/${SLUG}/${run.id}`, head]);
     assert.equal(added.status, 0, `git worktree add failed: ${added.stderr}`);
 
-    // The "implementation": commit the declared files on the run branch.
+    // The run's own projections, committed on the branch before the
+    // implementer sees it — the real implementation stage writes the spec and
+    // plan into the worktree and commits them before its first apply, so the
+    // recorded base is the head after this commit: a proper descendant of the
+    // signed starting commit, never the starting commit itself. Every fixture
+    // commits them, so a regression that anchored the changed-set diff at the
+    // starting commit would pull these projection paths into the range and
+    // fail the named tests.
+    const projectedDocs = [`docs/features/${SLUG}/spec.md`, `docs/features/${SLUG}/plan.md`];
+    for (const file of projectedDocs) {
+      const target = join(worktreePath, file);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, `projected ${file}\n`);
+    }
+    const addProjections = git(worktreePath, ["--literal-pathspecs", "add", "--", ...projectedDocs]);
+    assert.equal(addProjections.status, 0, `git add failed: ${addProjections.stderr}`);
+    commitIn(worktreePath, `bw run ${run.id}: project spec and plan`);
+    const patchBase = git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim();
+
+    // The "implementation": commit the declared files on the run branch, then
+    // apply any in-range deletions the test asks for.
     for (const file of opts.commitFiles ?? scope) {
       const target = join(worktreePath, file);
       mkdirSync(dirname(target), { recursive: true });
@@ -150,6 +182,11 @@ ${scope.map((p) => `- ${p}`).join("\n")}
       const addPatch = git(worktreePath, ["--literal-pathspecs", "add", "--", ...(opts.commitFiles ?? scope)]);
       assert.equal(addPatch.status, 0, `git add failed: ${addPatch.stderr}`);
       commitIn(worktreePath, `bw run ${run.id}: apply patch`);
+    }
+    if ((opts.deleteFiles ?? []).length > 0) {
+      const remove = git(worktreePath, ["rm", "-q", "--", ...(opts.deleteFiles ?? [])]);
+      assert.equal(remove.status, 0, `git rm failed: ${remove.stderr}`);
+      commitIn(worktreePath, `bw run ${run.id}: remove in range`);
     }
     const verifiedCommit = git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim();
 
@@ -161,14 +198,46 @@ ${scope.map((p) => `- ${p}`).join("\n")}
       actor: "system",
       actorType: "cli",
       action: "implementation.gate.pass",
-      summary: `base=${head}; head=${verifiedCommit}`,
+      summary: `base=${patchBase}; head=${verifiedCommit}`,
     });
 
-    // The real verification stage: writes the record delivery re-reads.
-    const verifiedRun = await runVerificationStage(store, { runId: run.id, rootDir: root });
-    assert.equal(verifiedRun.ok, true, verifiedRun.ok ? "" : verifiedRun.reason);
-    const verificationStage = store.getStage(verifiedRun.stageId)!;
-    assert.equal(verificationStage.kind, "verification");
+    // The real verification stage writes the record delivery re-reads; the
+    // noGateEvent option instead completes the stage by hand without its
+    // audit event, the one state in which delivery's missing-event refusal is
+    // reachable.
+    let verificationStageId: number;
+    if (opts.noGateEvent === true) {
+      const verificationStage = store.insertStage(run.id, "verification", implementationStage.id);
+      const resultRef = `.governance/verification/${run.id}/result.json`;
+      mkdirSync(dirname(join(root, resultRef)), { recursive: true });
+      // Minimal but strict-valid: delivery's record re-read must pass so only
+      // the missing-event refusal can fire.
+      writeFileSync(
+        join(root, resultRef),
+        `${JSON.stringify(
+          {
+            runId: run.id,
+            stageId: verificationStage.id,
+            worktreePath,
+            verifiedCommit,
+            patchBase,
+            outcome: "pass",
+            blockingCommand: null,
+            commands: [],
+          },
+          null,
+          2
+        )}\n`
+      );
+      store.completeStage(verificationStage.id, resultRef, "pass");
+      verificationStageId = verificationStage.id;
+    } else {
+      const verifiedRun = await runVerificationStage(store, { runId: run.id, rootDir: root });
+      assert.equal(verifiedRun.ok, true, verifiedRun.ok ? "" : verifiedRun.reason);
+      const verificationStage = store.getStage(verifiedRun.stageId)!;
+      assert.equal(verificationStage.kind, "verification");
+      verificationStageId = verificationStage.id;
+    }
 
     for (const file of opts.untracked ?? []) {
       const target = join(worktreePath, file);
@@ -181,12 +250,12 @@ ${scope.map((p) => `- ${p}`).join("\n")}
         store,
         root,
         runId: run.id,
-        head,
+        startingCommit: head,
         verifiedCommit,
-        patchBase: head,
+        patchBase,
         worktreePath,
         implementationStageId: implementationStage.id,
-        verificationStageId: verificationStage.id,
+        verificationStageId,
       })
     ).finally(() => {
       store.close();
@@ -203,6 +272,7 @@ function deliveryRecord(root: string, runId: number) {
   return JSON.parse(
     readFileSync(join(root, ".governance", "delivery", String(runId), "result.json"), "utf8")
   ) as {
+    stageId: number;
     delivered: string[];
     missing: string[];
     outcome: string;
@@ -233,6 +303,7 @@ test("every declared artifact committed on the run branch passes delivery and co
     assert.equal(record.outcome, "pass");
     assert.equal(record.patchBase, ctx.patchBase);
     assert.equal(record.verifiedCommit, ctx.verifiedCommit);
+    assert.equal(record.stageId, stage.id, "the record names the delivery_check stage that wrote it");
     assert.ok(existsSync(join(ctx.root, ".governance", "delivery", String(ctx.runId), "report.md")));
 
     const audit = ctx.store.query<{ summary: string }>(
@@ -256,9 +327,13 @@ test("no agent_run row exists: the stage spends nothing", async () => {
   });
 });
 
-test("untracked files left by verification never block delivery", async () => {
-  // The branch is the deliverable; untracked bytes cannot enter it, and
-  // verification commands may leave them because containment is unbuilt.
+test("untracked files appearing after verification never block delivery", async () => {
+  // The branch is the deliverable and untracked bytes cannot enter it.
+  // Verification itself leaves no residue — it refuses any post-command
+  // dirt, untracked included — so the only untracked files delivery can
+  // ever see are ones appearing between verify and deliver (this fixture
+  // adds them after the real verification has run), and those are
+  // tolerated precisely because they cannot enter the branch.
   await withDeliveryRun(
     async (ctx) => {
       const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
@@ -494,5 +569,102 @@ test("a crash mid-finalization leaves the run retryable, not wedged", async () =
     assert.equal(retry.ok, true, retry.ok ? "" : retry.reason);
     assert.equal(ctx.store.getRun(ctx.runId)!.status, "completed");
     assert.equal(verifyAuditChain(ctx.store), null, "the rolled-back audit inserts left no gap");
+  });
+});
+
+// --- the 2026-09-03 code-review remediations ---------------------------------
+
+test("a declared file that existed at the starting commit and was modified in range is delivered", async () => {
+  await withDeliveryRun(
+    async (ctx) => {
+      const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+      assert.equal(result.ok, true, result.ok ? "" : result.reason);
+    },
+    { scope: ["base.txt"], commitFiles: ["base.txt"] }
+  );
+});
+
+test("a declared artifact deleted inside the range blocks delivery: a removal is never delivery", async () => {
+  await withDeliveryRun(
+    async (ctx) => {
+      const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(result.reason, /delivery blocked: declared artifact\(s\) never appear/);
+      assert.match(result.reason, /base\.txt/);
+      const stage = ctx.store.getStageChain(ctx.runId).find((s) => s.kind === "delivery_check")!;
+      assert.equal(stage.status, "blocked");
+      assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+      const record = deliveryRecord(ctx.root, ctx.runId);
+      assert.deepEqual(record.delivered, []);
+      assert.deepEqual(record.missing, ["base.txt"]);
+    },
+    { scope: ["base.txt"], commitFiles: [], deleteFiles: ["base.txt"] }
+  );
+});
+
+test("the run's own projection documents never count as delivered: they sit before the base", async () => {
+  // The projections commit precedes the recorded base, so spec.md and plan.md
+  // are outside the certified range. A regression that anchored the changed
+  // set at the starting commit would pull them into the range and this run
+  // would complete; it must block instead.
+  await withDeliveryRun(
+    async (ctx) => {
+      const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(result.reason, new RegExp(`docs/features/${SLUG}/spec\\.md`));
+    },
+    { scope: [`docs/features/${SLUG}/spec.md`], commitFiles: [] }
+  );
+});
+
+test("a forged patch base equal to the starting commit refuses by strict descent", async () => {
+  await withDeliveryRun(async (ctx) => {
+    const recordPath = join(ctx.root, ".governance", "verification", String(ctx.runId), "result.json");
+    const record = JSON.parse(readFileSync(recordPath, "utf8")) as Record<string, unknown>;
+    record.patchBase = ctx.startingCommit;
+    writeFileSync(recordPath, JSON.stringify(record));
+    const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(
+      result.reason,
+      new RegExp(`the patch base ${ctx.startingCommit} is the starting commit, not a proper descendant`)
+    );
+    assert.equal(
+      ctx.store.getStageChain(ctx.runId).some((s) => s.kind === "delivery_check"),
+      false
+    );
+    assert.equal(ctx.store.getRun(ctx.runId)!.status, "in_progress");
+  });
+});
+
+test("a passed verification whose gate event is absent refuses: the audit must record the outcome", async () => {
+  await withDeliveryRun(
+    async (ctx) => {
+      const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(result.reason, /has no verification\.gate\.pass audit event/);
+      assert.equal(
+        ctx.store.getStageChain(ctx.runId).some((s) => s.kind === "delivery_check"),
+        false,
+        "no delivery stage may be created"
+      );
+      assert.equal(ctx.store.getRun(ctx.runId)!.status, "in_progress");
+    },
+    { noGateEvent: true }
+  );
+});
+
+test("a missing verification record refuses by name and names the repair", async () => {
+  await withDeliveryRun(async (ctx) => {
+    rmSync(join(ctx.root, ".governance", "verification", String(ctx.runId), "result.json"));
+    const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /verification record at .* is missing: restore it/);
+    assert.equal(ctx.store.getRun(ctx.runId)!.status, "in_progress");
   });
 });
