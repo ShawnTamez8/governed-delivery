@@ -74,6 +74,20 @@ export function proposalEvidenceDir(rootDir: string, runId: number): string {
   return join(rootDir, GOVERNANCE_DIR, "proposals", String(runId));
 }
 
+/** The directory holding one run's delivery records (step 8). */
+export function deliveryEvidenceDir(rootDir: string, runId: number): string {
+  return join(rootDir, GOVERNANCE_DIR, "delivery", String(runId));
+}
+
+/**
+ * The same file a delivery stage's `output_ref` stores it: relative to the
+ * repository root, mirroring `rawOutputRef`'s reasoning — the reference must
+ * survive the tree being read from elsewhere.
+ */
+export function deliveryEvidenceRef(runId: number, name: string): string {
+  return join(GOVERNANCE_DIR, "delivery", String(runId), name);
+}
+
 /**
  * The same file `proposal.evidence_ref` stores it: relative to the
  * repository root, mirroring `rawOutputRef`'s reasoning — the reference must
