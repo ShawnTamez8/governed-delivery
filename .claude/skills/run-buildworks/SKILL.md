@@ -202,7 +202,8 @@ Then any command from `bw`'s usage. Keep `BW_APPROVAL_PUBLIC_KEY` set on
 ## Test
 
 ```bash
-npm test              # node --test, 446 tests
+npm test              # node --test — 682 tests as of 2026-09-03 (681 pass,
+                      # 1 pre-existing skip); prose count, drifts with the suite
 npm run typecheck     # strict tsc --noEmit
 npm run check:docs    # the documentation checker
 ```
