@@ -1,6 +1,6 @@
 # Step 8 Delivery Check Implementation Plan
 
-**Status:** Reconciled
+**Status:** Implemented
 
 **Goal:** Implement `delivery_check` as the final deterministic stage. A new `bw deliver --run <id>` command proves that every declared artifact — an exact, committed file path the spec declared and the operator's signature bound — appears in the commits produced from the implementation patch base, then atomically passes or blocks the stage and sets the run to `completed` or `blocked`. No agent dispatch, model configuration, schema migration, PR creation, deferred stage, or second delivery surface is added.
 
@@ -240,3 +240,53 @@ These were settled during reconciliation of `2026-09-02-plan-review.md` and are 
 ## Test and acceptance summary
 
 The per-task verifications above are the acceptance plan: unit coverage for the handoff parsers, the result-record validator, and the coverage module (malformed fields, mismatched commits, pass/block consistency, exact matches, slash normalization, duplicates, extra paths, case mismatches, missing files, and the refusal of directory-prefix substitution); integration coverage over real temporary git repositories for every named refusal and both terminal transitions; CLI coverage for the command surface; and the spend-authorized paid run as the end-to-end gate. `npm test`, `npm run typecheck`, and `npm run check:docs` are the standing checks; the run-buildworks driver `smoke` stays green throughout.
+
+---
+
+## Implementation note (2026-09-03)
+
+All six tasks shipped on `master` as seven commits: `1890503` (Task 1),
+`02f799b` (Task 2), `849571c` (Task 3), `f68ebbb` (Task 4), `98d87b3`
+(Task 5), `695c16f` (Task 6 amendments and sweep), and `36a726d` (the
+remediation of the independent code review, `configured_standalone`,
+recorded in `2026-09-03-step8-code-review.md` beside this plan). Final
+state: full suite 682 tests (681 pass, one pre-existing skip), typecheck
+clean, driver smoke 12/12, doc-check 0 errors / 36 warnings (the baseline).
+
+**Deviations from the plan's wording, all corrections of the record rather
+than scope changes:**
+
+- **The pre-apply base is the starting commit's child, never the starting
+  commit itself.** Task 2's Step 2 and Task 4's Step 1 wording cross-checked
+  the recorded base against `approval.starting_commit` by equality, but the
+  implementation stage commits its own projections (spec and plan) onto the
+  run branch before dispatch, so the empirical pre-apply head always sits one
+  commit past the starting commit. Implementation enforces ancestry
+  continuity — and, after the code review, strict descent (finding F2): a
+  base equal to the starting commit refuses, because equality would widen the
+  certified range backwards over the projections commit.
+- **Run-document declarations refuse at the gates** (finding F6): a spec
+  declaring `docs/features/<slug>/design.md`, `spec.md`, or `plan.md` would
+  pass every tree rule and still block terminally at delivery, because those
+  documents are written by the system itself before the patch range. The
+  names refuse at spec writes and at the approval binding; the prompts state
+  the rule.
+- **Delivery certifies existence at the verified commit, not only presence
+  in the changed listing** (finding F1): an in-range deletion lists the path
+  in `git diff --name-only` but must never count as delivered.
+
+**Deferred items, stated rather than closed over:**
+
+- **The paid end-to-end run has not been executed.** The driver sequence
+  that reaches `delivery_check=passed` with `run=completed` against the real
+  `claude` binary is wired and asserted, but the run itself was deferred at
+  the operator's explicit spend stop. When authorized: `node
+  .claude/skills/run-buildworks/driver.mjs paid --yes`, then append the
+  cost and terminal state to this note. Step 9's milestone — one complete run
+  with queryable cost — is still the deliberate stop and has not been
+  reached.
+- **The duration ceiling at cost-free stages** (finding F3's architectural
+  half) and **the three stage-local git helpers** (finding F12's extraction,
+  now permitted by hard rule 4) are recorded with triggers in the review
+  file.
+

@@ -7,38 +7,64 @@ disagree, Current state wins.
 
 ## Current state (2026-09-03)
 
-**Shipped and committed:** build order steps 1-7 and all of step 5b (Tasks 1
-through 13 — the plan is `Status: Implemented`). `master` is the only local
-branch, one commit ahead of `origin/master` at `39d5432` (not pushed; the
-operator has not asked). Read the head with `git log -1` rather than
-trusting a commit id written here. Tasks 7, 8, and 9 shipped as one atomic
-commit at `54ee29b`; Tasks 10-13 (hazard 16 and `ARCHITECTURE.md` sections
-14/15/22, a `checkHazardCount` doc-check rule, a twenty-guard
-break-and-restore sweep, one real $0.36548 production smoke, and the
-completion gate with an independent review) shipped as one further atomic
-commit at `39d5432` — documentation, one checker script, and one test file
-only, no `src/` change. Full detail lives in the plan's own per-task
-completion records and its dated Implementation note
-(`docs/features/step5b-upstream-findings/plan.md`), and in its review files
-— `2026-09-02-task{5,6,6-2,7-9,10-12}-code-review.md` and
-`2026-09-03-task13-completion-review.md`, all reconciled.
+**Shipped and committed:** build order steps 1-8. Step 5b is fully
+`Implemented`; step 8 (delivery check) is fully `Implemented` too — plan
+`Status: Implemented` with a dated Implementation note, tasks.md fully
+checked, and the standalone review record reconciled. `master` is the only
+local branch, ahead of `origin/master` by the step-8 commits `1890503`,
+`02f799b`, `849571c`, `f68ebbb`, `98d87b3`, `695c16f`, `36a726d` (all
+pre-step-5b history plus 5b's own commits are behind them; nothing has been
+pushed — the operator has not asked). Read the head with `git log -1`
+rather than trusting a commit id written here.
 
-**The round-activation boundary is gone — the reversal to know before
-touching a stage.** `LEGACY_CLOSURE_PASSES` no longer exists in `src/`. Both
-stages read `profile.policy.specReviewRounds` / `planReviewRounds` and run
-one `panel → reconcile` cycle per configured round, then gate once over
-every round's decisions: `BLOCKING_DISPOSITIONS = [cannot_determine,
-upstream_blocking]` in `src/plan-gate.ts`, imported by `specReviewGate` so
-the two gates cannot drift.
+**Step 8's shipped surface:** declared artifacts are exact file paths
+(trailing-slash and starting-tree directory refusals; run-document
+refusals for design/spec/plan under `docs/features/<slug>/`); the
+implementation-to-verification handoff is one typed record
+(`base=<pre-apply head>; head=<final>` in the gate event, patch base on the
+verification record); a pure coverage module compares exactly; `bw deliver`
+performs every profile, handoff, scope, git, cleanliness, coverage,
+existence-at-head, gate-event, and ancestry check before one
+`Store.transaction` inserts the delivery_check stage, writes the record
+(carrying its own stage id), completes the stage, transitions the run to
+`completed` or `blocked`, and appends the audit event. The standalone review
+(`configured_standalone`, the operator's first billed review) found twelve
+issues — deletion counting as delivered, base==starting widening the range,
+run-document declarations being undeliverable, no fixture exercising the
+projections commit, missing verification.gate.pass — all remediated in
+`36a726d` with named regressions and break-and-restore proofs.
+
+**The delivery stage facts to know before touching it:**
+
+- The recorded patch base is the starting commit's **child** (the
+  implementation stage commits the run's own spec/plan projections before
+  its first apply). Delivery enforces strict descent — a base equal to the
+  starting commit refuses by name — and the fixtures commit projections
+  pre-base so the range-anchoring regression is visible.
+- Delivery certifies existence at the verified commit per declared artifact
+  (`ls-tree` blob check), because `git diff --name-only` lists deletions.
+- The record is written inside the final transaction after the stage insert.
+- Refusal messages on the terminal wedges (duration breach, missing or
+  invalid verification record, absent gate event) name the repair: restore
+  the evidence or start a fresh run — the branch, worktree, and evidence are
+  retained.
 
 **Open and deferred:**
 
-- Every review behind step 5b, including Task 13's own, ran inside this
-  repository's Claude Code harness session — `unverified_self_attestation`
-  throughout per hazard 14, never `configured_standalone`.
-- `cannot_determine` and `upstream_blocking` remain unexercised by real,
-  unscripted model output; both stay proven only by fixture and by Task 11's
-  break-it mutations.
+- **The paid end-to-end run is the one remaining step-8 evidence item** —
+  deferred at the operator's explicit spend stop. When authorized: `node
+  .claude/skills/run-buildworks/driver.mjs paid --yes`; the driver asserts
+  `delivery_check=passed`, `run=completed`, the record matches the signed
+  scope, and `verify-audit` over the delivery event. Append cost and
+  terminal state to the plan's Implementation note. Step 9's milestone —
+  one complete run with queryable cost — is still the deliberate stop and
+  has not been reached; do not build past it without a decision.
+- Architectural half of review finding F3 (whether the run-duration ceiling
+  should bind cost-free stages at all) and finding F12 (the three
+  stage-local git helpers may now be extracted under hard rule 4 — but
+  consolidation touches implementation and verification stages) are
+  deferred with triggers in
+  `docs/features/delivery-check/2026-09-03-step8-code-review.md`.
 - `npm test` intermittently leaks empty `moved` commits and a stray
   `base.txt` onto the real repo (auto memory:
   `test-suite-leaks-into-real-repo`). Root cause in
@@ -50,20 +76,15 @@ the two gates cannot drift.
   `.claude/sessions/2026-08-31-debug-implementer-mutates-worktree.md` in four
   places, including "committed as the evidence record"; that file was never
   written. Historical tier, so `check:docs` only warns — the gap is real.
-- Retained evidence outside the repo, no process: Task 1 prototype bundle at
-  `C:\Users\Shawn-work\repositories\step5b-task1-prototype`; Task 12 smoke
-  target at `%LOCALAPPDATA%\Temp\bw-task12-smoke\1788395870372\target`
-  (database independently re-verified by Task 13's review).
+- Retained evidence outside the repo, no process: step 5b's Task 1
+  prototype bundle and Task 12 smoke target (paths in the previous entry of
+  this file); `driver.mjs` scratch targets under
+  `%LOCALAPPDATA%\Temp\bw-run-skill\` (latest on disk, readable via
+  `driver.mjs report --dir <path>`).
 - `VERIFY_RETENTION_MAX_BYTES` (64 MB) is chosen, not derived; filesystem and
   network containment for verification commands is unbuilt
   (`docs/proposals/verification-containment.md`). `.governance` location
-  configuration is deferred out of 5b.
-- The build order stops at step 9. Do not build past it without a decision.
-
-**Next up:** step 5b is fully `Implemented` and committed at `39d5432`, one
-commit ahead of `origin/master` (not pushed). Whether step 5b or step 8
-(delivery check) goes first was never explicitly decided; step 5b has now
-shipped ahead of it by practice, in full.
+  configuration is deferred.
 
 ## Diagnostics quick-reference
 
@@ -83,6 +104,77 @@ One line memory does not yet carry:
   each caused one here.
 
 ## Session records
+
+### Step 8: delivery check, Tasks 1-6 and the standalone review (2026-09-02 to 2026-09-03)
+
+Seven atomic commits on `master`: `1890503` (Task 1: declared artifacts are
+exact file paths — trailing-slash and starting-tree directory refusals),
+`02f799b` (Task 2: one typed handoff, base + head in the gate event),
+`849571c` (Task 3: the pure coverage module), `f68ebbb` (Task 4:
+`runDeliveryStage` — checks first, one final transaction), `98d87b3`
+(Task 5: `bw deliver` and the paid driver), `695c16f` (Task 6: architecture
+amendments, docs, sweep, disposable gate), `36a726d` (remediation of the
+standalone review's twelve findings, `configured_standalone` — the
+operator's first billed review choice; all eleven fixable findings landed
+with named regressions, one deferred with a trigger). Final state: 682
+tests (one pre-existing skip), typecheck clean, smoke 12/12, doc-check
+0/36. Plan `Implemented`; the paid end-to-end run remains deferred at the
+operator's spend stop and is the last step-8 evidence item.
+
+#### Decisions and assumptions
+
+- **The operator chose `/code-review ultra` over the in-session subagent**
+  this time (hazard 14): a billed, separately spawned `configured_standalone`
+  review. It earned its cost — the sweep reproduced real defects end to end.
+- **Implementation corrected the plan's own wording**: the recorded patch
+  base is the starting commit's child (projections commit between), never
+  equal to it; delivery enforces ancestry continuity plus strict descent
+  (equality refuses), per the plan's review-driven amendment.
+- **Fixable wedges got repair messages, not behavior changes**: the
+  duration-breach, missing/invalid-record, and absent-gate-event refusals
+  keep refusing (per the approved plan and verification's precedent) and now
+  name the repair — restore the evidence or start a fresh run, with the
+  branch and worktree retained.
+
+#### What failed
+
+- **A break-it restore via `git checkout --` wiped the file's own
+  uncommitted remediation work.** Delivery-stage.ts carried legitimate
+  review fixes; restoring the mutation with `git checkout` reverted the file
+  to HEAD, discarding all of them, and the "restore" run failed against old
+  code. Auto memory `break-it-mechanics` already said prefer a scratch
+  mirror or staged git — I violated it mid-batch. Restore mutations with the
+  reverse patch, never a checkout, when the file also carries uncommitted
+  work.
+- **Two break mutations were aimed at the wrong branch.** Reversing the diff
+  range changed nothing (git lists a deleted path in name-only, so the set
+  was identical), and inverting the blob check changed nothing for a test
+  whose outcome was already a block (the mutation made everything missing).
+  Each needed a mutation that changed the *outcome class* the test pins.
+- **A `|`-delimited sed died on `||`** and an apostrophe escaped out of a
+  single-quoted sed script — both silently no-oped, producing pass/pass
+  cycles that looked like held guards until the logs were read.
+
+#### What worked
+
+- **The standalone review found what fixture-blind code hides.** F1 (a
+  deletion counts as delivered — name-only lists removed paths), F2 (base
+  equality widens the certified range over the projections commit), F5 (no
+  fixture exercised a pre-base projections commit, so the anchor regression
+  was invisible), F6 (declaring the run's own documents passed every gate
+  and blocked terminally at delivery), F8 (a run could complete without
+  verification.gate.pass in the audit). Each fix landed with a regression
+  that breaks when the guard is removed.
+- **Making every fixture reproduce the real chain's shape** (projections
+  committed before the base) turned the strict-descent refusal and the
+  projection-exclusion property into exercised code, and the 
+  `noGateEvent` fixture option made the missing-event refusal reachable at
+  all (the audit table's append-only trigger forbids deleting the event).
+- **Refusal messages that name the repair** turned three permanent wedges
+  from dead ends into explained, designed states.
+
+Review: `docs/features/delivery-check/2026-09-03-step8-code-review.md`,
+reconciled (11 accepted — 9 full, 2 narrow — 1 deferred, 0 open).
 
 ### Step 5b Task 13: completion gate and independent review (2026-09-03)
 
