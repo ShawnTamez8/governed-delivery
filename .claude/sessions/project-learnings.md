@@ -7,19 +7,21 @@ disagree, Current state wins.
 
 ## Current state (2026-09-03)
 
-**Shipped and committed:** build order steps 1-8. Step 5b is fully
-`Implemented`; step 8 (delivery check) is fully `Implemented` too — plan
-`Status: Implemented` with a dated Implementation note, tasks.md fully
-checked, and the standalone review record reconciled. `master` is the only
-local branch, ahead of `origin/master` by the step-8 commits `1890503`,
-`02f799b`, `849571c`, `f68ebbb`, `98d87b3`, `695c16f`, `36a726d` (all
-pre-step-5b history plus 5b's own commits are behind them; nothing has been
-pushed — the operator has not asked). Read the head with `git log -1`
-rather than trusting a commit id written here.
+**Shipped and committed:** build order steps 1-8 complete, and **step 9's
+milestone — one complete run with queryable cost — is reached.** Step 8
+(delivery check) is `Implemented` (plan note, tasks.md checked, standalone
+review reconciled); the operator-authorized paid run completed 2026-09-03:
+11 dispatches, `claude-sonnet-5`, $0.25019, all eight stages passed,
+`delivery_check=passed`, `run=completed`, record matching the signed scope,
+chain valid. `master` is the only local branch, ahead of `origin/master` by
+all step-8 work: `1890503`…`36a726d` (Tasks 1-6 + review remediation),
+`cf19f57` (evidence gate), `8646d75` (paid-run evidence), `d033595` (doc
+fix). Nothing pushed — the operator has not asked. Read the head with
+`git log -1` rather than trusting a commit id written here.
 
 **Step 8's shipped surface:** declared artifacts are exact file paths
-(trailing-slash and starting-tree directory refusals; run-document
-refusals for design/spec/plan under `docs/features/<slug>/`); the
+(trailing-slash, starting-tree directory, and run-document refusals for
+design/spec/plan under `docs/features/<slug>/`); the
 implementation-to-verification handoff is one typed record
 (`base=<pre-apply head>; head=<final>` in the gate event, patch base on the
 verification record); a pure coverage module compares exactly; `bw deliver`
@@ -28,11 +30,9 @@ existence-at-head, gate-event, and ancestry check before one
 `Store.transaction` inserts the delivery_check stage, writes the record
 (carrying its own stage id), completes the stage, transitions the run to
 `completed` or `blocked`, and appends the audit event. The standalone review
-(`configured_standalone`, the operator's first billed review) found twelve
-issues — deletion counting as delivered, base==starting widening the range,
-run-document declarations being undeliverable, no fixture exercising the
-projections commit, missing verification.gate.pass — all remediated in
-`36a726d` with named regressions and break-and-restore proofs.
+(`configured_standalone` — the operator's first billed review choice) found
+twelve issues, all remediated in `36a726d` with named regressions and
+break-and-restore proofs.
 
 **The delivery stage facts to know before touching it:**
 
@@ -51,25 +51,19 @@ projections commit, missing verification.gate.pass — all remediated in
 
 **Open and deferred:**
 
-- **Step 9's milestone has been reached.** The paid end-to-end run
-  (2026-09-03, operator-authorized) completed: 11 dispatches,
-  `claude-sonnet-5`, $0.25019, all eight stages passed, `delivery_check=
-  passed`, `run=completed`, delivery record matching the signed scope, chain
-  valid. Evidence: the plan's Implementation note and SKILL.md. One earlier
-  attempt that day spent $0.00 and blocked at the spec dispatch on an
-  expired `claude` OAuth session — retained, audited, fail-closed, exactly
-  as designed. Step 9 is the deliberate stop: do not build past it without
-  an explicit decision.
+- **The build order stops at step 9, which is now reached.** Do not build
+  past it (deferred stages, dashboard, notifications) without an explicit
+  decision; pushing to `origin/master` also awaits the operator.
 - Architectural half of review finding F3 (whether the run-duration ceiling
   should bind cost-free stages at all) and finding F12 (the three
-  stage-local git helpers may now be extracted under hard rule 4 — but
-  consolidation touches implementation and verification stages) are
+  stage-local git helpers may now be extracted under hard rule 4) are
   deferred with triggers in
   `docs/features/delivery-check/2026-09-03-step8-code-review.md`.
 - `npm test` intermittently leaks empty `moved` commits and a stray
   `base.txt` onto the real repo (auto memory:
   `test-suite-leaks-into-real-repo`). Root cause in
-  `test/verification-stage.test.ts`'s worktree setup is not traced.
+  `test/verification-stage.test.ts`'s worktree setup is not traced. Run the
+  full suite from a disposable checkout when tree purity matters.
 - `src/policy.ts:47` names `assertStaffable` in a doc comment; the function
   is `staffingShortfall`. One-word fix whenever that file is next edited for
   its own reasons.
@@ -78,14 +72,17 @@ projections commit, missing verification.gate.pass — all remediated in
   places, including "committed as the evidence record"; that file was never
   written. Historical tier, so `check:docs` only warns — the gap is real.
 - Retained evidence outside the repo, no process: step 5b's Task 1
-  prototype bundle and Task 12 smoke target (paths in the previous entry of
-  this file); `driver.mjs` scratch targets under
+  prototype bundle; `driver.mjs` scratch targets under
   `%LOCALAPPDATA%\Temp\bw-run-skill\` (latest on disk, readable via
   `driver.mjs report --dir <path>`).
 - `VERIFY_RETENTION_MAX_BYTES` (64 MB) is chosen, not derived; filesystem and
   network containment for verification commands is unbuilt
   (`docs/proposals/verification-containment.md`). `.governance` location
   configuration is deferred.
+
+**Next up:** nothing is in flight. The operator decides what step 9's
+reached milestone means: stop, push, or an explicit decision to build past
+the stop. Resuming any work here starts from `git log -1` and this block.
 
 ## Diagnostics quick-reference
 
@@ -95,8 +92,9 @@ whitespace-collapsing citation match, the unstable `intentKey`, frozen review
 defaults, dispatch cost, break-it mechanics, line endings, the source-scanning
 trap, duplicated-stage coverage, the discriminating-configuration rule, prompt
 bounds deriving from the validator, the `npm test` git leak, SQL comments
-defeating substring guards, doc-check's backtick scratch-filename warning, and
-the independent-review-choice pattern (hazard 14).
+defeating substring guards, doc-check's backtick scratch-filename warning, the
+independent-review-choice pattern (hazard 14), and the `claude` auth-expiry
+envelope.
 
 One line memory does not yet carry:
 
@@ -106,7 +104,7 @@ One line memory does not yet carry:
 
 ## Session records
 
-### Step 8: delivery check, Tasks 1-6 and the standalone review (2026-09-02 to 2026-09-03)
+### Step 8: delivery check, Tasks 1-6, the standalone review, and the paid milestone run (2026-09-02 to 2026-09-03)
 
 Seven atomic commits on `master`: `1890503` (Task 1: declared artifacts are
 exact file paths — trailing-slash and starting-tree directory refusals),
@@ -115,13 +113,14 @@ exact file paths — trailing-slash and starting-tree directory refusals),
 `runDeliveryStage` — checks first, one final transaction), `98d87b3`
 (Task 5: `bw deliver` and the paid driver), `695c16f` (Task 6: architecture
 amendments, docs, sweep, disposable gate), `36a726d` (remediation of the
-standalone review's twelve findings, `configured_standalone` — the
-operator's first billed review choice; all eleven fixable findings landed
-with named regressions, one deferred with a trigger). Final state: 682
-tests (one pre-existing skip), typecheck clean, smoke 12/12, doc-check
-0/36. Plan `Implemented`; the paid end-to-end run then completed under
-operator authorization (11 dispatches, $0.25019, all eight stages passed,
-`run=completed`) — step 9's milestone reached.
+standalone review's twelve findings — the operator's first
+`configured_standalone` review; eleven fixable findings landed with named
+regressions, one deferred with a trigger). Then `cf19f57` (evidence gate:
+review record, plan `Implemented`), `8646d75` (paid-run evidence), and
+`d033595` (test-count doc fix). Final state: 682 tests (681 pass, one
+pre-existing skip), typecheck clean, smoke 12/12, doc-check 0/36 — and the
+paid run completed: 11 dispatches, $0.25019, all eight stages passed,
+`delivery_check=passed`, `run=completed`.
 
 #### Decisions and assumptions
 
@@ -141,21 +140,28 @@ operator authorization (11 dispatches, $0.25019, all eight stages passed,
 #### What failed
 
 - **A break-it restore via `git checkout --` wiped the file's own
-  uncommitted remediation work.** Delivery-stage.ts carried legitimate
-  review fixes; restoring the mutation with `git checkout` reverted the file
-  to HEAD, discarding all of them, and the "restore" run failed against old
-  code. Auto memory `break-it-mechanics` already said prefer a scratch
-  mirror or staged git — I violated it mid-batch. Restore mutations with the
-  reverse patch, never a checkout, when the file also carries uncommitted
-  work.
+  uncommitted remediation work.** Restoring the mutation reverted the file
+  to HEAD, discarding the review fixes it carried. Auto memory
+  `break-it-mechanics` now says it: reverse the mutation, never checkout,
+  when the file also carries uncommitted work.
 - **Two break mutations were aimed at the wrong branch.** Reversing the diff
   range changed nothing (git lists a deleted path in name-only, so the set
-  was identical), and inverting the blob check changed nothing for a test
-  whose outcome was already a block (the mutation made everything missing).
-  Each needed a mutation that changed the *outcome class* the test pins.
-- **A `|`-delimited sed died on `||`** and an apostrophe escaped out of a
-  single-quoted sed script — both silently no-oped, producing pass/pass
-  cycles that looked like held guards until the logs were read.
+  was identical); inverting the blob check changed nothing for a test whose
+  outcome was already a block. Each needed a mutation that changed the
+  *outcome class* the test pins. A `|`-delimited sed died on `||` and an
+  apostrophe escaped a single-quoted script — both silently no-oped.
+- **The first paid attempt spent nothing and blocked at the spec dispatch:**
+  the `claude` binary's OAuth session had expired ("Failed to authenticate:
+  OAuth session expired and could not be refreshed"). The run failed closed
+  with the raw envelope retained and the refusal audited — designed
+  behaviour, and a re-authentication fixed it. (Auto memory:
+  `cli-auth-expiry-fails-closed`.)
+- **A driver step FAILed on its own assertion formatting**: the
+  expected-output regex could not match the summary its own code prints
+  (`declared=`/`delivered=` sit between `scopeMatch=yes` and `missing=[]`).
+  The comparison had passed; the fix was replayed green against the
+  retained run without respending. Also: piping the driver through `tail`
+  masked its exit code — read driver output unmasked.
 
 #### What worked
 
@@ -169,221 +175,49 @@ operator authorization (11 dispatches, $0.25019, all eight stages passed,
   that breaks when the guard is removed.
 - **Making every fixture reproduce the real chain's shape** (projections
   committed before the base) turned the strict-descent refusal and the
-  projection-exclusion property into exercised code, and the 
-  `noGateEvent` fixture option made the missing-event refusal reachable at
-  all (the audit table's append-only trigger forbids deleting the event).
+  projection-exclusion property into exercised code; the `noGateEvent`
+  fixture option made the missing-event refusal reachable at all (the audit
+  table's append-only trigger forbids deleting the event).
 - **Refusal messages that name the repair** turned three permanent wedges
   from dead ends into explained, designed states.
+- **doc-check cannot see prose numbers.** A stale test count in SKILL.md
+  ("446 tests" vs 682) sailed through `check:docs` — the checker verifies
+  paths, pins, and structure, never prose figures. The fixed line carries
+  its measurement date and a drift note.
 
 Review: `docs/features/delivery-check/2026-09-03-step8-code-review.md`,
 reconciled (11 accepted — 9 full, 2 narrow — 1 deferred, 0 open).
 
-### Step 5b Task 13: completion gate and independent review (2026-09-03)
+### Step 5b: reviews, storage rebuild, proposals (2026-08-31 to 2026-09-03)
 
-Gate, measured directly: typecheck clean; `npm test` 625/624 pass/1
-pre-existing skip/0 fail, no repository leak; `check:docs --json` 0 errors,
-36 warnings. Diff scope confirmed clean (no `src/` file, no requirement-ID
-text, nothing under `docs/proposals/`); the four plan-level review records
-untouched since before this diff existed.
+Committed `60587fc` (Task 1 prototype: 12 dispatches, $0.59543, evidence in
+`2026-09-01-task1-prototype-evidence.md`), `cd11071`/`5d63726` (Tasks 2-3:
+paths module, frozen review config — Route A refusal-by-name was the
+operator's decision), `578d0eb` (Task 4: self-critique), `bacec0a` (Task 5:
+author-proposed panel), `f094c0f` (Task 6: reconciliation), `54ee29b`
+(Tasks 7-9: storage rebuild + proposals — merged into one tranche by the
+operator after Task 7's Files list contradicted its steps), `39d5432`
+(Tasks 10-13: hazard 16, doc-check `checkHazardCount`, twenty-guard sweep,
+$0.36548 production smoke, completion gate). Plan `Implemented`; all review
+records reconciled.
 
-#### Decisions and assumptions
+Durable lessons still load-bearing from that era (most others are in auto
+memory):
 
-- **Asked the operator which kind of "independent" review to run, rather
-  than picking silently** — an in-session subagent
-  (`unverified_self_attestation` per hazard 14) vs. `/code-review ultra`
-  (billed, `configured_standalone`) is a real evidence difference, not a
-  cosmetic one. Operator chose the subagent. Auto memory:
-  `independent-review-choice-hazard14`.
-
-#### What worked
-
-- **An independent review that re-derives rather than re-reads is worth
-  more than one that agrees with the narrative.** It reproduced three of
-  Task 11's break-it mutations live, queried the retained Task 12 smoke
-  database directly via `node:sqlite`, and read the retained Task 1
-  evidence directly. Found zero findings, but earned that verdict.
-  `2026-09-03-task13-completion-review.md`, reconciled.
-
-Result: the plan's `Status:` moved to `Implemented`, with a dated
-Implementation note (shipped behaviour, 4 deviations, exact counts, the
-smoke outcome, remaining limitations stated rather than closed over).
-
-### Step 5b Tasks 10-12: documentation, break-it sweep, production smoke (2026-09-02 to 2026-09-03)
-
-Task 10: hazard 16 added to `docs/hazards.md`; `ARCHITECTURE.md` sections
-14, 15, 22 updated (12/13 already matched Task 1's amendment);
-`scripts/doc-check.mjs` gained `checkHazardCount`; `README.md`'s status
-section rewritten. Task 11: twenty distinct guards proven in a scratch
-`git worktree`, each mutation failing its named test and restoring clean.
-Task 12: one real, paid, bounded run against `bw` — 10 dispatches, $0.36548,
-`claude-sonnet-5` throughout, zero parse failures; all three non-blocking
-disposition families fired for real (`upstream_follow_up`, `addressed`,
-`rejected_with_rationale`); `cannot_determine`/`upstream_blocking` did not
-surface (one-sample limitation, not a gap).
-
-#### What failed
-
-- **A break-it proof observed a real guard weakness (item 13, P1) and didn't
-  repair it** — a comment quoting a dropped `UNIQUE` constraint still
-  substring-matched in both `test/schema.test.ts` and
-  `scripts/doc-check.mjs`; the original write-up quieted the mutation
-  instead of fixing the checker. Auto memory:
-  `sql-comment-defeats-substring-guard`. Caught on independent review, not
-  self-review.
-- **A warning-count fix introduced the warnings it was estimating** —
-  backtick-quoting the scratch filenames it was explaining. Auto memory:
-  `doc-check-backtick-scratch-warning`. True final count: 36, unchanged from
-  before Task 12.
-
-#### What worked
-
-- **Replaying a real retained historical decision, not a fixture, proved a
-  second guard branch.** Task 1's actual retained round-2 reconciliation
-  (ungrounded "atomic exclusive-create" criterion, zero `normativeChanges`)
-  replayed against the shipped, unmutated validator surfaces the criterion
-  in `unclaimedNodes` and aborts the round instead of converting a
-  decision — a branch fixtures never exercised. Also caught hazard 16's own
-  text overstating this as one path; corrected in the same pass.
-
-#### Verification
-
-- `npm run typecheck` clean; `node --test test/schema.test.ts` 8/8; `npm run
-  check:docs --json` 0 errors, 36 warnings (final).
-
-Review: `2026-09-02-task10-12-code-review.md` (7 accepted, 0 rejected, 0
-deferred, 0 open).
-
-### Step 5b Tasks 7-9: storage rebuild, proposals, orchestration (2026-09-02)
-
-One tranche, now committed at `54ee29b`. Migrations `005` (rebuild `finding`;
-add `finding_report`, `finding_decision`) and `006` (`proposal`,
-`proposal_source`); new `src/proposal.ts`; rewritten `src/store.ts`,
-`src/plan-gate.ts`, `src/spec-stage.ts`, `src/plan-stage.ts`; `bw
-proposal-export` in `src/cli.ts`. Review and reconciliation:
-`2026-09-02-task7-9-code-review.md` (6 accepted, 0 rejected, 0 deferred, 0
-open). No dispatch was paid for.
-
-#### Decisions and assumptions
-
-- **The operator merged Tasks 7-9 into one atomic tranche** after Task 7's
-  own Files list was found to contradict its steps — shipping Task 7 alone
-  needed a severity adapter hard rule 3 forbids. Raise a plan defect; don't
-  resolve it silently — only the operator can rule on a wrong task boundary.
-
-#### What failed
-
-- **`npm test` wrote to the real repository** — two empty `moved` commits
-  plus an untracked `base.txt`, zero content diff, removed with `git reset
-  --soft f094c0f`. Intermittent, root cause not traced (see Current state).
-- **A fixture substitution silently no-matched** (fifth instance of this
-  class): the plan-stage dedup test replaced code the stock fixture never
-  exercised, so it asserted nothing it meant to.
-
-#### What worked
-
-- **The `unclaimedNodes` correction reversed my own earlier design call.** A
-  node released by a conversion already has an owning decision the gate
-  blocks by name, so both stages abort only when `conversions.length === 0`
-  — fail-closed still holds, since a conversion always yields
-  `cannot_determine`. `reconciliation.ts` already documented this; read the
-  governing module's comment before designing around its output.
-- **Break-it proved all six accepted findings**: reverting each fix failed
-  exactly the named assertion, then restored green.
-
-### Step 5b Task 6: reconciliation contract and prompt (2026-09-02)
-
-`f094c0f`. `src/reconciliation.ts`, both reviewer prompts rewritten to the
-specialty-only boundary with classification, both reconciliation prompts,
-the reconciliation capabilities on both authors. Reviews:
-`2026-09-02-task6-code-review.md` and `-2.md`, both reconciled.
-
-- **The refusal/convert boundary.** Structure errors (missing/misplaced
-  fields, unknown dispositions, extra/duplicate/missing decisions) refuse by
-  name; content failures (unmatched grounding, extra/duplicated/unmatched
-  normative claims) rewrite the decision to `cannot_determine`, drop the
-  conditional fields, append a bracketed note to the retained rationale, and
-  record the conversion.
-- **One reconciliation per round, even a clean one** — the reconciler is the
-  actor that confirms an empty findings set.
-- **The mixed pair cannot share one canonical identity — operator decision,
-  not an inference.** Classification determines location shape, so a
-  mixed-classification pair is always two canonical findings with two
-  decisions. In auto memory: `mixed-pair-identity-constraint`.
-- **A held break-it mutation was an attack defect, not a coverage gap:** a
-  whole-file prompt scan cannot catch a sentence removed from one of two
-  prompts while the other keeps its copy.
-
-### Step 5b Task 5: author-proposed panel, deterministic staffing (2026-09-02)
-
-`bacec0a`. `validatePanelRequest` in `src/select.ts`; both stages validate
-the request and refuse an unstaffable panel by name before dispatching.
-
-- **The prompts were brought into scope though the task's file list omits
-  them**, operator asked first: the default installation's legal size is
-  exactly two, so a prompt stating neither bound would have made the named
-  refusal the ordinary outcome of a correct run.
-- **`staffingShortfall` was extended, not duplicated** — one question asked
-  at two moments is one function.
-- **Two of fourteen break-it mutations held, and both were real coverage
-  gaps** — the tests had picked configurations where the old and new rules
-  agree numerically. Auto memory: `discriminating-configuration`.
-- **The prompt brought into scope to state a bound stated the wrong bound**
-  — auto memory: `prompt-bounds-derive-from-validator`.
-
-### Step 5b Task 4: self-critique contract and prompt (2026-09-02)
-
-`578d0eb`. `src/self-critique.ts`, both self-critique prompts, one dispatch
-per artifact before `completeStage`.
-
-- **Revision A was implemented although Task 4's step list never absorbed
-  it** — nobody rewrote the steps when the operator accepted the prototype
-  result. Read a task's governing exit decision, not only its checkboxes.
-- **A capability refusal must sit beside the dispatch it guards**, not
-  before a draft that could never complete the stage.
-- **Making the fixture echo what the prompt actually contained** is how a
-  stage-level test can see a prompt: an omission surfaces as `none-listed`.
-
-### Step 5b Tasks 2 and 3: paths module, frozen review config (2026-09-01 to 2026-09-02)
-
-`cd11071` and `5d63726`. Route A — a profile violating the current policy
-shape is refused by name in `loadVerifiedProfile`, no migration, no
-defaults — was the operator's decision.
-
-- **A task that says "read X from the frozen profile" and also defines what
-  X means is two instructions.** Task 3's first attempt wired the configured
-  round counts into the legacy loop, making one round mean one panel and
-  zero reconciliations.
-- **Tracing the profile consumers settled the decision better than
-  reasoning about it did:** no stage read panel size or rounds from the
-  profile at all.
-
-### Step 5b Task 1: prototype run, architecture amended (2026-09-01)
-
-`60587fc`. Twelve real dispatches on `claude-sonnet-5`, $0.59543, 430 s,
-zero parse failures, scratch storage outside production stage order. Cost
-overran the $0.25-0.45 estimate. Evidence in
-`2026-09-01-task1-prototype-evidence.md`.
-
-- **Amend every section a design change falsifies, not only the ones
-  named** — the operator amended sections 8, 9, 12, 13, and 20.
-- **`addressed` admitted an invented obligation.** The author added an
-  acceptance criterion the design never states and the artifact gate
-  passed; the operator directed normative-delta grounding in response,
-  retained as Task 11's regression.
+- **Only the operator rules on a wrong task boundary.** A plan defect that
+  contradicts its own task split is raised, not silently resolved.
+- **Read a task's governing exit decision, not only its checkboxes** —
+  Revision A was implemented although Task 4's step list never absorbed it.
+- **Amend every section a design change falsifies, not only the named ones.**
+- **A reconciliation stamp is a claim, not evidence** — trace the promised
+  result through prompt, parser, storage, and gate.
+- **A review that re-derives rather than re-reads earns its verdict**: the
+  Task 13 review reproduced break-it mutations live and queried retained
+  databases directly.
 - **A scratch `.mjs` harness can import the repo's `.ts` modules** via
-  `await import(pathToFileURL(...).href)` under Node 24 type stripping.
-- **State what a deterministic check proves, in the document that describes
-  it.**
-
-### Step 5b: plan reviews and reconciliations (2026-08-31 to 2026-09-01)
-
-Four review records, all reconciled; review 2 superseded the design
-direction, so the plan was rewritten in place to 13 tasks.
-
-- **A reconciliation stamp is a claim, not evidence.** Trace the promised
-  result through prompt input, parser, storage, and gate before calling a
-  finding closed. A review that supersedes a design direction is reconciled
-  by rewriting the document, not by patching its findings in.
+  `await import(pathToFileURL(...).href)` under Node 24 type stripping;
+  **making a fixture echo what the prompt contained** is how a stage-level
+  test sees a prompt (an omission surfaces as `none-listed`).
 
 ### Steps 1-7: build order to the deliberate stop (2026-08-29 to 2026-08-31)
 
@@ -393,8 +227,7 @@ $0.01116 returning exactly `Glob/Grep/Read`.
 
 - **`bw new-run` could never create a run in a repository that had not
   gitignored `.governance/`** — `openStore()` creates the directory before
-  the clean-tree check. A fresh `new-run` also refuses a tree dirtied by a
-  blocked run's projections, so commit or clean between runs.
+  the clean-tree check (hazard 11; also in the run-buildworks SKILL gotchas).
 - **A documented guarantee was false at a boundary the plan never tested:**
   `resolveExisting` walks with `existsSync`, so a dangling link resolves
   lexically. Refuse what cannot be verified.
@@ -407,10 +240,5 @@ $0.01116 returning exactly `Glob/Grep/Read`.
   abstraction** (hard rule 4). Its round-2 smoke finding — the plan
   inventing a rejection requirement the spec never stated — is the
   observation behind hazard 16.
-- `claude -p --output-format json` **does** report `total_cost_usd`, and
-  `modelUsage` can carry auxiliary queries, so the effective model is the
-  unique entry whose `inputTokens` match `usage.input_tokens`. Migrations
-  anchor to the module location, not cwd.
-- `scripts/doc-check.mjs` exits 2 **when the checker itself cannot read the
-  source**. Historical-tier documents (`docs/features/**`,
-  `.claude/sessions/**`) warn, never error; `docs/proposals/` errors.
+- **State what a deterministic check proves, in the document that describes
+  it** (e.g., architecture section 12's residual-judgement paragraph).
