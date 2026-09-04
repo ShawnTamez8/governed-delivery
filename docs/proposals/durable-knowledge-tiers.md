@@ -121,3 +121,75 @@ consistent with the stop's terms.
 Related: `docs/proposals/spec-kit-harness-review.md`,
 `docs/hazards.md` entries 3 and 16, `ARCHITECTURE.md` section 12,
 `.claude/sessions/2026-09-03-debug-plan-coverage-gate-paraphrase-mismatch.md`.
+
+## The evidence tier (added 2026-09-04)
+
+The three instances above all concern *knowledge* — distilled judgement that
+did not survive where it would be needed. A fourth instance surfaced on
+2026-09-04 with a different shape and a sharper failure mode: **recorded
+evidence that became load-bearing while living outside the repository.**
+
+`docs/features/normative-removal-accounting/plan.md` was written, reviewed, and
+committed with a task that read, in effect, "copy the retained reconciliation
+response out of the scratch target into a repository fixture." The response was
+real, it was exactly the contract test the plan needed, and depending on it was
+correct. What was wrong was the tense. Until that copy happened, a committed
+plan's task depended on a file at
+`.../Temp/1/bw-run-skill/<timestamp>/target/.governance/raw/1/`, which:
+
+- exists on one machine, for one user, and no teammate can obtain it;
+- sits in an OS temp directory that may be cleared without notice;
+- is deleted wholesale by a documented command, `driver.mjs clean`, which had
+  already destroyed the `stats` run's per-dispatch record once; and
+- is invisible to every check in the repository — `check:docs` verifies that
+  cited paths resolve, and this path was never cited in a checkable form.
+
+This is worse than the knowledge instances in one specific way. A lost lesson
+degrades judgement, and a reader who suspects it exists can dig it out of git
+history. Lost recorded output cannot be recovered at all: reproducing it means
+a fresh paid dispatch, and the model may not produce the same shape twice.
+`ARCHITECTURE.md` section 21 already makes replayed real output the
+load-bearing verification category, which means the tier with the weakest
+durability guarantees is the one the verification strategy leans on hardest.
+
+### What was done about it
+
+Two of the candidate directions above were acted on for this instance, and
+both were cheap:
+
+- **The extraction was pulled forward out of the plan.** The response now lives
+  at `test/fixtures/recorded/plan-reconciliation-web-calculator.json` with a
+  `provenance` block naming the run, the dispatch time, the capture date, what
+  was dropped from the harness envelope, and the delta it demonstrates. It was
+  verified from its committed location to reproduce the same result — 2 added
+  nodes both claimed, 1 removed node claimed by nothing. The plan now reads
+  that file and has no remaining machine-local dependency.
+- **`CLAUDE.md` gained the direction-of-movement rule**, under Session
+  continuity: the committed tier is the system of record, auto memory is a
+  cache that may be added to but never traded against the committed file, and
+  recorded evidence is copied into the repository the moment something starts
+  depending on it rather than at a scheduled later step. This closes instance
+  2's dangling pointer as a matter of rule rather than of whoever is
+  compacting — the quoted Diagnostics text in instance 2 is preserved above as
+  the observation it was, and the file it describes no longer points outward
+  for content it does not carry.
+
+### What is still open
+
+- **Nothing enforces the provenance convention.** A fixture claiming to be
+  recorded output is trusted on its comment. The natural extension is a
+  `check:docs` rule: every file under `test/fixtures/recorded/` must carry a
+  `provenance` block with a named run, capture date, and fidelity statement,
+  and any test asserting against such a file must reference it by path.
+  Roughly twenty lines in `scripts/doc-check.mjs`, break-testable against a
+  scratchpad mirror per `.claude/skills/doc-check/SKILL.md`.
+- **Nothing detects the failure at the moment it is introduced.** The plan sat
+  committed for one session carrying a machine-local dependency, and only a
+  question from the operator surfaced it. A checkable form would be to require
+  that a plan task naming a path outside the repository state how that path
+  becomes committed before the task's own gate.
+- **The larger tier question is unchanged**: where durable non-failure lessons
+  live in-tree, and what enforces their consultation. `docs/hazards.md` covers
+  failures that occurred and has teeth; not every durable lesson is a failure.
+  Per the terms of the build order's step-9 stop, that should not be decided
+  without an explicit decision.

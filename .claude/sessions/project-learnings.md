@@ -115,16 +115,21 @@ its Task 1.
 - **Durable knowledge leaks out of the repository** —
   `docs/proposals/durable-knowledge-tiers.md`.
 
-**Retained evidence outside the repo — do not run `driver.mjs clean`:**
+**Nothing outside the repo is load-bearing any more.** The web-calculator
+run's reconciliation response was extracted 2026-09-04 into
+`test/fixtures/recorded/plan-reconciliation-web-calculator.json` with a
+`provenance` block, and verified from that committed location to reproduce the
+same delta (2 added nodes both claimed, 1 removed node claimed by nothing). The
+hazard 17 plan reads the fixture, not a scratch target. `CLAUDE.md` now carries
+the rule that made this necessary: recorded evidence is copied in the moment
+something depends on it, never at a scheduled later step.
 
-- `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1788500665227\target` —
-  the completed web-calculator run. Its retained reconciliation response is
-  **load-bearing**: the hazard 17 plan's Task 2 copies it into a repository
-  fixture as the recorded negative contract test. `clean` deletes every
-  target and already destroyed the `stats` run's per-dispatch record once.
-- `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1788529105160\target` —
-  this session's free smoke target; disposable.
-- Step 5b's Task 1 prototype bundle, outside the repo, no process.
+Both scratch targets under
+`C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\` (`1788500665227`, the
+web-calculator run; `1788529105160`, this session's smoke) are now disposable.
+Still query a run's store before `driver.mjs clean` — it deletes every target
+and already destroyed the `stats` run's per-dispatch record once. Step 5b's
+Task 1 prototype bundle remains outside the repo with no process.
 
 **Next up:** commit the two new documents under
 `docs/features/normative-removal-accounting/`, then either execute that plan

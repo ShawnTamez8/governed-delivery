@@ -95,6 +95,27 @@ decisions locked, running state, and open questions saved by the
 context-compaction skill. The most recent entry is the current state; treat
 it as the resume point for any work here.
 
+**The committed tier is the system of record. Knowledge moves into the
+repository, never out of it.** Harness auto memory is a cache: it is
+machine-local, per-user, and keyed by clone path, so the same person cloning to
+a different directory gets an empty store and a second developer never sees it
+at all. A compaction pass may mirror a durable one-liner into auto memory in
+addition to the committed file; it may never delete one from the committed file
+on the grounds that memory now holds it, and it may never leave the committed
+file pointing at memory for content memory alone carries. That trade already
+cost this repository a decision — see `docs/proposals/durable-knowledge-tiers.md`.
+
+**Recorded evidence is copied into the repository the moment it becomes
+load-bearing.** Retained model output under a run's `.governance/raw/` or a
+`driver.mjs` scratch target is machine-local, lives in a temp directory, and is
+deleted wholesale by `driver.mjs clean`. When a test, plan, or finding starts to
+depend on one of those responses, extract it into `test/fixtures/recorded/`
+with a `provenance` block naming the run, the dispatch time, the capture date,
+and what was dropped from the harness envelope — then depend on the committed
+copy. Never schedule that extraction for later: "later" is a machine-local
+dependency a teammate cannot execute. Query a run's store before cleaning it;
+`clean` deletes the only record.
+
 ## Commands
 
 Run from the repository root. These commands live here and nowhere else.

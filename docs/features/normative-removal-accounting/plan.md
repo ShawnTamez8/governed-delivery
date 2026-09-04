@@ -173,14 +173,16 @@ inferred.
   and they are where the stage-level accepted path is expressed: an emitter
   that claims both halves is the positive stage test, and the suite passing
   with it is that path proved deterministically.
-- The retained web-calculator target named in
-  `.claude/sessions/project-learnings.md` holds a real reconciliation response
-  whose `addressed` decision reworks a plan task and claims only the added
-  half. Verified by reading the retained raw response in that target's run
-  store. It is the negative contract fixture Task 2 needs, so no new spend is
-  required to obtain one — but it exists only in machine-local scratch state
-  that `driver.mjs clean` deletes, which is why Task 2 copies what it needs
-  into the repository rather than reading it from there at test time.
+- The negative contract fixture is committed at
+  `test/fixtures/recorded/plan-reconciliation-web-calculator.json` and this
+  plan has no remaining dependency on machine-local state. It was extracted
+  2026-09-04 from the retained web-calculator target's raw dispatch envelope
+  and verified from its committed location to reproduce the same delta — 2
+  added nodes both claimed, 1 removed node claimed by nothing. The extraction
+  was pulled forward out of Task 2 deliberately: the source target lives in a
+  temp directory on one machine, `driver.mjs clean` deletes every target, and
+  a plan task depending on that is a task no teammate on another machine could
+  execute.
 - `docs/hazards.md` is `current` tier per `.claude/skills/doc-check/SKILL.md`,
   so entry 17 must assert what is true after this change. The hazard count
   stated in `ARCHITECTURE.md` section 22 is derived from heading count and is
@@ -260,9 +262,9 @@ addition assertions still pass unmodified.
 **Files:**
 - Modify: `src/reconciliation.ts` — `deriveRemovedNormativeNodes` (new),
   `ReconciliationValidation`, `validateReconciliation`
-- Create: a sanitized recorded-response fixture under `test/fixtures/`,
-  carrying the retained web-calculator plan reconciliation payload and the two
-  plan revisions it sits between
+- Read: `test/fixtures/recorded/plan-reconciliation-web-calculator.json` —
+  already committed, carrying the retained web-calculator plan reconciliation
+  payload, the two plan revisions it sits between, and its provenance
 - Validate: `test/reconciliation.test.ts`
 
 **Steps:**
@@ -333,27 +335,29 @@ addition assertions still pass unmodified.
   - Expected: the removal is reported in `unclaimedRemovals` and no decision
     was converted, which is the shape Task 3's stage-level abort depends on.
 
-- **Step 2c: replay a retained real response as the negative contract test.**
+- **Step 2c: replay the recorded response as the negative contract test.**
   `ARCHITECTURE.md` section 21 makes contract tests fed by recorded real output
   the load-bearing category, and hard rule 5 forbids a hand-written fixture
-  from defining correctness. The retained web-calculator target named in
-  `.claude/sessions/project-learnings.md` holds the response this needs: an
-  `addressed` decision that reworks a plan task and supplies exactly one
-  `normativeChanges` claim, the added half. Copy the decisions payload and the
-  two plan revisions it sits between out of that target's retained raw output
-  into a new fixture under `test/fixtures/`, sanitized to remove the session
-  id, cost, usage, and any absolute machine path — keep the model-returned
-  shape byte-for-byte otherwise, because the shape is the whole point of the
-  fixture. Drive it through the same seam production uses: build the node lists
-  with `planNormativeNodes` from the two parsed revisions and pass the recorded
+  from defining correctness. The response is already committed at
+  `test/fixtures/recorded/plan-reconciliation-web-calculator.json`: one real
+  plan-author reconciliation from the web-calculator run, carrying the plan
+  revision before it, the revision it returned, and its two `addressed`
+  decisions. Its `provenance` block records the run, the dispatch time, the
+  capture date, and what was dropped from the harness envelope. Do not
+  re-derive it from a scratch target — the target is machine-local and
+  `driver.mjs clean` deletes it, which is why the copy was taken out of the
+  critical path before this plan was executed. Drive the fixture through the
+  same seam production uses: parse both revisions with `validatePlanDoc`,
+  build the node lists with `planNormativeNodes`, and pass the recorded
   decisions to `validateReconciliation`. Assert that the reworded task's
-  superseded text is reported in `unclaimedRemovals`, which is this real
-  response failing the new accounting exactly as intended.
-  - Change: record in the fixture file's own header where the response came
-    from, the run it belongs to, and the date it was captured, so a later
-    reader can tell recorded output from an invention. The retained target is
-    machine-local and `driver.mjs clean` deletes it, so the copy in the
-    repository is the durable artifact.
+  superseded text is reported in `unclaimedRemovals`.
+  - Change: the measured shape of this fixture, confirmed 2026-09-04 against
+    the shipped validator, is 2 added nodes and 1 removed node, with both
+    additions claimed and the removal claimed by nothing. The removal is the
+    282-character theme-toggle task the reconciliation reworded into a
+    407-character one. Assert the node counts as well as the unclaimed
+    removal, so a future edit to `planNormativeNodes` that changes what counts
+    as a node cannot silently turn this test into a tautology.
   - Verify: `node --test test/reconciliation.test.ts`
   - Expected: the replay reports the superseded task text as an unclaimed
     removal. If it reports nothing, the fixture is not reaching the accounting
