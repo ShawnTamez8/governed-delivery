@@ -125,6 +125,51 @@ scripts directory, on branch `gov/clamp/1`, and `verify` recorded
 `"outcome": "pass"` over the two frozen commands. Nothing is written into this
 repository — every path in that run is under the scratch target.
 
+**The committed design changed on 2026-09-04, and the two records above are
+the old one.** The driver used to commit a three-criterion clamp design, which
+is what `run 1 (clamp)` names in both. It now commits
+`.claude/skills/run-buildworks/web-calculator-design.md` under the slug
+`web-calculator`: a requirements document in PRD form — purpose, goals, scope,
+fifteen `RQ-###` functional requirements and five `NFR-###` non-functional
+ones. Change what a paid run exercises by editing that file, not the driver.
+
+The reason is not realism for its own sake. Every clamp run produced clean
+review panels: no findings, so no reconciliation decisions, so no exercise of
+the review, remediation, proposal, or normative-accounting paths — most of what
+the system is. A design too small to attract a finding cannot test a governed
+chain, and cheap runs were measuring that rather than confirming it worked.
+
+Verified run on the new design, 2026-09-04, `claude-sonnet-5`, all eight
+stages passed, the run completed:
+
+```
+dispatches: 11   total cost: $1.34097
+  spec-author $0.02889 / $0.10923, spec panel $0.04682 + $0.05779,
+  spec-author (reconcile) $0.11314, plan-author $0.02628 / $0.12810,
+  plan panel $0.13236 + $0.18361, plan-author (reconcile) $0.10946,
+  implementer $0.40528
+stages: spec=passed spec_review=passed awaiting_approval=passed plan=passed
+        plan_review=passed implementation=passed verification=passed
+        delivery_check=passed
+run 1 (web-calculator): completed        13/13 steps as expected
+```
+
+That run delivered four artifacts (`index.html`, `css/styles.css`,
+`js/calculator.js`, `js/theme.js`) with `scopeMatch=yes declared=4
+delivered=4`, and its two reconciliations exercised what the clamp never did:
+an `upstream_follow_up` with a proposal candidate on the spec side, and a
+normative task *replacement* on the plan side whose `addressed` decision
+claimed both halves and passed with `unclaimedRemoved=0`. That response is
+committed at
+`test/fixtures/recorded/plan-reconciliation-web-calculator-prd.json` and
+replayed by `test/reconciliation.test.ts`.
+
+**Budget $1.00–$2.00 for a full chain on this design, not the clamp's $0.25.**
+The cost moved into review and implementation rather than authoring — the
+implementer alone was $0.40528 and the plan panel $0.31597 — so a run with an
+extra remediation round will sit at the top of that range or above it. The free
+`smoke` still costs nothing: it reaches no dispatch.
+
 **Cost is not fixed.** That run took 7 dispatches, not 5, because the plan gate
 passed in round 2 — `plan.gate.pass | plan_review gate passed in round 2` after
 three findings were resolved by re-review. Budget one to three remediation
@@ -179,8 +224,10 @@ Then any command from `bw`'s usage. Keep `BW_APPROVAL_PUBLIC_KEY` set on
   stage costs money. There is no offline mode.
 - **The spec stage needs `docs/features/<slug>/design.md` in the target**, with
   `<slug>` matching `--slug`. Missing, it fails with `cannot read design
-  document …`. The driver commits a small one; a vague design is what makes a
-  chain expensive.
+  document …`. The driver commits
+  `.claude/skills/run-buildworks/web-calculator-design.md` under the slug
+  `web-calculator`; a vague design is what makes a chain expensive, and a
+  trivial one is what makes it prove nothing.
 - **A target repo does not need to gitignore `.governance/`.** `openStore()`
   creates it before the clean-tree check, so `new-run` filters `.governance/`
   out of the porcelain output (hazard 11). Verified: a repo with no

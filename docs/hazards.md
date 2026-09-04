@@ -51,6 +51,23 @@ Write a test that reads every prompt-building file and fails when a constrained
 field is requested without its shape stated, and assert that every example value
 a prompt advertises validates against the schema that receives it.
 
+**Measured, 2026-09-04, $0.39572.** A live spec reconciliation answered three
+findings correctly — including claiming both halves of a replacement, which is
+what the prompt asks for — and every claim was refused, because each
+`artifactText` carried the `- ` list marker of the artifact line while
+`specNormativeNodes` derives an acceptance criterion as `<id>: <text>` with no
+marker. The prompt asked for "the exact text of the added or removed node" and
+never said what a node's text is, so the author copied the line it was looking
+at. The run blocked at the `spec_review` gate. Two things fixed it and both
+were needed: the prompt now states the node form per artifact kind, and
+`normalizeNodeText` tolerates one leading marker on **both** sides of the
+comparison. The retained response is committed at
+`test/fixtures/recorded/spec-reconciliation-web-calculator-list-marker.json`
+and is the contract test for the fix. The lesson generalizes past this field: a
+constraint stated as "the exact text of X" is not stated at all unless the
+prompt also says what X's text is, and a shape a document schema *requires* the
+author to read (`- AC-001: …`) will be the shape the author sends back.
+
 ## 4. Fixtures and code agreeing while both are wrong
 
 A hand-written fixture that declares one thing and does another will pass
@@ -205,35 +222,61 @@ independently confirms either.
 
 ## 17. A reconciliation that answers a finding by deleting the obligation
 
-The normative-delta check derives additions only. `deriveAddedNormativeNodes`
-counts the after-set up and the before-set down and emits the positive
-remainder, so a node present before reconciliation and absent after produces
-nothing at all: no decision has to claim it, no excerpt has to ground it, and
-the unclaimed-node block never fires. This is the design's shape rather than a
-divergence from it — `ARCHITECTURE.md` section 12 specifies that "every added
-node ... must be claimed exactly once", and says nothing about a removed one.
+The mechanism, as it stood before the remedy below shipped: the normative-delta
+check derived additions only. `deriveAddedNormativeNodes` counts the after-set
+up and the before-set down and emits the positive remainder, so a node present
+before reconciliation and absent after produced nothing at all — no decision had
+to claim it, no excerpt had to ground it, and the unclaimed-node block never
+fired. That was the design's shape rather than a divergence from it:
+`ARCHITECTURE.md` section 12 specified that "every added node ... must be
+claimed exactly once" and said nothing about a removed one.
 
-The consequence is that an `addressed` decision can discharge a reviewer's
+The consequence was that an `addressed` decision could discharge a reviewer's
 finding by deleting the acceptance criterion the finding was about. Every check
-is satisfied: the canonical finding carries exactly one typed decision, nothing
-was added so nothing requires grounding, the revised document still passes its
-mechanical gates, and the artifact hash changes exactly as a legitimate revision
+was satisfied: the canonical finding carried exactly one typed decision, nothing
+was added so nothing required grounding, the revised document still passed its
+mechanical gates, and the artifact hash changed exactly as a legitimate revision
 would. Because spec reconciliation runs before the approval gate, the operator
-then signs a specification with the obligation already removed, and the hash
-binding that protects every later stage binds the weakened text. Deletion is the
-cheapest way to make a finding go away, and it is the one revision the delta
-check cannot see.
+would then sign a specification with the obligation already removed, and the hash
+binding that protects every later stage would bind the weakened text. Deletion is
+the cheapest way to make a finding go away, and it was the one revision the delta
+check could not see.
 
 This entry is a code-path gap found by reading, not a filed incident. Nothing
 here describes a run that did this, and the entry says so rather than implying
-evidence that does not exist. What makes it worth recording before it is
-observed is that it would be invisible if it happened: the mechanism that would
-catch it does not exist, so no run record could report it, and absence of a
-report is therefore not evidence of absence.
+evidence that does not exist. What made it worth recording before it was
+observed is that it would have been invisible if it happened: the mechanism that
+would catch it did not exist, so no run record could report it, and absence of a
+report was therefore not evidence of absence.
 
-Require the normative delta to account for removals as well as additions. A node
-present before reconciliation and absent after must be claimed by exactly one
-decision whose disposition permits removal, grounded in the governing input like
-any addition. Where an obligation really is wrong, the routes that already exist
-are the honest answers — a grounded rejection, or an upstream disposition
-carrying a proposal candidate. Silent deletion is not one of them.
+The normative delta now accounts for removals as well as additions.
+`deriveRemovedNormativeNodes` derives the other direction — the same multiset
+diff with its arguments swapped — and the claim accounting in
+`validateReconciliation` consumes each claimed `artifactText` against the added
+set or the removed set, so a node present before reconciliation and absent
+after must be claimed by exactly one `addressed` decision, the only disposition
+that may carry `normativeChanges`, and grounded in the governing input by the
+same check any addition passes. An unclaimed removal is reported in
+`unclaimedRemovals`, and both stages abort the round by name rather than
+persisting decisions the accounting cannot support. Where an obligation really
+is wrong, the routes that already exist are the honest answers — a grounded
+rejection, or an upstream disposition carrying a proposal candidate — and both
+reconciliation prompts now tell the author so. Silent deletion is not one of
+them.
+
+**Measured live, 2026-09-04, $1.34097.** A completed run's plan reconciliation
+answered a load-order finding by replacing a normative task and claimed both
+halves — the superseded text and its replacement — in one `addressed` decision,
+each grounded in the approved specification, on its first attempt with no
+retry. The delta was three added nodes and one removed; nothing converted,
+`unclaimedRemoved=0`, `plan_review` passed, and the run delivered every
+declared artifact. Replaying that same response with the removal suppressed
+from the before-set — addition-only accounting, the behaviour this remedy
+replaced — converts the decision to `cannot_determine` and blocks, so the
+acceptance was this mechanism's doing rather than incidental. The response, the
+two plan revisions, the governing specification, and the provenance recording
+how each was identified are at
+`test/fixtures/recorded/plan-reconciliation-web-calculator-prd.json`, and both
+replays are committed tests. What that run did not show: no claim carried a
+list marker, so hazard 3's tolerance was untouched, and its spec round produced
+no normative claim at all.

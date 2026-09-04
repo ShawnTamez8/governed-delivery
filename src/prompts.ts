@@ -500,6 +500,7 @@ function renderFindingsBlock(findings: ReconciliationFindingInput[]): string {
 function reconciliationDecisionContract(
   sourceName: string,
   normativeNodes: string,
+  nodeForm: string,
   exampleDecisions: string
 ): string {
   return `The decisions list has exactly one entry per finding id listed below, no
@@ -524,12 +525,22 @@ For disposition rejected_with_rationale you must also supply:
   logically supports your rejection.
 
 For disposition addressed you must also supply, for every ${normativeNodes}
-your revision adds or replaces, exactly one entry in:
-- normativeChanges: [{"artifactLocation": "<the section heading>", "artifactText": "<the added node's exact text>", "grounding": {...}}]
-  The system derives the set of added normative nodes itself. A node that is
-  missing, duplicated, or not in that set, or whose grounding does not occur
-  in the ${sourceName} document, makes the decision cannot_determine. The
-  added half of a replacement counts as an added node.
+your revision adds, replaces, or removes, exactly one entry in:
+- normativeChanges: [{"artifactLocation": "<the section heading>", "artifactText": "<the exact text of the added or removed node>", "grounding": {...}}]
+  The system derives both sets itself — the nodes your revision added and the
+  nodes it removed — and one entry claims one node in either direction; you
+  never say which direction an entry is for. A node that is missing,
+  duplicated, in neither set, or whose grounding does not occur in the
+  ${sourceName} document, makes the decision cannot_determine. The added half
+  of a replacement counts as an added node, and the
+  superseded half counts as a removed node needing its own entry,
+  which may cite the same excerpt.
+  Deleting an obligation is not a way to answer a finding. Where the
+  obligation itself is wrong, the two honest routes are rejected_with_rationale
+  grounded in the ${sourceName} document, or an upstream disposition carrying a
+  proposal candidate.
+  artifactText is the node's own text, not the artifact line it sits on:
+  ${nodeForm} Leave off the list marker.
 
 For disposition upstream_follow_up or upstream_blocking you must also supply:
 - proposal: {"title": "...", "problem": "...", "whyUpstream": "..."}
@@ -596,7 +607,12 @@ proposedContentChanges:
 status must be one of proposed, blocked, failed. Output the JSON object
 directly, with no surrounding prose, no markdown fences, and no commentary.
 
-${reconciliationDecisionContract("design", "declared artifact or acceptance criterion", exampleDecisions)}
+${reconciliationDecisionContract(
+    "design",
+    "declared artifact or acceptance criterion",
+    'an acceptance criterion\'s node text is `AC-001: <criterion text>` and a declared artifact\'s is the bare path, so write "AC-001: the display announces results", never "- AC-001: the display announces results".',
+    exampleDecisions
+  )}
 
 You may address a finding only by a change whose added normative nodes you
 can ground in the design below. A reviewer calling a concern current_artifact
@@ -664,7 +680,12 @@ proposedContentChanges:
 status must be one of proposed, blocked, failed. Output the JSON object
 directly, with no surrounding prose, no markdown fences, and no commentary.
 
-${reconciliationDecisionContract("specification", "task or coverage line", exampleDecisions)}
+${reconciliationDecisionContract(
+    "specification",
+    "task or coverage line",
+    'a task\'s node text is the task itself and a coverage entry\'s is `AC-001 -> <artifact path>`, so write "AC-001 -> src/a.ts", never "- AC-001 -> src/a.ts".',
+    exampleDecisions
+  )}
 
 You may address a finding only by a change whose added normative nodes you
 can ground in the approved specification below. A reviewer calling a concern

@@ -39,29 +39,24 @@ const results = [];
 let target = null;
 let env = process.env;
 
-const DEFAULT_SLUG = "clamp";
-const DESIGN = `# Clamp a number to a range
+const DEFAULT_SLUG = "web-calculator";
 
-## Goal
-
-Add \`scripts/clamp.mjs\`, one file exporting one function.
-
-## Behaviour
-
-\`clamp(value, min, max)\` returns \`min\` when \`value\` is below \`min\`,
-\`max\` when \`value\` is above \`max\`, and \`value\` otherwise. It throws a
-\`RangeError\` when \`min\` is greater than \`max\`.
-
-## Acceptance criteria
-
-- \`scripts/clamp.mjs\` exports a named function \`clamp\`.
-- \`clamp(5, 1, 10)\` returns 5; \`clamp(-2, 1, 10)\` returns 1; \`clamp(99, 1, 10)\` returns 10.
-- \`clamp(1, 10, 1)\` throws \`RangeError\`.
-
-## Out of scope
-
-CLI wiring, tests, and every other file.
-`;
+// The design lives beside this file rather than inside it. Two reasons, both
+// learned rather than assumed: a design is content, and pasting prose into a
+// template literal silently corrupts it the moment the prose contains a
+// backtick or a `${` — which a design describing code eventually will. And
+// swapping the design is the normal way to change what a paid run exercises,
+// so it should not be a code edit.
+//
+// This file is the requirements document a completed paid run was governed by
+// (2026-09-04, $1.34097, 11 dispatches, all eight stages passed, four
+// artifacts delivered), byte for byte. It replaced a three-criterion clamp
+// design that ran for $0.24558 but produced clean panels every time: no
+// findings, no reconciliation decisions, and therefore no exercise of the
+// review, remediation, or normative-accounting paths that most of the system
+// is. A design too small to attract a finding cannot test a governed chain,
+// and that is what the cheaper design was actually measuring.
+const DESIGN = readFileSync(join(SKILL_DIR, "web-calculator-design.md"), "utf8");
 
 function exec(file, argv, opts = {}) {
   const r = spawnSync(file, argv, {

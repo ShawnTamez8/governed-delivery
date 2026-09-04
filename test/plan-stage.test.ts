@@ -280,6 +280,10 @@ test("the happy path chains plan and plan_review from the approved stage, and ga
     const round1 = records[0];
     assert.ok(!round1.includes("->cannot_determine"), "no happy-path decision was converted");
     assert.match(round1, /unclaimed=0/);
+    // Both directions are accounted for: the fixture's revision replaces a
+    // task line and claims both halves, so neither an addition nor a removal
+    // is left over.
+    assert.match(round1, /unclaimedRemoved=0/);
     const findings = store.getCanonicalFindings(reviewStage.id);
     assert.equal(findings.length, 2);
     assert.ok(findings.every((f) => f.round === 1));
@@ -382,6 +386,11 @@ test("the gate blocks on a cannot_determine decision from an earlier round even 
               artifactText: "Build the thing REVISED-plan",
               grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
             },
+            {
+              artifactLocation: "## Tasks",
+              artifactText: supersededTask(current),
+              grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
+            },
           ]
         : [],
   }));`,
@@ -402,6 +411,11 @@ test("the gate blocks on a cannot_determine decision from an earlier round even 
               {
                 artifactLocation: "## Tasks",
                 artifactText: "Build the thing REVISED-plan",
+                grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
+              },
+              {
+                artifactLocation: "## Tasks",
+                artifactText: supersededTask(current),
                 grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
               },
             ]
@@ -444,6 +458,11 @@ test("upstream_follow_up stores a proposal, names every source finding, and does
               artifactText: "Build the thing REVISED-plan",
               grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
             },
+            {
+              artifactLocation: "## Tasks",
+              artifactText: supersededTask(current),
+              grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
+            },
           ]
         : [],
   }));`,
@@ -469,6 +488,11 @@ test("upstream_follow_up stores a proposal, names every source finding, and does
               {
                 artifactLocation: "## Tasks",
                 artifactText: "Build the thing REVISED-plan",
+                grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
+              },
+              {
+                artifactLocation: "## Tasks",
+                artifactText: supersededTask(current),
                 grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
               },
             ]
@@ -528,6 +552,11 @@ test("upstream_blocking stores a proposal and blocks, naming both the finding an
               artifactText: "Build the thing REVISED-plan",
               grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
             },
+            {
+              artifactLocation: "## Tasks",
+              artifactText: supersededTask(current),
+              grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
+            },
           ]
         : [],
   }));`,
@@ -553,6 +582,11 @@ test("upstream_blocking stores a proposal and blocks, naming both the finding an
               {
                 artifactLocation: "## Tasks",
                 artifactText: "Build the thing REVISED-plan",
+                grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
+              },
+              {
+                artifactLocation: "## Tasks",
+                artifactText: supersededTask(current),
                 grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
               },
             ]
@@ -609,6 +643,11 @@ test("the same upstream candidate raised in two rounds links one proposal and re
             {
               artifactLocation: "## Tasks",
               artifactText: "Build the thing REVISED-plan",
+              grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
+            },
+            {
+              artifactLocation: "## Tasks",
+              artifactText: supersededTask(current),
               grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
             },
           ]
@@ -685,6 +724,9 @@ test("a decision converted by an unmatched grounding is stored as cannot_determi
     const record = auditSummaries(store, runId, "plan.reconcile.record")[0];
     assert.match(record, new RegExp(`${converted!.finding_id}:addressed->cannot_determine`));
     assert.match(record, /unclaimed=1/);
+    // The conversion drops both of the decision's claims, so the superseded
+    // task is released alongside the added one and both counts say so.
+    assert.match(record, /unclaimedRemoved=1/);
     assert.equal(store.getRun(runId)!.status, "blocked");
   });
 });
@@ -713,6 +755,47 @@ test("an added node no decision claims aborts the round before any decision is p
     }
     assert.equal(store.getFindingDecisions(reviewStage.id).length, 0, "no decision was persisted on an aborted round");
     assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("a removed node no decision claims aborts the round, naming the deleted node", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    // The plan-side copy of the spec-side hazard 17 proof: the reconciliation
+    // answers both findings `addressed` and deletes a task line, claiming
+    // nothing for it. A task is the node to delete rather than a coverage
+    // line, because dropping a coverage line fails the coverage identity gate
+    // first and would never reach the accounting.
+    const scratch = join(root, "emit-plan-unclaimed-removal.mjs");
+    const source = fixtureSource()
+      .replace(
+        "const artifact = revising ? planDoc({ revised: true }) : current;",
+        'const artifact = revising ? current.replace("- Test the thing\\n", "") : current;'
+      )
+      .replace("    normativeChanges:\n      revising && index === 0", "    normativeChanges:\n      false");
+    assert.ok(source.includes('current.replace("- Test the thing\\n", "")'), "the deletion substitution must apply");
+    assert.ok(source.includes("    normativeChanges:\n      false"), "the claim substitution must apply");
+    writeFileSync(scratch, source);
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /left removed normative node\(s\) unclaimed by any decision/);
+    assert.match(result.reason, /Test the thing/, "the refusal names the deleted node");
+
+    const reviewStage = store.getStageChain(runId).find((s) => s.kind === "plan_review")!;
+    assert.equal(store.getFindingDecisions(reviewStage.id).length, 0, "no decision was persisted on an aborted round");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+    // The abort precedes decision insertion and the reconcile summary, so the
+    // blocked round's evidence is the invalid event, not an `unclaimedRemoved`
+    // token — there is no summary to carry one.
+    const invalid = auditSummaries(store, runId, "plan.reconcile.invalid");
+    assert.equal(invalid.length, 1);
+    assert.match(invalid[0], /Test the thing/);
+    assert.equal(
+      auditSummaries(store, runId, "plan.reconcile.record").length,
+      0,
+      "the aborted round wrote no reconcile summary"
+    );
   });
 });
 
@@ -1597,6 +1680,11 @@ test("mixed reports reach the plan reconciler unfused: a shared identity dedups,
             {
               artifactLocation: "## Tasks",
               artifactText: "Build the thing REVISED-plan",
+              grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
+            },
+            {
+              artifactLocation: "## Tasks",
+              artifactText: supersededTask(current),
               grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
             },
           ]

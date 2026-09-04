@@ -703,6 +703,12 @@ export async function runPlanStage(
       //
       // With no conversion, nothing owns the node: there is no decision row
       // for the gate to block on, so the round fails closed here.
+      //
+      // The same reasoning covers a removed node (hazard 17), which is why
+      // the removal check carries the same conversion guard and only its
+      // message differs: a converted decision drops its claims, so its
+      // removals surface as unclaimed while the `cannot_determine` decision
+      // still owns the finding and must reach the gate by name.
       if (
         reconciliation.value.unclaimedNodes.length > 0 &&
         reconciliation.value.conversions.length === 0
@@ -711,6 +717,16 @@ export async function runPlanStage(
           reviewStage.id,
           "plan.reconcile.invalid",
           `plan reconciliation left normative node(s) unclaimed by any decision: ${reconciliation.value.unclaimedNodes.join(" | ")}`
+        );
+      }
+      if (
+        reconciliation.value.unclaimedRemovals.length > 0 &&
+        reconciliation.value.conversions.length === 0
+      ) {
+        return abort(
+          reviewStage.id,
+          "plan.reconcile.invalid",
+          `plan reconciliation left removed normative node(s) unclaimed by any decision: ${reconciliation.value.unclaimedRemovals.join(" | ")}`
         );
       }
       try {
@@ -796,7 +812,13 @@ export async function runPlanStage(
         audit(
           reviewStage.id,
           "plan.reconcile.record",
-          `plan reconcile round ${round}: planHashBefore=${planHashBefore}; planHashAfter=${planHashAfter}; risk=${risk}; decisions=${reconciliation.value.decisions.length}; findings=${reconcileFindings.map((f) => f.findingId).join(",")}; ${decisionParts.join(" ")}; conversions=${conversionParts}; unclaimed=${reconciliation.value.unclaimedNodes.length}; proposals=${proposalParts.join(",")}`
+          // `unclaimedRemoved` documents rounds that proceeded: the unclaimed
+          // branches above abort before any decision row is inserted and
+          // before this event is written, so a round that failed on an
+          // unaccounted removal has no summary at all — its evidence is the
+          // `plan.reconcile.invalid` event naming the removals, plus the
+          // retained raw response.
+          `plan reconcile round ${round}: planHashBefore=${planHashBefore}; planHashAfter=${planHashAfter}; risk=${risk}; decisions=${reconciliation.value.decisions.length}; findings=${reconcileFindings.map((f) => f.findingId).join(",")}; ${decisionParts.join(" ")}; conversions=${conversionParts}; unclaimed=${reconciliation.value.unclaimedNodes.length}; unclaimedRemoved=${reconciliation.value.unclaimedRemovals.length}; proposals=${proposalParts.join(",")}`
         );
       }
     }

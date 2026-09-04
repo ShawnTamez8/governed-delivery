@@ -1,0 +1,75 @@
+{
+  "provenance": {
+    "what": "One real spec-reconciliation response, returned by the spec-author agent and retained by the run that produced it, together with the specification revision it was given, the revision it returned, and the governing design it was dispatched with.",
+    "run": "web-calculator, run 1, spec_review round 1 — the operator-authorized live run of 2026-09-04 that blocked at the spec_review gate",
+    "agent": "spec-author (role author), claude-sonnet-5",
+    "dispatchedAt": "2026-09-04T17:15:43Z",
+    "capturedAt": "2026-09-04",
+    "capturedFrom": "The retained raw dispatch envelopes of an operator-authorized paid run on a scratch target built from the operator's web-calculator design. beforeSpec comes from the self-critique envelope (2026-09-04T17-12-55Z), afterSpec and decisions from the reconciliation envelope (2026-09-04T17-15-43Z), and design from the target's committed docs/features/web-calculator/design.md. The target is machine-local and deletable; this file is the durable copy.",
+    "fidelity": "Every value in beforeSpec, afterSpec, and decisions is verbatim as the model returned it, and design is verbatim as the run supplied it to the model - the model received that document, it did not write it. The surrounding harness envelopes were dropped (session id, cost, usage, timings) and the retained JSON was re-serialized with indentation; no field in any of the four was edited.",
+    "demonstrates": "Two things, and the second is why this file exists. (1) A live author, asked by the revised reconciliation prompt to claim both halves of a replacement, did exactly that on its first attempt: the decision for finding 2 claims the superseded AC-020 text and its replacement, each grounded in the design. (2) Every claim in the response was nonetheless refused, because each artifactText carries the artifact's '- ' list marker while specNormativeNodes renders an acceptance criterion as '<id>: <text>' with no marker. The failure is direction-independent: finding 1's claim is a pure addition and was refused the same way. The run therefore blocked at the spec_review gate on two cannot_determine decisions, with unclaimed=2 and unclaimedRemoved=1 released by those conversions.",
+    "seeAlso": "docs/features/normative-removal-accounting/real-run-evidence.md; docs/hazards.md entries 3 and 17; ARCHITECTURE.md section 12",
+    "consumedBy": "test/reconciliation.test.ts, \"the blocked run's recorded response validates once the marker is tolerated\" - the contract test for the remedy the operator chose on 2026-09-04: tolerate one leading list marker on both sides of the claim comparison (normalizeNodeText) and state the node form in both reconciliation prompts. Removing either half of that remedy makes this replay fail, which is how the fix was proven."
+  },
+  "design": "# Web Calculator\n\n## Goal\n\nAdd `web/calculator.html`: a browser-based calculator that performs common\narithmetic calculations through an intuitive interface, supports light and\ndark themes, and runs entirely in the browser without installation. One\nself-contained static file — markup, styles, and script together, no external\nresources, no build step, no dependencies.\n\n## Behaviour\n\nThe page shows a display and a button grid: digits 0–9, decimal point,\noperators (+, −, ×, ÷), equals, clear, and backspace. Calculations evaluate\nsequentially left to right, the way a basic desk calculator does: pressing an\noperator while an operation is pending evaluates the pending operation first.\nThe interface works with mouse, touch, and keyboard, on desktop and mobile\nviewport widths.\n\n## Acceptance criteria\n\n- `web/calculator.html` is a single self-contained HTML file with no external scripts, stylesheets, fonts, or network requests.\n- The calculator has clickable buttons for the digits 0 through 9, a decimal point, +, −, ×, ÷, =, clear, and backspace.\n- Addition works: entering 2 + 3 = displays 5.\n- Subtraction works: entering 9 − 4 = displays 5.\n- Multiplication works: entering 6 × 7 = displays 42.\n- Division works: entering 8 ÷ 2 = displays 4.\n- Division by zero displays the text `Error` rather than Infinity or NaN, and clear recovers from it.\n- Decimal calculations work: entering 1.5 + 2.25 = displays 3.75.\n- An operand accepts at most one decimal point: pressing . twice in one operand does not produce a second point.\n- Chained operations evaluate left to right: entering 2 + 3 × 4 = displays 20.\n- Clear resets the display to 0 and discards any pending operation.\n- Backspace removes the last entered digit of the current operand.\n- A visible theme toggle switches the interface between a light theme and a dark theme, changing at least the background and text colors.\n- The initial theme follows the operating system preference via the `prefers-color-scheme` media query.\n- The selected theme persists across page reloads using `localStorage`.\n- The layout is responsive: a `viewport` meta tag is present, and the calculator remains fully usable at a 360px-wide mobile viewport and at desktop widths.\n- Keyboard input is supported: digit keys, `.`, `+`, `-`, `*`, `/`, `Enter` for equals, `Escape` for clear, and `Backspace` for deleting the last digit.\n- Every control is a native `button` element with an accessible name, and the display is a live region (`aria-live`) so results are announced by screen readers.\n\n## Out of scope\n\nScientific calculations, graphing functionality, user accounts, calculation\nhistory synchronization across devices, build tooling, tests, and every file\nother than `web/calculator.html`.\n",
+  "beforeSpec": "---\nfeature: web-calculator\nchange_kind: feature\n---\n\n## Declared artifacts\n\nweb/calculator.html\n\n## Acceptance criteria\n\n- AC-001: `web/calculator.html` is a single self-contained HTML file with no external scripts, stylesheets, fonts, or network requests.\n- AC-002: The calculator has clickable buttons for the digits 0 through 9.\n- AC-003: The calculator has a clickable decimal point button.\n- AC-004: The calculator has clickable operator buttons for addition (+), subtraction (−), multiplication (×), and division (÷).\n- AC-005: The calculator has a clickable equals (=) button.\n- AC-006: The calculator has a clickable clear button.\n- AC-007: The calculator has a clickable backspace button.\n- AC-008: Addition works: entering 2 + 3 = displays 5.\n- AC-009: Subtraction works: entering 9 − 4 = displays 5.\n- AC-010: Multiplication works: entering 6 × 7 = displays 42.\n- AC-011: Division works: entering 8 ÷ 2 = displays 4.\n- AC-012: Division by zero displays the text `Error` rather than Infinity or NaN.\n- AC-013: Pressing clear after a division-by-zero error recovers the calculator to a usable state.\n- AC-014: Decimal calculations work: entering 1.5 + 2.25 = displays 3.75.\n- AC-015: An operand accepts at most one decimal point: pressing . twice in one operand does not produce a second point.\n- AC-016: Chained operations evaluate left to right: entering 2 + 3 × 4 = displays 20, because pressing an operator while an operation is pending evaluates the pending operation first.\n- AC-017: Pressing clear resets the display to 0 and discards any pending operation.\n- AC-018: Pressing backspace removes the last entered digit of the current operand.\n- AC-019: A visible theme toggle switches the interface between a light theme and a dark theme, changing at least the background and text colors.\n- AC-020: The initial theme follows the operating system preference via the `prefers-color-scheme` media query when no stored preference exists.\n- AC-021: The selected theme persists across page reloads using `localStorage`.\n- AC-022: A `viewport` meta tag is present in the document head.\n- AC-023: The calculator remains fully usable at a 360px-wide mobile viewport, with every control visible and operable without horizontal scrolling.\n- AC-024: The calculator remains fully usable at desktop viewport widths.\n- AC-025: Pressing digit keys 0-9 on the keyboard enters the corresponding digit.\n- AC-026: Pressing the `.` key on the keyboard enters a decimal point.\n- AC-027: Pressing the `+`, `-`, `*`, or `/` keys on the keyboard triggers the corresponding operator.\n- AC-028: Pressing `Enter` on the keyboard triggers equals.\n- AC-029: Pressing `Escape` on the keyboard triggers clear.\n- AC-030: Pressing `Backspace` on the keyboard deletes the last entered digit.\n- AC-031: Every control in the interface is a native `button` element with an accessible name.\n- AC-032: The display is a live region marked with `aria-live` so results are announced by screen readers.\n\n## Out of scope\n\nScientific calculations, graphing functionality, user accounts, calculation history synchronization across devices, build tooling, automated tests, and any file other than `web/calculator.html`.\n",
+  "afterSpec": "---\nfeature: web-calculator\nchange_kind: feature\n---\n\n## Declared artifacts\n\nweb/calculator.html\n\n## Acceptance criteria\n\n- AC-001: `web/calculator.html` is a single self-contained HTML file with no external scripts, stylesheets, fonts, or network requests.\n- AC-002: The calculator has clickable buttons for the digits 0 through 9.\n- AC-003: The calculator has a clickable decimal point button.\n- AC-004: The calculator has clickable operator buttons for addition (+), subtraction (−), multiplication (×), and division (÷).\n- AC-005: The calculator has a clickable equals (=) button.\n- AC-006: The calculator has a clickable clear button.\n- AC-007: The calculator has a clickable backspace button.\n- AC-008: Addition works: entering 2 + 3 = displays 5.\n- AC-009: Subtraction works: entering 9 − 4 = displays 5.\n- AC-010: Multiplication works: entering 6 × 7 = displays 42.\n- AC-011: Division works: entering 8 ÷ 2 = displays 4.\n- AC-012: Division by zero displays the text `Error` rather than Infinity or NaN.\n- AC-013: Pressing clear after a division-by-zero error recovers the calculator to a usable state.\n- AC-014: Decimal calculations work: entering 1.5 + 2.25 = displays 3.75.\n- AC-015: An operand accepts at most one decimal point: pressing . twice in one operand does not produce a second point.\n- AC-016: Chained operations evaluate left to right: entering 2 + 3 × 4 = displays 20, because pressing an operator while an operation is pending evaluates the pending operation first.\n- AC-017: Pressing clear resets the display to 0 and discards any pending operation.\n- AC-018: Pressing backspace removes the last entered digit of the current operand.\n- AC-019: A visible theme toggle switches the interface between a light theme and a dark theme, changing at least the background and text colors.\n- AC-020: The initial theme follows the operating system preference via the `prefers-color-scheme` media query.\n- AC-021: The selected theme persists across page reloads using `localStorage`.\n- AC-022: A `viewport` meta tag is present in the document head.\n- AC-023: The calculator remains fully usable at a 360px-wide mobile viewport, with every control visible and operable without horizontal scrolling.\n- AC-024: The calculator remains fully usable at desktop viewport widths.\n- AC-025: Pressing digit keys 0-9 on the keyboard enters the corresponding digit.\n- AC-026: Pressing the `.` key on the keyboard enters a decimal point.\n- AC-027: Pressing the `+`, `-`, `*`, or `/` keys on the keyboard triggers the corresponding operator.\n- AC-028: Pressing `Enter` on the keyboard triggers equals.\n- AC-029: Pressing `Escape` on the keyboard triggers clear.\n- AC-030: Pressing `Backspace` on the keyboard deletes the last entered digit.\n- AC-031: Every control in the interface is a native `button` element with an accessible name.\n- AC-032: The display is a live region marked with `aria-live` so results are announced by screen readers.\n- AC-033: Every button responds to touch input (tap), and the calculator remains fully operable via touch on mobile viewport widths.\n\n## Out of scope\n\nScientific calculations, graphing functionality, user accounts, calculation history synchronization across devices, build tooling, tests, and any file other than `web/calculator.html`.\n",
+  "decisions": [
+    {
+      "findingId": 1,
+      "disposition": "addressed",
+      "rationale": "Added AC-033 requiring touch responsiveness for every button and full touch operability on mobile viewport widths, closing the gap where only click and keyboard interaction were verified.",
+      "changedLocations": [
+        "AC-033"
+      ],
+      "normativeChanges": [
+        {
+          "artifactLocation": "Acceptance criteria",
+          "artifactText": "- AC-033: Every button responds to touch input (tap), and the calculator remains fully operable via touch on mobile viewport widths.",
+          "grounding": {
+            "source": "design",
+            "location": "Behaviour",
+            "excerpt": "The interface works with mouse, touch, and keyboard, on desktop and mobile viewport widths."
+          }
+        }
+      ]
+    },
+    {
+      "findingId": 2,
+      "disposition": "addressed",
+      "rationale": "Removed the unauthorized 'when no stored preference exists' qualifier from AC-020, reverting it to the design's exact wording so the spec no longer silently resolves the tension between the OS-preference criterion and the localStorage persistence criterion on its own authority.",
+      "changedLocations": [
+        "AC-020"
+      ],
+      "normativeChanges": [
+        {
+          "artifactLocation": "Acceptance criteria",
+          "artifactText": "- AC-020: The initial theme follows the operating system preference via the `prefers-color-scheme` media query when no stored preference exists.",
+          "grounding": {
+            "source": "design",
+            "location": "Acceptance criteria",
+            "excerpt": "The initial theme follows the operating system preference via the `prefers-color-scheme` media query."
+          }
+        },
+        {
+          "artifactLocation": "Acceptance criteria",
+          "artifactText": "- AC-020: The initial theme follows the operating system preference via the `prefers-color-scheme` media query.",
+          "grounding": {
+            "source": "design",
+            "location": "Acceptance criteria",
+            "excerpt": "The initial theme follows the operating system preference via the `prefers-color-scheme` media query."
+          }
+        }
+      ]
+    },
+    {
+      "findingId": 3,
+      "disposition": "addressed",
+      "rationale": "Replaced 'automated tests' with the design's unqualified 'tests' in the Out of scope list so the exclusion is not narrower than the design and manual test artifacts remain out of scope as the design states.",
+      "changedLocations": [
+        "Out of scope"
+      ],
+      "normativeChanges": []
+    }
+  ]
+}

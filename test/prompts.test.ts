@@ -142,6 +142,16 @@ const CONSTRAINT_STRINGS = [
   "artifactText",
   "whyUpstream",
   "Do not return an impact field",
+  // Hazard 17's obligation on the author, and hazard 3's reason it must be
+  // stated here: the removal claim is a constrained field the validator
+  // enforces, so a prompt silent about it guarantees a blocked paid run.
+  "superseded half counts as a removed node",
+  "Deleting an obligation is not a way to answer a finding",
+  // The node form itself, which a paid run was measured failing without: an
+  // author copied the artifact line, list marker and all, and every claim was
+  // refused. Hazard 3 — the constraint belongs where the field is requested.
+  "artifactText is the node",
+  "Leave off the list marker",
   "does not authorize you to add an obligation",
   "Findings to reconcile",
   "none were reported this round",
@@ -527,6 +537,16 @@ test("the generated spec reconciliation prompt carries the decision contract and
     "artifactText",
     "whyUpstream",
     "Do not return an impact field",
+    // The node form for this artifact kind, asserted per prompt because the
+    // two prompts state different forms and one builder renders both.
+    "an acceptance criterion's node text is `AC-001: <criterion text>`",
+    "Leave off the list marker",
+    // Both directions of the normative delta, asserted on this prompt rather
+    // than only in the whole-file scan: the two reconciliation prompts render
+    // from one contract builder, so a sentence missing from one of them would
+    // be invisible to a scan that found it in the other.
+    "superseded half counts as a removed node",
+    "Deleting an obligation is not a way to answer a finding",
     "source is always design",
     "does not authorize you to add an obligation",
     "upstream_blocking blocks the run, upstream_follow_up does not",
@@ -584,6 +604,17 @@ test("the generated plan reconciliation prompt carries the spec as governing inp
     "Copy each canonical AC ID",
     "cite its AC ID",
     "Do not return an impact field",
+    // The plan side's own copy of the removal obligation, for the reason the
+    // conditional-field matrix is asserted twice: one shared builder, and
+    // nothing structural notices a sentence tested on one prompt only.
+    "superseded half counts as a removed node",
+    "Deleting an obligation is not a way to answer a finding",
+    // The plan side states its own node forms — a task and a coverage entry —
+    // which are not the spec side's, so a shared assertion would prove
+    // neither. The spec side carries the same pair for its own forms.
+    "a task's node text is the task itself",
+    "`AC-001 -> <artifact path>`",
+    "Leave off the list marker",
     // The plan side's own copy of the conditional-field matrix. These two
     // prompts share the contract builder, and nothing structural notices a
     // missing assertion on one of them.

@@ -215,6 +215,10 @@ test("happy path: a clean-panel round gates on decision completeness, not a clos
     const round1 = reconcileRecords[0];
     assert.ok(!round1.includes("->cannot_determine"), "no happy-path decision was converted");
     assert.match(round1, /unclaimed=0/);
+    // Both directions are accounted for: the fixture's revision replaces a
+    // criterion and claims both halves, so neither an addition nor a removal
+    // is left over.
+    assert.match(round1, /unclaimedRemoved=0/);
     for (const finding of findings) {
       assert.match(round1, new RegExp(`d${finding.id}=addressed`), `finding ${finding.id} kept its addressed disposition`);
     }
@@ -308,6 +312,11 @@ test("the gate blocks on a cannot_determine decision from an earlier round even 
               artifactText: "AC-001: the thing works REVISED-spec",
               grounding: { source: "design", location: "# design", excerpt: "design" },
             },
+            {
+              artifactLocation: "AC-001",
+              artifactText: supersededCriterion(current),
+              grounding: { source: "design", location: "# design", excerpt: "design" },
+            },
           ]
         : [],
   }));`,
@@ -328,6 +337,11 @@ test("the gate blocks on a cannot_determine decision from an earlier round even 
               {
                 artifactLocation: "AC-001",
                 artifactText: "AC-001: the thing works REVISED-spec",
+                grounding: { source: "design", location: "# design", excerpt: "design" },
+              },
+              {
+                artifactLocation: "AC-001",
+                artifactText: supersededCriterion(current),
                 grounding: { source: "design", location: "# design", excerpt: "design" },
               },
             ]
@@ -369,6 +383,11 @@ test("upstream_follow_up stores a proposal, names every source finding, and does
               artifactText: "AC-001: the thing works REVISED-spec",
               grounding: { source: "design", location: "# design", excerpt: "design" },
             },
+            {
+              artifactLocation: "AC-001",
+              artifactText: supersededCriterion(current),
+              grounding: { source: "design", location: "# design", excerpt: "design" },
+            },
           ]
         : [],
   }));`,
@@ -394,6 +413,11 @@ test("upstream_follow_up stores a proposal, names every source finding, and does
               {
                 artifactLocation: "AC-001",
                 artifactText: "AC-001: the thing works REVISED-spec",
+                grounding: { source: "design", location: "# design", excerpt: "design" },
+              },
+              {
+                artifactLocation: "AC-001",
+                artifactText: supersededCriterion(current),
                 grounding: { source: "design", location: "# design", excerpt: "design" },
               },
             ]
@@ -453,6 +477,11 @@ test("upstream_blocking stores a proposal and blocks, naming both the finding an
               artifactText: "AC-001: the thing works REVISED-spec",
               grounding: { source: "design", location: "# design", excerpt: "design" },
             },
+            {
+              artifactLocation: "AC-001",
+              artifactText: supersededCriterion(current),
+              grounding: { source: "design", location: "# design", excerpt: "design" },
+            },
           ]
         : [],
   }));`,
@@ -478,6 +507,11 @@ test("upstream_blocking stores a proposal and blocks, naming both the finding an
               {
                 artifactLocation: "AC-001",
                 artifactText: "AC-001: the thing works REVISED-spec",
+                grounding: { source: "design", location: "# design", excerpt: "design" },
+              },
+              {
+                artifactLocation: "AC-001",
+                artifactText: supersededCriterion(current),
                 grounding: { source: "design", location: "# design", excerpt: "design" },
               },
             ]
@@ -535,6 +569,11 @@ test("the same upstream candidate raised in two rounds links one proposal and re
             {
               artifactLocation: "AC-001",
               artifactText: "AC-001: the thing works REVISED-spec",
+              grounding: { source: "design", location: "# design", excerpt: "design" },
+            },
+            {
+              artifactLocation: "AC-001",
+              artifactText: supersededCriterion(current),
               grounding: { source: "design", location: "# design", excerpt: "design" },
             },
           ]
@@ -623,6 +662,54 @@ test("an added node no decision claims aborts the round before any decision is p
   });
 });
 
+test("a removed node no decision claims aborts the round, naming the deleted node", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // Hazard 17 at stage level: the reconciliation answers both findings
+    // `addressed` and deletes a declared artifact, claiming nothing for it.
+    // Nothing was added, so the addition-only accounting saw a clean round;
+    // the removal has no owning decision to convert, so the round must fail
+    // closed exactly as an unclaimed addition does. The deletion is expressed
+    // by the document the fixture returns, as every other artifact change in
+    // these tests is.
+    const scratch = join(root, "emit-spec-stage-unclaimed-removal.mjs");
+    const source = fixtureSource()
+      .replace(
+        "const artifact = revising ? REVISED_SPEC : current;",
+        'const artifact = revising ? current.replace("- src/a11.ts\\n", "") : current;'
+      )
+      .replace("    normativeChanges:\n      revising && index === 0", "    normativeChanges:\n      false");
+    assert.ok(source.includes('current.replace("- src/a11.ts\\n", "")'), "the deletion substitution must apply");
+    assert.ok(source.includes("    normativeChanges:\n      false"), "the claim substitution must apply");
+    writeFileSync(scratch, source);
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /left removed normative node\(s\) unclaimed by any decision/);
+    assert.match(result.reason, /src\/a11\.ts/, "the refusal names the deleted node");
+
+    const reviewStage = store.getStageChain(runId)[1];
+    assert.equal(store.getFindingDecisions(reviewStage.id).length, 0, "no decision was persisted on an aborted round");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+    // The abort precedes decision insertion and the reconcile summary, so the
+    // blocked round's evidence is the invalid event, not an `unclaimedRemoved`
+    // token — there is no summary to carry one.
+    const invalid = store
+      .query<{ summary: string }>(
+        "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.reconcile.invalid' ORDER BY id",
+        [runId]
+      )
+      .map((r) => r.summary);
+    assert.equal(invalid.length, 1);
+    assert.match(invalid[0], /src\/a11\.ts/);
+    assert.equal(
+      store.query("SELECT * FROM audit WHERE run_id = ? AND action = 'spec.reconcile.record'", [runId]).length,
+      0,
+      "the aborted round wrote no reconcile summary"
+    );
+  });
+});
+
 test("a decision converted by an unmatched grounding is stored as cannot_determine and blocks by name, not discarded as an unclaimed node", async () => {
   await withRun(async ({ store, root, runId }) => {
     // The other half of the test above, and the distinction the stage must
@@ -673,6 +760,9 @@ test("a decision converted by an unmatched grounding is stored as cannot_determi
       .map((r) => r.summary)[0];
     assert.match(record, new RegExp(`${converted!.finding_id}:addressed->cannot_determine`));
     assert.match(record, /unclaimed=1/);
+    // The conversion drops both of the decision's claims, so the superseded
+    // criterion is released alongside the added one and both counts say so.
+    assert.match(record, /unclaimedRemoved=1/);
     assert.equal(store.getRun(runId)!.status, "blocked");
   });
 });
@@ -752,6 +842,11 @@ test("mixed reports reach the reconciler unfused: a shared identity dedups, a cl
             {
               artifactLocation: "AC-001",
               artifactText: "AC-001: the thing works REVISED-spec",
+              grounding: { source: "design", location: "# design", excerpt: "design" },
+            },
+            {
+              artifactLocation: "AC-001",
+              artifactText: supersededCriterion(current),
               grounding: { source: "design", location: "# design", excerpt: "design" },
             },
           ]

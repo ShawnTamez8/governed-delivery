@@ -509,16 +509,28 @@ pass; and that the resulting route is honoured.
 derives the normative delta by set-diffing the parsed nodes of the validated
 artifact before and after reconciliation — declared artifacts and acceptance
 criteria rendered as `<id>: <text>` for a specification, tasks and ID-led
-coverage for a plan. Every added node,
-including the added half of a replacement, must be claimed exactly once by an
-`addressed` decision and carry an excerpt from the governing input: the design
-for a specification, the approved specification for a plan. The artifact under
-review is never an authority for its own content. An added node that is
-unclaimed, claimed twice, or ungrounded is handled as `cannot_determine` and
-blocks. Where the governing input is genuinely silent, the author's route is an
-upstream disposition with a complete proposal candidate, not a new requirement.
-This adds no round and no dispatch: the delta is computed from artifacts the
-stage already holds.
+coverage for a plan. The delta has two directions and both are accounted for.
+Every added node, including the added half of a replacement, must be claimed
+exactly once by an `addressed` decision and carry an excerpt from the governing
+input: the design for a specification, the approved specification for a plan.
+Every removed node — a node present before reconciliation and absent after,
+including the superseded half of a replacement — must be claimed exactly once
+and grounded the same way. The author never states which direction a claim is
+for; deterministic code decides that from the two derived sets. A claim matches
+a node with whitespace collapsed and one leading Markdown list marker dropped,
+applied to both sides of the comparison: the marker tolerance was added because
+a paid run was measured failing without it, since the specification schema
+requires criteria to be written `- <id>: <text>` while the derived node is
+`<id>: <text>`, and both reconciliation prompts state each artifact kind's
+node form so tolerance is not the author's only route to a match. The
+artifact under review is never an authority for its own content. A node in either
+direction that is unclaimed, claimed twice, or ungrounded is handled as
+`cannot_determine` and blocks. Where the governing input is genuinely silent,
+the author's route is an upstream disposition with a complete proposal
+candidate, not a new requirement; where an obligation is genuinely wrong, the
+route is a grounded rejection or an upstream disposition, not deletion.
+This adds no round and no dispatch: both directions are computed from artifacts
+the stage already holds.
 
 **What these checks do not establish.** An exact match proves that the cited
 words occur in the governing input, in that order. It does not prove they
@@ -529,8 +541,12 @@ panel independently confirms an `addressed` decision or a grounded rejection.
 That residual semantic judgement is the author's, it is retained as evidence,
 and it is the accepted cost of removing the closure pass. It is not a gap the
 checks above close, and nothing in this system should be described as though it
-were. Stable criterion identity also does not authorize removal: the normative
-delta remains addition-only, so hazard 17's deleted-obligation gap is unchanged.
+were. The normative delta now accounts for removals as well as additions, so a
+deleted obligation must be claimed and grounded like an added one and stable
+criterion identity does not authorize removal by itself. That closes hazard
+17's deleted-obligation gap, and it inherits exactly the limit the addition
+guard has: the grounding check proves the cited words occur in the governing
+input, never that they justify the deletion.
 
 **`awaiting_approval`.** The only human gate. One signed authorization — an
 Ed25519 signature by the operator, verified by the gate against a public key

@@ -98,15 +98,34 @@ function currentArtifact() {
   return (block.split("Findings to reconcile:")[0] ?? "").trim();
 }
 
+// The superseded half of the replacement `reconcile` makes: the task line the
+// revised plan drops. Scraped out of the artifact under review rather than
+// written as a literal, for the same reason the `plan_for` hash and the scope
+// paths are read back out of the prompt — a fixture carrying its own copy of
+// what the code produced agrees with it by construction (hazard 4).
+function supersededTask(artifact) {
+  const block = artifact.split("## Tasks")[1] ?? "";
+  const line = block
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.startsWith("- "));
+  if (line === undefined) {
+    throw new Error("emit-plan-stage: no task line found in the artifact under review");
+  }
+  return line.slice(2).trim();
+}
+
 // The reconciler's answer: revise when the round reported findings (so the
 // next panel sees the REVISED marker and reports clean), otherwise hand the
-// plan back unchanged. When it revises, exactly one decision claims the task
-// line the revision replaces — the stage derives the added node from the
-// before/after parse, a second claim of one node is a duplicate and converts
-// its decision, and an unclaimed node fails the accounting. A round that
-// already reviews the revised plan revises nothing and claims nothing. The
-// grounding excerpt is the criterion text from the approved spec, which the
-// plan reconcile prompt embeds as the governing input.
+// plan back unchanged. When it revises, exactly one decision claims both
+// halves of the replacement — the added task line and the superseded one,
+// grounded by the same excerpt. The stage derives both directions from the
+// before/after parse (hazard 17), a second claim of one node is a duplicate
+// and converts its decision, and a node left unclaimed in either direction
+// fails the accounting. A round that already reviews the revised plan revises
+// nothing and claims nothing. The grounding excerpt is the criterion text from
+// the approved spec, which the plan reconcile prompt embeds as the governing
+// input.
 function reconcile() {
   const ids = [...stdin.matchAll(/finding (\d+)/g)].map((m) => Number(m[1]));
   const current = currentArtifact();
@@ -123,6 +142,11 @@ function reconcile() {
             {
               artifactLocation: "## Tasks",
               artifactText: "Build the thing REVISED-plan",
+              grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
+            },
+            {
+              artifactLocation: "## Tasks",
+              artifactText: supersededTask(current),
               grounding: { source: "specification", location: "## Acceptance criteria", excerpt: "the thing works" },
             },
           ]

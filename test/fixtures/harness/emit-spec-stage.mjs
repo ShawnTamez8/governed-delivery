@@ -95,14 +95,33 @@ function currentArtifact() {
   return (block.split("Findings to reconcile:")[0] ?? "").trim();
 }
 
+// The superseded half of the replacement `reconcile` makes: the acceptance
+// criterion the revised document drops, in the node form the stage diffs
+// (`<id>: <text>`). Scraped out of the artifact under review rather than
+// written as a literal, for the same reason the document is built from the
+// prompt — a fixture carrying its own copy of what the code produced agrees
+// with it by construction and proves nothing (hazard 4).
+function supersededCriterion(artifact) {
+  const block = artifact.split("## Acceptance criteria")[1] ?? "";
+  const line = block
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => /^- AC-\d/.test(l));
+  if (line === undefined) {
+    throw new Error("emit-spec-stage: no acceptance criterion found in the artifact under review");
+  }
+  return line.slice(2).trim();
+}
+
 // The reconciler's answer: revise when the round reported findings (so the
 // next panel sees the REVISED marker and reports clean), otherwise hand the
-// artifact back unchanged. When it revises, exactly one decision claims the
-// criterion the revision replaces — the stage derives the added node from
-// the before/after parse, a second claim of one node is a duplicate and
-// converts its decision, and an unclaimed node fails the accounting. A round
-// that already reviews the revised document revises nothing and claims
-// nothing.
+// artifact back unchanged. When it revises, exactly one decision claims both
+// halves of the replacement — the added criterion and the superseded one,
+// grounded by the same excerpt. The stage derives both directions from the
+// before/after parse (hazard 17), a second claim of one node is a duplicate
+// and converts its decision, and a node left unclaimed in either direction
+// fails the accounting. A round that already reviews the revised document
+// revises nothing and claims nothing.
 function reconcile() {
   const ids = [...stdin.matchAll(/finding (\d+)/g)].map((m) => Number(m[1]));
   const current = currentArtifact();
@@ -119,6 +138,11 @@ function reconcile() {
             {
               artifactLocation: "AC-001",
               artifactText: "AC-001: the thing works REVISED-spec",
+              grounding: { source: "design", location: "# design", excerpt: "design" },
+            },
+            {
+              artifactLocation: "AC-001",
+              artifactText: supersededCriterion(current),
               grounding: { source: "design", location: "# design", excerpt: "design" },
             },
           ]

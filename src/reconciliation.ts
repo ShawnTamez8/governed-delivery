@@ -102,6 +102,41 @@ export function collapseWhitespace(text: string): string {
   return normalizeText(text).replace(/\s+/g, " ").trim();
 }
 
+/**
+ * The comparison form for a normative node and for a claim about one:
+ * whitespace collapsed, then a single leading Markdown list marker dropped.
+ *
+ * The marker tolerance exists because a paid run was measured failing without
+ * it (2026-09-04, recorded in
+ * `docs/features/normative-removal-accounting/real-run-evidence.md`). A live
+ * spec author answered three findings correctly — including claiming both
+ * halves of a replacement, which is exactly what the prompt asks for — and
+ * every claim was refused, because each `artifactText` carried the `- ` the
+ * artifact line carries while `specNormativeNodes` renders a criterion as
+ * `<id>: <text>` with no marker. The document schema *requires* criteria to be
+ * written `- AC-001: <text>`, so the line an author copies can never equal the
+ * node the validator derives: without this, the honest answer is unreachable
+ * for that node kind. The prompt now states the node form as well — hazard 3 —
+ * because a tolerance that rescues a wrong shape is not a substitute for
+ * asking for the right one.
+ *
+ * Applied to **both** sides of every comparison, never one: a normalization on
+ * one side only is the defect this repository keeps rediscovering. Derived
+ * nodes never carry a marker, so on that side it is a no-op that costs
+ * nothing and cannot drift.
+ *
+ * What it deliberately does not do: it drops one marker, not a run of them,
+ * and it changes nothing else about the text. Two distinct nodes could in
+ * principle collide under it — a node literally beginning `- ` and another
+ * equal to its remainder — which no node kind can produce today, because
+ * criteria begin with an AC ID, coverage lines with an AC ID, declared
+ * artifacts with a path segment, and a parsed task has already had its marker
+ * removed.
+ */
+export function normalizeNodeText(text: string): string {
+  return collapseWhitespace(text).replace(/^[-*+]\s+/, "");
+}
+
 /* ------------------------------------------------------------------ *
  * Reviewer report
  * ------------------------------------------------------------------ */
@@ -302,6 +337,21 @@ export function deriveAddedNormativeNodes(before: string[], after: string[]): st
   return added;
 }
 
+/**
+ * The removed normative nodes: `before` minus `after`, which is the same
+ * multiset difference with its arguments swapped — the swap is the whole
+ * implementation, and a second counting loop would be a second place for the
+ * whitespace tolerance to drift. The name still earns its place because
+ * `deriveAddedNormativeNodes(after, before)` reads as a bug at a call site.
+ *
+ * Every occurrence is a node an `addressed` decision must claim exactly once,
+ * including the superseded half of a replacement (hazard 17): a reviewer's
+ * finding cannot be discharged by deleting the obligation it was about.
+ */
+export function deriveRemovedNormativeNodes(before: string[], after: string[]): string[] {
+  return deriveAddedNormativeNodes(after, before);
+}
+
 /* ------------------------------------------------------------------ *
  * Reconciliation result
  * ------------------------------------------------------------------ */
@@ -339,8 +389,14 @@ export interface ReconciliationValidation {
   conversions: { findingId: number; from: Disposition; reason: string }[];
   /** Added normative nodes no decision claimed. The gate treats these as
    * `cannot_determine` and blocks (Task 9); there is no owning decision to
-   * convert, so they are reported rather than rewritten. */
+   * convert, so they are reported rather than rewritten. This field carries
+   * added nodes only — removals are reported separately in
+   * `unclaimedRemovals`, because the two failures need different repairs. */
   unclaimedNodes: string[];
+  /** Removed normative nodes no decision claimed: a node present before this
+   * reconciliation and absent after, which nothing owns (hazard 17). Reported
+   * for the same reason and treated the same way as `unclaimedNodes`. */
+  unclaimedRemovals: string[];
 }
 
 const PROPOSAL_FIELDS = ["title", "problem", "whyUpstream"] as const;
@@ -351,12 +407,17 @@ const PROPOSAL_FIELDS = ["title", "problem", "whyUpstream"] as const;
  * refuse with a named cause; content failures convert the affected decision
  * to `cannot_determine` — see the module comment for the boundary.
  *
- * Every added normative node must be claimed exactly once across the
- * `addressed` decisions' `normativeChanges`: an entry whose `artifactText` is
- * not an added node, or is one already claimed, converts its decision; an
- * added node left unclaimed is reported in `unclaimedNodes`. An `addressed`
- * decision may carry no entries — a deletion-only or prose-only change adds
- * no normative node and has nothing to claim.
+ * Every normative node the reconciliation adds *or removes* must be claimed
+ * exactly once across the `addressed` decisions' `normativeChanges`: an entry
+ * whose `artifactText` is in neither derived set, or names a node already
+ * claimed, converts its decision; a node left unclaimed is reported in
+ * `unclaimedNodes` or `unclaimedRemovals` according to its direction. The
+ * author never asserts which direction an entry claims — deterministic code
+ * decides that from the two derived sets, which keeps the authority split
+ * section 12 states. An `addressed` decision may carry no entries: a
+ * prose-only change touches no normative node and has nothing to claim.
+ * A deletion is not such a change (hazard 17) — a reconciliation that
+ * deletes a node and claims nothing for it fails closed.
  */
 export function validateReconciliation(
   raw: unknown,
@@ -376,9 +437,22 @@ export function validateReconciliation(
   const seen = new Set<number>();
   const decisions: ReconciliationDecision[] = [];
   const conversions: ReconciliationValidation["conversions"] = [];
-  const claimable = new Map<string, number>();
+  // Both maps are keyed by `normalizeNodeText`, and so is every claim looked
+  // up in them — the tolerance is applied to both sides of the comparison or
+  // it is a bug. The reported node keeps the derived text.
+  const claimableAdded = new Map<string, { node: string; count: number }>();
   for (const node of deriveAddedNormativeNodes(ctx.beforeNormativeNodes, ctx.afterNormativeNodes)) {
-    claimable.set(node, (claimable.get(node) ?? 0) + 1);
+    const key = normalizeNodeText(node);
+    const entry = claimableAdded.get(key) ?? { node, count: 0 };
+    entry.count += 1;
+    claimableAdded.set(key, entry);
+  }
+  const claimableRemoved = new Map<string, { node: string; count: number }>();
+  for (const node of deriveRemovedNormativeNodes(ctx.beforeNormativeNodes, ctx.afterNormativeNodes)) {
+    const key = normalizeNodeText(node);
+    const entry = claimableRemoved.get(key) ?? { node, count: 0 };
+    entry.count += 1;
+    claimableRemoved.set(key, entry);
   }
 
   const convert = (decision: ReconciliationDecision, reason: string): void => {
@@ -568,37 +642,74 @@ export function validateReconciliation(
     return refuse(`reconciliation is incomplete: no decision for canonical finding id(s) ${missing.join(", ")}`);
   }
 
-  // Normative accounting. All-or-nothing per decision: a decision is checked
-  // against the still-claimable nodes, and only if every one of its entries
-  // claims a unique added node are they consumed. A converted decision drops
-  // its entries, so its nodes surface as unclaimed rather than silently
-  // claimed by an answer the gate will block anyway.
+  // Normative accounting, in both directions. All-or-nothing per decision: a
+  // decision is checked against the still-claimable nodes, and only if every
+  // one of its entries claims a unique node — added or removed — are they
+  // consumed. A converted decision drops its entries, so its nodes surface as
+  // unclaimed rather than silently claimed by an answer the gate will block
+  // anyway.
   for (const decision of decisions) {
     if (decision.normativeChanges === null || decision.normativeChanges.length === 0) continue;
-    const claims = decision.normativeChanges.map((c) => collapseWhitespace(c.artifactText));
-    const wouldUse = new Map<string, number>();
+    // `key` is what matches; `raw` is what the refusal names, so an operator
+    // reads back the text the author actually sent rather than a normalized
+    // rewrite of it.
+    const claims = decision.normativeChanges.map((c) => ({
+      raw: collapseWhitespace(c.artifactText),
+      key: normalizeNodeText(c.artifactText),
+    }));
+    // One provisional counter per direction, so a claim's direction is
+    // recorded where it was spent. A decision may legitimately claim the same
+    // text twice — a node can appear twice in an artifact — and each of those
+    // claims has to consume a budget that exists.
+    //
+    // A single counter keyed by text would behave identically *today*, and
+    // saying otherwise would overclaim: the two derived sets come from one
+    // count per node, so at most one direction is ever non-zero for a given
+    // text and a shared counter could only ever decrement the non-zero one.
+    // Measured, not assumed — aliasing the two maps was tried and no
+    // assertion in this file failed. The pair is kept because it does not
+    // depend on that invariant holding, and the invariant is a property of
+    // `deriveAddedNormativeNodes`, not of this accounting.
+    const wouldUseAdded = new Map<string, number>();
+    const wouldUseRemoved = new Map<string, number>();
     let failure: string | null = null;
     for (const claim of claims) {
-      const available = (claimable.get(claim) ?? 0) - (wouldUse.get(claim) ?? 0);
-      if (available <= 0) {
-        failure = `normative change ${JSON.stringify(claim)} is not an added node of this reconciliation claimed exactly once`;
+      // Additions are checked first so each claim's direction is decided
+      // once and deterministically. A text cannot be both: the multiset diff
+      // leaves at most one direction non-zero for a given node.
+      const addedLeft =
+        (claimableAdded.get(claim.key)?.count ?? 0) - (wouldUseAdded.get(claim.key) ?? 0);
+      const removedLeft =
+        (claimableRemoved.get(claim.key)?.count ?? 0) - (wouldUseRemoved.get(claim.key) ?? 0);
+      if (addedLeft > 0) {
+        wouldUseAdded.set(claim.key, (wouldUseAdded.get(claim.key) ?? 0) + 1);
+      } else if (removedLeft > 0) {
+        wouldUseRemoved.set(claim.key, (wouldUseRemoved.get(claim.key) ?? 0) + 1);
+      } else {
+        failure = `normative change ${JSON.stringify(claim.raw)} is not an added or removed node of this reconciliation claimed exactly once`;
         break;
       }
-      wouldUse.set(claim, (wouldUse.get(claim) ?? 0) + 1);
     }
     if (failure !== null) {
       convert(decision, failure);
       continue;
     }
-    for (const [claim, count] of wouldUse) {
-      claimable.set(claim, claimable.get(claim)! - count);
+    for (const [key, count] of wouldUseAdded) {
+      claimableAdded.get(key)!.count -= count;
+    }
+    for (const [key, count] of wouldUseRemoved) {
+      claimableRemoved.get(key)!.count -= count;
     }
   }
 
   const unclaimedNodes: string[] = [];
-  for (const [node, count] of claimable) {
+  for (const { node, count } of claimableAdded.values()) {
     for (let i = 0; i < count; i++) unclaimedNodes.push(node);
   }
+  const unclaimedRemovals: string[] = [];
+  for (const { node, count } of claimableRemoved.values()) {
+    for (let i = 0; i < count; i++) unclaimedRemovals.push(node);
+  }
 
-  return { ok: true, value: { decisions, conversions, unclaimedNodes } };
+  return { ok: true, value: { decisions, conversions, unclaimedNodes, unclaimedRemovals } };
 }

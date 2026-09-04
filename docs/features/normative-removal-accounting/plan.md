@@ -1,6 +1,12 @@
 # Normative Removal Accounting Implementation Plan
 
-**Status:** Reconciled
+**Status:** Implemented, with Task 6 at outcome 2. The second live run of
+2026-09-04 blocked the gate on a cause outside this change, the operator took
+the design decision that unblocked it, the remedy shipped with the plan, and a
+third authorized run then completed a chain in which a live author claimed both
+halves of a real replacement and the round passed with `unclaimedRemoved=0`.
+See the closing section, and `real-run-evidence.md` for all three runs, the
+decision, and what remains unproven live.
 
 **Goal:** Make the reconciliation normative delta account for removed nodes as
 well as added ones, so an `addressed` decision can no longer discharge a
@@ -768,6 +774,40 @@ prompt, or the accounting to manufacture outcome 2 after the fact. Live-provider
 compliance is claimed only under outcome 2, and only for what the run actually
 did.
 
+**Recorded 2026-09-04: the second run landed outside all four outcomes, and it
+blocks.** The author claimed both halves of a replacement, which is outcome 2's
+behaviour, and the round was refused anyway, which is outcome 4's consequence —
+but not for outcome 4's reason. Every claim carried the acceptance criterion's
+`- ` list marker while the derived node form has none, so the addition claims
+failed with the removal claim and the run would have blocked before removals
+were accounted for at all. The reword tax this list names as outcome 4's cause
+is not what happened, and the narrower identity-aware rule is not its remedy.
+The evidence, the measurement isolating the cause, and the candidate remedies
+are in `real-run-evidence.md`.
+
+The operator took that decision the same day and chose both candidate remedies
+together: tolerate one leading list marker on both sides of the claim
+comparison, and state the node form in the prompt where `artifactText` is
+requested. Both shipped, each with a break-test, and the retained response is
+now the contract test for them. That closes the gate this paragraph blocked;
+what the run settles and does not settle is unchanged by the remedy, and
+`real-run-evidence.md` records it under its own heading rather than restating
+the run as a success.
+
+**Recorded 2026-09-04: a third authorized run is outcome 2.** The operator
+authorized one more run with a PRD-form design — fifteen `RQ-###` and five
+`NFR-###` requirements instead of an acceptance-criterion list — and it
+completed all eight stages for $1.34097 over 11 dispatches, above the
+$0.30–$1.20 range stated beforehand. Its plan reconciliation answered a
+load-order finding by replacing a normative task and claimed both halves in one
+`addressed` decision, grounded in the approved specification; the round passed
+with 0 conversions and `unclaimedRemoved=0`, and the run delivered all four
+declared artifacts. The replay identifying the three documents by the run's own
+audit hashes, and the counterfactual showing addition-only accounting would
+have converted that decision instead, are in `real-run-evidence.md` and are
+committed as tests. What run 3 did not exercise is stated there too: no marker
+appeared in any claim, and the spec round produced no normative claim at all.
+
 ## Gate
 
 This plan is complete when `deriveRemovedNormativeNodes` and the two-direction
@@ -788,3 +828,173 @@ Outcome 4 — a live run that falsely refused a legitimate replacement — block
 this gate. It is a design decision for the operator, not a defect to work
 around, and no fixture, prompt, or accounting change may be made to clear it
 without that decision.
+
+**Cleared 2026-09-04 by decision, not by workaround.** The second run's refusal
+was outcome 4's consequence for a different cause, the cause was measured and
+brought to the operator with the remedies named and none applied, and the
+operator authorized both. The gate's requirement was the decision, and the
+decision exists; the change it authorized is recorded in the Implementation
+section below and its own break-tests and contract test are part of the
+verification this gate lists.
+
+**And the gate's Task 6 condition is met by outcome 2, not by outcome 1 or 3.**
+The third authorized run completed with a real plan-side replacement claimed in
+both directions and `unclaimedRemoved=0`, replayed from the run's own hashes and
+shown by counterfactual to depend on this change. That is the strongest outcome
+the plan defines, and it is claimed only for what the run exercised — the
+marker tolerance and the spec-side path were not part of it.
+
+## Implementation
+
+**Date:** 2026-09-04. Every task executed in order with its verifications.
+Completion is recorded here in prose rather than as checked-off list items:
+`npm run check:docs` refuses status checkboxes in a plan outside its closed
+allowlist, and this plan is not in it.
+
+**What shipped.** `deriveRemovedNormativeNodes` in `src/reconciliation.ts` as a
+named wrapper over the existing multiset diff, and two-direction claim
+accounting in `validateReconciliation` with `unclaimedRemovals` as its own
+reported field. Both stages gained a removal abort under the same conversion
+guard the addition branch uses, each with its own message and its existing
+abort key, and both reconcile summaries carry `unclaimedRemoved=<n>` on every
+round that proceeds. Both reconciliation prompts state the obligation, asserted
+per prompt. `ARCHITECTURE.md` section 12 and `docs/hazards.md` entry 17 assert
+the implemented behaviour. Both shared harness emitters now claim both halves
+of the replacement they make, deriving the superseded node from the artifact
+under review rather than from a literal, and the eight copies of that payload
+in the two stage test files moved with them.
+
+**Evidence.** Three recorded real responses now carry it, each replayed through
+the seam its stage uses: the reconciliation that owed a claim it never made
+(`plan-reconciliation-web-calculator.json`), the one that made every claim in
+the wrong shape (`spec-reconciliation-web-calculator-list-marker.json`), and
+the one from a completed run that claimed both halves of a real replacement
+and passed its gate (`plan-reconciliation-web-calculator-prd.json`, with the
+counterfactual replay showing addition-only accounting would have refused it).
+The first of them replays in both directions: as returned it reports its superseded 282-character
+theme-toggle task in `unclaimedRemovals` with both additions claimed and
+nothing converted, and the same response with that one claim added validates
+cleanly. Every new guard was observed failing under a targeted mutation and
+restored by editing back — additions-only matching, an always-empty
+`unclaimedRemovals`, each stage's abort condition, and the prompt sentence.
+`npm run typecheck`, `npm run check:docs`, and the free smoke (12/12) all pass.
+The full suite ran in a recursive copy of the working tree placed outside the
+repository, four times as the work grew: 704 tests, 703 passing, 0 failing, 1
+environmental skip against the pre-change baseline of 695/694/0/1; 705/704
+after the code review added the test finding 1 names; 709/708 after the
+list-marker remedy's four tests; and **711 tests, 710 passing, 0 failing, 1
+environmental skip** on the final copy, after run 3's two replays. Every copy's
+`HEAD` was unmoved and its only modifications were this plan's files; the real
+repository was likewise untouched at `90a7ed9` with nineteen expected paths and
+nothing else, so the intermittent `moved`/`base.txt` leak did not reproduce and
+nothing needed repairing. Each copy was deleted afterwards. `ARCHITECTURE.md`
+gained its section 12 sentence between suite runs, so `test/schema.test.ts` —
+the one test that reads that file — was also run against the edited copy on its
+own: 8 of 8.
+
+**Deviations.** Three, all disclosed rather than absorbed.
+
+- The committed fixture carried the response but not the governing
+  specification, and `validateReconciliation` checks every claim's grounding
+  against it — so Steps 2c and 2d as written would have converted both
+  recorded decisions on grounding instead of exercising the accounting. The
+  `spec.md` that `src/plan-stage.ts` passed as `governingText` in that same run
+  was extracted verbatim from the retained target into the fixture as a
+  `specification` field, with its own provenance line. That keeps the replay
+  in-repository, per the rule that load-bearing evidence is copied in
+  immediately.
+- Task 1 Step 1 said to leave the pre-existing addition-only assertions exactly
+  as they are. The assertions are unchanged, but the comment above one of them
+  claimed hazard 17 was out of scope and the test's name said removal "stays
+  addition-only" — both false once the sibling function landed. The wording
+  moved; the assertions did not.
+- `docs/hazards.md` entry 17's mechanism and consequence paragraphs described
+  the gap in the present tense. Task 5 Step 3 said to keep them, and they are
+  kept, but a `current`-tier document cannot assert a live defect that no
+  longer exists, so those paragraphs now read as what the gap was.
+
+**Reviewed.** `docs/features/normative-removal-accounting/2026-09-04-code-review.md`
+— two findings, both reconciled before this status changed: a missing test for
+the repeated-removal-claim case the accounting was restructured for (added, and
+the restructuring's stated rationale corrected to what breaking it actually
+showed), and a fidelity sentence in the recorded fixture that stopped being
+true when the governing specification joined it (rescoped). The list-marker
+remedy postdates that pass, so it carries its own scoped second pass in the
+same file — no findings, with the checks it ran, the collision reachability it
+traced at the parsers, and what it withheld. Both passes are the same reviewer
+in the same session, which the second one states outright rather than implying
+independence it cannot prove (hazard 14); the break-tests are what carries
+them. `ARCHITECTURE.md` section 12 gained a sentence stating the comparison
+tolerance and that the prompts state each node form, so the binding document
+describes the matching rule the code now applies rather than leaving it
+implementation detail.
+
+**Task 6, three runs, recorded in
+`docs/features/normative-removal-accounting/real-run-evidence.md`.** The first,
+against the driver's clamp design, completed all eight stages for $0.24558 over
+11 dispatches with both panels clean — outcome 3, inconclusive, not repeated.
+The second, which the operator authorized with the 18-criterion web-calculator
+design, blocked at `spec_review` for $0.39572 over 5 dispatches, and it is why
+this plan's Status waited on an operator decision. The third, with a PRD-form
+design the operator supplied after that decision, completed all eight stages
+for $1.34097 over 11 dispatches and is outcome 2 — the accepted removal path,
+live, on a run that finished.
+
+That run is the first live evidence that the author-side obligation is
+answerable: asked to claim both halves of a replacement, the author claimed the
+superseded AC-020 text and its replacement, each grounded in the design, on its
+first attempt with no retry. Every claim was still refused, because each
+`artifactText` carried the artifact's `- ` list marker while
+`specNormativeNodes` renders a criterion as `<id>: <text>` without one.
+Replaying the committed response with the marker stripped and nothing else
+changed gives 0 conversions, both unclaimed sets empty, and all three decisions
+`addressed` — so the marker is the whole cause. The failure is
+direction-independent: finding 1's claim was a pure addition and was refused
+identically, so this run would have blocked before removals were accounted for
+at all. The response, the specification revision it was given, the revision it
+returned, and the governing design are committed at
+`test/fixtures/recorded/spec-reconciliation-web-calculator-list-marker.json`
+with provenance.
+
+**Nothing was done to clear the gate before the decision, and the decision was
+the operator's.** No guard was softened, no prompt relaxed, and no fixture
+edited while it was open. The candidates were put to the operator with the
+narrower identity-aware rule ruled out by measurement — it would have left
+finding 1's addition claim failing exactly as it did — and the operator chose
+both remaining ones together.
+
+**The remedy, both halves, each break-tested.** `normalizeNodeText` in
+`src/reconciliation.ts` collapses whitespace and then strips one leading list
+marker, and it is applied to both sides of every claim comparison — the derived
+node and the claimed `artifactText` — so the tolerance cannot exist on one side
+only, which is this repository's recurring defect shape. The refusal message
+still names the author's raw text, so an operator reading a genuine mismatch
+sees what was sent, not a normalized form. In `src/prompts.ts`,
+`reconciliationDecisionContract` takes a `nodeForm` argument and each caller
+supplies its own sentence: the spec prompt states that a criterion's node text
+is `AC-001: <criterion text>` and a declared artifact's is the bare path, the
+plan prompt that a task's node text is the task itself and a coverage entry's
+is `AC-001 -> <artifact path>`, and both end with the marker instruction. That
+is hazard 3's prescription applied to the field the run actually failed on: the
+prompt asked for "the exact text of the added or removed node" and never said
+what a node's text is.
+
+Reverting `normalizeNodeText` to plain `collapseWhitespace` failed exactly
+three tests including the recorded replay; reducing the prompt sentence block
+to the bare `nodeForm` argument failed the whole-file scan and both per-prompt
+assertions. Both were restored by editing back. The recorded response is the
+contract test for the pair — `test/reconciliation.test.ts` drives the blocked
+run's own decisions through the same seam and asserts they validate once the
+marker is tolerated — so neither half can be removed without a real recorded
+failure appearing, and the fixture's provenance names that test as its
+consumer. Both halves were needed: the tolerance alone would leave an author
+who copies the line it is looking at succeeding by accident rather than by
+instruction, and the prompt alone would leave a correct-looking answer refused
+whenever an author does copy it. `docs/hazards.md` entry 3 carries the incident
+and its cost as measured evidence.
+
+**Not built, deliberately.** The narrower identity-aware rule described in this
+plan's Assumptions — treating a removal whose stable criterion ID reappears in
+the after-set as already covered by the addition claim — stays deferred. Its
+trigger is unchanged: a live run in which an author fails the literal rule on a
+legitimate reword. Nothing observed so far is that run.

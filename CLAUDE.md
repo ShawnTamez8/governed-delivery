@@ -135,7 +135,10 @@ Run from the repository root. These commands live here and nowhere else.
   scratch target instead.
 - `node .claude/skills/run-buildworks/driver.mjs smoke` — builds that scratch
   target and drives the CLI against it, spending nothing. `paid --yes` drives
-  the full chain against the real `claude` binary and reports what it cost.
+  the full chain against the real `claude` binary and reports what it cost:
+  budget $1.00–$2.00, since the committed design is the 20-requirement
+  `web-calculator-design.md` beside the driver rather than the trivial clamp
+  design that preceded it. Change what a run exercises by editing that file.
   See `.claude/skills/run-buildworks/SKILL.md`.
 - `node scripts/sign-approval.mjs keygen|sign` — the operator's signing tool.
   It holds the only private key path in the repository and the system never
