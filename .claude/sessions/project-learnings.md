@@ -87,7 +87,13 @@ break-and-restore proofs.
   `docs/proposals/spec-kit-harness-review.md`; the 2026-09-03 diagnosis and
   its reconciliation are in
   `.claude/sessions/2026-09-03-debug-plan-coverage-gate-paraphrase-mismatch.md`.
-  Nothing adopted before the step-9 stop.
+  Nothing adopted before the step-9 stop. **A reproduction is on disk:** the
+  scratch target at *%LOCALAPPDATA%\Temp\bw-run-skill\1788477394347\target*
+  carries a calculator design whose sixteen markdown-formatted acceptance
+  criteria trigger the block on every attempt; its
+  *docs/features/calculator/design.md* is the input to recreate if that
+  target has been cleaned up. Cheapest first move is the reverse-direction
+  check — no schema change, and it closes the invented-criterion hole.
 - **Hazard 17 is unguarded by design, not by oversight.** The normative delta
   derives additions only, so a reconciliation can discharge a finding by
   deleting the acceptance criterion — before the approval hash is taken.
@@ -157,6 +163,13 @@ that corrected three of its own claims, are in
   also carried the original decision ("the gate was right; the prompt was not
   softened to pass") until `f094c0f` trimmed it. Both are the subject of
   `docs/proposals/durable-knowledge-tiers.md`.
+- **One observation, not a rate:** in the `clamp` run that completed, the
+  author's self-critique returned four critique entries and both seated
+  reviewers returned zero findings — every edit in that run came from the
+  author critiquing its own draft, and the reconciliation dispatch confirmed
+  an empty round (`specHashBefore` equal to `specHashAfter`). Worth a second
+  data point before concluding anything about what the panel contributes on
+  a small, tightly-scoped design.
 - **The lesson for this file specifically:** a decision that lives only in the
   narrative tier dies at the next compaction. Durable content belongs in
   `docs/hazards.md` or a proposal; this file carries the resume point and
