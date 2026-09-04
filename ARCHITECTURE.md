@@ -945,7 +945,7 @@ block.
 
 ## 22. Known hazards
 
-`docs/hazards.md` states sixteen failure modes this kind of system is subject
+`docs/hazards.md` states seventeen failure modes this kind of system is subject
 to and what each requires. They are requirements, not an appendix: model output
 in shapes the schema refuses, discarded output being undiagnosable, constrained
 fields whose constraint the prompt never states, fixtures and code agreeing
@@ -955,8 +955,9 @@ interpreters, exact-match model acceptance against moving aliases, a default
 install that cannot complete a run, configuration divergence between targets,
 specifications inventing obligations, independence that cannot be proven,
 proposal subprocesses that are requested rather than enforced to be read-only,
-and a remediation loop aimed at the wrong artifact that cannot repair an
-upstream omission.
+a remediation loop aimed at the wrong artifact that cannot repair an upstream
+omission, and a reconciliation that answers a finding by deleting the
+obligation.
 
 When a new failure mode is found, add it there rather than here. Two lists drift
 apart, and the one that drifts is the one people stop trusting.

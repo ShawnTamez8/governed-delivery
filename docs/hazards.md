@@ -202,3 +202,38 @@ words are in the governing input, in that order — never that they logically
 support what was added or rejected; neither the grounding match nor the
 mechanical artifact gates are evidence of semantic correctness, and no panel
 independently confirms either.
+
+## 17. A reconciliation that answers a finding by deleting the obligation
+
+The normative-delta check derives additions only. `deriveAddedNormativeNodes`
+counts the after-set up and the before-set down and emits the positive
+remainder, so a node present before reconciliation and absent after produces
+nothing at all: no decision has to claim it, no excerpt has to ground it, and
+the unclaimed-node block never fires. This is the design's shape rather than a
+divergence from it — `ARCHITECTURE.md` section 12 specifies that "every added
+node ... must be claimed exactly once", and says nothing about a removed one.
+
+The consequence is that an `addressed` decision can discharge a reviewer's
+finding by deleting the acceptance criterion the finding was about. Every check
+is satisfied: the canonical finding carries exactly one typed decision, nothing
+was added so nothing requires grounding, the revised document still passes its
+mechanical gates, and the artifact hash changes exactly as a legitimate revision
+would. Because spec reconciliation runs before the approval gate, the operator
+then signs a specification with the obligation already removed, and the hash
+binding that protects every later stage binds the weakened text. Deletion is the
+cheapest way to make a finding go away, and it is the one revision the delta
+check cannot see.
+
+This entry is a code-path gap found by reading, not a filed incident. Nothing
+here describes a run that did this, and the entry says so rather than implying
+evidence that does not exist. What makes it worth recording before it is
+observed is that it would be invisible if it happened: the mechanism that would
+catch it does not exist, so no run record could report it, and absence of a
+report is therefore not evidence of absence.
+
+Require the normative delta to account for removals as well as additions. A node
+present before reconciliation and absent after must be claimed by exactly one
+decision whose disposition permits removal, grounded in the governing input like
+any addition. Where an obligation really is wrong, the routes that already exist
+are the honest answers — a grounded rejection, or an upstream disposition
+carrying a proposal candidate. Silent deletion is not one of them.

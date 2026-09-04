@@ -79,10 +79,39 @@ break-and-restore proofs.
   network containment for verification commands is unbuilt
   (`docs/proposals/verification-containment.md`). `.governance` location
   configuration is deferred.
+- **The plan coverage gate is unrepaired.** `coverageMeetsCriteria` compares
+  model-restated prose by near-exact match and blocks all criteria
+  identically whether one was weakened or merely reformatted; the reverse
+  direction (a coverage line naming a criterion the spec never contained) is
+  unchecked. Three dispositions are already recorded in
+  `docs/proposals/spec-kit-harness-review.md`; the 2026-09-03 diagnosis and
+  its reconciliation are in
+  `.claude/sessions/2026-09-03-debug-plan-coverage-gate-paraphrase-mismatch.md`.
+  Nothing adopted before the step-9 stop.
+- **Hazard 17 is unguarded by design, not by oversight.** The normative delta
+  derives additions only, so a reconciliation can discharge a finding by
+  deleting the acceptance criterion — before the approval hash is taken.
+  `ARCHITECTURE.md` section 12 specifies the same asymmetry, so closing it is
+  a design change rather than a patch.
+- **Durable knowledge leaks out of the repository.** Compaction has been
+  promoting lessons into machine-local auto memory, and the Diagnostics
+  quick-reference below points at a store no second machine has. Filed as
+  `docs/proposals/durable-knowledge-tiers.md`.
 
-**Next up:** nothing is in flight. The operator decides what step 9's
-reached milestone means: stop, push, or an explicit decision to build past
-the stop. Resuming any work here starts from `git log -1` and this block.
+- **Tasks-as-state shipped with three unremediated review findings**, all
+  low, none blocking, none fixed in the commit that landed it. (1) The two
+  checkbox guards disagree: `src/plan-doc.ts` refuses a bare `[ ]` with no
+  bullet, `scripts/doc-check.mjs` requires the bullet and lets it through —
+  measured 2026-09-03, and the same tolerance-at-one-boundary class listed
+  below. (2) Both checker allowlists compare paths case-sensitively while
+  detection folds case, so a grandfathered record renamed `TASKS.md` is
+  flagged — on Windows, where this repository runs. (3) `CLAUDE.md` names
+  the three grandfathered task records but not the eleven checklist plans
+  the checker also exempts; `.claude/skills/doc-check/SKILL.md` names both.
+
+**Next up:** the operator decides what step 9's reached milestone means:
+stop, push, or an explicit decision to build past the stop. Resuming any
+work starts from `git log -1`, `git status`, and this block.
 
 ## Diagnostics quick-reference
 
@@ -103,6 +132,35 @@ One line memory does not yet carry:
   each caused one here.
 
 ## Session records
+
+### Coverage-gate investigation, hazard 17, and the knowledge-tier gap (2026-09-03)
+
+No source changed. Driven runs against scratch targets: two `clamp` runs
+(one stopped at the approval gate, $0.11084; one full chain to
+`run=completed`, 11 dispatches, $0.26333 — a second independent end-to-end
+run after the milestone), then two `calculator` runs that both blocked
+($0.21660 at `spec_review` on a malformed reconciliation envelope;
+$0.24683 at `plan.coverage.incomplete` with all 16 criteria reported
+uncovered). $0.83080 across the session.
+
+The second block is the one that mattered. Diagnosis, and the reconciliation
+that corrected three of its own claims, are in
+`.claude/sessions/2026-09-03-debug-plan-coverage-gate-paraphrase-mismatch.md`
+— read that rather than restating it here. What belongs in the resume point:
+
+- **Hazard 17 was raised out of it** and `ARCHITECTURE.md` section 22 renumbered
+  to seventeen. Read the entry before touching reconciliation.
+- **The repository already held the answer and it was not found.**
+  `docs/proposals/spec-kit-harness-review.md` carried the same failure, three
+  dispositions, and a defect the investigation never found — referenced by
+  nothing but the backlog README. A pruned half-sentence in this file had
+  also carried the original decision ("the gate was right; the prompt was not
+  softened to pass") until `f094c0f` trimmed it. Both are the subject of
+  `docs/proposals/durable-knowledge-tiers.md`.
+- **The lesson for this file specifically:** a decision that lives only in the
+  narrative tier dies at the next compaction. Durable content belongs in
+  `docs/hazards.md` or a proposal; this file carries the resume point and
+  points outward.
 
 ### Step 8: delivery check, Tasks 1-6, the standalone review, and the paid milestone run (2026-09-02 to 2026-09-03)
 
