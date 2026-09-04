@@ -13,11 +13,10 @@ milestone — one complete run with queryable cost — is reached.** Step 8
 review reconciled); the operator-authorized paid run completed 2026-09-03:
 11 dispatches, `claude-sonnet-5`, $0.25019, all eight stages passed,
 `delivery_check=passed`, `run=completed`, record matching the signed scope,
-chain valid. `master` is the only local branch, ahead of `origin/master` by
-all step-8 work: `1890503`…`36a726d` (Tasks 1-6 + review remediation),
-`cf19f57` (evidence gate), `8646d75` (paid-run evidence), `d033595` (doc
-fix). Nothing pushed — the operator has not asked. Read the head with
-`git log -1` rather than trusting a commit id written here.
+chain valid. `master` is the only local branch and it is level with
+`origin/master`: everything through the stable-criterion-ids commit is
+pushed, verified 2026-09-04. Read the head with `git log -1` rather than
+trusting a commit id written here.
 
 **Step 8's shipped surface** is summarized in `ARCHITECTURE.md` and the
 reconciled review record (`docs/features/delivery-check/2026-09-03-step8-code-review.md`):
@@ -56,9 +55,6 @@ blocks the run.
   `test-suite-leaks-into-real-repo`). Root cause in
   `test/verification-stage.test.ts`'s worktree setup is not traced. Run the
   full suite from a disposable checkout when tree purity matters.
-- `src/policy.ts:47` names `assertStaffable` in a doc comment; the function
-  is `staffingShortfall`. One-word fix whenever that file is next edited for
-  its own reasons.
 - `docs/features/step6-trust-boundary/plan.md` names
   `.claude/sessions/2026-08-31-debug-implementer-mutates-worktree.md` in four
   places, including "committed as the evidence record"; that file was never
@@ -73,8 +69,8 @@ blocks the run.
   network containment for verification commands is unbuilt
   (`docs/proposals/verification-containment.md`). `.governance` location
   configuration is deferred.
-- **The stable-criterion-ids feature is complete in the working tree,
-  live-validated, and uncommitted.** Spec-minted canonical IDs, the exact
+- **The stable-criterion-ids feature is shipped and pushed** (`9a12cba`,
+  2026-09-04), live-validated. Spec-minted canonical IDs, the exact
   bidirectional Coverage relation at all three plan checkpoints, and the
   fresh-run repair for old parse-boundary runs — plus this session's fix:
   the coverage split in `src/plan-doc.ts` is the *first* `->` (the left side
@@ -103,21 +99,39 @@ blocks the run.
   quick-reference below points at a store no second machine has. Filed as
   `docs/proposals/durable-knowledge-tiers.md`.
 
-- **Tasks-as-state shipped with three unremediated review findings**, all
-  low, none blocking, none fixed in the commit that landed it. (1) The two
-  checkbox guards disagree: `src/plan-doc.ts` refuses a bare `[ ]` with no
-  bullet, `scripts/doc-check.mjs` requires the bullet and lets it through —
-  measured 2026-09-03, and the same tolerance-at-one-boundary class listed
-  below. (2) Both checker allowlists compare paths case-sensitively while
-  detection folds case, so a grandfathered record renamed `TASKS.md` is
-  flagged — on Windows, where this repository runs. (3) `CLAUDE.md` names
-  the three grandfathered task records but not the eleven checklist plans
-  the checker also exempts; `.claude/skills/doc-check/SKILL.md` names both.
+- **`scripts/doc-check.mjs` has no test at all.** The three tasks-as-state
+  findings it carried were fixed 2026-09-04 and each fix was proved by
+  break-and-restore against the live checker (a bullet-less `[ ]` in a scratch
+  plan; `tasks.md` and `plan.md` renamed to uppercase in
+  `docs/features/verification-stage/`), but nothing committed re-runs those
+  probes. A committed test would have to create Markdown inside the real
+  `docs/` tree, which is the leak class already listed above — the reason
+  there is no test file, not an oversight to fix casually.
+- One cosmetic defect left in place deliberately: the `taskArtifacts`
+  checkbox regex opens `^\s*`, and `\s` matches the newline under `m`, so the
+  reported line is one short of the offending line. Pre-existing, unrelated to
+  the guards being aligned, and touching it was out of the approved scope.
 
-**Next up:** operator decisions — commit the stable-criterion-ids working tree
-(feature, coverage-split fix, plan `Implemented`, relocated debug session
-records), and push when ready. Resuming any work starts from `git log -1`,
-`git status`, and this block.
+**Next up:** the post-milestone flow decision — the operator chose 2026-09-04
+to clear the known small findings first rather than let item 4 of
+`docs/proposals/post-milestone-target-flow.md` (code-review specialist
+selection) be answered by drift. That decision is still open, and it lifts the
+step-9 stop when taken; see the framing below. Resuming any work starts from
+`git log -1`, `git status`, and this block.
+
+**What item 4 would actually cost, established 2026-09-04 without building
+anything.** Its machinery mostly exists and is aimed elsewhere: `src/select.ts`
+already has `selectReviewers`, `validatePanelRequest`, and
+`staffingShortfall`; `computeRisk` runs at intake; the author proposes lenses
+while deterministic code picks identities; role separation is the
+`role === "reviewer"` filter; section 9 already permits raising the maximum to
+five once specialists are registered. Two things are genuinely missing. The
+ranked fill that decides unrequested seats sorts by "has a specialty" then
+alphabetically by agent id — approved scope, changed paths, and technology
+play no part in it, on either of the two panels running today. And the
+`code_review` stage item 4 names is one of section 5's six deferred stages, so
+item 4 alone would be selection logic with nothing to seat (hard rule 4);
+delivering it as written pulls in proposal items 6-8 as well.
 
 ## Diagnostics quick-reference
 

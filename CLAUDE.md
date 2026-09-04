@@ -63,7 +63,10 @@ exceptions are the exact historical bootstrap records at
 `docs/features/verification-stage/tasks.md`. Keep them as history, not
 templates. A plan's `## Tasks` section uses plain list items, never Markdown
 status checkboxes; execution and completion status belong in run-state database
-rows. `npm run check:docs` enforces both rules.
+rows. `npm run check:docs` enforces both rules — and exempts, by exact path,
+those three task records plus the eleven bootstrap `plan.md` files that already
+carried checkboxes when the rule landed. Both allowlists are closed: a new
+document never joins either one.
 
 ## Layout
 

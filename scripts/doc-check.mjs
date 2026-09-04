@@ -75,25 +75,36 @@ const HISTORICAL_DIRS = ["docs/features", ".claude/sessions"];
 // artifacts. These files and checklist plans predate that enforcement and are
 // retained as historical evidence; the allowlists are exact so a new artifact
 // cannot inherit the exception merely by living in the historical tier.
-const HISTORICAL_TASK_DOCUMENTS = new Set([
-  "docs/features/delivery-check/tasks.md",
-  "docs/features/step6-trust-boundary/tasks.md",
-  "docs/features/verification-stage/tasks.md",
-]);
+//
+// Both sets are case-folded on construction and looked up case-folded, because
+// `checkTaskArtifacts` detects a task document by its case-folded basename. A
+// tolerance applied at one boundary and not its sibling is a defect: without
+// the fold, `TASKS.md` would be detected as a task document and then miss its
+// own allowlist entry — and this repository runs on a filesystem where that
+// rename is invisible.
+const HISTORICAL_TASK_DOCUMENTS = new Set(
+  [
+    "docs/features/delivery-check/tasks.md",
+    "docs/features/step6-trust-boundary/tasks.md",
+    "docs/features/verification-stage/tasks.md",
+  ].map((p) => p.toLowerCase())
+);
 
-const HISTORICAL_CHECKLIST_PLANS = new Set([
-  "docs/features/approval-gate-hardening/plan.md",
-  "docs/features/approval-gate/plan.md",
-  "docs/features/delivery-check/plan.md",
-  "docs/features/harness-adapter/plan.md",
-  "docs/features/implementation-stage/plan.md",
-  "docs/features/plan-stage/plan.md",
-  "docs/features/run-store/plan.md",
-  "docs/features/spec-stage/plan.md",
-  "docs/features/step5b-upstream-findings/plan.md",
-  "docs/features/step6-trust-boundary/plan.md",
-  "docs/features/verification-stage/plan.md",
-]);
+const HISTORICAL_CHECKLIST_PLANS = new Set(
+  [
+    "docs/features/approval-gate-hardening/plan.md",
+    "docs/features/approval-gate/plan.md",
+    "docs/features/delivery-check/plan.md",
+    "docs/features/harness-adapter/plan.md",
+    "docs/features/implementation-stage/plan.md",
+    "docs/features/plan-stage/plan.md",
+    "docs/features/run-store/plan.md",
+    "docs/features/spec-stage/plan.md",
+    "docs/features/step5b-upstream-findings/plan.md",
+    "docs/features/step6-trust-boundary/plan.md",
+    "docs/features/verification-stage/plan.md",
+  ].map((p) => p.toLowerCase())
+);
 
 function tierOf(rel) {
   const p = rel.split("\\").join("/");
@@ -557,8 +568,9 @@ function checkHazards() {
 function checkTaskArtifacts() {
   for (const file of markdownFiles("docs")) {
     const normalized = file.split("\\").join("/");
-    const basename = normalized.split("/").at(-1)?.toLowerCase();
-    if (basename === "tasks.md" && !HISTORICAL_TASK_DOCUMENTS.has(normalized)) {
+    const folded = normalized.toLowerCase();
+    const basename = folded.split("/").at(-1);
+    if (basename === "tasks.md" && !HISTORICAL_TASK_DOCUMENTS.has(folded)) {
       err(
         "taskArtifacts",
         file,
@@ -566,9 +578,13 @@ function checkTaskArtifacts() {
         "new tasks.md artifacts are prohibited; tasks and their status belong in run-state database rows"
       );
     }
-    if (basename !== "plan.md" || HISTORICAL_CHECKLIST_PLANS.has(normalized)) continue;
+    if (basename !== "plan.md" || HISTORICAL_CHECKLIST_PLANS.has(folded)) continue;
     const text = read(file);
-    const checkbox = /^\s*[-*+]\s+\[[ xX]\](?:\s|$)/m.exec(text);
+    // The bullet is optional, matching `validatePlanDoc`'s guard in
+    // `src/plan-doc.ts`. Requiring it here let a bare `[ ] Task 1` through the
+    // committed-document check while the stage that writes plans refused the
+    // same line — two spellings of one rule, enforced at only one end.
+    const checkbox = /^\s*(?:[-*+]\s+)?\[[ xX]\](?:\s|$)/m.exec(text);
     if (checkbox) {
       err(
         "taskArtifacts",

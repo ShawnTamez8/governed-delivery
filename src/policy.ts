@@ -44,7 +44,7 @@ export const PLAN_REVIEW_ROUNDS = 1;
  *
  * `PANEL_SIZE_MAX` must lie within [`PANEL_SIZE_FLOOR`, `PANEL_SIZE_CEILING`].
  * Raising it is an operator action that requires registering more specialists,
- * and `assertStaffable` refuses at configuration time when they are absent —
+ * and `staffingShortfall` refuses at configuration time when they are absent —
  * before a run row exists and before anything has been spent.
  */
 export const PANEL_SIZE_FLOOR = 2;
