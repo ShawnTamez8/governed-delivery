@@ -30,7 +30,7 @@ change_kind: feature
 
 ## Acceptance criteria
 
-- the thing works
+- AC-001: the thing works
 `;
 
 const REVISED_SPEC = BASE_SPEC.replace("the thing works", "the thing works REVISED-spec");
@@ -62,7 +62,7 @@ change_kind: feature
 
 ## Acceptance criteria
 
-- the thing works
+- AC-001: the thing works
 `;
 
 function emit(agentResult) {
@@ -112,13 +112,13 @@ function reconcile() {
     findingId: id,
     disposition: "addressed",
     rationale: "fixture addressed the finding",
-    changedLocations: ["## Acceptance criteria"],
+    changedLocations: ["AC-001"],
     normativeChanges:
       revising && index === 0
         ? [
             {
-              artifactLocation: "## Acceptance criteria",
-              artifactText: "the thing works REVISED-spec",
+              artifactLocation: "AC-001",
+              artifactText: "AC-001: the thing works REVISED-spec",
               grounding: { source: "design", location: "# design", excerpt: "design" },
             },
           ]
@@ -150,7 +150,7 @@ if (stdin.includes("self-critique")) {
     proposedContentChanges: {
       selfCritique: {
         critique: ["the acceptance criterion does not say how it is observed"],
-        artifact: authoredSpec().replace("- the thing works", "- the thing works SELFCRITIQUED"),
+        artifact: authoredSpec().replace("- AC-001: the thing works", "- AC-001: the thing works SELFCRITIQUED"),
         panelRequest: { size: 2, specialties: ["security"] },
       },
     },
@@ -161,7 +161,7 @@ if (stdin.includes("self-critique")) {
     ? []
     : [
         {
-          location: "## Acceptance criteria",
+          location: "AC-001",
           intentKey: "missing-traceability",
           severity: "high",
           classification: "current_artifact",

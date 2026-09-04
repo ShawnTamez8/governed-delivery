@@ -43,9 +43,9 @@ change_kind: feature
 
 ## Acceptance criteria
 
-- the thing works
-- it is observable
-- it stays working
+- AC-001: the thing works
+- AC-002: it is observable
+- AC-003: it stays working
 `;
 
 const SCOPE = ["src/a1.ts", "test/a1.test.ts"];
@@ -228,9 +228,9 @@ plan_for: ${specHash}
 
 ## Coverage
 
-- the thing works -> src/a1.ts
-- it is observable -> not_applicable: observed at runtime, not asserted / checked in the smoke run's recorded output
-- it stays working -> test/a1.test.ts
+- AC-001 -> src/a1.ts
+- AC-002 -> not_applicable: observed at runtime, not asserted / checked in the smoke run's recorded output
+- AC-003 -> test/a1.test.ts
 `;
     mkdirSync(dirname(planPath), { recursive: true });
     writeFileSync(planPath, plan);

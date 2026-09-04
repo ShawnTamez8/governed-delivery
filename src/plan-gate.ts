@@ -1,4 +1,5 @@
 import type { PlanDoc } from "./plan-doc.ts";
+import type { AcceptanceCriterion } from "./spec-doc.ts";
 import type { FindingDecisionRow } from "./store.ts";
 
 /** Every disposition that blocks the run (section 12). */
@@ -66,12 +67,13 @@ export function coverageFitsScope(
     // is preferable to a fabricated test. There is nothing to be outside the
     // scope, so it can never be unkeepable.
     .filter((entry) => entry.artifact !== null && !signed.has(entry.artifact))
-    .map((entry) => entry.criterion);
+    .map((entry) => entry.criterionId);
   return unkeepable.length === 0 ? { ok: true } : { ok: false, unkeepable };
 }
 
 /**
- * Every acceptance criterion has a coverage line.
+ * Every approved acceptance-criterion ID has exactly one coverage line, and
+ * every coverage line names an approved ID.
  *
  * `coverageFitsScope` answers "may the plan promise this artifact". It does
  * not answer "did the plan promise anything for this criterion at all" — a
@@ -79,19 +81,34 @@ export function coverageFitsScope(
  * nothing about the other four. The author prompt states one line per
  * acceptance criterion; this is the gate that holds it to that.
  *
- * The comparison normalizes case and collapses whitespace, unlike
- * `coverageFitsScope`'s exact-string test. The difference is deliberate: a
- * scope entry is a path the operator signed, so its spelling is load-bearing,
- * while a criterion is prose restated by a model and nobody signs it. Holding
- * restated prose to byte equality would refuse correct plans over a double
- * space.
+ * IDs replace restated prose at this boundary. Surrounding field whitespace is
+ * trimmed, then identity is exact: no case-folding, markdown removal, or
+ * semantic comparison can turn one approved obligation into another.
  */
 export function coverageMeetsCriteria(
   doc: PlanDoc,
-  acceptanceCriteria: string[]
-): { ok: true } | { ok: false; uncovered: string[] } {
-  const normalize = (s: string): string => s.trim().replace(/\s+/g, " ").toLowerCase();
-  const covered = new Set(doc.coverage.map((entry) => normalize(entry.criterion)));
-  const uncovered = acceptanceCriteria.filter((c) => !covered.has(normalize(c)));
-  return uncovered.length === 0 ? { ok: true } : { ok: false, uncovered };
+  acceptanceCriteria: AcceptanceCriterion[]
+): { ok: true } | { ok: false; missing: string[]; unknown: string[]; duplicate: string[] } {
+  const specIds = acceptanceCriteria.map((criterion) => criterion.id.trim());
+  const approved = new Set(specIds);
+  const counts = new Map<string, number>();
+  const unknown: string[] = [];
+  const duplicate: string[] = [];
+  const seenUnknown = new Set<string>();
+
+  for (const entry of doc.coverage) {
+    const id = entry.criterionId.trim();
+    const count = (counts.get(id) ?? 0) + 1;
+    counts.set(id, count);
+    if (count === 2) duplicate.push(id);
+    if (!approved.has(id) && !seenUnknown.has(id)) {
+      seenUnknown.add(id);
+      unknown.push(id);
+    }
+  }
+
+  const missing = specIds.filter((id) => !counts.has(id));
+  return missing.length === 0 && unknown.length === 0 && duplicate.length === 0
+    ? { ok: true }
+    : { ok: false, missing, unknown, duplicate };
 }

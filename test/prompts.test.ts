@@ -20,6 +20,8 @@ import { PLAN_AUTHOR } from "../src/agents/plan-author.ts";
 import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
 import { SPEC_REVIEWER_TRACEABILITY } from "../src/agents/spec-reviewer-traceability.ts";
 import { validatePanelRequest } from "../src/select.ts";
+import { validateSpecDoc } from "../src/spec-doc.ts";
+import { validatePlanDoc } from "../src/plan-doc.ts";
 
 // Hazard 3: every constrained field the prompts request must state its
 // constraint in the prompt source. This test reads the file, never the
@@ -53,6 +55,8 @@ const CONSTRAINT_STRINGS = [
   "defect_fix",
   "## Declared artifacts",
   "## Acceptance criteria",
+  "AC-(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})",
+  "never reuse an ID for a different criterion",
   "the run itself writes",
   "Never declare a tasks.md file",
   "low",
@@ -67,6 +71,8 @@ const CONSTRAINT_STRINGS = [
   "## Tasks",
   "Checkbox prefixes such as",
   "## Coverage",
+  "Copy each canonical AC ID",
+  "do not copy or paraphrase criterion prose",
   "not_applicable",
   "proposedContentChanges.plan",
   // The patch rules the implementation prompt states.
@@ -120,6 +126,8 @@ const CONSTRAINT_STRINGS = [
   "upstream:design:",
   "upstream:specification:",
   "never require or invent a heading",
+  "use that criterion's AC ID as the location",
+  "use that entry's AC ID as the location",
   // The reconciliation contract's constrained fields, conditional where
   // used and forbidden elsewhere. Impact is derived, never model output, so
   // the sentence forbidding it is pinned too.
@@ -137,6 +145,7 @@ const CONSTRAINT_STRINGS = [
   "does not authorize you to add an obligation",
   "Findings to reconcile",
   "none were reported this round",
+  "cite its AC ID",
   // The conditional-field prohibitions: the validator refuses a field on
   // every disposition that does not list it, so the prompt must state the
   // allowed/forbidden matrix, not only what each disposition requires.
@@ -160,6 +169,8 @@ test("the generated author prompt states the schema constraints", () => {
     "the run itself writes",
     "Never declare a tasks.md file",
     "feature, defect_fix",
+    "AC-001: <criterion text>",
+    "beginning at AC-001 and increasing monotonically",
     "No git operations",
     "Output the JSON object",
   ]) {
@@ -181,6 +192,7 @@ test("the generated spec reviewer prompt states the finding constraints and name
     "An empty findings array is a valid result",
     "current_artifact",
     "upstream:design:",
+    "use that criterion's AC ID as the location",
     "never require or invent a heading",
   ]) {
     assert.ok(prompt.includes(constraint), `reviewer prompt missing: ${constraint}`);
@@ -203,6 +215,8 @@ test("the generated plan author prompt states the schema, the hash, and the scop
     "Checkbox prefixes such as",
     "## Coverage",
     "not_applicable requires both a rationale and an alternative verification",
+    "Copy each canonical AC ID",
+    "do not copy or paraphrase criterion prose",
     "proposedContentChanges",
     "No git operations",
     "Output the JSON object",
@@ -215,6 +229,35 @@ test("the generated plan author prompt states the schema, the hash, and the scop
   // The signed scope is stated as the only paths the plan may promise.
   assert.ok(prompt.includes("- src/thing.ts"));
   assert.ok(prompt.includes("- test/thing.test.ts"));
+});
+
+test("the criterion examples advertised by emitting prompts validate against the receiving parsers", () => {
+  const spec = validateSpecDoc(`feature: demo
+change_kind: feature
+
+## Declared artifacts
+
+- src/a.ts
+
+## Acceptance criteria
+
+- AC-001: criterion text
+`);
+  assert.equal(spec.ok, true, spec.ok ? "" : spec.reason);
+
+  const plan = validatePlanDoc(`feature: demo
+plan_for: ${"a".repeat(64)}
+
+## Tasks
+
+- Build the criterion
+
+## Coverage
+
+- AC-001 -> src/a.ts
+- AC-002 -> not_applicable: rationale / alternative verification
+`);
+  assert.equal(plan.ok, true, plan.ok ? "" : plan.reason);
 });
 
 test("the plan author prompt has no revision variant — reconciliation owns revision", () => {
@@ -242,6 +285,7 @@ test("the generated plan reviewer prompt states the finding constraints and name
     "An empty findings array is a valid result",
     "current_artifact",
     "upstream:specification:",
+    "use that entry's AC ID as the location",
     "never require or invent a heading",
   ]) {
     assert.ok(prompt.includes(constraint), `plan reviewer prompt missing: ${constraint}`);
@@ -294,6 +338,7 @@ test("the generated spec self-critique prompt states the contract and carries bo
     "never an agent identity",
     "may not add an obligation",
     "fallback to your draft",
+    "Preserve each existing ID",
     "Output the JSON object",
     // Asserted here and again on the plan prompt, per prompt rather than per
     // file: both prompts carry these sentences, and the whole-file scan above
@@ -346,6 +391,7 @@ test("the generated plan self-critique prompt restates the hash and the scope it
     "not_applicable requires both a rationale and an alternative verification",
     "may not add an obligation",
     "fallback to your draft",
+    "Copy each canonical AC ID",
     // The plan side's own copy. Task 4 shipped a guard proven only on the spec
     // side once already; these two prompts are duplicated on purpose and
     // nothing structural notices a missing assertion on one of them.
@@ -495,6 +541,8 @@ test("the generated spec reconciliation prompt carries the decision contract and
     "the run itself writes",
     "Never declare a tasks.md file",
     "## Acceptance criteria",
+    "Preserve each existing ID",
+    "cite its AC ID",
     "Output the JSON object",
   ]) {
     assert.ok(prompt.includes(constraint), `spec reconcile prompt missing: ${constraint}`);
@@ -533,6 +581,8 @@ test("the generated plan reconciliation prompt carries the spec as governing inp
     "Checkbox prefixes such as",
     "## Coverage",
     "not_applicable requires both a rationale and an alternative verification",
+    "Copy each canonical AC ID",
+    "cite its AC ID",
     "Do not return an impact field",
     // The plan side's own copy of the conditional-field matrix. These two
     // prompts share the contract builder, and nothing structural notices a

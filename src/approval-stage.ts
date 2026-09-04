@@ -88,7 +88,10 @@ export function buildBinding(
   }
   const doc = validateSpecDoc(content);
   if (!doc.ok) {
-    return no(`the approved spec ${last.output_ref} no longer validates: ${doc.reason}`);
+    const repair = doc.obsoleteCriterionShape
+      ? "; this specification uses the obsolete prose-only acceptance-criterion shape, so start a fresh run to mint stable criterion IDs"
+      : "";
+    return no(`the approved spec ${last.output_ref} no longer validates: ${doc.reason}${repair}`);
   }
   // The spec stage checks this at write time, but a spec edited afterwards can
   // flip it, and section 14 makes change_kind the flag that requires a defect

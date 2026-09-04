@@ -253,12 +253,15 @@ export function groundingTextuallyFails(
  * and after reconciliation to derive what an `addressed` decision must claim.
  */
 export function specNormativeNodes(doc: SpecDoc): string[] {
-  return [...doc.declaredArtifacts, ...doc.acceptanceCriteria];
+  return [
+    ...doc.declaredArtifacts,
+    ...doc.acceptanceCriteria.map((criterion) => `${criterion.id}: ${criterion.text}`),
+  ];
 }
 
 /**
  * The parsed normative nodes of a plan: the tasks and the coverage lines.
- * Coverage entries are reconstructed into their line form — `<criterion> ->
+ * Coverage entries are reconstructed into their line form — `<criterion-id> ->
  * <artifact>` or the `not_applicable` decision — because that is the text a
  * reconciler copies out of the artifact. The comparison that consumes these
  * collapses whitespace on both sides, so a line whose spacing differs from
@@ -269,8 +272,8 @@ export function planNormativeNodes(doc: PlanDoc): string[] {
     ...doc.tasks,
     ...doc.coverage.map((entry) =>
       entry.artifact !== null
-        ? `${entry.criterion} -> ${entry.artifact}`
-        : `${entry.criterion} -> not_applicable: ${entry.rationale} / ${entry.alternativeVerification}`
+        ? `${entry.criterionId} -> ${entry.artifact}`
+        : `${entry.criterionId} -> not_applicable: ${entry.rationale} / ${entry.alternativeVerification}`
     ),
   ];
 }

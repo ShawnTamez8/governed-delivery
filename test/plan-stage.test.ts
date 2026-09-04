@@ -35,9 +35,9 @@ change_kind: feature
 
 ## Acceptance criteria
 
-- the thing works
-- it is observable
-- it stays working
+- AC-001: the thing works
+- AC-002: it is observable
+- AC-003: it stays working
 `;
 
 const SCOPE = ["src/a1.ts", "test/a1.test.ts"];
@@ -786,6 +786,24 @@ test("an unreadable approved spec is refused naming the path, before any dispatc
   });
 });
 
+test("an approved spec with obsolete prose-only criteria names the fresh-run repair path", async () => {
+  const obsolete = SPEC
+    .replace("- AC-001: ", "- ")
+    .replace("- AC-002: ", "- ")
+    .replace("- AC-003: ", "- ");
+  await withApprovedRun(
+    async ({ store, root, runId }) => {
+      const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(result.reason, /obsolete prose-only acceptance-criterion shape/);
+      assert.match(result.reason, /start a fresh run to mint stable criterion IDs/);
+      assert.equal(agentRunCounts(store, runId).author, 0, "the repair refusal precedes every dispatch");
+    },
+    { spec: obsolete }
+  );
+});
+
 test("a model disagreeing with the frozen map is refused before any dispatch", async () => {
   await withApprovedRun(async ({ store, root, runId }) => {
     const result = await runPlanStage(store, fixtureExecutor(FIXTURE), {
@@ -810,7 +828,7 @@ test("a spec edited after approval is refused by name before any dispatch", asyn
     // The panel gated one specification and the operator signed it. Editing
     // the file afterwards must not produce a plan bound to a spec no
     // signature covered — provenance through output_ref is not enough.
-    writeFileSync(specPath, `${SPEC}\n- something nobody approved\n`);
+    writeFileSync(specPath, `${SPEC}\n- AC-004: something nobody approved\n`);
     const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -884,7 +902,7 @@ test("coverage outside the approved scope blocks before any reviewer is dispatch
     assert.equal(result.ok, false);
     if (result.ok) return;
     assert.match(result.reason, /plan promises coverage outside the approved scope/);
-    assert.match(result.reason, /the thing works/);
+    assert.match(result.reason, /AC-001/);
 
     // The gate is deterministic and free, so it must run before the panel:
     // one author invocation, zero reviewer invocations.
@@ -896,7 +914,7 @@ test("coverage outside the approved scope blocks before any reviewer is dispatch
     // diagnosable record of what the plan promised that nobody approved.
     const audited = auditSummaries(store, runId, "plan.coverage.unkeepable");
     assert.equal(audited.length, 1);
-    assert.match(audited[0], /the thing works/);
+    assert.match(audited[0], /AC-001/);
 
     assert.equal(store.getStageChain(runId).find((s) => s.kind === "plan")!.status, "blocked");
     assert.equal(store.getRun(runId)!.status, "blocked");
@@ -932,7 +950,10 @@ test("an author returning an invalid plan document blocks terminally and writes 
     writeFileSync(
       scratch,
       // Drop the arrow so the coverage line matches neither documented form.
-      fixtureSource().replace("- the thing works -> ${artifact}", "- the thing works ${artifact}")
+      fixtureSource().replace(
+        ': `- ${id} -> ${index === 0 ? artifact : second}`',
+        ': `- ${id} ${index === 0 ? artifact : second}`'
+      )
     );
     freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
@@ -1117,26 +1138,28 @@ test("the plan panel seats the lens the author asked for", async () => {
   });
 });
 
-test("a reconciliation that drops a criterion's coverage blocks and leaves the gated plan on disk", async () => {
+test("a reconciliation with missing, unknown, and duplicate coverage IDs blocks and leaves the gated plan on disk", async () => {
   await withApprovedRun(async ({ store, root, runId }) => {
-    // The reconciliation variant drops the "it stays working" line. The
-    // completeness gate must run on the reconciled plan exactly as on the
+    // The reconciliation variant drops AC-003, repeats AC-002, and invents
+    // AC-999. The identity gate must run on the reconciled plan exactly as on the
     // first write, and it must refuse *before* the reconciliation overwrites
     // the document the gate already approved.
     const scratch = join(root, "emit-dropped-criterion-revision.mjs");
     writeFileSync(
       scratch,
       fixtureSource().replace(
-        "- it stays working -> ${second}",
-        '${stdin.includes("reconcile") ? "" : "- it stays working -> " + second}'
+        "const ids = criterionIds();",
+        'const ids = stdin.includes("reconcile") ? [...criterionIds().slice(0, 2), "AC-002", "AC-999"] : criterionIds();'
       )
     );
     freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
-    assert.match(result.reason, /does not cover every acceptance criterion/);
-    assert.match(result.reason, /it stays working/);
+    assert.equal(
+      result.reason,
+      "plan coverage IDs are invalid: missing=[AC-003]; unknown=[AC-999]; duplicate=[AC-002]"
+    );
 
     // The refusal happened before the write: the gated round-1 document is
     // still the file on disk, not the never-approved revision.
@@ -1238,27 +1261,48 @@ test("a plan covering only some acceptance criteria blocks before the panel", as
     const scratch = join(root, "emit-partial-coverage.mjs");
     writeFileSync(
       scratch,
-      fixtureSource()
-        .replace("- it is observable -> not_applicable: observed at runtime, not asserted / checked in the smoke run's recorded output\n", "")
-        .replace("- it stays working -> ${second}\n", "")
+      fixtureSource().replace("const ids = criterionIds();", "const ids = criterionIds().slice(0, 1);")
     );
     freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
-    assert.match(result.reason, /does not cover every acceptance criterion/);
-    assert.match(result.reason, /it is observable/);
-    assert.match(result.reason, /it stays working/);
+    assert.match(result.reason, /plan coverage IDs are invalid/);
+    assert.match(result.reason, /missing=\[AC-002, AC-003\]/);
 
     // Deterministic and free, so it must refuse before the panel spends.
     const counts = agentRunCounts(store, runId);
     assert.equal(counts.author, 1);
     assert.equal(counts.reviewer, 0, "the free gate must refuse before the panel spends");
 
-    const audited = auditSummaries(store, runId, "plan.coverage.incomplete");
+    const audited = auditSummaries(store, runId, "plan.coverage.invalid");
     assert.equal(audited.length, 1);
-    assert.match(audited[0], /it is observable/);
+    assert.match(audited[0], /missing=\[AC-002, AC-003\]/);
     assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("coverage identity diagnostics group missing, unknown, and duplicate IDs before scope", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-invalid-coverage-ids.mjs");
+    writeFileSync(
+      scratch,
+      fixtureSource().replace(
+        "const ids = criterionIds();",
+        'const ids = [...criterionIds().slice(0, 2), "AC-002", "AC-999"];'
+      )
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(
+      result.reason,
+      "plan coverage IDs are invalid: missing=[AC-003]; unknown=[AC-999]; duplicate=[AC-002]"
+    );
+    assert.equal(agentRunCounts(store, runId).reviewer, 0);
+    assert.deepEqual(auditSummaries(store, runId, "plan.coverage.invalid"), [result.reason]);
+    assert.equal(auditSummaries(store, runId, "plan.coverage.unkeepable").length, 0);
   });
 });
 
@@ -1302,7 +1346,7 @@ test("exactly one self-critique runs per plan, and the panel reviews its output"
   });
 });
 
-test("a self-critique that drops a criterion's coverage blocks and leaves the gated draft on disk", async () => {
+test("a self-critique with missing, unknown, and duplicate coverage IDs blocks and leaves the gated draft on disk", async () => {
   await withApprovedRun(async ({ store, root, runId }) => {
     // Every gate the draft passed runs again on the revised plan, and refuses
     // before the revision can replace the document already on disk.
@@ -1310,16 +1354,18 @@ test("a self-critique that drops a criterion's coverage blocks and leaves the ga
     writeFileSync(
       scratch,
       fixtureSource().replace(
-        "- it stays working -> ${second}",
-        '${stdin.includes("self-critique") ? "" : "- it stays working -> " + second}'
+        "const ids = criterionIds();",
+        'const ids = stdin.includes("self-critique") ? [...criterionIds().slice(0, 2), "AC-002", "AC-999"] : criterionIds();'
       )
     );
     freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
-    assert.match(result.reason, /does not cover every acceptance criterion/);
-    assert.match(result.reason, /it stays working/);
+    assert.equal(
+      result.reason,
+      "plan coverage IDs are invalid: missing=[AC-003]; unknown=[AC-999]; duplicate=[AC-002]"
+    );
     const onDisk = readFileSync(join(root, "docs", "features", SLUG, "plan.md"), "utf8");
     assert.ok(!onDisk.includes("SELFCRITIQUED"), "the refused revision must not replace the draft");
     assert.equal(agentRunCounts(store, runId).reviewer, 0, "the free gate refuses before the panel spends");
@@ -1490,7 +1536,7 @@ test("mixed reports reach the plan reconciler unfused: a shared identity dedups,
     ? []
     : [
         {
-          location: "## Coverage",
+          location: criterionIds()[0] ?? "## Coverage",
           intentKey: "coverage-gap",
           severity: "high",
           classification: "current_artifact",
@@ -1508,7 +1554,7 @@ test("mixed reports reach the plan reconciler unfused: a shared identity dedups,
     agentId === "spec-reviewer-security"
       ? [
           {
-            location: "## Coverage",
+            location: "AC-001",
             intentKey: "shared-concern",
             severity: "critical",
             classification: "current_artifact",
@@ -1590,7 +1636,7 @@ test("mixed reports reach the plan reconciler unfused: a shared identity dedups,
     assert.equal(findings.length, 3, "dup-concern dedups; shared-concern splits by classification");
     const dup = findings.find((f) => f.intent_key === "dup-concern")!;
     const sharedCurrent = findings.find(
-      (f) => f.intent_key === "shared-concern" && f.location === "## Coverage"
+      (f) => f.intent_key === "shared-concern" && f.location === "AC-001"
     )!;
     const sharedUpstream = findings.find(
       (f) => f.intent_key === "shared-concern" && f.location === "upstream:specification:shared-concern"

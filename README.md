@@ -23,8 +23,9 @@ approval gate
 authorization against a public key held outside the repository); and the plan
 and plan-review stages (`bw plan` builds the plan from the approved
 specification, re-verified against the hash the review gate recorded, and an
-unkeepable-promise gate refuses coverage naming any artifact outside the
-signed scope before a panel is convened); and the implementation stage
+ID-based coverage gate requires every approved acceptance-criterion ID exactly
+once, refuses unknown or repeated IDs, then refuses any covered artifact outside
+the signed scope before a panel is convened); and the implementation stage
 (`bw implement` creates the run's worktree on branch `gov/<slug>/<run-id>`,
 commits the projections, dispatches an implementer, and applies each proposed
 patch only when it binds to the recorded base commit and stays inside the

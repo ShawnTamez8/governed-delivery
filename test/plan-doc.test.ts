@@ -17,7 +17,7 @@ function planDoc(overrides: { frontmatter?: string; tasks?: string; coverage?: s
     overrides.frontmatter ?? `feature: Thing\nplan_for: ${SPEC_HASH}`;
   const tasks = overrides.tasks ?? "## Tasks\n\n- Build the thing\n- Test the thing\n";
   const coverage =
-    overrides.coverage ?? "## Coverage\n\n- It does the thing -> test/thing.test.ts\n";
+    overrides.coverage ?? "## Coverage\n\n- AC-001 -> test/thing.test.ts\n";
   return `${frontmatter}\n\n${tasks}\n${coverage}`;
 }
 
@@ -36,7 +36,7 @@ test("a well-formed plan document validates and parses every part", () => {
   assert.deepEqual(result.value.tasks, ["Build the thing", "Test the thing"]);
   assert.deepEqual(result.value.coverage, [
     {
-      criterion: "It does the thing",
+      criterionId: "AC-001",
       artifact: "test/thing.test.ts",
       rationale: null,
       alternativeVerification: null,
@@ -94,15 +94,15 @@ test("an empty coverage list is refused", () => {
 
 test("a coverage line matching neither form is refused naming the line", () => {
   assert.match(
-    refusal(planDoc({ coverage: "## Coverage\n\n- It does the thing\n" })),
-    /coverage entry must be '<criterion> -> <artifact>'/
+    refusal(planDoc({ coverage: "## Coverage\n\n- AC-001\n" })),
+    /coverage entry must be '<criterion-id> -> <artifact>'/
   );
 });
 
 test("a coverage line with an empty target is refused", () => {
   assert.match(
-    refusal(planDoc({ coverage: "## Coverage\n\n- It does the thing ->\n" })),
-    /coverage entry must name a criterion and a target/
+    refusal(planDoc({ coverage: "## Coverage\n\n- AC-001 ->\n" })),
+    /coverage entry must name a criterion ID and a target/
   );
 });
 
@@ -110,14 +110,14 @@ test("a well-formed not_applicable entry carries both halves", () => {
   const result = validatePlanDoc(
     planDoc({
       coverage:
-        "## Coverage\n\n- It logs on startup -> not_applicable: logging is observed, not asserted / verified by the smoke run's recorded output\n",
+        "## Coverage\n\n- AC-001 -> not_applicable: logging is observed, not asserted / verified by the smoke run's recorded output\n",
     })
   );
   assert.equal(result.ok, true, (result as { reason?: string }).reason);
   if (!result.ok) return;
   assert.deepEqual(result.value.coverage, [
     {
-      criterion: "It logs on startup",
+      criterionId: "AC-001",
       artifact: null,
       rationale: "logging is observed, not asserted",
       alternativeVerification: "verified by the smoke run's recorded output",
@@ -130,39 +130,35 @@ test("not_applicable without an alternative verification is refused naming the c
   // excuse for dropping a criterion.
   assert.match(
     refusal(
-      planDoc({ coverage: "## Coverage\n\n- It logs on startup -> not_applicable: hard to assert\n" })
+      planDoc({ coverage: "## Coverage\n\n- AC-001 -> not_applicable: hard to assert\n" })
     ),
-    /coverage entry for It logs on startup says not_applicable without both a rationale and an alternative verification/
+    /coverage entry for AC-001 says not_applicable without both a rationale and an alternative verification/
   );
 });
 
 test("not_applicable without a rationale is refused naming the criterion", () => {
   assert.match(
     refusal(
-      planDoc({ coverage: "## Coverage\n\n- It logs on startup -> not_applicable:  / checked by hand\n" })
+      planDoc({ coverage: "## Coverage\n\n- AC-001 -> not_applicable:  / checked by hand\n" })
     ),
-    /coverage entry for It logs on startup says not_applicable without both a rationale and an alternative verification/
+    /coverage entry for AC-001 says not_applicable without both a rationale and an alternative verification/
   );
 });
 
 test("a bare not_applicable is refused", () => {
   assert.match(
-    refusal(planDoc({ coverage: "## Coverage\n\n- It logs on startup -> not_applicable\n" })),
+    refusal(planDoc({ coverage: "## Coverage\n\n- AC-001 -> not_applicable\n" })),
     /says not_applicable without both a rationale and an alternative verification/
   );
 });
 
-test("a criterion containing an arrow splits at the last one", () => {
-  // Criterion prose may legitimately contain an arrow; the artifact path is
-  // the tail. Splitting at the first arrow truncated the criterion and
-  // fabricated an artifact from its tail.
-  const result = validatePlanDoc(
-    planDoc({ coverage: "## Coverage\n\n- the a->b mapping works -> src/a1.ts\n" })
+test("criterion prose on the left side is refused", () => {
+  // The split lands at the first arrow, so the diagnostic names the prefix
+  // of the prose ("the a") — refused either way, since prose is never an ID.
+  assert.match(
+    refusal(planDoc({ coverage: "## Coverage\n\n- the a->b mapping works -> src/a1.ts\n" })),
+    /coverage entry criterion ID is invalid: the a;/
   );
-  assert.equal(result.ok, true, (result as { reason?: string }).reason);
-  if (!result.ok) return;
-  assert.equal(result.value.coverage[0].criterion, "the a->b mapping works");
-  assert.equal(result.value.coverage[0].artifact, "src/a1.ts");
 });
 
 test("a rationale containing a slash splits at the delimiter, not the slash", () => {
@@ -172,7 +168,7 @@ test("a rationale containing a slash splits at the delimiter, not the slash", ()
   const result = validatePlanDoc(
     planDoc({
       coverage:
-        "## Coverage\n\n- It logs on startup -> not_applicable: no check in test/unit/a.test.ts yet / verified manually\n",
+        "## Coverage\n\n- AC-001 -> not_applicable: no check in test/unit/a.test.ts yet / verified manually\n",
     })
   );
   assert.equal(result.ok, true, (result as { reason?: string }).reason);
@@ -181,9 +177,31 @@ test("a rationale containing a slash splits at the delimiter, not the slash", ()
   assert.equal(result.value.coverage[0].alternativeVerification, "verified manually");
 });
 
+test("an arrow inside the not_applicable body splits at the first arrow, not inside the prose", () => {
+  // The left side is a constrained ID that can never contain an arrow; the
+  // rationale is prose and may. Splitting at the last arrow refused this
+  // valid document with a bogus invalid-ID diagnostic.
+  const result = validatePlanDoc(
+    planDoc({
+      coverage:
+        "## Coverage\n\n- AC-002 -> not_applicable: the a->b mapping is observed at runtime / checked in the smoke output\n",
+    })
+  );
+  assert.equal(result.ok, true, (result as { reason?: string }).reason);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.coverage, [
+    {
+      criterionId: "AC-002",
+      artifact: null,
+      rationale: "the a->b mapping is observed at runtime",
+      alternativeVerification: "checked in the smoke output",
+    },
+  ]);
+});
+
 test("an artifact path beginning with not_applicable is an artifact, not a decision", () => {
   const result = validatePlanDoc(
-    planDoc({ coverage: "## Coverage\n\n- It logs on startup -> not_applicable.test.ts\n" })
+    planDoc({ coverage: "## Coverage\n\n- AC-001 -> not_applicable.test.ts\n" })
   );
   assert.equal(result.ok, true, (result as { reason?: string }).reason);
   if (!result.ok) return;
@@ -193,12 +211,21 @@ test("an artifact path beginning with not_applicable is an artifact, not a decis
 
 test("the spaced not_applicable form is still a decision with both halves", () => {
   const result = validatePlanDoc(
-    planDoc({ coverage: "## Coverage\n\n- It logs on startup -> not_applicable : hard to assert / checked by hand\n" })
+    planDoc({ coverage: "## Coverage\n\n- AC-001 -> not_applicable : hard to assert / checked by hand\n" })
   );
   assert.equal(result.ok, true, (result as { reason?: string }).reason);
   if (!result.ok) return;
   assert.equal(result.value.coverage[0].rationale, "hard to assert");
   assert.equal(result.value.coverage[0].alternativeVerification, "checked by hand");
+});
+
+test("duplicate valid criterion IDs remain visible to the spec-aware gate", () => {
+  const result = validatePlanDoc(
+    planDoc({ coverage: "## Coverage\n\n- AC-001 -> src/a.ts\n- AC-001 -> src/b.ts\n" })
+  );
+  assert.equal(result.ok, true, (result as { reason?: string }).reason);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.coverage.map((entry) => entry.criterionId), ["AC-001", "AC-001"]);
 });
 
 test("writePlanDoc writes the content verbatim and returns the parsed document", () => {

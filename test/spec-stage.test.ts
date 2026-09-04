@@ -299,13 +299,13 @@ test("the gate blocks on a cannot_determine decision from an earlier round even 
     findingId: id,
     disposition: "addressed",
     rationale: "fixture addressed the finding",
-    changedLocations: ["## Acceptance criteria"],
+    changedLocations: ["AC-001"],
     normativeChanges:
       revising && index === 0
         ? [
             {
-              artifactLocation: "## Acceptance criteria",
-              artifactText: "the thing works REVISED-spec",
+              artifactLocation: "AC-001",
+              artifactText: "AC-001: the thing works REVISED-spec",
               grounding: { source: "design", location: "# design", excerpt: "design" },
             },
           ]
@@ -317,7 +317,7 @@ test("the gate blocks on a cannot_determine decision from an earlier round even 
       findingId: id,
       disposition,
       rationale: index === 0 ? "fixture cannot determine" : "fixture addressed the finding",
-      changedLocations: ["## Acceptance criteria"],
+    changedLocations: ["AC-001"],
     };
     if (disposition !== "addressed") return base;
     return {
@@ -326,8 +326,8 @@ test("the gate blocks on a cannot_determine decision from an earlier round even 
         revising && index === 1
           ? [
               {
-                artifactLocation: "## Acceptance criteria",
-                artifactText: "the thing works REVISED-spec",
+                artifactLocation: "AC-001",
+                artifactText: "AC-001: the thing works REVISED-spec",
                 grounding: { source: "design", location: "# design", excerpt: "design" },
               },
             ]
@@ -360,13 +360,13 @@ test("upstream_follow_up stores a proposal, names every source finding, and does
     findingId: id,
     disposition: "addressed",
     rationale: "fixture addressed the finding",
-    changedLocations: ["## Acceptance criteria"],
+    changedLocations: ["AC-001"],
     normativeChanges:
       revising && index === 0
         ? [
             {
-              artifactLocation: "## Acceptance criteria",
-              artifactText: "the thing works REVISED-spec",
+              artifactLocation: "AC-001",
+              artifactText: "AC-001: the thing works REVISED-spec",
               grounding: { source: "design", location: "# design", excerpt: "design" },
             },
           ]
@@ -378,7 +378,7 @@ test("upstream_follow_up stores a proposal, names every source finding, and does
       findingId: id,
       disposition,
       rationale: index === 0 ? "fixture routes upstream" : "fixture addressed the finding",
-      changedLocations: ["## Acceptance criteria"],
+    changedLocations: ["AC-001"],
     };
     if (disposition !== "addressed") {
       return {
@@ -392,8 +392,8 @@ test("upstream_follow_up stores a proposal, names every source finding, and does
         revising && index === 1
           ? [
               {
-                artifactLocation: "## Acceptance criteria",
-                artifactText: "the thing works REVISED-spec",
+                artifactLocation: "AC-001",
+                artifactText: "AC-001: the thing works REVISED-spec",
                 grounding: { source: "design", location: "# design", excerpt: "design" },
               },
             ]
@@ -444,13 +444,13 @@ test("upstream_blocking stores a proposal and blocks, naming both the finding an
     findingId: id,
     disposition: "addressed",
     rationale: "fixture addressed the finding",
-    changedLocations: ["## Acceptance criteria"],
+    changedLocations: ["AC-001"],
     normativeChanges:
       revising && index === 0
         ? [
             {
-              artifactLocation: "## Acceptance criteria",
-              artifactText: "the thing works REVISED-spec",
+              artifactLocation: "AC-001",
+              artifactText: "AC-001: the thing works REVISED-spec",
               grounding: { source: "design", location: "# design", excerpt: "design" },
             },
           ]
@@ -462,7 +462,7 @@ test("upstream_blocking stores a proposal and blocks, naming both the finding an
       findingId: id,
       disposition,
       rationale: index === 0 ? "fixture routes upstream" : "fixture addressed the finding",
-      changedLocations: ["## Acceptance criteria"],
+    changedLocations: ["AC-001"],
     };
     if (disposition !== "addressed") {
       return {
@@ -476,8 +476,8 @@ test("upstream_blocking stores a proposal and blocks, naming both the finding an
         revising && index === 1
           ? [
               {
-                artifactLocation: "## Acceptance criteria",
-                artifactText: "the thing works REVISED-spec",
+                artifactLocation: "AC-001",
+                artifactText: "AC-001: the thing works REVISED-spec",
                 grounding: { source: "design", location: "# design", excerpt: "design" },
               },
             ]
@@ -528,13 +528,13 @@ test("the same upstream candidate raised in two rounds links one proposal and re
     findingId: id,
     disposition: "addressed",
     rationale: "fixture addressed the finding",
-    changedLocations: ["## Acceptance criteria"],
+    changedLocations: ["AC-001"],
     normativeChanges:
       revising && index === 0
         ? [
             {
-              artifactLocation: "## Acceptance criteria",
-              artifactText: "the thing works REVISED-spec",
+              artifactLocation: "AC-001",
+              artifactText: "AC-001: the thing works REVISED-spec",
               grounding: { source: "design", location: "# design", excerpt: "design" },
             },
           ]
@@ -691,7 +691,7 @@ test("mixed reports reach the reconciler unfused: a shared identity dedups, a cl
     ? []
     : [
         {
-          location: "## Acceptance criteria",
+          location: "AC-001",
           intentKey: "missing-traceability",
           severity: "high",
           classification: "current_artifact",
@@ -709,7 +709,7 @@ test("mixed reports reach the reconciler unfused: a shared identity dedups, a cl
     agentId === "spec-reviewer-security"
       ? [
           {
-            location: "## Acceptance criteria",
+            location: "AC-001",
             intentKey: "shared-concern",
             severity: "critical",
             classification: "current_artifact",
@@ -745,13 +745,13 @@ test("mixed reports reach the reconciler unfused: a shared identity dedups, a cl
     findingId: id,
     disposition: "addressed",
     rationale: "fixture addressed the finding",
-    changedLocations: ["## Acceptance criteria"],
+    changedLocations: ["AC-001"],
     normativeChanges:
       revising && index === 0
         ? [
             {
-              artifactLocation: "## Acceptance criteria",
-              artifactText: "the thing works REVISED-spec",
+              artifactLocation: "AC-001",
+              artifactText: "AC-001: the thing works REVISED-spec",
               grounding: { source: "design", location: "# design", excerpt: "design" },
             },
           ]
@@ -770,7 +770,7 @@ test("mixed reports reach the reconciler unfused: a shared identity dedups, a cl
     findingId: id,
     disposition: "addressed",
     rationale: "fixture addressed the finding",
-    changedLocations: ["## Acceptance criteria"],
+    changedLocations: ["AC-001"],
   }));
   emit({
     status: "proposed",
@@ -791,7 +791,7 @@ test("mixed reports reach the reconciler unfused: a shared identity dedups, a cl
     assert.equal(findings.length, 3, "dup-concern dedups; shared-concern splits by classification");
     const dup = findings.find((f) => f.intent_key === "dup-concern")!;
     const sharedCurrent = findings.find(
-      (f) => f.intent_key === "shared-concern" && f.location === "## Acceptance criteria"
+      (f) => f.intent_key === "shared-concern" && f.location === "AC-001"
     )!;
     const sharedUpstream = findings.find(
       (f) => f.intent_key === "shared-concern" && f.location === "upstream:design:shared-concern"
@@ -1358,7 +1358,7 @@ test("a self-critique whose document does not validate blocks instead of falling
     writeFileSync(
       scratch,
       fixtureSource().replace(
-        'artifact: authoredSpec().replace("- the thing works", "- the thing works SELFCRITIQUED"),',
+        'artifact: authoredSpec().replace("- AC-001: the thing works", "- AC-001: the thing works SELFCRITIQUED"),',
         'artifact: "this is not a specification",'
       )
     );
@@ -1437,8 +1437,8 @@ test("the spec reviewer's prompt carries the design document", async () => {
     writeFileSync(
       scratch,
       fixtureSource().replace(
-        '    ? []\n    : [\n        {\n          location: "## Acceptance criteria",',
-        '    ? []\n    : stdin.includes("DESIGN-SENTINEL")\n    ? [{ location: "## Acceptance criteria", intentKey: "design-present", severity: "low", classification: "current_artifact", subject: "the design reached the reviewer" }]\n    : [\n        {\n          location: "## Acceptance criteria",'
+        '    ? []\n    : [\n        {\n          location: "AC-001",',
+        '    ? []\n    : stdin.includes("DESIGN-SENTINEL")\n    ? [{ location: "AC-001", intentKey: "design-present", severity: "low", classification: "current_artifact", subject: "the design reached the reviewer" }]\n    : [\n        {\n          location: "AC-001",'
       )
     );
     freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
@@ -1528,7 +1528,7 @@ test("the reconciliation prompt carries the design document", async () => {
     writeFileSync(
       scratch,
       fixtureSource().replace(
-        'changedLocations: ["## Acceptance criteria"],',
+        'changedLocations: ["AC-001"],',
         'changedLocations: [stdin.includes("DESIGN-SENTINEL") ? "design-seen" : "design-missing"],'
       )
     );
@@ -1586,7 +1586,7 @@ test("a self-critique revision that declares a directory blocks instead of repla
       writeFileSync(
         scratch,
         fixtureSource().replace(
-          'artifact: authoredSpec().replace("- the thing works", "- the thing works SELFCRITIQUED"),',
+          'artifact: authoredSpec().replace("- AC-001: the thing works", "- AC-001: the thing works SELFCRITIQUED"),',
           'artifact: authoredSpec().replace("- src/a1.ts", "- src"),'
         )
       );
@@ -1653,7 +1653,7 @@ test("a self-critique revision that declares the run's own plan document blocks 
       writeFileSync(
         scratch,
         fixtureSource().replace(
-          'artifact: authoredSpec().replace("- the thing works", "- the thing works SELFCRITIQUED"),',
+          'artifact: authoredSpec().replace("- AC-001: the thing works", "- AC-001: the thing works SELFCRITIQUED"),',
           'artifact: authoredSpec().replace("- src/a1.ts", "- docs/features/demo/plan.md"),'
         )
       );

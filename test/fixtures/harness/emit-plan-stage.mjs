@@ -26,6 +26,21 @@ function scopePaths() {
     .filter((line) => line !== "");
 }
 
+// The approved specification is the authority for criterion IDs. The schema
+// examples earlier in the prompt also mention AC-001, so scrape only the
+// block after the approved-specification marker. Coverage lines use `->`, not
+// `:`, and therefore cannot be mistaken for spec criteria on later prompts.
+function criterionIds() {
+  const block = stdin.split("Approved specification:")[1] ?? "";
+  return [
+    ...new Set(
+      [...block.matchAll(/^- (AC-(?:00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})): .+$/gm)].map(
+        (match) => match[1]
+      )
+    ),
+  ];
+}
+
 function planDoc({ revised = false, selfCritiqued = false, outOfScope = false, planFor = specHash } = {}) {
   const paths = scopePaths();
   if (paths.length === 0) {
@@ -36,6 +51,17 @@ function planDoc({ revised = false, selfCritiqued = false, outOfScope = false, p
   }
   const artifact = outOfScope ? "src/never-approved.ts" : paths[0];
   const second = paths[1] ?? paths[0];
+  const ids = criterionIds();
+  if (ids.length === 0) {
+    throw new Error("emit-plan-stage: no criterion IDs found in the approved specification");
+  }
+  const coverage = ids
+    .map((id, index) =>
+      index === 1
+        ? `- ${id} -> not_applicable: observed at runtime, not asserted / checked in the smoke run's recorded output`
+        : `- ${id} -> ${index === 0 ? artifact : second}`
+    )
+    .join("\n");
   return `feature: demo
 plan_for: ${planFor}
 
@@ -46,9 +72,7 @@ plan_for: ${planFor}
 
 ## Coverage
 
-- the thing works -> ${artifact}
-- it is observable -> not_applicable: observed at runtime, not asserted / checked in the smoke run's recorded output
-- it stays working -> ${second}
+${coverage}
 `;
 }
 
@@ -141,7 +165,7 @@ if (stdin.includes("self-critique")) {
     ? []
     : [
         {
-          location: "## Coverage",
+          location: criterionIds()[0] ?? "## Coverage",
           intentKey: "coverage-gap",
           severity: "high",
           classification: "current_artifact",

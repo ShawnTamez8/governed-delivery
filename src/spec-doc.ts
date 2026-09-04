@@ -8,8 +8,23 @@ export interface SpecDoc {
   feature: string;
   changeKind: "feature" | "defect_fix";
   declaredArtifacts: string[];
-  acceptanceCriteria: string[];
+  acceptanceCriteria: AcceptanceCriterion[];
 }
+
+export interface AcceptanceCriterion {
+  id: string;
+  text: string;
+}
+
+export const CRITERION_ID_PATTERN = /^AC-(?:00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})$/;
+
+export function isCriterionId(value: string): boolean {
+  return CRITERION_ID_PATTERN.test(value);
+}
+
+export type SpecDocValidationResult =
+  | { ok: true; value: SpecDoc }
+  | { ok: false; reason: string; obsoleteCriterionShape?: true };
 
 const CHANGE_KINDS: readonly string[] = ["feature", "defect_fix"];
 
@@ -20,7 +35,7 @@ const CHANGE_KINDS: readonly string[] = ["feature", "defect_fix"];
  */
 export function validateSpecDoc(
   content: string
-): { ok: true; value: SpecDoc } | { ok: false; reason: string } {
+): SpecDocValidationResult {
   // The same tolerance the spec hash already applies (`normalizeText`): an
   // editor that saves a BOM, or a checkout under `core.autocrlf=true`, must
   // not make a valid spec unparseable. Without this the BOM sits before
@@ -77,12 +92,47 @@ export function validateSpecDoc(
   if (criteriaSection === null) {
     return { ok: false, reason: "spec is missing the ## Acceptance criteria section" };
   }
-  const criteria = criteriaSection
+  const criterionLines = criteriaSection
     .split("\n")
     .map((line) => line.trim().replace(/^-\s*/, ""))
     .filter((line) => line !== "");
-  if (criteria.length === 0) {
+  if (criterionLines.length === 0) {
     return { ok: false, reason: "acceptance criteria must not be empty" };
+  }
+  const criteria: AcceptanceCriterion[] = [];
+  const seenCriterionIds = new Set<string>();
+  for (const line of criterionLines) {
+    const colon = line.indexOf(":");
+    if (colon < 0) {
+      return {
+        ok: false,
+        reason: `acceptance criterion must be '<criterion-id>: <criterion text>': ${line}`,
+        obsoleteCriterionShape: true,
+      };
+    }
+    const id = line.slice(0, colon).trim();
+    if (!isCriterionId(id) || line.slice(0, colon) !== id) {
+      return {
+        ok: false,
+        reason: `invalid acceptance criterion ID ${id || "missing"}: must match ${CRITERION_ID_PATTERN.source}`,
+      };
+    }
+    const afterColon = line.slice(colon + 1);
+    const criterionText = afterColon.trim();
+    if (criterionText === "") {
+      return { ok: false, reason: `acceptance criterion ${id} has empty text` };
+    }
+    if (!/^\s/.test(afterColon)) {
+      return {
+        ok: false,
+        reason: `acceptance criterion must be '<criterion-id>: <criterion text>': ${line}`,
+      };
+    }
+    if (seenCriterionIds.has(id)) {
+      return { ok: false, reason: `duplicate acceptance criterion ID ${id}` };
+    }
+    seenCriterionIds.add(id);
+    criteria.push({ id, text: criterionText });
   }
   return {
     ok: true,

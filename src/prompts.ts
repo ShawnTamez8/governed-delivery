@@ -28,7 +28,10 @@ The specification document schema is:
   delivery proves each declared artifact by its exact committed path.
   Never declare a tasks.md file: task execution and status belong in run-state
   database rows
-- an ## Acceptance criteria section: one criterion per list line
+- an ## Acceptance criteria section: one criterion per list line in exactly
+  this form: \`- AC-001: <criterion text>\`. Criterion IDs must match
+  \`AC-(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})\`. Mint them here, beginning at AC-001 and increasing monotonically; never reuse an ID for a different
+  criterion
 
 Design document:
 
@@ -144,7 +147,11 @@ The self-critique has:
     docs/features/): delivery proves each declared artifact by its exact
     committed path. Never declare a tasks.md file: task execution and status
     belong in run-state database rows
-  - an ## Acceptance criteria section: one criterion per list line
+  - an ## Acceptance criteria section: one criterion per list line in exactly
+    this form: \`- AC-001: <criterion text>\`. Criterion IDs must match
+    \`AC-(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})\`. Preserve each existing ID
+    when wording or reordering criteria; mint a greater unused ID only for a
+    genuinely new criterion, and never reuse an ID for a different criterion
   A revised specification that does not validate blocks the run. There is no
   fallback to your draft.
 - panelRequest: the panel you propose for the independent review
@@ -206,7 +213,8 @@ Each finding has:
   governing design leaves the decision unmade
 - location, by classification:
   - current_artifact: a real section heading or declared artifact path from
-    the specification below
+    the specification below. When the finding targets an acceptance
+    criterion, use that criterion's AC ID as the location
   - upstream: exactly upstream:design:<decision-key>, where <decision-key>
     is lowercase kebab-case within 64 characters and names the absent
     decision or obligation — never require or invent a heading for an
@@ -269,10 +277,12 @@ The plan document schema is:
 - a ## Tasks section: one plain task per list line. Checkbox prefixes such as
   [ ] and [x] are forbidden because completion state belongs in the run
   database
-- a ## Coverage section: one line per acceptance criterion, in one of two
+- a ## Coverage section: one line per acceptance criterion ID, in one of two
   forms:
-    <criterion> -> <artifact path>
-    <criterion> -> not_applicable: <rationale> / <alternative verification>
+    - AC-001 -> <artifact path>
+    - AC-001 -> not_applicable: <rationale> / <alternative verification>
+  Copy each canonical AC ID from the approved specification exactly. Put only
+  the ID to the left of \`->\`; do not copy or paraphrase criterion prose there.
   not_applicable requires both a rationale and an alternative verification.
   An entry with only one of them is refused.
 
@@ -332,10 +342,13 @@ The self-critique has:
   - plan_for must be exactly: ${specHash}
   - a ## Tasks section: one plain task per list line. Checkbox prefixes such as
     [ ] and [x] are forbidden because completion state belongs in the run database
-  - a ## Coverage section: one line per acceptance criterion, in one of two
+  - a ## Coverage section: one line per acceptance criterion ID, in one of two
     forms:
-      <criterion> -> <artifact path>
-      <criterion> -> not_applicable: <rationale> / <alternative verification>
+      - AC-001 -> <artifact path>
+      - AC-001 -> not_applicable: <rationale> / <alternative verification>
+    Copy each canonical AC ID from the approved specification exactly. Put
+    only the ID to the left of \`->\`; do not copy or paraphrase criterion prose
+    there.
     not_applicable requires both a rationale and an alternative verification.
     An entry with only one of them is refused.
   A revised plan that does not validate, drops a criterion's coverage, or
@@ -401,7 +414,7 @@ Each finding has:
   specification leaves the decision unmade
 - location, by classification:
   - current_artifact: a real section heading, task, or artifact path from
-    the plan below
+    the plan below. When the finding targets a coverage entry, use that entry's AC ID as the location
   - upstream: exactly upstream:specification:<decision-key>, where
     <decision-key> is lowercase kebab-case within 64 characters and names
     the absent decision or obligation — never require or invent a heading
@@ -500,6 +513,7 @@ more and no fewer. Each decision has:
   judgement those checks cannot make.
 - changedLocations: the locations in the revised artifact you changed to
   answer this finding (section headings, task lines, or artifact paths).
+  When a changed location is an acceptance criterion or coverage entry, cite its AC ID.
   Empty when you change nothing, as for cannot_determine.
 
 For disposition rejected_with_rationale you must also supply:
@@ -601,7 +615,11 @@ The revised specification must satisfy the same document schema as before:
   delivery proves each declared artifact by its exact committed path.
   Never declare a tasks.md file: task execution and status belong in run-state
   database rows
-- an ## Acceptance criteria section: one criterion per list line
+- an ## Acceptance criteria section: one criterion per list line in exactly
+  this form: \`- AC-001: <criterion text>\`. Criterion IDs must match
+  \`AC-(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})\`. Preserve each existing ID
+  when wording or reordering criteria; mint a greater unused ID only for a
+  genuinely new criterion, and never reuse an ID for a different criterion
 A revised specification that does not validate blocks the run.
 
 Design document:
@@ -663,10 +681,12 @@ The revised plan must satisfy the same document schema as before:
 - a ## Tasks section: one plain task per list line. Checkbox prefixes such as
   [ ] and [x] are forbidden because completion state belongs in the run
   database
-- a ## Coverage section: one line per acceptance criterion, in one of two
+- a ## Coverage section: one line per acceptance criterion ID, in one of two
   forms:
-    <criterion> -> <artifact path>
-    <criterion> -> not_applicable: <rationale> / <alternative verification>
+    - AC-001 -> <artifact path>
+    - AC-001 -> not_applicable: <rationale> / <alternative verification>
+  Copy each canonical AC ID from the approved specification exactly. Put only
+  the ID to the left of \`->\`; do not copy or paraphrase criterion prose there.
   not_applicable requires both a rationale and an alternative verification.
 Every artifact path you name in ## Coverage must be one of the approved scope
 paths below. A plan promising an artifact outside the approved scope is

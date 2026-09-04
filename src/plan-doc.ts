@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { normalizeText } from "./canonical.ts";
+import { CRITERION_ID_PATTERN, isCriterionId } from "./spec-doc.ts";
 
 /**
  * One acceptance criterion and how the plan proposes to cover it.
@@ -12,7 +13,7 @@ import { normalizeText } from "./canonical.ts";
  * `artifact` / (`rationale` + `alternativeVerification`) is populated.
  */
 export interface CoverageEntry {
-  criterion: string;
+  criterionId: string;
   artifact: string | null;
   rationale: string | null;
   alternativeVerification: string | null;
@@ -94,23 +95,31 @@ export function validatePlanDoc(
 
   const coverage: CoverageEntry[] = [];
   for (const line of coverageLines) {
-    // The delimiter is the *last* `->`: criterion prose may legitimately
-    // contain an arrow ("the a->b mapping works"), but the artifact path —
-    // the tail — is where the split belongs. Splitting at the first arrow
-    // truncated that criterion and fabricated an artifact from its tail.
-    const arrow = line.lastIndexOf("->");
+    // The delimiter is the *first* `->`. The left side is a constrained
+    // criterion ID that can never contain an arrow, while the right side may
+    // carry free prose (a not_applicable rationale citing "the a->b mapping").
+    // Splitting at the last arrow would break inside that prose and refuse a
+    // valid document; splitting at the first cannot mis-accept, because a
+    // prose-led left side still fails the ID check below.
+    const arrow = line.indexOf("->");
     if (arrow < 0) {
       return {
         ok: false,
-        reason: `coverage entry must be '<criterion> -> <artifact>' or '<criterion> -> not_applicable: <rationale> / <alternative verification>': ${line}`,
+        reason: `coverage entry must be '<criterion-id> -> <artifact>' or '<criterion-id> -> not_applicable: <rationale> / <alternative verification>': ${line}`,
       };
     }
-    const criterion = line.slice(0, arrow).trim();
+    const criterionId = line.slice(0, arrow).trim();
     const target = line.slice(arrow + 2).trim();
-    if (criterion === "" || target === "") {
+    if (criterionId === "" || target === "") {
       return {
         ok: false,
-        reason: `coverage entry must name a criterion and a target: ${line}`,
+        reason: `coverage entry must name a criterion ID and a target: ${line}`,
+      };
+    }
+    if (!isCriterionId(criterionId)) {
+      return {
+        ok: false,
+        reason: `coverage entry criterion ID is invalid: ${criterionId}; must match ${CRITERION_ID_PATTERN.source}`,
       };
     }
     // The prefix test is the decision form `not_applicable:` (spacing before
@@ -131,13 +140,13 @@ export function validatePlanDoc(
       if (rationale === "" || alternative === "") {
         return {
           ok: false,
-          reason: `coverage entry for ${criterion} says not_applicable without both a rationale and an alternative verification`,
+          reason: `coverage entry for ${criterionId} says not_applicable without both a rationale and an alternative verification`,
         };
       }
-      coverage.push({ criterion, artifact: null, rationale, alternativeVerification: alternative });
+      coverage.push({ criterionId, artifact: null, rationale, alternativeVerification: alternative });
       continue;
     }
-    coverage.push({ criterion, artifact: target, rationale: null, alternativeVerification: null });
+    coverage.push({ criterionId, artifact: target, rationale: null, alternativeVerification: null });
   }
 
   return {

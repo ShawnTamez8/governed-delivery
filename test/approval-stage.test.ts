@@ -28,7 +28,7 @@ change_kind: feature
 
 ## Acceptance criteria
 
-- It does the thing.
+- AC-001: It does the thing.
 `;
 
 /**
@@ -420,10 +420,36 @@ test("a spec that no longer validates is refused naming the schema failure", () 
   });
 });
 
+test("an obsolete prose-only criterion is refused with the fresh-run repair path", () => {
+  withFixture((f) => {
+    const signature = signFor(f);
+    writeFileSync(
+      f.specPath,
+      `feature: Thing
+change_kind: feature
+
+## Declared artifacts
+
+- src/thing.ts
+
+## Acceptance criteria
+
+- It does the thing.
+`
+    );
+    const r = approveRun(f.store, f.root, { runId: f.runId, expiresAt: f.expiresAt, signature });
+    assert.equal(r.ok, false);
+    if (r.ok) return;
+    assert.match(r.reason, /obsolete prose-only acceptance-criterion shape/);
+    assert.match(r.reason, /start a fresh run to mint stable criterion IDs/);
+    assertNothingWritten(f);
+  });
+});
+
 test("a spec edited after review is refused by name, before the signature is even checked", () => {
   withFixture((f) => {
     const signature = signFor(f);
-    appendFileSync(f.specPath, "\n- src/extra.ts\n");
+    appendFileSync(f.specPath, "\n- AC-002: An extra reviewed obligation.\n");
     const r = approveRun(f.store, f.root, { runId: f.runId, expiresAt: f.expiresAt, signature });
     assert.equal(r.ok, false);
     // A spec change caught by name is a better diagnostic than the signature

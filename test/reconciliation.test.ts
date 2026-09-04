@@ -42,7 +42,7 @@ change_kind: feature
 
 ## Acceptance criteria
 
-- the thing works
+- AC-001: the thing works
 `;
 
 function specDoc(): SpecDoc {
@@ -62,7 +62,7 @@ plan_for: ${"a".repeat(64)}
 
 ## Coverage
 
-- the thing works -> src/a.ts
+- AC-001 -> src/a.ts
 `
   );
   assert.equal(parsed.ok, true);
@@ -286,13 +286,23 @@ test("the artifact under review can never be the grounding source", () => {
 // --- normative nodes ----------------------------------------------------------
 
 test("spec normative nodes are the declared artifacts and acceptance criteria", () => {
-  assert.deepEqual(specNormativeNodes(specDoc()), ["src/a.ts", "the thing works"]);
+  assert.deepEqual(specNormativeNodes(specDoc()), ["src/a.ts", "AC-001: the thing works"]);
+});
+
+test("criterion wording under one ID remains a normative replacement, while removal stays addition-only", () => {
+  assert.deepEqual(
+    deriveAddedNormativeNodes(["AC-001: the thing works"], ["AC-001: the thing works precisely"]),
+    ["AC-001: the thing works precisely"]
+  );
+  // Hazard 17 remains explicitly out of scope: stable identity does not turn
+  // the existing addition-only delta into removal authorization.
+  assert.deepEqual(deriveAddedNormativeNodes(["AC-001: the thing works"], []), []);
 });
 
 test("plan normative nodes are the tasks and the reconstructed coverage lines", () => {
   assert.deepEqual(planNormativeNodes(planDoc()), [
     "Build the thing",
-    "the thing works -> src/a.ts",
+    "AC-001 -> src/a.ts",
   ]);
 });
 
@@ -307,14 +317,14 @@ plan_for: ${"a".repeat(64)}
 
 ## Coverage
 
-- it is observable -> not_applicable: observed at runtime / checked in the smoke run
+- AC-002 -> not_applicable: observed at runtime / checked in the smoke run
 `
   );
   assert.equal(parsed.ok, true);
   if (!parsed.ok) return;
   assert.deepEqual(planNormativeNodes(parsed.value), [
     "Build the thing",
-    "it is observable -> not_applicable: observed at runtime / checked in the smoke run",
+    "AC-002 -> not_applicable: observed at runtime / checked in the smoke run",
   ]);
 });
 

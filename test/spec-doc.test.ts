@@ -19,7 +19,7 @@ change_kind: feature
 
 ## Acceptance criteria
 
-- the parser accepts the documented shapes
+- AC-001: the parser accepts the documented shapes
 `;
 }
 
@@ -30,7 +30,9 @@ test("a valid spec parses with artifacts and criteria extracted", () => {
     assert.equal(result.value.feature, "my-feature");
     assert.equal(result.value.changeKind, "feature");
     assert.deepEqual(result.value.declaredArtifacts, ["src/parser.ts", "test/parser.test.ts"]);
-    assert.deepEqual(result.value.acceptanceCriteria, ["the parser accepts the documented shapes"]);
+    assert.deepEqual(result.value.acceptanceCriteria, [
+      { id: "AC-001", text: "the parser accepts the documented shapes" },
+    ]);
   }
 });
 
@@ -50,7 +52,7 @@ test("each refusal names its cause", () => {
     ok: false,
     reason: "spec is missing the ## Declared artifacts section",
   });
-  const noCriteria = validSpec().replace("## Acceptance criteria\n\n- the parser accepts the documented shapes\n", "## Acceptance criteria\n");
+  const noCriteria = validSpec().replace("## Acceptance criteria\n\n- AC-001: the parser accepts the documented shapes\n", "## Acceptance criteria\n");
   assert.deepEqual(validateSpecDoc(noCriteria), {
     ok: false,
     reason: "acceptance criteria must not be empty",
@@ -60,6 +62,46 @@ test("each refusal names its cause", () => {
     ok: false,
     reason: "declared artifact must be a repo-relative path: ../secrets.ts",
   });
+});
+
+test("criterion IDs use one canonical positive-integer encoding", () => {
+  for (const id of ["AC-001", "AC-010", "AC-999", "AC-1000"]) {
+    const result = validateSpecDoc(validSpec().replace("AC-001", id));
+    assert.equal(result.ok, true, id);
+  }
+  for (const id of ["AC-000", "ac-001", "AC-01", "AC-0001"]) {
+    const result = validateSpecDoc(validSpec().replace("AC-001", id));
+    assert.equal(result.ok, false, id);
+    if (result.ok) continue;
+    assert.match(result.reason, new RegExp(id));
+    assert.equal(result.obsoleteCriterionShape, undefined);
+  }
+});
+
+test("acceptance criteria require an ID, unique identity, and non-empty text", () => {
+  const proseOnly = validateSpecDoc(
+    validSpec().replace("AC-001: the parser accepts the documented shapes", "the parser accepts the documented shapes")
+  );
+  assert.equal(proseOnly.ok, false);
+  if (!proseOnly.ok) {
+    assert.match(proseOnly.reason, /acceptance criterion must be '<criterion-id>: <criterion text>'/);
+    assert.equal(proseOnly.obsoleteCriterionShape, true);
+  }
+
+  const duplicate = validateSpecDoc(
+    validSpec().replace(
+      "- AC-001: the parser accepts the documented shapes",
+      "- AC-001: the parser accepts the documented shapes\n- AC-001: another criterion"
+    )
+  );
+  assert.equal(duplicate.ok, false);
+  if (!duplicate.ok) assert.match(duplicate.reason, /duplicate acceptance criterion ID AC-001/);
+
+  const empty = validateSpecDoc(
+    validSpec().replace("AC-001: the parser accepts the documented shapes", "AC-001:")
+  );
+  assert.equal(empty.ok, false);
+  if (!empty.ok) assert.match(empty.reason, /acceptance criterion AC-001 has empty text/);
 });
 
 test("writeSpecDoc writes the file and refuses invalid content without touching the filesystem", () => {
@@ -72,7 +114,7 @@ test("writeSpecDoc writes the file and refuses invalid content without touching 
     assert.throws(() => writeSpecDoc(root, "my-feature", "not a spec"), /missing the frontmatter/);
     assert.equal(readFileSync(before, "utf8"), validSpec());
     // Overwrite on revision.
-    const revised = validSpec() + "revision\n";
+    const revised = validSpec().replace("documented shapes", "documented shapes after revision");
     writeSpecDoc(root, "my-feature", revised);
     assert.equal(readFileSync(before, "utf8"), revised);
   } finally {

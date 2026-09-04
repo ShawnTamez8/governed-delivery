@@ -2,19 +2,27 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { BLOCKING_DISPOSITIONS, coverageFitsScope, coverageMeetsCriteria, planReviewGate } from "../src/plan-gate.ts";
 import type { CoverageEntry, PlanDoc } from "../src/plan-doc.ts";
+import type { AcceptanceCriterion } from "../src/spec-doc.ts";
 import type { FindingDecisionRow } from "../src/store.ts";
 
-function covers(artifact: string, criterion = `criterion for ${artifact}`): CoverageEntry {
-  return { criterion, artifact, rationale: null, alternativeVerification: null };
+function covers(artifact: string, criterionId = "AC-001"): CoverageEntry {
+  return { criterionId, artifact, rationale: null, alternativeVerification: null };
 }
 
-function notApplicable(criterion: string): CoverageEntry {
+function notApplicable(criterionId: string): CoverageEntry {
   return {
-    criterion,
+    criterionId,
     artifact: null,
     rationale: "observed, not asserted",
     alternativeVerification: "checked in the smoke run's recorded output",
   };
+}
+
+function criteria(...ids: string[]): AcceptanceCriterion[] {
+  return ids.map((id) => ({
+    id,
+    text: `${id} keeps markdown like \`calculator/index.html\` and qualifiers (no build step)`,
+  }));
 }
 
 function planWith(coverage: CoverageEntry[]): PlanDoc {
@@ -50,13 +58,13 @@ test("coverage entirely inside the signed scope passes", () => {
 
 test("an artifact outside the signed scope is returned as unkeepable and named", () => {
   const result = coverageFitsScope(
-    planWith([covers("src/thing.ts"), covers("src/elsewhere.ts", "it also does the other thing")]),
+    planWith([covers("src/thing.ts"), covers("src/elsewhere.ts", "AC-002")]),
     SCOPE
   );
   assert.equal(result.ok, false);
   if (result.ok) return;
   // The criterion is what the operator can act on, not the path.
-  assert.deepEqual(result.unkeepable, ["it also does the other thing"]);
+  assert.deepEqual(result.unkeepable, ["AC-002"]);
 });
 
 test("a path differing from a signed entry only in case is unkeepable on every platform", () => {
@@ -65,19 +73,19 @@ test("a path differing from a signed entry only in case is unkeepable on every p
   // what was signed, so this must refuse on Windows and macOS too — where the
   // two spellings name one file — not just on a case-sensitive filesystem.
   const result = coverageFitsScope(
-    planWith([covers("src/Thing.ts", "case-differing promise")]),
+    planWith([covers("src/Thing.ts", "AC-001")]),
     SCOPE
   );
   assert.equal(result.ok, false);
   if (result.ok) return;
-  assert.deepEqual(result.unkeepable, ["case-differing promise"]);
+  assert.deepEqual(result.unkeepable, ["AC-001"]);
 });
 
 test("a not_applicable entry is never unkeepable", () => {
   // It promises no artifact: it carries a rationale and an alternative
   // verification instead, which section 8 prefers to a fabricated test.
   const result = coverageFitsScope(
-    planWith([covers("src/thing.ts"), notApplicable("it logs on startup")]),
+    planWith([covers("src/thing.ts"), notApplicable("AC-002")]),
     SCOPE
   );
   assert.deepEqual(result, { ok: true });
@@ -86,23 +94,23 @@ test("a not_applicable entry is never unkeepable", () => {
 test("a mix returns only the offending criteria", () => {
   const result = coverageFitsScope(
     planWith([
-      covers("src/thing.ts", "in scope"),
-      covers("src/nope.ts", "out of scope one"),
-      notApplicable("not applicable at all"),
-      covers("docs/other.md", "out of scope two"),
+      covers("src/thing.ts", "AC-001"),
+      covers("src/nope.ts", "AC-002"),
+      notApplicable("AC-003"),
+      covers("docs/other.md", "AC-004"),
     ]),
     SCOPE
   );
   assert.equal(result.ok, false);
   if (result.ok) return;
-  assert.deepEqual(result.unkeepable, ["out of scope one", "out of scope two"]);
+  assert.deepEqual(result.unkeepable, ["AC-002", "AC-004"]);
 });
 
 test("an empty signed scope makes every artifact promise unkeepable", () => {
-  const result = coverageFitsScope(planWith([covers("src/thing.ts", "anything")]), []);
+  const result = coverageFitsScope(planWith([covers("src/thing.ts", "AC-001")]), []);
   assert.equal(result.ok, false);
   if (result.ok) return;
-  assert.deepEqual(result.unkeepable, ["anything"]);
+  assert.deepEqual(result.unkeepable, ["AC-001"]);
 });
 
 test("planReviewGate passes when there are no decisions at all", () => {
@@ -142,29 +150,42 @@ test("planReviewGate blocks on exactly BLOCKING_DISPOSITIONS", () => {
   }
 });
 
-test("coverageMeetsCriteria passes when every criterion has a line", () => {
-  const doc = planWith([covers("src/thing.ts", "it works"), notApplicable("it logs")]);
-  assert.deepEqual(coverageMeetsCriteria(doc, ["it works", "it logs"]), { ok: true });
+test("coverageMeetsCriteria passes by ID without restating criterion prose", () => {
+  const doc = planWith([covers("src/thing.ts", "AC-001"), notApplicable("AC-002")]);
+  assert.deepEqual(coverageMeetsCriteria(doc, criteria("AC-001", "AC-002")), { ok: true });
 });
 
-test("coverageMeetsCriteria names the criteria the plan never mentions", () => {
-  const doc = planWith([covers("src/thing.ts", "it works")]);
-  const result = coverageMeetsCriteria(doc, ["it works", "it logs", "it is fast"]);
+test("coverageMeetsCriteria names missing criterion IDs", () => {
+  const doc = planWith([covers("src/thing.ts", "AC-001")]);
+  const result = coverageMeetsCriteria(doc, criteria("AC-001", "AC-002", "AC-003"));
   assert.equal(result.ok, false);
   if (result.ok) return;
-  assert.deepEqual(result.uncovered, ["it logs", "it is fast"]);
+  assert.deepEqual(result, { ok: false, missing: ["AC-002", "AC-003"], unknown: [], duplicate: [] });
 });
 
-test("coverageMeetsCriteria tolerates case and whitespace differences", () => {
-  // A criterion is prose restated by a model and nobody signs it, so byte
-  // equality would refuse correct plans over a double space. This is
-  // deliberately unlike coverageFitsScope, where the spelling is signed.
-  const doc = planWith([covers("src/thing.ts", "It  Works   Correctly")]);
-  assert.deepEqual(coverageMeetsCriteria(doc, ["it works correctly"]), { ok: true });
+test("coverageMeetsCriteria names unknown criterion IDs", () => {
+  const doc = planWith([covers("src/thing.ts", "AC-001"), covers("src/other.ts", "AC-999")]);
+  const result = coverageMeetsCriteria(doc, criteria("AC-001"));
+  assert.deepEqual(result, { ok: false, missing: [], unknown: ["AC-999"], duplicate: [] });
 });
 
-test("coverageMeetsCriteria is unaffected by extra coverage lines", () => {
-  // A plan may say more than the spec asked; the gate only refuses silence.
-  const doc = planWith([covers("src/a.ts", "it works"), covers("src/b.ts", "a bonus concern")]);
-  assert.deepEqual(coverageMeetsCriteria(doc, ["it works"]), { ok: true });
+test("coverageMeetsCriteria names duplicate criterion IDs", () => {
+  const doc = planWith([covers("src/a.ts", "AC-001"), covers("src/b.ts", "AC-001")]);
+  const result = coverageMeetsCriteria(doc, criteria("AC-001"));
+  assert.deepEqual(result, { ok: false, missing: [], unknown: [], duplicate: ["AC-001"] });
+});
+
+test("coverageMeetsCriteria reports every identity defect in first-observed order", () => {
+  const doc = planWith([
+    covers("src/a.ts", "AC-999"),
+    covers("src/b.ts", "AC-999"),
+    covers("src/c.ts", "AC-888"),
+    covers("src/d.ts", "AC-888"),
+  ]);
+  assert.deepEqual(coverageMeetsCriteria(doc, criteria("AC-001", "AC-002")), {
+    ok: false,
+    missing: ["AC-001", "AC-002"],
+    unknown: ["AC-999", "AC-888"],
+    duplicate: ["AC-999", "AC-888"],
+  });
 });

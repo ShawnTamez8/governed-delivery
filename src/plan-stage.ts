@@ -201,7 +201,10 @@ export async function runPlanStage(
   // panel and the spec panel are sized on the same basis.
   const specDoc = validateSpecDoc(specContent);
   if (!specDoc.ok) {
-    return { ok: false, reason: `the approved spec ${specPath} no longer validates: ${specDoc.reason}` };
+    const repair = specDoc.obsoleteCriterionShape
+      ? "; this specification uses the obsolete prose-only acceptance-criterion shape, so start a fresh run to mint stable criterion IDs"
+      : "";
+    return { ok: false, reason: `the approved spec ${specPath} no longer validates: ${specDoc.reason}${repair}` };
   }
 
   const audit = (stageId: number | null, action: string, summary: string): void => {
@@ -229,6 +232,17 @@ export async function runPlanStage(
     store.completeStage(stageId, "", "block");
     store.setRunStatus(runId, "blocked");
     return { ok: false, reason };
+  };
+
+  const coverageIdentityCheck = (doc: PlanDoc, stageId: number): PlanStageResult | null => {
+    const result = coverageMeetsCriteria(doc, specDoc.value.acceptanceCriteria);
+    return result.ok
+      ? null
+      : abort(
+          stageId,
+          "plan.coverage.invalid",
+          `plan coverage IDs are invalid: missing=[${result.missing.join(", ")}]; unknown=[${result.unknown.join(", ")}]; duplicate=[${result.duplicate.join(", ")}]`
+        );
   };
 
   try {
@@ -315,6 +329,8 @@ export async function runPlanStage(
     // The coverage gate runs here, before the panel: it is deterministic and
     // free, so refusing a plan that promises out-of-scope artifacts saves a
     // full panel's invocations on a plan that could never pass.
+    const invalidCoverage = coverageIdentityCheck(written.doc, planStage.id);
+    if (invalidCoverage) return invalidCoverage;
     const coverage = coverageFitsScope(written.doc, scope);
     if (!coverage.ok) {
       // The audit event carries the criteria names, not just a count — the
@@ -326,15 +342,6 @@ export async function runPlanStage(
         `plan promises coverage outside the approved scope: ${coverage.unkeepable.join("; ")}`
       );
     }
-    const complete = coverageMeetsCriteria(written.doc, specDoc.value.acceptanceCriteria);
-    if (!complete.ok) {
-      return abort(
-        planStage.id,
-        "plan.coverage.incomplete",
-        `plan does not cover every acceptance criterion: ${complete.uncovered.join("; ")}`
-      );
-    }
-
     // --- self-critique: the author's own pass, before any reviewer sees it ---
     // One dispatch per artifact, under the author's frozen definition and the
     // author's model mapping, recorded as its own agent_run. It is never a
@@ -416,20 +423,14 @@ export async function runPlanStage(
     }
     const critiqueMismatch = planForCheck(critiqueParsed.value, planStage.id);
     if (critiqueMismatch) return critiqueMismatch;
+    const invalidCritiqueCoverage = coverageIdentityCheck(critiqueParsed.value, planStage.id);
+    if (invalidCritiqueCoverage) return invalidCritiqueCoverage;
     const critiqueCoverage = coverageFitsScope(critiqueParsed.value, scope);
     if (!critiqueCoverage.ok) {
       return abort(
         planStage.id,
         "plan.coverage.unkeepable",
         `plan promises coverage outside the approved scope: ${critiqueCoverage.unkeepable.join("; ")}`
-      );
-    }
-    const critiqueComplete = coverageMeetsCriteria(critiqueParsed.value, specDoc.value.acceptanceCriteria);
-    if (!critiqueComplete.ok) {
-      return abort(
-        planStage.id,
-        "plan.coverage.incomplete",
-        `plan does not cover every acceptance criterion: ${critiqueComplete.uncovered.join("; ")}`
       );
     }
     try {
@@ -667,20 +668,14 @@ export async function runPlanStage(
       const reconciledDoc = reconciledParsed.value;
       const reconcileMismatch = planForCheck(reconciledDoc, reviewStage.id);
       if (reconcileMismatch) return reconcileMismatch;
+      const invalidReconcileCoverage = coverageIdentityCheck(reconciledDoc, reviewStage.id);
+      if (invalidReconcileCoverage) return invalidReconcileCoverage;
       const reconcileCoverage = coverageFitsScope(reconciledDoc, scope);
       if (!reconcileCoverage.ok) {
         return abort(
           reviewStage.id,
           "plan.coverage.unkeepable",
           `plan promises coverage outside the approved scope: ${reconcileCoverage.unkeepable.join("; ")}`
-        );
-      }
-      const reconcileComplete = coverageMeetsCriteria(reconciledDoc, specDoc.value.acceptanceCriteria);
-      if (!reconcileComplete.ok) {
-        return abort(
-          reviewStage.id,
-          "plan.coverage.incomplete",
-          `plan does not cover every acceptance criterion: ${reconcileComplete.uncovered.join("; ")}`
         );
       }
       const reconciliation = validateReconciliation(reconcileContent.decisions, {

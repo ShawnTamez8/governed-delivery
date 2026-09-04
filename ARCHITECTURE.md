@@ -251,8 +251,34 @@ a test should enforce that across every prompt-building file.
 
 ### Coverage decisions
 
+A specification owns acceptance-criterion identity. Each criterion is one
+line in the canonical form `- AC-001: <criterion text>`; IDs are positive
+decimal integers with at least three digits, no alternate zero padding, and
+must be unique within the specification. The spec author mints them. Revision
+prompts require an existing obligation to keep its ID through wording changes
+or reordering and a genuinely new obligation to receive a greater unused ID.
+The parser proves only format and uniqueness: before approval it cannot prove
+that a model preserved semantic identity or was authorized to delete an
+obligation.
+
+A plan Coverage line copies only the approved criterion ID to the left of
+`->`; it never restates criterion prose. Before scope fitness is evaluated,
+the planning gate requires a bidirectional, unique relation: every approved ID
+appears exactly once, no unknown ID appears, and no ID is repeated. Identity is
+exact after trimming field whitespace. The plan remains bound by `plan_for` to
+the same normalized specification hash the review and approval chain records,
+and artifact targets remain constrained by the separately signed scope.
+
 A coverage entry may say `not_applicable`, but only with a rationale and an
 alternative verification. Honest non-coverage beats a fabricated test.
+
+There is one current document schema, not a compatibility parser. A run that
+reaches a parsing boundary with prose-only criteria or prose-led Coverage is
+refused with the repair to start a fresh run. A run already beyond that gate
+may continue through downstream consumers that treat the documents as
+hash-bound opaque content. Review and reconciliation prompts recommend an AC
+ID in their existing textual location fields, but those fields do not create
+typed or mechanically enforced criterion lineage.
 
 ## 9. Agents: definition, registry, and selection
 
@@ -482,7 +508,8 @@ pass; and that the resulting route is honoured.
 **`addressed` is not authority to invent an obligation.** Deterministic code
 derives the normative delta by set-diffing the parsed nodes of the validated
 artifact before and after reconciliation — declared artifacts and acceptance
-criteria for a specification, tasks and coverage for a plan. Every added node,
+criteria rendered as `<id>: <text>` for a specification, tasks and ID-led
+coverage for a plan. Every added node,
 including the added half of a replacement, must be claimed exactly once by an
 `addressed` decision and carry an excerpt from the governing input: the design
 for a specification, the approved specification for a plan. The artifact under
@@ -502,7 +529,8 @@ panel independently confirms an `addressed` decision or a grounded rejection.
 That residual semantic judgement is the author's, it is retained as evidence,
 and it is the accepted cost of removing the closure pass. It is not a gap the
 checks above close, and nothing in this system should be described as though it
-were.
+were. Stable criterion identity also does not authorize removal: the normative
+delta remains addition-only, so hazard 17's deleted-obligation gap is unchanged.
 
 **`awaiting_approval`.** The only human gate. One signed authorization — an
 Ed25519 signature by the operator, verified by the gate against a public key

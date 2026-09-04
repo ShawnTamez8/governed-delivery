@@ -5,7 +5,7 @@ resume point. Everything under **Session records** is history, ordered newest
 first, and may name state that has since been superseded — when the two
 disagree, Current state wins.
 
-## Current state (2026-09-03)
+## Current state (2026-09-04)
 
 **Shipped and committed:** build order steps 1-8 complete, and **step 9's
 milestone — one complete run with queryable cost — is reached.** Step 8
@@ -19,20 +19,12 @@ all step-8 work: `1890503`…`36a726d` (Tasks 1-6 + review remediation),
 fix). Nothing pushed — the operator has not asked. Read the head with
 `git log -1` rather than trusting a commit id written here.
 
-**Step 8's shipped surface:** declared artifacts are exact file paths
-(trailing-slash, starting-tree directory, and run-document refusals for
-design/spec/plan under `docs/features/<slug>/`); the
-implementation-to-verification handoff is one typed record
-(`base=<pre-apply head>; head=<final>` in the gate event, patch base on the
-verification record); a pure coverage module compares exactly; `bw deliver`
-performs every profile, handoff, scope, git, cleanliness, coverage,
-existence-at-head, gate-event, and ancestry check before one
-`Store.transaction` inserts the delivery_check stage, writes the record
-(carrying its own stage id), completes the stage, transitions the run to
-`completed` or `blocked`, and appends the audit event. The standalone review
-(`configured_standalone` — the operator's first billed review choice) found
-twelve issues, all remediated in `36a726d` with named regressions and
-break-and-restore proofs.
+**Step 8's shipped surface** is summarized in `ARCHITECTURE.md` and the
+reconciled review record (`docs/features/delivery-check/2026-09-03-step8-code-review.md`):
+declared artifacts are exact file paths, the implementation-to-verification
+handoff is one typed record, a pure coverage module compares exactly, and
+`bw deliver` runs every check before one `Store.transaction` completes or
+blocks the run.
 
 **The delivery stage facts to know before touching it:**
 
@@ -72,28 +64,35 @@ break-and-restore proofs.
   places, including "committed as the evidence record"; that file was never
   written. Historical tier, so `check:docs` only warns — the gap is real.
 - Retained evidence outside the repo, no process: step 5b's Task 1
-  prototype bundle; `driver.mjs` scratch targets under
-  `%LOCALAPPDATA%\Temp\bw-run-skill\` (latest on disk, readable via
-  `driver.mjs report --dir <path>`).
+  prototype bundle; one `driver.mjs` scratch target with the completed
+  web-calculator run at
+  `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1788500665227\target`
+  (readable via `driver.mjs report --dir <path>`; earlier targets, including
+  the stats run's record, were deleted by `driver.mjs clean`).
 - `VERIFY_RETENTION_MAX_BYTES` (64 MB) is chosen, not derived; filesystem and
   network containment for verification commands is unbuilt
   (`docs/proposals/verification-containment.md`). `.governance` location
   configuration is deferred.
-- **The plan coverage gate is unrepaired.** `coverageMeetsCriteria` compares
-  model-restated prose by near-exact match and blocks all criteria
-  identically whether one was weakened or merely reformatted; the reverse
-  direction (a coverage line naming a criterion the spec never contained) is
-  unchecked. Three dispositions are already recorded in
-  `docs/proposals/spec-kit-harness-review.md`; the 2026-09-03 diagnosis and
-  its reconciliation are in
-  `.claude/sessions/2026-09-03-debug-plan-coverage-gate-paraphrase-mismatch.md`.
-  Nothing adopted before the step-9 stop. **A reproduction is on disk:** the
-  scratch target at *%LOCALAPPDATA%\Temp\bw-run-skill\1788477394347\target*
-  carries a calculator design whose sixteen markdown-formatted acceptance
-  criteria trigger the block on every attempt; its
-  *docs/features/calculator/design.md* is the input to recreate if that
-  target has been cleaned up. Cheapest first move is the reverse-direction
-  check — no schema change, and it closes the invented-criterion hole.
+- **The stable-criterion-ids feature is complete in the working tree,
+  live-validated, and uncommitted.** Spec-minted canonical IDs, the exact
+  bidirectional Coverage relation at all three plan checkpoints, and the
+  fresh-run repair for old parse-boundary runs — plus this session's fix:
+  the coverage split in `src/plan-doc.ts` is the *first* `->` (the left side
+  is a constrained ID; last-arrow splitting falsely refused `not_applicable`
+  prose containing an arrow), regression test proven by break-and-restore.
+  Full suite 694 pass / 0 fail / 1 pre-existing skip, typecheck clean,
+  doc-check clean. **Live proof exists:** two operator-authorized paid runs
+  completed end to end on scratch targets 2026-09-04 — `stats` (18 criteria,
+  11 dispatches, $0.63735) and `web-calculator` (18 criteria from a PRD,
+  11 dispatches, $0.84567) — IDs survived spec → plan coverage → signed
+  scope → delivery through remediation rounds with no false refusals. This
+  supersedes the earlier blocked 13-criterion calculator attempt (whose
+  retained reproduction was deleted by `driver.mjs clean` this session).
+  The in-session code review of the diff found the coverage-split defect
+  (fixed) and nothing else; the operator ruled 2026-09-04 that it discharges
+  the plan's review requirement — the plan is `Implemented`.
+  Evidence: `docs/features/stable-criterion-ids/real-run-evidence.md` and
+  the audit chain in the retained web-calculator target below.
 - **Hazard 17 is unguarded by design, not by oversight.** The normative delta
   derives additions only, so a reconciliation can discharge a finding by
   deleting the acceptance criterion — before the approval hash is taken.
@@ -115,21 +114,18 @@ break-and-restore proofs.
   the three grandfathered task records but not the eleven checklist plans
   the checker also exempts; `.claude/skills/doc-check/SKILL.md` names both.
 
-**Next up:** the operator decides what step 9's reached milestone means:
-stop, push, or an explicit decision to build past the stop. Resuming any
-work starts from `git log -1`, `git status`, and this block.
+**Next up:** operator decisions — commit the stable-criterion-ids working tree
+(feature, coverage-split fix, plan `Implemented`, relocated debug session
+records), and push when ready. Resuming any work starts from `git log -1`,
+`git status`, and this block.
 
 ## Diagnostics quick-reference
 
-Durable one-liners live in **auto memory**, which loads automatically — read
-`MEMORY.md` there rather than duplicating it here. It carries the
-whitespace-collapsing citation match, the unstable `intentKey`, frozen review
-defaults, dispatch cost, break-it mechanics, line endings, the source-scanning
-trap, duplicated-stage coverage, the discriminating-configuration rule, prompt
-bounds deriving from the validator, the `npm test` git leak, SQL comments
-defeating substring guards, doc-check's backtick scratch-filename warning, the
-independent-review-choice pattern (hazard 14), and the `claude` auth-expiry
-envelope.
+Durable one-liners were promoted into **auto memory** on the machine that ran
+those sessions — verified 2026-09-04: no governed-delivery store exists under
+`C:\Users\tamezs\.claude\projects\` on this machine, so that layer cannot be
+assumed present (the durable-knowledge-tiers gap). The lessons it carried are
+recoverable from the session records and review documents named below.
 
 One line memory does not yet carry:
 
@@ -139,15 +135,89 @@ One line memory does not yet carry:
 
 ## Session records
 
+### Stable-criterion-ids review, coverage-split fix, and two live E2E runs (2026-09-04)
+
+Working tree only — nothing committed. Reviewed the uncommitted feature diff,
+fixed its one defect, then proved the feature live with two operator-authorized
+paid chains against scratch targets: `stats` (16 design bullets → 18 IDs,
+$0.63735) and `web-calculator` (18 criteria from an operator PRD, $0.84567),
+both `run=completed`, chain valid, delivery scope matching the signed approval.
+$1.48302 across the session.
+
+#### Decisions and assumptions
+
+- Operator approved both paid runs and both approvals; the second signature
+  was executed by the agent on the operator's explicit "approve for me" after
+  the signing script failed for them locally.
+- Review of the feature diff used the in-session code-review agent; the
+  operator ruled it discharges the plan's review requirement and directed
+  the plan `Implemented` (the Anthropic-cloud standalone review stays unrun).
+- The two `.Codex/sessions/` debug analyses were relocated into
+  `.claude/sessions/` — a second sessions location would fork the convention.
+
+#### What failed
+
+- **Last-arrow coverage split falsely refused valid plans**: with all free
+  prose moved right of the arrow, `lastIndexOf("->")` split inside a
+  `not_applicable` rationale containing `->`, misreporting an invalid
+  criterion ID after a paid dispatch. Fixed to `indexOf`; the old justifying
+  comment argued the stale direction convincingly — re-derive the split when
+  a constrained ID moves to one side of a delimiter. The prose-refusal test's
+  pinned diagnostic changed shape (names the prefix before the first arrow).
+- **The stats run's per-dispatch record became unqueryable** after
+  `driver.mjs clean` — the operator later asked for its self-critique counts
+  and only the cost survived (captured pre-clean). Query the store before
+  cleaning; clean deletes the only record.
+
+#### What worked
+
+- **Byte-exact approval mechanics under PowerShell**: capture the payload with
+  `cmd /c "node <cli> approval-request ... > payload.json"` and sign with
+  `cmd /c "node scripts/sign-approval.mjs sign --key <key> < payload.json"` —
+  PowerShell redirection re-encodes bytes and does not support `<`.
+- **The audit chain answers panel questions directly**: web-calculator spec
+  self-critique returned 5 entries and its panel 0 findings; plan
+  self-critique 4 entries and its panel 2 findings (AC-008 medium
+  traceability — no task verified decimal results; AC-015 low security —
+  unvalidated localStorage theme value), both resolved in round 1. The panel
+  seated a **security** reviewer for the browser/localStorage design where
+  stats drew consistency — composition adapts to content. Second and third
+  data points for the panel-contribution question below.
+- Spot-checks of both delivered artifacts matched their criteria (stats
+  functions exact; calculator structural checks: 19 buttons, no external
+  refs, viewport/aria-live/prefers-color-scheme/localStorage present).
+
+#### Running state
+
+- Scratch target with the completed web-calculator run:
+  `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1788500665227\target` —
+  retained evidence - remove with
+  `node .claude/skills/run-buildworks/driver.mjs clean`.
+
+#### Verification
+
+- `npm test` — 694 pass, 0 fail, 1 pre-existing skip; no tree leak observed
+  this pass. `npm run typecheck`, `npm run check:docs` — clean (39
+  pre-existing historical path warnings).
+- `node --test test/plan-doc.test.ts` — 23/23; the new arrow-in-rationale
+  regression test confirmed failing under the reverted split before restore.
+
+#### Deferred and open
+
+- Auto-memory mirror skipped: no governed-delivery store exists under
+  `C:\Users\tamezs\.claude\projects\` on this machine — the
+  `docs/proposals/durable-knowledge-tiers.md` gap observed directly.
+
+#### Next up
+
+- Operator: commit the working tree and push when ready.
+
 ### Coverage-gate investigation, hazard 17, and the knowledge-tier gap (2026-09-03)
 
-No source changed. Driven runs against scratch targets: two `clamp` runs
-(one stopped at the approval gate, $0.11084; one full chain to
-`run=completed`, 11 dispatches, $0.26333 — a second independent end-to-end
-run after the milestone), then two `calculator` runs that both blocked
-($0.21660 at `spec_review` on a malformed reconciliation envelope;
-$0.24683 at `plan.coverage.incomplete` with all 16 criteria reported
-uncovered). $0.83080 across the session.
+No source changed. Four driven scratch runs (two `clamp`, one completing
+end to end; two `calculator`, both blocked — the second at
+`plan.coverage.incomplete` with all 16 criteria reported uncovered),
+$0.83080 across the session.
 
 The second block is the one that mattered. Diagnosis, and the reconciliation
 that corrected three of its own claims, are in
@@ -177,21 +247,13 @@ that corrected three of its own claims, are in
 
 ### Step 8: delivery check, Tasks 1-6, the standalone review, and the paid milestone run (2026-09-02 to 2026-09-03)
 
-Seven atomic commits on `master`: `1890503` (Task 1: declared artifacts are
-exact file paths — trailing-slash and starting-tree directory refusals),
-`02f799b` (Task 2: one typed handoff, base + head in the gate event),
-`849571c` (Task 3: the pure coverage module), `f68ebbb` (Task 4:
-`runDeliveryStage` — checks first, one final transaction), `98d87b3`
-(Task 5: `bw deliver` and the paid driver), `695c16f` (Task 6: architecture
-amendments, docs, sweep, disposable gate), `36a726d` (remediation of the
-standalone review's twelve findings — the operator's first
-`configured_standalone` review; eleven fixable findings landed with named
-regressions, one deferred with a trigger). Then `cf19f57` (evidence gate:
-review record, plan `Implemented`), `8646d75` (paid-run evidence), and
-`d033595` (test-count doc fix). Final state: 682 tests (681 pass, one
-pre-existing skip), typecheck clean, smoke 12/12, doc-check 0/36 — and the
-paid run completed: 11 dispatches, $0.25019, all eight stages passed,
-`delivery_check=passed`, `run=completed`.
+Tasks 1-6 landed as seven atomic commits `1890503`…`36a726d` (the last
+remediating the standalone review's twelve findings — the operator's first
+`configured_standalone` review), then `cf19f57` (evidence gate), `8646d75`
+(paid-run evidence), `d033595` (doc fix); per-task mapping is in `git log`.
+Final state: 682 tests (681 pass, one pre-existing skip), typecheck clean,
+smoke 12/12, doc-check clean — and the paid run completed: 11 dispatches,
+$0.25019, all eight stages passed, `run=completed`.
 
 #### Decisions and assumptions
 
@@ -215,35 +277,27 @@ paid run completed: 11 dispatches, $0.25019, all eight stages passed,
   to HEAD, discarding the review fixes it carried. Auto memory
   `break-it-mechanics` now says it: reverse the mutation, never checkout,
   when the file also carries uncommitted work.
-- **Two break mutations were aimed at the wrong branch.** Reversing the diff
-  range changed nothing (git lists a deleted path in name-only, so the set
-  was identical); inverting the blob check changed nothing for a test whose
-  outcome was already a block. Each needed a mutation that changed the
-  *outcome class* the test pins. A `|`-delimited sed died on `||` and an
-  apostrophe escaped a single-quoted script — both silently no-oped.
+- **Two break mutations were aimed at the wrong branch** — each needed a
+  mutation that changed the *outcome class* the test pins, not a reversal the
+  code path never distinguishes; and sed with `|` delimiters or an apostrophe
+  in a single-quoted script silently no-ops.
 - **The first paid attempt spent nothing and blocked at the spec dispatch:**
   the `claude` binary's OAuth session had expired ("Failed to authenticate:
   OAuth session expired and could not be refreshed"). The run failed closed
   with the raw envelope retained and the refusal audited — designed
   behaviour, and a re-authentication fixed it. (Auto memory:
   `cli-auth-expiry-fails-closed`.)
-- **A driver step FAILed on its own assertion formatting**: the
-  expected-output regex could not match the summary its own code prints
-  (`declared=`/`delivered=` sit between `scopeMatch=yes` and `missing=[]`).
-  The comparison had passed; the fix was replayed green against the
-  retained run without respending. Also: piping the driver through `tail`
-  masked its exit code — read driver output unmasked.
+- **A driver step FAILed on its own assertion formatting** — the comparison
+  had passed; the fix was replayed green against the retained run without
+  respending. Piping the driver through `tail` also masked its exit code.
 
 #### What worked
 
-- **The standalone review found what fixture-blind code hides.** F1 (a
-  deletion counts as delivered — name-only lists removed paths), F2 (base
-  equality widens the certified range over the projections commit), F5 (no
-  fixture exercised a pre-base projections commit, so the anchor regression
-  was invisible), F6 (declaring the run's own documents passed every gate
-  and blocked terminally at delivery), F8 (a run could complete without
-  verification.gate.pass in the audit). Each fix landed with a regression
-  that breaks when the guard is removed.
+- **The standalone review found what fixture-blind code hides** — deletions
+  counted as delivered, a widened certified range, the run's own documents
+  passing every gate, completion without `verification.gate.pass`. Each fix
+  landed with a regression that breaks when the guard is removed; details in
+  the reconciled review record named below.
 - **Making every fixture reproduce the real chain's shape** (projections
   committed before the base) turned the strict-descent refusal and the
   projection-exclusion property into exercised code; the `noGateEvent`
@@ -261,15 +315,10 @@ reconciled (11 accepted — 9 full, 2 narrow — 1 deferred, 0 open).
 
 ### Step 5b: reviews, storage rebuild, proposals (2026-08-31 to 2026-09-03)
 
-Committed `60587fc` (Task 1 prototype: 12 dispatches, $0.59543, evidence in
-`2026-09-01-task1-prototype-evidence.md`), `cd11071`/`5d63726` (Tasks 2-3:
-paths module, frozen review config — Route A refusal-by-name was the
-operator's decision), `578d0eb` (Task 4: self-critique), `bacec0a` (Task 5:
-author-proposed panel), `f094c0f` (Task 6: reconciliation), `54ee29b`
-(Tasks 7-9: storage rebuild + proposals — merged into one tranche by the
-operator after Task 7's Files list contradicted its steps), `39d5432`
-(Tasks 10-13: hazard 16, doc-check `checkHazardCount`, twenty-guard sweep,
-$0.36548 production smoke, completion gate). Plan `Implemented`; all review
+Tasks 1-13 landed across `60587fc`…`39d5432` (per-task mapping in `git log`;
+Route A refusal-by-name and the Tasks 7-9 tranche merge were operator
+decisions; Task 1 prototype evidence in
+`2026-09-01-task1-prototype-evidence.md`). Plan `Implemented`; all review
 records reconciled.
 
 Durable lessons still load-bearing from that era (most others are in auto

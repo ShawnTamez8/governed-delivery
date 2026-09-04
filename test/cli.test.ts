@@ -517,7 +517,7 @@ test("request, sign, and approve walk end to end through the CLI", () => {
     mkdirSync(dirname(specPath), { recursive: true });
     writeFileSync(
       specPath,
-      "feature: Thing\nchange_kind: feature\n\n## Declared artifacts\n\n- src/thing.ts\n\n## Acceptance criteria\n\n- It works.\n"
+      "feature: Thing\nchange_kind: feature\n\n## Declared artifacts\n\n- src/thing.ts\n\n## Acceptance criteria\n\n- AC-001: It works.\n"
     );
     const store = openStore(cwd);
     const specStage = store.insertStage(runId, "spec", null);
@@ -791,7 +791,7 @@ test("plan drives the real stage logic up to the dispatch boundary", () => {
     assert.equal(newRun.status, 0, newRun.stderr);
     const runId = Number(newRun.stdout.trim());
 
-    const spec = "feature: demo\nchange_kind: feature\n\n## Declared artifacts\n\n- src/a1.ts\n\n## Acceptance criteria\n\n- it works\n";
+    const spec = "feature: demo\nchange_kind: feature\n\n## Declared artifacts\n\n- src/a1.ts\n\n## Acceptance criteria\n\n- AC-001: it works\n";
     const specPath = join(cwd, "docs", "features", "demo", "spec.md");
     mkdirSync(dirname(specPath), { recursive: true });
     writeFileSync(specPath, spec);
@@ -826,7 +826,7 @@ test("plan drives the real stage logic up to the dispatch boundary", () => {
     store.close();
 
     // Edit the approved spec, then plan: the binding check must refuse.
-    writeFileSync(specPath, `${spec}- and something nobody approved\n`);
+    writeFileSync(specPath, `${spec}- AC-002: something nobody approved\n`);
     const r = runCli(cwd, "plan", "--run", String(runId));
     assert.equal(r.status, 1);
     assert.match(r.stderr, /the spec has changed since review: gated [0-9a-f]{64}, on disk [0-9a-f]{64}/);
@@ -876,7 +876,7 @@ test("implement drives the real stage logic up to the dispatch boundary", () => 
     assert.equal(newRun.status, 0, newRun.stderr);
     const runId = Number(newRun.stdout.trim());
 
-    const spec = "feature: demo\nchange_kind: feature\n\n## Declared artifacts\n\n- src/a1.ts\n\n## Acceptance criteria\n\n- it works\n";
+    const spec = "feature: demo\nchange_kind: feature\n\n## Declared artifacts\n\n- src/a1.ts\n\n## Acceptance criteria\n\n- AC-001: it works\n";
     const specPath = join(cwd, "docs", "features", "demo", "spec.md");
     mkdirSync(dirname(specPath), { recursive: true });
     writeFileSync(specPath, spec);
@@ -911,7 +911,7 @@ test("implement drives the real stage logic up to the dispatch boundary", () => 
     });
 
     const planPath = join(cwd, "docs", "features", "demo", "plan.md");
-    const plan = `feature: demo\nplan_for: ${specHash}\n\n## Tasks\n\n- Build it\n\n## Coverage\n\n- it works -> src/a1.ts\n`;
+    const plan = `feature: demo\nplan_for: ${specHash}\n\n## Tasks\n\n- Build it\n\n## Coverage\n\n- AC-001 -> src/a1.ts\n`;
     mkdirSync(dirname(planPath), { recursive: true });
     writeFileSync(planPath, plan);
     const planStage = store.insertStage(runId, "plan", approvalStage.id);
@@ -1202,7 +1202,7 @@ function parkVerifiedRun(
     "",
     "## Acceptance criteria",
     "",
-    "- the artifact is committed",
+    "- AC-001: the artifact is committed",
     "",
   ].join("\n");
   const specPath = join(cwd, "docs", "features", slug, "spec.md");
