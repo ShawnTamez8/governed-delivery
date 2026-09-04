@@ -25,7 +25,9 @@ The specification document schema is:
 - a ## Declared artifacts section: one concrete, exact, repo-relative file
   path per line — never a directory scope or a glob, and never a document
   the run itself writes (the design, spec, or plan under docs/features/):
-  delivery proves each declared artifact by its exact committed path
+  delivery proves each declared artifact by its exact committed path.
+  Never declare a tasks.md file: task execution and status belong in run-state
+  database rows
 - an ## Acceptance criteria section: one criterion per list line
 
 Design document:
@@ -140,7 +142,8 @@ The self-critique has:
     file path per line — never a directory scope or a glob, and never a
     document the run itself writes (the design, spec, or plan under
     docs/features/): delivery proves each declared artifact by its exact
-    committed path
+    committed path. Never declare a tasks.md file: task execution and status
+    belong in run-state database rows
   - an ## Acceptance criteria section: one criterion per list line
   A revised specification that does not validate blocks the run. There is no
   fallback to your draft.
@@ -263,7 +266,9 @@ directly, with no surrounding prose, no markdown fences, and no commentary.
 The plan document schema is:
 - frontmatter with feature and plan_for
 - plan_for must be exactly: ${specHash}
-- a ## Tasks section: one task per list line
+- a ## Tasks section: one plain task per list line. Checkbox prefixes such as
+  [ ] and [x] are forbidden because completion state belongs in the run
+  database
 - a ## Coverage section: one line per acceptance criterion, in one of two
   forms:
     <criterion> -> <artifact path>
@@ -325,7 +330,8 @@ The self-critique has:
   document schema as the draft:
   - frontmatter with feature and plan_for
   - plan_for must be exactly: ${specHash}
-  - a ## Tasks section: one task per list line
+  - a ## Tasks section: one plain task per list line. Checkbox prefixes such as
+    [ ] and [x] are forbidden because completion state belongs in the run database
   - a ## Coverage section: one line per acceptance criterion, in one of two
     forms:
       <criterion> -> <artifact path>
@@ -592,7 +598,9 @@ The revised specification must satisfy the same document schema as before:
 - a ## Declared artifacts section: one concrete, exact, repo-relative file
   path per line — never a directory scope or a glob, and never a document
   the run itself writes (the design, spec, or plan under docs/features/):
-  delivery proves each declared artifact by its exact committed path
+  delivery proves each declared artifact by its exact committed path.
+  Never declare a tasks.md file: task execution and status belong in run-state
+  database rows
 - an ## Acceptance criteria section: one criterion per list line
 A revised specification that does not validate blocks the run.
 
@@ -652,7 +660,9 @@ complete proposal candidate, or return cannot_determine.
 The revised plan must satisfy the same document schema as before:
 - frontmatter with feature and plan_for
 - plan_for must be exactly: ${specHash}
-- a ## Tasks section: one task per list line
+- a ## Tasks section: one plain task per list line. Checkbox prefixes such as
+  [ ] and [x] are forbidden because completion state belongs in the run
+  database
 - a ## Coverage section: one line per acceptance criterion, in one of two
   forms:
     <criterion> -> <artifact path>
@@ -722,7 +732,9 @@ Each patch has:
 - baseCommit must be exactly: ${baseCommit}
 - files: one entry per file the patch changes, each with path, action, and
   content
-- path: a repo-relative path, one of the approved scope paths below
+- path: a repo-relative path, one of the approved scope paths below.
+  A tasks.md path is prohibited because task execution and status belong in
+  run-state database rows
 - action one of add, modify — deletion is refused by the system and must not
   be proposed
 - content is the complete new file content, not a diff

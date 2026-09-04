@@ -60,6 +60,16 @@ test("gatePatchPaths refuses a protected path even when the scope names it", () 
   assert.match(result.reason, /touches a protected path: src\/agents\/x\.ts/);
 });
 
+test("gatePatchPaths refuses tasks.md even when the signed scope names it", () => {
+  for (const path of ["tasks.md", "docs/features/demo/tasks.md", "DOCS/TASKS.MD"]) {
+    const result = gatePatchPaths([path], [path], "demo");
+    assert.equal(result.ok, false);
+    if (result.ok) continue;
+    assert.deepEqual(result.refused, [path]);
+    assert.match(result.reason, /task artifacts are prohibited/);
+  }
+});
+
 test("gatePatchPaths refuses a path that escapes the repository and names it", () => {
   for (const escape of ["../evil.ts", "a/../../b"]) {
     const result = gatePatchPaths([escape], ["src"], "demo");

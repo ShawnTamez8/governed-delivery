@@ -11,6 +11,7 @@
 
 import { isAbsolute } from "node:path";
 import { normalizePath, touchesProtected } from "./scope.ts";
+import { isTaskDocumentPath } from "./task-artifact.ts";
 
 /**
  * Is `path` inside the signed scope?
@@ -51,6 +52,13 @@ export function gatePatchPaths(
     if (isAbsolute(p) || normalizePath(p).split("/").includes("..")) {
       refused.push(p);
       refusals.push(`path escapes the repository: ${p}`);
+      continue;
+    }
+    if (isTaskDocumentPath(p)) {
+      refused.push(p);
+      refusals.push(
+        `task artifacts are prohibited; tasks belong in run-state database rows: ${p}`
+      );
       continue;
     }
     if (!pathFitsScope(p, scope)) {

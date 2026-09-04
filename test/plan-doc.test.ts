@@ -75,6 +75,15 @@ test("an empty task list is refused", () => {
   assert.match(refusal(planDoc({ tasks: "## Tasks\n" })), /tasks must not be empty/);
 });
 
+test("task status checkboxes are refused because status belongs in run state", () => {
+  for (const checkbox of ["- [ ] Build the thing", "- [x] Build the thing", "* [X] Build the thing"]) {
+    assert.match(
+      refusal(planDoc({ tasks: `## Tasks\n\n${checkbox}\n` })),
+      /plan task must be a plain list item, not a status checkbox/
+    );
+  }
+});
+
 test("a missing Coverage section is refused by name", () => {
   assert.match(refusal(planDoc({ coverage: "" })), /plan is missing the ## Coverage section/);
 });

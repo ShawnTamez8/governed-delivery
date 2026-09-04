@@ -68,6 +68,16 @@ export function validatePlanDoc(
   if (tasksSection === null) {
     return { ok: false, reason: "plan is missing the ## Tasks section" };
   }
+  const checkboxTask = tasksSection
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => /^(?:[-*+]\s+)?\[[ xX]\](?:\s|$)/.test(line));
+  if (checkboxTask !== undefined) {
+    return {
+      ok: false,
+      reason: `plan task must be a plain list item, not a status checkbox; completion state belongs in the run database: ${checkboxTask}`,
+    };
+  }
   const tasks = listItems(tasksSection);
   if (tasks.length === 0) {
     return { ok: false, reason: "tasks must not be empty" };

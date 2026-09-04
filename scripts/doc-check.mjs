@@ -71,6 +71,30 @@ const CURRENT_DOCS = ["ARCHITECTURE.md", "CLAUDE.md", "README.md", "docs/hazards
 const REFERENCE_DIRS = ["docs/proposals"];
 const HISTORICAL_DIRS = ["docs/features", ".claude/sessions"];
 
+// Architecture section 14 makes tasks run-owned database rows, not document
+// artifacts. These files and checklist plans predate that enforcement and are
+// retained as historical evidence; the allowlists are exact so a new artifact
+// cannot inherit the exception merely by living in the historical tier.
+const HISTORICAL_TASK_DOCUMENTS = new Set([
+  "docs/features/delivery-check/tasks.md",
+  "docs/features/step6-trust-boundary/tasks.md",
+  "docs/features/verification-stage/tasks.md",
+]);
+
+const HISTORICAL_CHECKLIST_PLANS = new Set([
+  "docs/features/approval-gate-hardening/plan.md",
+  "docs/features/approval-gate/plan.md",
+  "docs/features/delivery-check/plan.md",
+  "docs/features/harness-adapter/plan.md",
+  "docs/features/implementation-stage/plan.md",
+  "docs/features/plan-stage/plan.md",
+  "docs/features/run-store/plan.md",
+  "docs/features/spec-stage/plan.md",
+  "docs/features/step5b-upstream-findings/plan.md",
+  "docs/features/step6-trust-boundary/plan.md",
+  "docs/features/verification-stage/plan.md",
+]);
+
 function tierOf(rel) {
   const p = rel.split("\\").join("/");
   if (CURRENT_DOCS.includes(p)) return "current";
@@ -86,7 +110,7 @@ function markdownFiles(dir = "", out = []) {
     if (entry.name === "node_modules" || entry.name === ".git") continue;
     const rel = dir ? `${dir}/${entry.name}` : entry.name;
     if (entry.isDirectory()) markdownFiles(rel, out);
-    else if (entry.name.endsWith(".md")) out.push(rel);
+    else if (entry.name.toLowerCase().endsWith(".md")) out.push(rel);
   }
   return out;
 }
@@ -526,6 +550,36 @@ function checkHazards() {
   }
 }
 
+// Task state has one authoritative home: the run database. A tasks.md file or
+// a plan checkbox creates a second, hand-editable lifecycle that can disagree
+// with it. Historical bootstrap records stay byte-for-byte evidence; no new
+// file receives their exception.
+function checkTaskArtifacts() {
+  for (const file of markdownFiles("docs")) {
+    const normalized = file.split("\\").join("/");
+    const basename = normalized.split("/").at(-1)?.toLowerCase();
+    if (basename === "tasks.md" && !HISTORICAL_TASK_DOCUMENTS.has(normalized)) {
+      err(
+        "taskArtifacts",
+        file,
+        1,
+        "new tasks.md artifacts are prohibited; tasks and their status belong in run-state database rows"
+      );
+    }
+    if (basename !== "plan.md" || HISTORICAL_CHECKLIST_PLANS.has(normalized)) continue;
+    const text = read(file);
+    const checkbox = /^\s*[-*+]\s+\[[ xX]\](?:\s|$)/m.exec(text);
+    if (checkbox) {
+      err(
+        "taskArtifacts",
+        file,
+        lineOf(text, checkbox.index),
+        "plan task checkboxes are prohibited; use plain list items because completion state belongs in the run database"
+      );
+    }
+  }
+}
+
 // Root-anchored repository paths cited in backticks must resolve.
 //
 // Only root-anchored paths are checked. A `./scope.ts` or `../src/policy.ts` in
@@ -566,6 +620,7 @@ const CHECKS = {
   contract: checkContract,
   hazardCount: checkHazardCount,
   hazards: checkHazards,
+  taskArtifacts: checkTaskArtifacts,
   paths: checkPaths,
 };
 

@@ -56,6 +56,15 @@ afterwards. `npm run check:docs` refuses a document without it.
 **Say what is unverified.** Severity is a claim about reachability. Do not label
 something critical without naming the configurations that reach it.
 
+**Tasks are state, not documents.** Never create a new `tasks.md`. The only
+exceptions are the exact historical bootstrap records at
+`docs/features/delivery-check/tasks.md`,
+`docs/features/step6-trust-boundary/tasks.md`, and
+`docs/features/verification-stage/tasks.md`. Keep them as history, not
+templates. A plan's `## Tasks` section uses plain list items, never Markdown
+status checkboxes; execution and completion status belong in run-state database
+rows. `npm run check:docs` enforces both rules.
+
 ## Layout
 
 - `ARCHITECTURE.md` — the design. Change it deliberately, not incidentally.
@@ -66,8 +75,9 @@ something critical without naming the configurations that reach it.
   only human-authored file, everything else is produced by a stage, and
   `status.md` is a projection. No stage writes there yet. Every directory
   present today is bootstrap work on BuildWorks itself — a hand-written
-  `plan.md`, sometimes `tasks.md`, and dated review records beside them. Do not
-  read them as stage output.
+  `plan.md`, dated review records, and the three grandfathered task documents
+  named above. Do not read them as stage output or create new task documents
+  from their shape.
 - `.governance/` — machine-local state. Gitignored. Never hand-edited.
 
 Plans and review records carry a `**Status:**` line. A plan is `Implemented`

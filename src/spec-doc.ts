@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { normalizeText } from "./canonical.ts";
 import { artifactDirectoryRefusals, normalizePath } from "./scope.ts";
+import { isTaskDocumentPath } from "./task-artifact.ts";
 
 export interface SpecDoc {
   feature: string;
@@ -59,6 +60,16 @@ export function validateSpecDoc(
       return {
         ok: false,
         reason: `declared artifact must be an exact file path, not a directory: ${path}`,
+      };
+    }
+    // Architecture section 14 makes task execution and status database
+    // state, not documents. Refuse the declaration at the first deterministic
+    // boundary so an old or non-conforming prompt cannot authorize tasks.md
+    // and spend the rest of a run on an artifact implementation must reject.
+    if (isTaskDocumentPath(path)) {
+      return {
+        ok: false,
+        reason: `declared artifact is prohibited because tasks belong in run-state database rows, not tasks.md: ${path}`,
       };
     }
   }

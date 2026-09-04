@@ -13,6 +13,7 @@ executable form of it.
 npm run check:docs                       # the normal invocation
 node scripts/doc-check.mjs --json        # machine-readable
 node scripts/doc-check.mjs --only=paths  # one check; an unknown name lists them all
+node scripts/doc-check.mjs --only=taskArtifacts # task-document policy only
 ```
 
 Exit `0` clean, `1` a document is wrong, `2` the checker can no longer read the
@@ -34,6 +35,12 @@ The same sentence is correct in a plan written three steps ago and wrong in
 
 Historical documents are evidence of what was believed when written. **Never
 edit one to make it true** — the reconciliation depends on the record.
+
+The `taskArtifacts` policy applies across all tiers. The exact three historical
+task documents and eleven bootstrap checklist plans named in the checker are
+grandfathered evidence, not templates. A new `tasks.md` file or a new plan with
+Markdown task checkboxes is always an error: task execution and completion
+status belong in run-state database rows.
 
 Adding a current-state document means adding it to `CURRENT_DOCS` in the script,
 or it is silently held to the weaker reference standard.
@@ -99,6 +106,9 @@ the script runs identically and nothing needs restoring.
   in this document's first draft.
 - **The working tree is checked, not `HEAD`.** Correct: this repository routinely
   carries a large uncommitted tree.
+- **Task artifacts are exact-allowlisted history.** Do not widen the allowlist
+  by directory or glob. A deliberate migration of a historical file removes
+  its exact entry; it does not create a broader exception.
 
 Verify a documentation-only change with `npm run check:docs` and
 `npm run typecheck`. The checker itself has no test suite; its verification is

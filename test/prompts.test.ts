@@ -54,6 +54,7 @@ const CONSTRAINT_STRINGS = [
   "## Declared artifacts",
   "## Acceptance criteria",
   "the run itself writes",
+  "Never declare a tasks.md file",
   "low",
   "medium",
   "high",
@@ -64,6 +65,7 @@ const CONSTRAINT_STRINGS = [
   // The plan document schema's constrained values. Still no patch rules: the
   // plan stage is a content write like the spec stage.
   "## Tasks",
+  "Checkbox prefixes such as",
   "## Coverage",
   "not_applicable",
   "proposedContentChanges.plan",
@@ -74,6 +76,7 @@ const CONSTRAINT_STRINGS = [
   "modify",
   "deletion",
   "content",
+  "A tasks.md path is prohibited",
   // The read-only constraint: hazard 3 applied to a constrained behaviour,
   // per docs/proposals/implementer-writes-files-it-also-proposes.md. The
   // sentence is UX, not a guard — enforcement is the invocation boundary
@@ -155,6 +158,7 @@ test("the generated author prompt states the schema constraints", () => {
     "proposed, blocked, failed",
     "## Declared artifacts",
     "the run itself writes",
+    "Never declare a tasks.md file",
     "feature, defect_fix",
     "No git operations",
     "Output the JSON object",
@@ -196,6 +200,7 @@ test("the generated plan author prompt states the schema, the hash, and the scop
   for (const constraint of [
     "proposed, blocked, failed",
     "## Tasks",
+    "Checkbox prefixes such as",
     "## Coverage",
     "not_applicable requires both a rationale and an alternative verification",
     "proposedContentChanges",
@@ -258,6 +263,7 @@ test("the generated implementation author prompt states the patch contract", () 
     "action one of add, modify",
     "deletion is refused by the system",
     "complete new file content",
+    "A tasks.md path is prohibited",
     "Run no git commands",
     "This checkout is read-only for you",
     "Patch only these paths:",
@@ -283,6 +289,7 @@ test("the generated spec self-critique prompt states the contract and carries bo
     "proposedContentChanges.selfCritique",
     "proposed, blocked, failed",
     "the run itself writes",
+    "Never declare a tasks.md file",
     "panelRequest",
     "never an agent identity",
     "may not add an obligation",
@@ -334,6 +341,7 @@ test("the generated plan self-critique prompt restates the hash and the scope it
     "proposedContentChanges.selfCritique",
     "panelRequest",
     "## Tasks",
+    "Checkbox prefixes such as",
     "## Coverage",
     "not_applicable requires both a rationale and an alternative verification",
     "may not add an obligation",
@@ -485,6 +493,7 @@ test("the generated spec reconciliation prompt carries the decision contract and
     // The document schema the reconciled artifact must still satisfy.
     "## Declared artifacts",
     "the run itself writes",
+    "Never declare a tasks.md file",
     "## Acceptance criteria",
     "Output the JSON object",
   ]) {
@@ -521,6 +530,7 @@ test("the generated plan reconciliation prompt carries the spec as governing inp
     "source is always specification",
     "does not authorize you to add an obligation",
     "## Tasks",
+    "Checkbox prefixes such as",
     "## Coverage",
     "not_applicable requires both a rationale and an alternative verification",
     "Do not return an impact field",

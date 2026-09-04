@@ -110,6 +110,16 @@ test("a declared artifact spelled with a trailing slash refuses as a directory s
   });
 });
 
+test("a declared tasks.md artifact is refused wherever it is proposed", () => {
+  for (const path of ["tasks.md", "docs/features/my-feature/tasks.md", "DOCS/TASKS.MD"]) {
+    const result = validateSpecDoc(validSpec().replace("src/parser.ts", path));
+    assert.deepEqual(result, {
+      ok: false,
+      reason: `declared artifact is prohibited because tasks belong in run-state database rows, not tasks.md: ${path}`,
+    });
+  }
+});
+
 function gitCommitBase(root: string): string {
   const git = (args: string[]): { status: number; stdout: string; stderr: string } => {
     const r = spawnSync("git", args, { cwd: root, encoding: "utf8" });
