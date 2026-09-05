@@ -1747,7 +1747,27 @@ gives a location. Until one such response is committed under
 `validateCodeReviewLocations`, and `codeReviewGate`, this feature is awaiting
 contract evidence.
 
-The run needs operator authorization and a working `claude` session, and costs
-$1.25 to $2.50. It has not been requested or run. No prompt, fixture, validator,
-threshold, or gate change may be made to clear a live block or abort without the
-operator's decision, per this plan's Gate.
+One paid run was authorized and executed on 2026-09-05. It blocked at
+`spec_review`, stage 2 of 9, four stages before `code_review`, when the spec
+author answered two acceptance-criteria numbering findings with a prose `Note:`
+line that `validateSpecDoc` parsed as a malformed criterion ID. Five dispatches,
+$0.41049, no code-review response. That is not one of the five outcomes this task
+enumerates — all five assume the chain reaches the stage — so it is recorded under
+its own name in `docs/features/code-review-stage/real-run-evidence.md`, and the
+block itself is written up as
+`docs/proposals/spec-reconciliation-prose-note-blocks-run.md`. The reconciliation
+response is committed at
+`test/fixtures/recorded/spec-reconciliation-web-calculator-numbering-note.json`
+with provenance; it is spec-stage evidence and its provenance block says plainly
+that it is not the code-review response this task needs.
+
+The block does not implicate this stage: commit `6fb5412` touches no file in the
+spec authoring or validation path, `new-run` passed so the new freeze-time
+staffing refusal was satisfied against the real registry, and the panel's upstream
+findings recorded as `upstream:design:` tokens unchanged.
+
+A second run was declined by the operator on the evidence above: the chain, the
+design, the model, and every prompt are unchanged, so whether the author writes a
+prose note again is chance rather than a plan (hazard 7). No prompt, fixture,
+validator, threshold, or gate change was made to clear the block, and none may be
+made without the operator's decision, per this plan's Gate.
