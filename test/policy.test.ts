@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   APPROVAL_MAX_LIFETIME_SECONDS,
+  CODE_REVIEW_BLOCKING_SEVERITY,
   PANEL_SIZE_CEILING,
   PANEL_SIZE_FLOOR,
   PANEL_SIZE_MAX,
@@ -36,6 +37,7 @@ test("every policy value is the one the enforcing module actually uses", () => {
   assert.equal(p.panelSizeMin, PANEL_SIZE_FLOOR);
   assert.equal(p.panelSizeMax, PANEL_SIZE_MAX);
   assert.deepEqual(p.severities, [...SEVERITIES]);
+  assert.equal(p.codeReviewBlockingSeverity, CODE_REVIEW_BLOCKING_SEVERITY);
   assert.deepEqual(p.requiredSpecialties, [...REQUIRED_SPECIALTIES]);
   assert.deepEqual(p.protectedPathPrefixes, [...PROTECTED_PATH_PREFIXES]);
   assert.equal(p.promptMaxBytes, PROMPT_MAX_BYTES);
@@ -181,6 +183,55 @@ test("something that is not a policy object at all is refused", () => {
 });
 
 
+test("the code-review threshold must occur exactly once in the policy's own frozen severities", () => {
+  // Checked against the frozen list rather than the live `SEVERITIES` because
+  // that frozen list is what the gate indexes. A threshold valid against the
+  // live constant but absent from the list this run froze would index to -1
+  // and block nothing — a gate that silently stopped gating.
+  const notASeverity = invalidPolicyReason({
+    ...buildPolicy(),
+    codeReviewBlockingSeverity: "severe",
+  });
+  assert.match(String(notASeverity), /codeReviewBlockingSeverity/);
+  assert.match(String(notASeverity), /\["low","medium","high","critical"\]/);
+  assert.match(String(notASeverity), /found "severe"/);
+
+  // Valid against the live constant, absent from this policy's frozen list.
+  assert.match(
+    String(invalidPolicyReason({ ...buildPolicy(), severities: ["low", "medium"] })),
+    /codeReviewBlockingSeverity must occur exactly once/
+  );
+
+  // Twice is refused too: the comparison must not depend on which index won.
+  assert.match(
+    String(
+      invalidPolicyReason({
+        ...buildPolicy(),
+        severities: ["low", "medium", "high", "critical", "high"],
+      })
+    ),
+    /codeReviewBlockingSeverity must occur exactly once/
+  );
+
+  for (const bad of [null, undefined, 7, ["high"]]) {
+    assert.match(
+      String(invalidPolicyReason({ ...buildPolicy(), codeReviewBlockingSeverity: bad })),
+      /codeReviewBlockingSeverity must occur exactly once/,
+      `threshold ${JSON.stringify(bad)} must be refused`
+    );
+  }
+
+  // Every member of the seeded vocabulary is a legal threshold: an operator
+  // may freeze a stricter or looser gate without changing this code.
+  for (const severity of SEVERITIES) {
+    assert.equal(
+      invalidPolicyReason({ ...buildPolicy(), codeReviewBlockingSeverity: severity }),
+      null,
+      `${severity} must be a legal threshold`
+    );
+  }
+});
+
 // --- the review configuration has one source, read where it is enforced -----
 
 const SRC = join(fileURLToPath(new URL("..", import.meta.url)), "src");
@@ -198,6 +249,7 @@ const FROZEN_ONLY = [
   "PANEL_SIZE_FLOOR",
   "PANEL_SIZE_CEILING",
   "REQUIRED_SPECIALTIES",
+  "CODE_REVIEW_BLOCKING_SEVERITY",
 ];
 
 /** The modules that execute a run, as opposed to those that configure one. */
@@ -207,6 +259,7 @@ const STAGE_MODULES = [
   "plan-gate.ts",
   "implementation-stage.ts",
   "verification-stage.ts",
+  "code-review-stage.ts",
 ];
 
 test("no stage reads a review-policy constant directly: it comes from the frozen profile", () => {

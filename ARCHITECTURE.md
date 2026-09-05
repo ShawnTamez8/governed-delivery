@@ -102,13 +102,18 @@ one run are worth less than eight that close the loop.
 
 ```
 spec  ->  spec_review  ->  awaiting_approval  ->  plan  ->  plan_review
-      ->  implementation  ->  verification  ->  delivery_check  ->  completed
+      ->  implementation  ->  verification  ->  code_review
+      ->  delivery_check  ->  completed
 ```
 
-Deferred until the above completes end to end at least once:
-`task_decomposition`, `test_authoring`, `code_review`, `documentation`,
-`final_verification`, `pr_summary`. Each is real work; none is worth building
-before the loop closes.
+The loop above closed end to end on 2026-09-03. On 2026-09-04 the operator
+lifted the stop for exactly one of the deferred stages, the code review, on
+the evidence that a run could deliver every declared artifact and pass every
+gate while nothing in the system had read the code; it is in the sequence
+above. Still deferred, each behind its own decision:
+`task_decomposition`, `test_authoring`, `documentation`,
+`final_verification`, `pr_summary`. Each is real work; none is built
+because the loop closed.
 
 ## 6. Trust boundaries
 
@@ -577,6 +582,47 @@ signature.
 **`verification`.** Fails closed when commands are missing or do not pass.
 Bounded remediation rounds are the retry budget; exhausting one blocks.
 
+**`code_review`.** Seats a fixed panel of every registered code reviewer —
+role `reviewer`, output kind `code-findings`, bound to the frozen executor —
+and hands each the approved specification and plan, the changed paths, and the
+unified diff of the recorded patch range, with the worktree at the verified
+commit as a read-only working directory. It asserts the worktree is at that
+commit and clean before the stage row exists and again after every dispatch,
+and records every report as immutable evidence on a canonical finding exactly
+as the two review stages do. It passes when no report carries a severity at or
+above the threshold frozen in the profile, and blocks otherwise, naming each
+blocking finding by id, severity, and location.
+
+What the gate proves: that no reviewer asserted a severity at or above the
+frozen threshold, and that no reviewer placed a defect's cause in the approved
+plan. What it does not prove: that the code is correct. Nothing confirms a
+below-threshold finding was harmless, no author answers any finding, and the
+stage's reach is bounded by diff size — the prompt carries the specification,
+the plan, and the full diff under the frozen prompt ceiling, and a change that
+exceeds it is refused by name after implementation has already spent, never
+reviewed in part.
+
+Severity gates here although this section removed severity gating from
+`spec_review` and `plan_review`. Those two have a reconciliation dispatch
+that produces decisions, so decision completeness is a question their state can
+answer; this stage has none, and no author exists to answer a finding. Blocking
+on any finding at all would make a default installation unable to complete a
+run against any design large enough to attract one, so the gate is a frozen
+threshold rather than a count.
+
+Where an upstream finding goes, so section 13's rule holds here too: a code
+reviewer's upstream finding carries the `upstream:plan:` prefix and blocks the
+run for a human at any severity, its finding id and decision key retained in
+the record and in the gate event, and every one of them also becomes a
+non-binding `blocking_dependency` proposal with retained evidence, which only
+a human promotes. A fresh run is the repair.
+
+The panel is fixed: every registered code reviewer, seated in id order.
+Selection by scope, changed paths, technology, or risk is deferred. The two
+seeded reviewers are separately dispatched and recorded as
+`configured_standalone` — never described as independent; section 6 says what
+that label proves and what it does not.
+
 **`delivery_check`.** Before a run may complete, every declared artifact must
 be delivered by exact normalized equality, never by containment. The delivery
 stage diffs the patch range — between the recorded patch base and the verified
@@ -604,11 +650,11 @@ hash and policy snapshot, and let that be part of what is approved.
 
 ### Deferred before the step 9 milestone
 
-Three behaviours this section describes are deliberately not built yet. They
+Five behaviours this section describes are deliberately not built yet. They
 are recorded here rather than only in a plan, because this document is
 binding and a deferral nobody can find in it is indistinguishable from an
 omission. Each one blocks terminally with the cause named, and **a fresh run
-is the repair for all three** — there is no in-place resume.
+is the repair for all five** — there is no in-place resume.
 
 - **Verification remediation rounds.** `verification` fails closed on the
   first command that does not pass; the remediation budget above is not spent
@@ -620,9 +666,19 @@ is the repair for all three** — there is no in-place resume.
 - **The `status.md` projection.** Section 14 describes it as a projection of
   the run row. Nothing writes it, and the database is the only place a run's
   state can be read today.
+- **Code-review remediation.** `code_review` blocks terminally on a report at
+  or above the frozen severity, or on any upstream finding. No reconciliation
+  dispatch, patch round, or re-review exists, and a fresh run is the repair.
+- **Operator waiver.** No human can read a code-review finding, judge it wrong
+  or over-graded, and let the run continue. A fresh run against the same design
+  and model varies nothing, so a mistaken block ends at the design or the
+  rubric rather than at a retry. A waiver would be a signed operator decision
+  recorded against the finding id, in the approval's shape, and is not built.
 
-These stay deferred until the deliberate stop at step 9 is lifted by an
-explicit decision. Building past it is not a matter of finding time.
+The stop at step 9 was lifted for exactly one deferred stage, `code_review`,
+by operator decision on 2026-09-04. The five behaviours here and the five
+stages still listed in section 5 each need their own; building past a deferral
+is not a matter of finding time.
 
 ## 13. Conflict resolution
 
@@ -769,6 +825,11 @@ report lives there.
                     delivered, and missing sets) and its human-readable
                     report.md companion; the delivery_check stage's
                     output_ref references the structured record
+  code-review/<run>/  the retained review record: result.json (changed paths,
+                      the panel, every finding with every report, the blocking
+                      list, and the outcome) and its human-readable report.md
+                      companion; the code_review stage's output_ref references
+                      the structured record, and delivery_check reads it
 ```
 
 **What is git-tracked and what is not.** The database and raw output are
@@ -989,7 +1050,7 @@ block.
 
 ## 22. Known hazards
 
-`docs/hazards.md` states seventeen failure modes this kind of system is subject
+`docs/hazards.md` states eighteen failure modes this kind of system is subject
 to and what each requires. They are requirements, not an appendix: model output
 in shapes the schema refuses, discarded output being undiagnosable, constrained
 fields whose constraint the prompt never states, fixtures and code agreeing
@@ -1000,8 +1061,8 @@ install that cannot complete a run, configuration divergence between targets,
 specifications inventing obligations, independence that cannot be proven,
 proposal subprocesses that are requested rather than enforced to be read-only,
 a remediation loop aimed at the wrong artifact that cannot repair an upstream
-omission, and a reconciliation that answers a finding by deleting the
-obligation.
+omission, a reconciliation that answers a finding by deleting the obligation,
+and a delivery proven complete that nothing ever read.
 
 When a new failure mode is found, add it there rather than here. Two lists drift
 apart, and the one that drifts is the one people stop trusting.
@@ -1018,7 +1079,8 @@ apart, and the one that drifts is the one people stop trusting.
 8. Delivery check.
 9. **Stop. One complete run, with queryable cost.** This is the milestone that
    decides whether the project continues.
-10. Only then: the deferred stages, then a dashboard, then notifications, then —
+10. Only then: the deferred stages (`code_review` was the first, by operator
+    decision on 2026-09-04), then a dashboard, then notifications, then —
     if ever — a second harness.
 
 ## 24. Non-goals

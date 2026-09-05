@@ -51,6 +51,32 @@ export const PANEL_SIZE_FLOOR = 2;
 export const PANEL_SIZE_CEILING = 5;
 export const PANEL_SIZE_MAX = 2;
 
+/**
+ * The lowest severity at which one code-review report blocks the run.
+ *
+ * `high` rather than anything weaker because of hazard 11: a panel that
+ * returns nothing is the exception, not the rule — every web-calculator panel
+ * returned findings — so a gate that blocked on any finding at all would make
+ * the default installation unable to complete a run against any design large
+ * enough to attract one. `high` is the first level at which a reviewer is
+ * asserting the change fails an acceptance criterion or a plan task it claims
+ * to cover, or behaves incorrectly in ordinary use; the two levels below it
+ * are a defect that fails no criterion, and a nit. That rubric is stated to
+ * the reviewer in the prompt, because a threshold over an unstated scale is a
+ * comparison against nothing (hazard 3).
+ *
+ * On breach (section 20's rule that every limit defines its behaviour): the
+ * run blocks terminally, naming each blocking finding's id, severity, and
+ * location. There is no reconciliation dispatch, no remediation round, and no
+ * operator waiver; a fresh run is the repair.
+ *
+ * Configuration, so its value is stated here and frozen per run through the
+ * profile. The stage reads `profile.policy.codeReviewBlockingSeverity` and
+ * orders it within `profile.policy.severities` — never this constant, and
+ * never the live `SEVERITIES`.
+ */
+export const CODE_REVIEW_BLOCKING_SEVERITY = "high";
+
 export const REQUIRED_SPECIALTIES = ["requirements-traceability"];
 
 /**
@@ -151,6 +177,7 @@ export interface Policy {
   planReviewRounds: number;
   panelSizeMin: number;
   panelSizeMax: number;
+  codeReviewBlockingSeverity: string;
   severities: string[];
   requiredSpecialties: string[];
   protectedPathPrefixes: string[];
@@ -176,6 +203,7 @@ export function buildPolicy(): Policy {
     planReviewRounds: PLAN_REVIEW_ROUNDS,
     panelSizeMin: PANEL_SIZE_FLOOR,
     panelSizeMax: PANEL_SIZE_MAX,
+    codeReviewBlockingSeverity: CODE_REVIEW_BLOCKING_SEVERITY,
     severities: [...SEVERITIES],
     requiredSpecialties: [...REQUIRED_SPECIALTIES],
     protectedPathPrefixes: [...PROTECTED_PATH_PREFIXES],
@@ -269,6 +297,18 @@ export function invalidPolicyReason(policy: unknown): string | null {
     if (!isStringArray(p[field])) {
       return `the frozen policy field ${field} must be an array of strings, found ${JSON.stringify(p[field])}`;
     }
+  }
+  // Checked against the policy's own frozen vocabulary, not the live
+  // `SEVERITIES`, because that frozen list is what the gate indexes: a
+  // threshold valid against the live constant but absent from the frozen list
+  // would index to -1 and block nothing. Exactly once, so a list carrying the
+  // threshold twice cannot make the comparison depend on which index won.
+  const severities = p.severities as string[];
+  const threshold = p.codeReviewBlockingSeverity;
+  if (typeof threshold !== "string" || severities.filter((s) => s === threshold).length !== 1) {
+    return `the frozen policy field codeReviewBlockingSeverity must occur exactly once in the frozen severities ${JSON.stringify(
+      severities
+    )}, found ${JSON.stringify(threshold)}`;
   }
   if (!isPositiveInt(p.panelSizeMin) || !isPositiveInt(p.panelSizeMax)) {
     return `the frozen policy panel sizes must be positive integers, found min ${JSON.stringify(

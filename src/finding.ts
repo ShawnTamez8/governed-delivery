@@ -1,3 +1,11 @@
+/**
+ * The severity vocabulary, in ascending order: `low` is the weakest assertion
+ * a reviewer can make and `critical` the strongest. `buildPolicy` copies this
+ * array into the frozen `policy.severities`, and the code-review gate decides
+ * by comparing indices *in that frozen copy* — so the order here is
+ * load-bearing for every run frozen after a change to it, and reordering the
+ * constant can never move an in-progress run's gate (hard rule 6).
+ */
 export const SEVERITIES: readonly string[] = ["low", "medium", "high", "critical"];
 
 /**

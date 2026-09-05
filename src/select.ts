@@ -296,3 +296,92 @@ export function staffingShortfall(
   }
   return null;
 }
+
+/**
+ * The fixed code-review panel: every registered code reviewer bound to the
+ * frozen executor, in id order. A pure function of its arguments — the caller
+ * passes the frozen profile's agents, never the live registry (hard rule 6),
+ * exactly as `selectReviewers` requires.
+ *
+ * This is the fixed panel the operator's decision of 2026-09-04 asked for.
+ * There is no panel request, no self-critique, and no ranked fill: the stage
+ * that dispatches this has no author to propose lenses, so the only honest
+ * panel is all of them. Item 4 of `docs/proposals/post-milestone-target-flow.md`
+ * replaces the "every registered code reviewer" rule with a selection over
+ * these same candidates, by scope, changed paths, technology, or risk; nothing
+ * else here is meant to move when it does.
+ *
+ * The candidate filter is what partitions the two reviewer registries.
+ * `selectReviewers` and `staffingShortfall` filter on `findings`; this filters
+ * on `code-findings`. A code reviewer can therefore never be ranked into a
+ * spec or plan panel, and a spec reviewer can never be seated here, whatever
+ * lens names the two registries happen to share.
+ */
+export function codeReviewPanel(
+  candidates: readonly AgentDefinition[],
+  executorId: string
+): AgentDefinition[] {
+  return candidates
+    .filter(
+      (a) =>
+        a.role === "reviewer" &&
+        a.outputs.includes("code-findings") &&
+        a.executor === executorId
+    )
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+/**
+ * Can this registry seat the fixed code-review panel on the named executor?
+ * Returns the refusal, or null when it can.
+ *
+ * The sibling of `staffingShortfall` for the other candidate set, asked at the
+ * same two moments: when the profile is frozen, before a run row exists and
+ * before anything has been spent (hazard 11 — a default installation that
+ * cannot complete a run must fail at configuration time, not after the paid
+ * stages), and again at the stage boundary, because a tolerance applied at one
+ * boundary and not its sibling is this repository's recurring defect.
+ *
+ * There is no requested or required specialty set here: the panel is fixed, so
+ * the only questions are whether it is large enough and whether its members are
+ * distinct agents carrying distinct lenses. Two reviewers sharing a lens are
+ * one lens twice, which is not the coverage a panel of that size is claiming.
+ */
+export function codeReviewStaffingShortfall(
+  candidates: readonly AgentDefinition[],
+  minSize: number,
+  executorId: string
+): string | null {
+  const panel = codeReviewPanel(candidates, executorId);
+  const repeatedIds = panel
+    .map((a) => a.id)
+    .filter((id, index, ids) => ids.indexOf(id) !== index);
+  if (repeatedIds.length > 0) {
+    return `the eligible code reviewer registry contains duplicate agent ids: ${[
+      ...new Set(repeatedIds),
+    ]
+      .sort()
+      .join(", ")}`;
+  }
+  const unlensed = panel.filter((a) => a.specialty === null).map((a) => a.id);
+  if (unlensed.length > 0) {
+    return `the code reviewer${unlensed.length === 1 ? "" : "s"} ${unlensed
+      .sort()
+      .join(", ")} carr${unlensed.length === 1 ? "ies" : "y"} no specialty`;
+  }
+  const specialties = panel.map((a) => a.specialty as string);
+  const repeated = specialties.filter((s, index) => specialties.indexOf(s) !== index);
+  if (repeated.length > 0) {
+    return `the code reviewer registry seats the specialt${
+      repeated.length === 1 ? "y" : "ies"
+    } ${[...new Set(repeated)].sort().join(", ")} more than once`;
+  }
+  if (panel.length < minSize) {
+    return `the agent registry seats ${panel.length} code reviewer${
+      panel.length === 1 ? "" : "s"
+    } on executor ${executorId} (${
+      panel.map((a) => a.id).join(", ") || "none at all"
+    }), which cannot fill the code-review panel floor of ${minSize}`;
+  }
+  return null;
+}

@@ -2,6 +2,8 @@ import { AGENTS } from "../src/agents.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  codeReviewPanel,
+  codeReviewStaffingShortfall,
   computeRisk,
   selectReviewers,
   staffingShortfall,
@@ -365,6 +367,89 @@ test("duplicate eligible reviewer ids are refused before selection can collapse 
     2,
     REQUIRED_SPECIALTIES,
     [],
+    CLAUDE_CODE.id
+  );
+  assert.match(String(reason), /duplicate agent ids/);
+  assert.match(String(reason), new RegExp(duplicate.id));
+});
+
+// --- the fixed code-review panel --------------------------------------------
+
+test("the fixed code-review panel is every registered code reviewer, in id order", () => {
+  assert.deepEqual(
+    codeReviewPanel(AGENTS, CLAUDE_CODE.id).map((a) => a.id),
+    ["code-reviewer-correctness", "code-reviewer-security"]
+  );
+});
+
+test("no code reviewer can be ranked into a spec or plan panel", () => {
+  // The ranked fill sorts `code-reviewer-*` before `spec-reviewer-*` by id, so
+  // a leaked eligibility would seat one first rather than last. Asking for more
+  // seats than the registry holds makes the selector take everything it
+  // considers a candidate, which is the strongest form of the question.
+  const panel = selectReviewers(AGENTS, 5, []);
+  assert.ok(panel.length > 0, "the selector must still seat the spec reviewers");
+  for (const agent of panel) {
+    assert.ok(
+      !agent.outputs.includes("code-findings"),
+      `${agent.id} leaked into a spec or plan panel`
+    );
+  }
+});
+
+test("no spec or plan reviewer can be seated on the code-review panel", () => {
+  // The partition read from the other side: the two candidate sets are
+  // disjoint, so neither function can reach the other's registry.
+  for (const agent of codeReviewPanel(AGENTS, CLAUDE_CODE.id)) {
+    assert.ok(!agent.outputs.includes("findings"), `${agent.id} leaked into the code-review panel`);
+  }
+});
+
+test("the default registry staffs the code-review panel", () => {
+  assert.equal(codeReviewStaffingShortfall(AGENTS, PANEL_SIZE_FLOOR, CLAUDE_CODE.id), null);
+});
+
+test("a registry holding one code reviewer cannot staff the panel floor", () => {
+  const thinned = AGENTS.filter((a) => a.id !== "code-reviewer-security");
+  const reason = codeReviewStaffingShortfall(thinned, PANEL_SIZE_FLOOR, CLAUDE_CODE.id);
+  assert.match(String(reason), /seats 1 code reviewer/);
+  assert.match(String(reason), /code-reviewer-correctness/);
+  assert.match(String(reason), new RegExp(`panel floor of ${PANEL_SIZE_FLOOR}`));
+});
+
+test("two code reviewers sharing a lens are one lens twice, not a panel of two", () => {
+  const cloned = AGENTS.map((a) =>
+    a.outputs.includes("code-findings") ? { ...a, specialty: "correctness" } : a
+  );
+  const reason = codeReviewStaffingShortfall(cloned, PANEL_SIZE_FLOOR, CLAUDE_CODE.id);
+  assert.match(String(reason), /seats the specialty correctness more than once/);
+});
+
+test("a code reviewer without a lens is refused by name", () => {
+  const unlensed = AGENTS.map((a) =>
+    a.id === "code-reviewer-security" ? { ...a, specialty: null } : a
+  );
+  const reason = codeReviewStaffingShortfall(unlensed, PANEL_SIZE_FLOOR, CLAUDE_CODE.id);
+  assert.match(String(reason), /code-reviewer-security carries no specialty/);
+});
+
+test("a code reviewer on another executor is not counted toward the panel", () => {
+  const wrongExecutor = AGENTS.map((a) =>
+    a.id === "code-reviewer-security" ? { ...a, executor: "another-executor" } : a
+  );
+  assert.deepEqual(
+    codeReviewPanel(wrongExecutor, CLAUDE_CODE.id).map((a) => a.id),
+    ["code-reviewer-correctness"]
+  );
+  const reason = codeReviewStaffingShortfall(wrongExecutor, PANEL_SIZE_FLOOR, CLAUDE_CODE.id);
+  assert.match(String(reason), /seats 1 code reviewer on executor claude-code/);
+});
+
+test("duplicate eligible code reviewer ids are refused before the panel is seated", () => {
+  const duplicate = { ...codeReviewPanel(AGENTS, CLAUDE_CODE.id)[0]!, specialty: "concurrency" };
+  const reason = codeReviewStaffingShortfall(
+    [...AGENTS, duplicate],
+    PANEL_SIZE_FLOOR,
     CLAUDE_CODE.id
   );
   assert.match(String(reason), /duplicate agent ids/);

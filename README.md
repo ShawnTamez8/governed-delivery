@@ -36,9 +36,15 @@ named environment passthrough and bounded per-command time and output limits,
 proving the worktree still holds the commit implementation left and is clean
 before and after every command, retaining each command's complete output, and
 handing the next stage a structured record naming the worktree and the
-verified commit); and the delivery stage (`bw deliver` — the final
+verified commit); the code review stage (`bw review` — a fixed panel of two
+code reviewers reads the verified change against the approved specification and
+plan, with the worktree as a read-only working directory; every finding is
+recorded as immutable evidence, and a finding at or above the severity frozen
+at run start, or one whose cause is in the approved plan, blocks the run); and
+the delivery stage (`bw deliver` — the final
 deterministic gate, no dispatch and no model: it re-reads the verification
-record and the retained worktree, diffs the patch range between the recorded
+record and the code-review record it is handed, cross-checks the two, re-reads
+the retained worktree, diffs the patch range between the recorded
 base and the verified commit, and completes the run only when every declared
 artifact the operator signed for appears there as an exact changed path —
 otherwise it blocks the run naming what is missing). The model each stage
@@ -60,9 +66,15 @@ promotion to active work stays a human `git mv`. Step 8 shipped next:
 [`docs/features/delivery-check/plan.md`](docs/features/delivery-check/plan.md)
 implemented the terminal delivery check described above — the delivery_check
 stage, `bw deliver`, and the audit events that transition a run to
-`completed` or `blocked`. All eight build-order stages now exist; step 9's
-stop is the milestone itself: one feature run that reaches `completed` with
-queryable per-stage cost.
+`completed` or `blocked`. All eight build-order stages exist, and step 9's
+stop — one feature run reaching `completed` with queryable per-stage cost —
+was met on 2026-09-03. The first stage past that stop exists by explicit
+operator decision on 2026-09-04 and by that decision alone:
+[`docs/features/code-review-stage/plan.md`](docs/features/code-review-stage/plan.md)
+added `code_review` between verification and delivery, because a run had
+delivered every declared artifact and passed every gate while nothing in the
+system had read the code. The five stages still deferred in
+[`ARCHITECTURE.md`](ARCHITECTURE.md) section 5 each need their own decision.
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the design, and its binding
   constraints.

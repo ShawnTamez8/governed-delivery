@@ -20,7 +20,9 @@ The hard rules are constraints, not aspirations:
 6. Config is frozen at run start.
 
 The build order has a deliberate stop at step 9 — one complete run with
-queryable cost. Do not build past it without an explicit decision.
+queryable cost. Do not build past it without an explicit decision. That
+decision has been taken exactly once, on 2026-09-04, for `code_review` alone;
+no other deferred stage or behaviour inherits it.
 
 ## How to work here
 
@@ -127,7 +129,7 @@ Run from the repository root. These commands live here and nowhere else.
   explicit `.ts` extensions).
 - `npm run check:docs` — the documentation checker (`scripts/doc-check.mjs`);
   run before claiming a documentation change is consistent.
-- `node src/cli.ts migrate|new-run|stage-add|stage-complete|dispatch|spec|plan|implement|verify|deliver|approval-request|approve|verify-audit`
+- `node src/cli.ts migrate|new-run|stage-add|stage-complete|dispatch|spec|plan|implement|verify|review|deliver|approval-request|approve|verify-audit`
   — the CLI. There is no `bw` on PATH after `npm install`: npm does not link a
   private package's own bin, and `node_modules/.bin/` holds only `tsc` and
   `tsserver`. Invoke the file. Note that the CLI governs the repository it is

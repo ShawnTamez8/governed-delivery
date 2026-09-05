@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { acquireLock } from "../src/lock.ts";
-import { deliveryEvidenceRef } from "../src/paths.ts";
+import { codeReviewEvidenceDir, codeReviewEvidenceRef, deliveryEvidenceRef } from "../src/paths.ts";
 import { openStore } from "../src/store.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { appendAudit } from "../src/audit.ts";
@@ -58,6 +58,10 @@ function tempCwd(): string {
   assert.equal(git(cwd, ["init", "-q"]).status, 0);
   writeFileSync(join(cwd, ".gitignore"), ".governance/\n");
   writeFileSync(join(cwd, "governed.yaml"), GOVERNED);
+  // Committed at the base so every parked run's worktree holds it: the
+  // code-review harness fixture reads it to prove it ran with its working
+  // directory set to the worktree.
+  writeFileSync(join(cwd, "base.txt"), "worktree-base-marker\n");
   commitAll(cwd, "base");
   return cwd;
 }
@@ -1113,6 +1117,62 @@ test("the usage text distinguishes verify from verify-audit", () => {
   }
 });
 
+// --- review (the code_review stage) -----------------------------------------
+
+test("the usage text introduces review between verify and deliver", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "not-a-command");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /review --run <id> \[--model <name>\] +run the code_review stage/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("review without --run is a usage error", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "review");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /missing required option --run/);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("review with a nonexistent run exits 1 naming the run and writes nothing", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "review", "--run", "9999");
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /run 9999 does not exist/);
+    assert.ok(
+      !existsSync(join(cwd, ".governance", "code-review")),
+      "no code-review record directory was created"
+    );
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("review refuses a run whose last stage is not a passed verification", () => {
+  const cwd = tempCwd();
+  try {
+    const newRun = runCli(cwd, ...NEW_RUN_ARGS);
+    assert.equal(newRun.status, 0, newRun.stderr);
+    const r = runCli(cwd, "review", "--run", newRun.stdout.trim());
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /last stage is none, not a passed verification/);
+    assert.ok(
+      !existsSync(join(cwd, ".governance", "code-review")),
+      "no code-review record directory was created"
+    );
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
 // --- deliver (step 8, the terminal stage) ------------------------------------
 
 test("the usage text introduces deliver as the step-8 terminal check", () => {
@@ -1152,14 +1212,14 @@ test("deliver with a nonexistent run exits 1 naming the run and writes nothing",
   }
 });
 
-test("deliver refuses a run whose last stage is not a passed verification", () => {
+test("deliver refuses a run whose last stage is not a passed code_review", () => {
   const cwd = tempCwd();
   try {
     const newRun = runCli(cwd, ...NEW_RUN_ARGS);
     assert.equal(newRun.status, 0, newRun.stderr);
     const r = runCli(cwd, "deliver", "--run", newRun.stdout.trim());
     assert.equal(r.status, 1);
-    assert.match(r.stderr, /last stage is none, not a passed verification/);
+    assert.match(r.stderr, /last stage is none, not a passed code_review/);
     assert.ok(
       !existsSync(join(cwd, ".governance", "delivery")),
       "no delivery record directory was created"
@@ -1183,7 +1243,14 @@ function parkVerifiedRun(
   cwd: string,
   runId: number,
   scope: string[],
-  commitFiles: string[] = scope
+  commitFiles: string[] = scope,
+  /**
+   * Append the hand-completed `code_review` row delivery now follows. False
+   * parks the run one stage earlier, which is where `bw review` itself is
+   * exercised — the CLI has no executor seam, so the review row is built
+   * through the store exactly as the implementation row above it is.
+   */
+  throughCodeReview = true
 ): {
   worktreePath: string;
   verifiedCommit: string;
@@ -1243,6 +1310,26 @@ function parkVerifiedRun(
     signer: "signer",
   });
 
+  // The plan and its gate event. Delivery never reads them, but the
+  // code_review stage re-verifies the plan hash at its own boundary the way
+  // the implementation stage does, so a parked run needs both to be real.
+  const plan = ["# thing plan", "", "## Tasks", "", "- Task 1: write the artifact", ""].join("\n");
+  const planPath = join(cwd, "docs", "features", slug, "plan.md");
+  writeFileSync(planPath, plan);
+  const planHash = sha256Hex(normalizeText(plan));
+  const planStage = store.insertStage(runId, "plan", approvalStage.id);
+  store.completeStage(planStage.id, planPath, "pass");
+  const planReviewStage = store.insertStage(runId, "plan_review", planStage.id);
+  store.completeStage(planReviewStage.id, planPath, "pass");
+  appendAudit(store, {
+    runId,
+    stageId: planReviewStage.id,
+    actor: "system",
+    actorType: "cli",
+    action: "plan.gate.pass",
+    summary: `plan_review gate passed in round 1; planHash=${planHash}; planFor=${specHash}`,
+  });
+
   const worktreePath = join(cwd, ".governance", "worktrees", String(runId));
   const added = git(cwd, ["worktree", "add", "-q", worktreePath, "-b", `gov/${slug}/${runId}`, startingCommit]);
   assert.equal(added.status, 0, `git worktree add failed: ${added.stderr}`);
@@ -1290,7 +1377,7 @@ function parkVerifiedRun(
   assert.equal(commitPatch.status, 0, `git commit failed: ${commitPatch.stderr}`);
   const verifiedCommit = git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim();
 
-  const implementationStage = store.insertStage(runId, "implementation", approvalStage.id);
+  const implementationStage = store.insertStage(runId, "implementation", planReviewStage.id);
   store.completeStage(implementationStage.id, worktreePath, "pass");
   appendAudit(store, {
     runId,
@@ -1304,8 +1391,117 @@ function parkVerifiedRun(
 
   const verify = runCli(cwd, "verify", "--run", String(runId));
   assert.equal(verify.status, 0, verify.stderr);
+
+  if (throughCodeReview) {
+    const after = openStore(cwd);
+    try {
+      const verificationStage = after.getStageChain(runId).find((s) => s.kind === "verification")!;
+      const codeReviewStage = after.insertStage(runId, "code_review", verificationStage.id);
+      mkdirSync(codeReviewEvidenceDir(cwd, runId), { recursive: true });
+      writeFileSync(
+        join(codeReviewEvidenceDir(cwd, runId), "result.json"),
+        `${JSON.stringify(
+          {
+            runId,
+            stageId: codeReviewStage.id,
+            worktreePath,
+            patchBase,
+            verifiedCommit,
+            changedPaths: commitFiles,
+            panel: ["code-reviewer-correctness", "code-reviewer-security"],
+            blockingSeverity: "high",
+            severities: ["low", "medium", "high", "critical"],
+            findings: [],
+            blocking: [],
+            proposals: [],
+            outcome: "pass",
+            createdAt: new Date().toISOString(),
+          },
+          null,
+          2
+        )}\n`
+      );
+      after.completeStage(codeReviewStage.id, codeReviewEvidenceRef(runId, "result.json"), "pass");
+      appendAudit(after, {
+        runId,
+        stageId: codeReviewStage.id,
+        actor: "system",
+        actorType: "cli",
+        action: "code_review.gate.pass",
+        summary: `code_review gate passed over ${patchBase}..${verifiedCommit}; findings=0; blocking=0; threshold=high`,
+      });
+    } finally {
+      after.close();
+    }
+  }
+
   return { worktreePath, verifiedCommit, startingCommit, patchBase, specStageId: specStage.id };
 }
+
+test("review runs the fixed panel through the CLI and prints the record reference", () => {
+  const cwd = tempCwd();
+  const before = process.env.EMIT_MODE;
+  try {
+    const newRun = runCli(cwd, ...NEW_RUN_ARGS);
+    assert.equal(newRun.status, 0, newRun.stderr);
+    const runId = Number(newRun.stdout.trim());
+    parkVerifiedRun(cwd, runId, ["src/a1.ts"], ["src/a1.ts"], false);
+
+    // There is no executor injection seam in the CLI (hard rule 4), so the
+    // fixture is frozen into the profile the same way the stage tests do it.
+    // EMIT_MODE travels in the executor's own passthrough, not the test's.
+    const profilePath = join(cwd, ".governance", "profiles", String(runId), "profile.json");
+    const profile = JSON.parse(readFileSync(profilePath, "utf8")) as Record<string, unknown>;
+    profile.executor = {
+      id: "claude-code",
+      command: ["node", join(process.cwd(), "test", "fixtures", "harness", "emit-code-review.mjs")],
+      probe: ["node", "--version"],
+      capabilities: ["spec", "plan", "review", "implementation"],
+      telemetry: { perInvocationModel: true, effectiveModel: true, tokenUsage: true, sessionCost: true },
+      sandbox: {
+        allowedPaths: [],
+        deniedPaths: [],
+        commandAllowlist: [],
+        idleTimeoutSeconds: 30,
+        absoluteTimeoutSeconds: 120,
+        envPassthrough: ["PATH", "SystemRoot", "TEMP", "TMP", "EMIT_MODE"],
+        network: "inherit",
+      },
+    };
+    const serialized = canonicalJson(profile);
+    writeFileSync(profilePath, serialized);
+    const store = openStore(cwd);
+    store.setProfileRef(runId, sha256Hex(serialized));
+    store.close();
+
+    process.env.EMIT_MODE = "ok";
+    const r = runCli(cwd, "review", "--run", String(runId));
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim(), codeReviewEvidenceRef(runId, "result.json"));
+
+    const after = openStore(cwd);
+    try {
+      const stage = after.getStageChain(runId).find((s) => s.kind === "code_review")!;
+      assert.equal(stage.status, "passed");
+      assert.equal(stage.gate_result, "pass");
+      const runs = after.query<{ agent: string; role: string }>(
+        "SELECT agent, role FROM agent_run WHERE stage_id = ? ORDER BY id",
+        [stage.id]
+      );
+      assert.equal(runs.length, 2, "the fixed panel seats both reviewers");
+      assert.ok(runs.every((x) => x.role === "reviewer"));
+    } finally {
+      after.close();
+    }
+    const audit = runCli(cwd, "verify-audit");
+    assert.equal(audit.status, 0, audit.stderr);
+    assert.match(audit.stdout, /chain valid/);
+  } finally {
+    if (before === undefined) delete process.env.EMIT_MODE;
+    else process.env.EMIT_MODE = before;
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
 
 test("deliver prints the result reference, completes the run, and the terminal run refuses all work", () => {
   const cwd = tempCwd();

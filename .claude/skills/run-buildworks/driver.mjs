@@ -201,6 +201,9 @@ function freeSmoke() {
   step("verify refuses a run that does not exist", { exit: 1, match: /does not exist/ }, () =>
     bw(["verify", "--run", "9999"]));
 
+  step("review refuses without a passed verification",
+    { exit: 1, match: /not a passed verification/ }, () => bw(["review", "--run", runId]));
+
   step("verify-audit validates the chain", { exit: 0, match: /chain valid/ }, () =>
     bw(["verify-audit"]));
 
@@ -248,21 +251,32 @@ function paidChain() {
     bw(["implement", "--run", runId]));
   step("verify (frozen commands)", { exit: 0, match: /result\.json/ }, () =>
     bw(["verify", "--run", runId]));
+  // The first stage past the step 9 stop, by operator decision on 2026-09-04:
+  // nothing before it reads the code, so a chain without it can deliver a file
+  // that is present and wrong. Blocking output would name the finding ids and
+  // exit 1; that is a result, not a driver failure.
+  step("review (fixed panel + gate)", { exit: 0, match: /result\.json/ }, () =>
+    bw(["review", "--run", runId]));
   // Step 8: the delivery check is what makes `completed` reachable from the
   // default paid workflow (hazard 11) — a chain that never reaches it has no
   // record that delivery ever happened. Success prints the result reference;
   // blocking output would print the named missing artifacts and exit 1.
   step("deliver (step 8 delivery check)", { exit: 0, match: /result\.json/ }, () =>
     bw(["deliver", "--run", runId]));
-  step("delivery terminal state", { exit: 0, match: /delivery_check=passed run=completed/ }, () => {
+  step("delivery terminal state", { exit: 0, match: /code_review=passed delivery_check=passed run=completed/ }, () => {
     const db = new DatabaseSync(join(target.repo, ".governance", "state.db"), { readOnly: true });
-    const stage = db.prepare(
+    const statusOf = (kind) => db.prepare(
       "SELECT status FROM stage WHERE kind = ? ORDER BY id DESC LIMIT 1"
-    ).get("delivery_check");
+    ).get(kind)?.status ?? "absent";
+    const review = statusOf("code_review");
+    const stage = statusOf("delivery_check");
     const run = db.prepare("SELECT status FROM run WHERE id = ?").get(runId);
     db.close();
-    const state = `delivery_check=${stage?.status ?? "absent"} run=${run?.status ?? "absent"}`;
-    return { code: state === "delivery_check=passed run=completed" ? 0 : 1, out: state };
+    const state = `code_review=${review} delivery_check=${stage} run=${run?.status ?? "absent"}`;
+    return {
+      code: state === "code_review=passed delivery_check=passed run=completed" ? 0 : 1,
+      out: state,
+    };
   });
   step("delivery record covers the signed artifacts", { exit: 0, match: /scopeMatch=yes declared=\d+ delivered=\d+ missing=\[\], outcome=pass/ }, () => {
     const rec = JSON.parse(readFileSync(

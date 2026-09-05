@@ -1625,3 +1625,129 @@ report form the validators refuse — are design decisions for the operator
 about the threshold, the rubric, or the location form, not defects to work
 around. No prompt, fixture, validator, threshold, or gate change may be made
 to clear either without that decision.
+
+---
+
+## Implementation note
+
+**Date:** 2026-09-04
+**Branch:** `code-review-stage`
+**Status of this plan:** `Reconciled`, deliberately not `Implemented`. Tasks 1
+through 9 are built and verified; Task 10 is outstanding, and by this plan's own
+Gate the status does not advance until one real reviewer response is committed
+and replayed. Outcome 1 — no paid run authorized — is where the work currently
+stands.
+
+**Hazards considered:** 3, 4, 5, 7, 11, 12, 14, 15, 16, and the new 18, as the
+header states; no hazard was newly implicated during execution. 4 governed the
+one behavioural correction made after the independent review: a guard whose test
+could not reach it is a fixture and code agreeing while the guard is unproven.
+
+### What shipped
+
+Tasks 1-9 as written: the two `code-findings` reviewers and the fixed-panel
+functions; the frozen `codeReviewBlockingSeverity`, the sixth model-map entry,
+the `review` capability, and the freeze-time staffing refusal;
+`src/code-review-stage.ts` with `runCodeReviewStage`,
+`validateCodeReviewLocations`, `codeReviewGate`, and the exported
+`CodeReviewRecord`; `buildCodeReviewPrompt`; `bw review`;
+`emit-code-review.mjs` and `test/code-review-stage.test.ts`; delivery's
+two-record read and cross-check; ARCHITECTURE sections 5, 12, 15, 22, and 23,
+the two doc-check pins, `CLAUDE.md`, `README.md`, the driver and its skill
+document; and hazard 18.
+
+### Verification
+
+`npm test` in a copy of the working tree outside the repository: 774 tests,
+773 passing, 0 failing, 1 environmental skip, against the 711/710/0/1 baseline —
+61 new tests, no regressions. `npm run typecheck` and `npm run check:docs`
+clean; the free smoke is 13 of 13. The real repository's `HEAD` was unmoved in
+both isolated runs and no `moved` commit or stray `base.txt` leaked; the known
+intermittent leak did not occur.
+
+Nineteen targeted mutations were applied and reversed by editing back, never by
+`git checkout --`, each confirmed to fail exactly the named test and each
+restore confirmed byte-identical by hash: twelve against the stage (Task 6 Step
+12), four against delivery (Task 7 Step 4), and three against the corrections
+below. The doc-check sequence and deferred pins, and the hazard count, were each
+observed firing on a real difference before the pin was moved.
+
+### Deviations from the plan
+
+1. **Task 4's prompt builder was written before Task 3's stage.** Task 3 calls
+   `buildCodeReviewPrompt` and its every step gates on `npm run typecheck`
+   exiting 0, which is impossible while the builder does not exist. The
+   dependency is one-directional — the builder needs nothing from the stage —
+   so the builder was written first and Task 4 Step 1 then only added the call
+   site, as planned.
+2. **The two missing-gate-event states are built by omission, not deletion.**
+   Task 6 Step 10 and Task 10 said to delete the audit row; `Store.exec`
+   refuses any write to that table by design (`audit is append-only`). Both
+   states are instead built the way `withDeliveryRun` already built its
+   verification case — the fixture never appends the event — which is stronger:
+   the hash chain stays valid, so the tests also assert that the gap is a
+   missing event rather than a broken chain.
+3. **Two existing delivery tests now forge both records.** "A forged patch base
+   that is not on the run branch" and "a forged patch base equal to the starting
+   commit" rewrote only the verification record. The new cross-check refuses a
+   single-record forgery before the ancestry rules run, so those tests reached
+   the wrong guard. They now rewrite both records through a `forgePatchBase`
+   helper, which is what a forger who wanted to reach the ancestry rules would
+   have to do; the single-record case has its own test.
+4. **The blocked-review regression asserts two guards, not one.** The operator
+   asked that delivery not follow a blocked review. On the real path the run is
+   blocked too, so `requireRunInProgress` refuses first; the test asserts that,
+   then restores the run status by hand to reach the last-stage guard and
+   asserts its wording as well.
+
+### The independent review, and what it changed
+
+One independent reviewer pass ran against the full diff. It confirmed the
+precondition ordering (nothing dispatched and no stage row before any refusal),
+that the gate reads only frozen values, that no tampered or blocked code-review
+record reaches delivery, and that no binding document calls the reviewers
+independent. It raised three material findings, all reconciled:
+
+- **A test asserted a throw it never reached.** `codeReviewGate(..., "high",
+  ["low","medium"])` throws from the threshold branch, because the threshold is
+  itself absent from that list, so the per-report severity guard had no coverage
+  while a test's name claimed it. The case now uses a threshold that *is* in the
+  frozen list, so the per-report branch is what throws, and both assertions
+  match the specific message rather than a substring common to both.
+- **The stage's frozen-severity-vocabulary check was untested.** Its sibling
+  (`validateCodeReviewLocations`) had four tests; this one had none, because
+  the only test touching `policy.severities` permuted the order and kept every
+  member. A stage-level test now freezes `["low","medium"]` and drives a
+  `high` report through it.
+- **A changed path containing a whitespace run was wrongly refused.**
+  `normalizeLocation` collapses internal whitespace on the report's side;
+  `changedPaths` was compared raw. A reviewer citing such a path — git emits
+  those names raw under `-z` — reported correctly and took a terminal block
+  that a fresh run would repeat identically. This is the tolerance-at-one-
+  boundary defect this repository has recorded as its recurring failure, so the
+  fix normalizes both sides. That admits one collision the raw comparison could
+  not have — two changed paths differing only in whitespace share a normalized
+  form — which is refused as ambiguous rather than resolved by guessing, since a
+  guess would make a finding traceable to the wrong file. The doc comment's
+  earlier claim that normalization "cannot turn one changed path into another"
+  was true but beside the point: it could turn a changed path into a non-path,
+  and the comment now says so.
+
+### What is not done
+
+**Task 10, and with it the plan's completion.** Section 21 makes a contract test
+fed by recorded real output the load-bearing verification category, and hard rule
+5 says no hand-written fixture defines correctness. `emit-code-review.mjs`
+proves the stage matches its author's reading of the contract; only a real
+reviewer response proves the contract with the provider — the envelope, the field
+shapes, the case of a constrained field, and the form a live reviewer actually
+gives a location. Until one such response is committed under
+`test/fixtures/recorded/` with provenance and replayed through
+`extractJsonBody`, `validateAgentResult`, `validateReviewerReports`,
+`validateCodeReviewLocations`, and `codeReviewGate`, this feature is awaiting
+contract evidence.
+
+The run needs operator authorization and a working `claude` session, and costs
+$1.25 to $2.50. It has not been requested or run. No prompt, fixture, validator,
+threshold, or gate change may be made to clear a live block or abort without the
+operator's decision, per this plan's Gate.

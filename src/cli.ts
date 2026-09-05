@@ -11,6 +11,7 @@ import { runSpecStage } from "./spec-stage.ts";
 import { runPlanStage } from "./plan-stage.ts";
 import { runImplementationStage } from "./implementation-stage.ts";
 import { runVerificationStage } from "./verification-stage.ts";
+import { runCodeReviewStage } from "./code-review-stage.ts";
 import { runDeliveryStage } from "./delivery-stage.ts";
 import { freezeProfile, loadVerifiedProfile, requireFrozenBinding, resolveStageModel, resolveStartingCommit, validateModelName } from "./profile.ts";
 import { approvalPayload, validateExpiry } from "./approval.ts";
@@ -30,6 +31,10 @@ commands:
   plan --run <id> [--model <name>]       run the plan and plan_review stages
   implement --run <id> [--model <name>]   run the implementation stage
   verify --run <id>                      run the verification stage
+  review --run <id> [--model <name>]     run the code_review stage: a fixed
+                                         reviewer panel reads the verified
+                                         change; a finding at or above the
+                                         frozen severity blocks the run
   deliver --run <id>                     run the delivery check (step 8): prove
                                          every declared artifact was committed,
                                          then complete or block the run
@@ -133,6 +138,7 @@ async function main(): Promise<void> {
     "plan",
     "implement",
     "verify",
+    "review",
     "deliver",
     "approval-request",
     "approve",
@@ -487,6 +493,32 @@ async function main(): Promise<void> {
         // result path.
         const result = await runVerificationStage(store, {
           runId: numeric(args, "run"),
+          rootDir: process.cwd(),
+        });
+        if (result.ok) {
+          console.log(result.resultRef);
+        } else {
+          console.error(result.reason);
+          process.exitCode = 1;
+        }
+        break;
+      }
+      case "review": {
+        // Hard rule 6: the stage runs against the executor the run froze.
+        // Unlike verify and deliver this stage dispatches, so it accepts
+        // --model; the frozen-model mismatch refusal is the stage's.
+        const reviewRunId = numeric(args, "run");
+        const reviewRun = store.getRun(reviewRunId);
+        if (!reviewRun) {
+          throw new Error(`run ${reviewRunId} does not exist`);
+        }
+        const reviewVerified = loadVerifiedProfile(process.cwd(), reviewRun);
+        if (!reviewVerified.ok) {
+          throw new Error(reviewVerified.reason);
+        }
+        const result = await runCodeReviewStage(store, reviewVerified.profile.executor, {
+          runId: reviewRun.id,
+          requestedModel: optional(args, "model"),
           rootDir: process.cwd(),
         });
         if (result.ok) {

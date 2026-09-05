@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendAudit } from "./audit.ts";
+import type { CodeReviewRecord } from "./code-review-stage.ts";
 import { deliveryCoverage } from "./delivery-coverage.ts";
 import { deliveryEvidenceDir, deliveryEvidenceRef } from "./paths.ts";
 import { loadVerifiedProfile } from "./profile.ts";
@@ -17,6 +18,14 @@ const COMMIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
  * What the delivery stage reads from the record the verification stage wrote,
  * validated strictly here — a record edited after verification is refused,
  * never trusted.
+ *
+ * Two records are read, not one. Section 4 makes a stage's `output_ref`
+ * literally the next stage's input, and the stage before delivery is now
+ * `code_review`, so the code-review record is what delivery is handed. It
+ * names the verification record's range, and delivery walks back to the
+ * verification stage in the chain and cross-checks the two: a review that read
+ * a different worktree, base, or verified commit has not reviewed what
+ * delivery is about to certify.
  */
 interface VerificationHandoff {
   runId: number;
@@ -32,6 +41,11 @@ interface VerificationHandoff {
  * the operator's signature bound — appears in the commits produced from the
  * implementation patch base, then finalize the stage, the run, and the audit
  * event in one transaction.
+ *
+ * It follows `code_review`, not `verification`: section 4 makes a stage's
+ * `output_ref` literally the next stage's input, so the code-review record is
+ * what this stage is handed, and the verification record it names is read
+ * second and cross-checked against it.
  *
  * **Every check runs before the stage row exists.** Profile, handoff, git,
  * scope, cleanliness, coverage, and existence checks all refuse by name up
@@ -110,13 +124,24 @@ export function runDeliveryStage(
     };
   }
   const last = chain[chain.length - 1];
-  if (!last || last.kind !== "verification" || last.status !== "passed" || !last.output_ref) {
+  if (!last || last.kind !== "code_review" || last.status !== "passed" || !last.output_ref) {
     return {
       ok: false,
-      reason: `run ${runId}'s last stage is ${last ? `${last.kind} (${last.status})` : "none"}, not a passed verification`,
+      reason: `run ${runId}'s last stage is ${last ? `${last.kind} (${last.status})` : "none"}, not a passed code_review`,
     };
   }
-  const verificationStageId = last.id;
+  const codeReviewStageId = last.id;
+  // The verification record still holds the range delivery certifies, but it
+  // is no longer the row delivery follows. It is located by kind rather than
+  // by position, and validated against its own stage id below.
+  const verificationStage = chain.find((s) => s.kind === "verification");
+  if (!verificationStage || verificationStage.status !== "passed" || !verificationStage.output_ref) {
+    return {
+      ok: false,
+      reason: `run ${runId} has no passed verification stage with a record to read`,
+    };
+  }
+  const verificationStageId = verificationStage.id;
 
   // The frozen profile and the run-duration ceiling, exactly as the earlier
   // stages read them: the run is governed by the limit in force when it
@@ -156,19 +181,67 @@ export function runDeliveryStage(
     };
   }
 
+  // The code-review record, read from the stage delivery actually follows
+  // (section 4) and parsed strictly. A blocked review, a deleted record, or a
+  // record edited to claim a pass it never made all refuse by name — delivery
+  // must never certify a change over a review that did not happen.
+  const codeReviewPath = join(rootDir, last.output_ref);
+  let codeReview: Pick<
+    CodeReviewRecord,
+    "worktreePath" | "patchBase" | "verifiedCommit" | "changedPaths"
+  >;
+  if (!existsSync(codeReviewPath)) {
+    return {
+      ok: false,
+      reason: `run ${runId}'s code-review record at ${last.output_ref} is missing: restore it from the code-review evidence or start a fresh run (the branch and worktree are retained; a code_review stage cannot be re-run)`,
+    };
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(codeReviewPath, "utf8")) as Record<string, unknown>;
+    if (
+      parsed.runId !== runId ||
+      typeof parsed.stageId !== "number" ||
+      parsed.stageId !== codeReviewStageId ||
+      parsed.outcome !== "pass" ||
+      !Array.isArray(parsed.blocking) ||
+      parsed.blocking.length !== 0 ||
+      typeof parsed.worktreePath !== "string" ||
+      typeof parsed.verifiedCommit !== "string" ||
+      !COMMIT.test(parsed.verifiedCommit) ||
+      typeof parsed.patchBase !== "string" ||
+      !COMMIT.test(parsed.patchBase) ||
+      !Array.isArray(parsed.changedPaths) ||
+      parsed.changedPaths.length === 0 ||
+      parsed.changedPaths.some((p) => typeof p !== "string")
+    ) {
+      throw new Error("the record does not describe this run's passed code review");
+    }
+    codeReview = {
+      worktreePath: parsed.worktreePath,
+      verifiedCommit: parsed.verifiedCommit,
+      patchBase: parsed.patchBase,
+      changedPaths: parsed.changedPaths as string[],
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `run ${runId}'s code-review record at ${last.output_ref} is invalid: ${(err as Error).message}`,
+    };
+  }
+
   // The verification record, re-read and validated strictly. It lives at the
-  // passed stage's output_ref and is the only authoritative statement of what
-  // was verified; a record edited after verification refuses by name. A
+  // verification stage's output_ref and is the only authoritative statement of
+  // what was verified; a record edited after verification refuses by name. A
   // *missing* record gets its own named refusal: `bw verify` cannot re-run a
   // stage that exists, so the repair is restoring the retained evidence or a
   // fresh run — and the message says so, rather than folding the loss into
   // the tampering refusal.
-  const recordPath = join(rootDir, last.output_ref);
+  const recordPath = join(rootDir, verificationStage.output_ref);
   let record: VerificationHandoff;
   if (!existsSync(recordPath)) {
     return {
       ok: false,
-      reason: `run ${runId}'s verification record at ${last.output_ref} is missing: restore it from the verification evidence or start a fresh run (the branch and worktree are retained; a verification stage cannot be re-run)`,
+      reason: `run ${runId}'s verification record at ${verificationStage.output_ref} is missing: restore it from the verification evidence or start a fresh run (the branch and worktree are retained; a verification stage cannot be re-run)`,
     };
   }
   try {
@@ -199,10 +272,24 @@ export function runDeliveryStage(
   } catch (err) {
     return {
       ok: false,
-      reason: `run ${runId}'s verification record at ${last.output_ref} is invalid: ${(err as Error).message}`,
+      reason: `run ${runId}'s verification record at ${verificationStage.output_ref} is invalid: ${(err as Error).message}`,
     };
   }
   const { worktreePath, verifiedCommit, patchBase } = record;
+
+  // The two records must describe the same change. A code-review record naming
+  // a different worktree, base, or head is a review of something delivery is
+  // not about to certify, whatever each record says on its own.
+  if (
+    codeReview.worktreePath !== worktreePath ||
+    codeReview.patchBase !== patchBase ||
+    codeReview.verifiedCommit !== verifiedCommit
+  ) {
+    return {
+      ok: false,
+      reason: `run ${runId}'s code-review record at ${last.output_ref} is invalid: it reviewed ${codeReview.patchBase}..${codeReview.verifiedCommit} in ${codeReview.worktreePath}, not the verified ${patchBase}..${verifiedCommit} in ${worktreePath}`,
+    };
+  }
 
   // The audit trail must carry the verdict delivery is about to extend.
   // Verification completes its stage and appends `verification.gate.pass` as
@@ -219,6 +306,21 @@ export function runDeliveryStage(
     return {
       ok: false,
       reason: `run ${runId}'s passed verification stage ${verificationStageId} has no verification.gate.pass audit event: the audit trail does not record the verification outcome — start a fresh run; the branch and evidence are retained`,
+    };
+  }
+
+  // The same requirement for the review's own verdict: `code_review`
+  // completes its stage and appends its gate event as separate writes, so a
+  // run completing without the event would carry a delivery verdict over an
+  // audit that never records the review passing.
+  const reviewedEvent = store
+    .getAuditEvents(runId)
+    .filter((e) => e.action === "code_review.gate.pass")
+    .pop();
+  if (!reviewedEvent) {
+    return {
+      ok: false,
+      reason: `run ${runId}'s passed code_review stage ${codeReviewStageId} has no code_review.gate.pass audit event: the audit trail does not record the review outcome — start a fresh run; the branch and evidence are retained`,
     };
   }
 
@@ -370,7 +472,7 @@ export function runDeliveryStage(
         reason: `run ${runId} already has a delivery_check stage with status ${existing.status}`,
       };
     }
-    const stage = store.insertStage(runId, "delivery_check", verificationStageId);
+    const stage = store.insertStage(runId, "delivery_check", codeReviewStageId);
     const recordDocument = {
       runId,
       stageId: stage.id,

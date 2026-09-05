@@ -12,7 +12,7 @@ import {
   policyHash,
   type Policy,
 } from "./policy.ts";
-import { staffingShortfall } from "./select.ts";
+import { codeReviewStaffingShortfall, staffingShortfall } from "./select.ts";
 import type { VerificationConfig } from "./governed-config.ts";
 
 /**
@@ -164,6 +164,20 @@ export function freezeProfile(
   if (shortfall !== null) {
     throw new Error(`cannot freeze a profile for run ${runId}: ${shortfall}`);
   }
+  // The same rule for the other candidate set. The code-review panel is fixed
+  // — every registered code reviewer — so the only question a profile can be
+  // asked at freeze time is whether the registry holds enough of them, with
+  // distinct lenses, on this executor. A registry that cannot seat the panel
+  // makes the default installation unable to complete a run (hazard 11), and
+  // that must fail here rather than after the paid stages have spent.
+  const codeReviewShortfall = codeReviewStaffingShortfall(
+    agents,
+    policy.panelSizeMin,
+    CLAUDE_CODE.id
+  );
+  if (codeReviewShortfall !== null) {
+    throw new Error(`cannot freeze a profile for run ${runId}: ${codeReviewShortfall}`);
+  }
   // A missing or unreadable key at run start is normal — most machines have
   // none — so this records null rather than failing run creation.
   const key = loadPublicKey(rootDir);
@@ -175,7 +189,14 @@ export function freezeProfile(
     // only point at which this can be resolved, which is what makes hard
     // rule 6 — config is frozen at run start — enforceable rather than
     // advisory.
-    modelMap: { spec: model, spec_review: model, plan: model, plan_review: model, implementation: model },
+    modelMap: {
+      spec: model,
+      spec_review: model,
+      plan: model,
+      plan_review: model,
+      implementation: model,
+      code_review: model,
+    },
     approvalSigner: key.ok ? key.signer : null,
     verification,
     frozenAt: new Date().toISOString(),
@@ -358,7 +379,7 @@ export function loadVerifiedProfile(
 /**
  * The executor capability a stage kind requires (architecture section 11:
  * "a stage requiring a capability no configured executor declares must fail
- * at configuration time"). The five dispatchable kinds map to four capability
+ * at configuration time"). The six dispatchable kinds map to four capability
  * names — the review kinds share `review`, mirroring how the stages resolve
  * two model entries. Unknown kinds return null, which the binding check
  * refuses by name.
@@ -369,6 +390,7 @@ export function requiredCapability(stageKind: string): string | null {
       return "spec";
     case "spec_review":
     case "plan_review":
+    case "code_review":
       return "review";
     case "plan":
       return "plan";

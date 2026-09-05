@@ -14,6 +14,8 @@ import { dirname, join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
 import { runDeliveryStage } from "../src/delivery-stage.ts";
 import { runVerificationStage } from "../src/verification-stage.ts";
+import type { CodeReviewRecord } from "../src/code-review-stage.ts";
+import { codeReviewEvidenceDir, codeReviewEvidenceRef } from "../src/paths.ts";
 import { freezeProfile, loadProfile } from "../src/profile.ts";
 import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
@@ -41,6 +43,7 @@ interface Ctx {
   worktreePath: string;
   implementationStageId: number;
   verificationStageId: number;
+  codeReviewStageId: number;
 }
 
 interface Opts {
@@ -57,6 +60,17 @@ interface Opts {
    * real stage always appends the event.
    */
   noGateEvent?: boolean;
+  /**
+   * Complete the code_review stage without its gate event, the same crash gap
+   * `noGateEvent` builds for verification.
+   */
+  noCodeReviewGateEvent?: boolean;
+  /**
+   * A code review that blocked: the record carries an upstream finding and the
+   * stage and run are blocked. This is the shape the code-review stage
+   * produces on an upstream finding, and delivery must never follow it.
+   */
+  blockedCodeReview?: boolean;
 }
 
 function git(cwd: string, args: string[]): { status: number; stdout: string; stderr: string } {
@@ -239,6 +253,60 @@ ${scope.map((p) => `- ${p}`).join("\n")}
       verificationStageId = verificationStage.id;
     }
 
+    // The code_review stage delivery now follows (section 4). Built by hand
+    // rather than dispatched: this file's whole point is that nothing here
+    // crosses the executor boundary, and the record is written in the exported
+    // shape the real stage writes so delivery reads one type, not two.
+    const blockedReview = opts.blockedCodeReview === true;
+    const codeReviewStage = store.insertStage(run.id, "code_review", verificationStageId);
+    const codeReviewRecord: CodeReviewRecord = {
+      runId: run.id,
+      stageId: codeReviewStage.id,
+      worktreePath,
+      patchBase,
+      verifiedCommit,
+      changedPaths: (opts.commitFiles ?? scope).length > 0 ? (opts.commitFiles ?? scope) : [ARTIFACT],
+      panel: ["code-reviewer-correctness", "code-reviewer-security"],
+      blockingSeverity: "high",
+      severities: ["low", "medium", "high", "critical"],
+      findings: [],
+      blocking: blockedReview
+        ? [
+            {
+              findingId: 1,
+              severity: "low",
+              location: "upstream:plan:missing-rounding-decision",
+              cause: "upstream",
+            },
+          ]
+        : [],
+      proposals: [],
+      outcome: blockedReview ? "block" : "pass",
+      createdAt: new Date().toISOString(),
+    };
+    mkdirSync(codeReviewEvidenceDir(root, run.id), { recursive: true });
+    writeFileSync(
+      join(codeReviewEvidenceDir(root, run.id), "result.json"),
+      `${JSON.stringify(codeReviewRecord, null, 2)}\n`
+    );
+    const codeReviewRef = codeReviewEvidenceRef(run.id, "result.json");
+    if (blockedReview) {
+      store.completeStage(codeReviewStage.id, codeReviewRef, "block");
+      store.setRunStatus(run.id, "blocked");
+    } else {
+      store.completeStage(codeReviewStage.id, codeReviewRef, "pass");
+      if (opts.noCodeReviewGateEvent !== true) {
+        appendAudit(store, {
+          runId: run.id,
+          stageId: codeReviewStage.id,
+          actor: "system",
+          actorType: "cli",
+          action: "code_review.gate.pass",
+          summary: `code_review gate passed over ${patchBase}..${verifiedCommit}; findings=0; blocking=0; threshold=high`,
+        });
+      }
+    }
+
     for (const file of opts.untracked ?? []) {
       const target = join(worktreePath, file);
       mkdirSync(dirname(target), { recursive: true });
@@ -256,6 +324,7 @@ ${scope.map((p) => `- ${p}`).join("\n")}
         worktreePath,
         implementationStageId: implementationStage.id,
         verificationStageId,
+        codeReviewStageId: codeReviewStage.id,
       })
     ).finally(() => {
       store.close();
@@ -293,7 +362,7 @@ test("every declared artifact committed on the run branch passes delivery and co
     const stage = chain.find((s) => s.kind === "delivery_check")!;
     assert.equal(stage.status, "passed");
     assert.equal(stage.gate_result, "pass");
-    assert.equal(stage.input_stage_id, ctx.verificationStageId);
+    assert.equal(stage.input_stage_id, ctx.codeReviewStageId);
     assert.equal(ctx.store.getRun(ctx.runId)!.status, "completed");
     assert.equal(stage.output_ref, result.resultRef);
 
@@ -422,13 +491,30 @@ test("a second delivery invocation refuses: the completed run is terminal", asyn
   });
 });
 
+/**
+ * Rewrite the patch base in *both* handoff records. Delivery cross-checks the
+ * code-review record against the verification record before it reaches the
+ * ancestry checks, so a forgery that moved only one is refused as a mismatch
+ * — which is a different guard, tested separately. A forger who wanted to
+ * reach the ancestry rules would have to move both, and these tests do.
+ */
+function forgePatchBase(ctx: Ctx, base: string): void {
+  for (const recordPath of [
+    join(ctx.root, ".governance", "verification", String(ctx.runId), "result.json"),
+    join(ctx.root, ".governance", "code-review", String(ctx.runId), "result.json"),
+  ]) {
+    const record = JSON.parse(readFileSync(recordPath, "utf8")) as Record<string, unknown>;
+    record.patchBase = base;
+    writeFileSync(recordPath, JSON.stringify(record));
+  }
+}
+
 test("a run already holding a delivery_check stage refuses by name before any re-finalization", async () => {
   await withDeliveryRun(async (ctx) => {
     // The transaction makes this state unreachable through the stage, so it
     // is constructed directly: the chain guard is the belt behind the run
     // guard, and it must name the existing stage's status.
-    const verificationStage = ctx.store.getStage(ctx.verificationStageId)!;
-    ctx.store.insertStage(ctx.runId, "delivery_check", verificationStage.id);
+    ctx.store.insertStage(ctx.runId, "delivery_check", ctx.codeReviewStageId);
     const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -437,13 +523,119 @@ test("a run already holding a delivery_check stage refuses by name before any re
   });
 });
 
-test("a last stage that is not a passed verification is refused by name", async () => {
+test("delivery cannot follow a blocked code review", async () => {
+  // The shape the code-review stage produces on an upstream finding: the
+  // record is retained, the stage is blocked, and the run is blocked. A fresh
+  // run is the repair; delivery is not a way past it.
+  await withDeliveryRun(
+    async (ctx) => {
+      // On the real path the run itself is blocked, so that refusal comes
+      // first — the strongest of the two, and the one an operator actually
+      // meets.
+      const blocked = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+      assert.equal(blocked.ok, false);
+      if (blocked.ok) return;
+      assert.match(blocked.reason, /run \d+ is blocked, not in_progress/);
+
+      // The last-stage guard is the belt behind it. Reaching it needs the run
+      // status put back by hand, which is the only way a blocked review row
+      // can sit under an in-progress run.
+      ctx.store.setRunStatus(ctx.runId, "in_progress");
+      const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(result.reason, /last stage is code_review \(blocked\), not a passed code_review/);
+      assert.equal(
+        ctx.store.getStageChain(ctx.runId).some((s) => s.kind === "delivery_check"),
+        false
+      );
+    },
+    { blockedCodeReview: true }
+  );
+});
+
+test("a passed code_review whose gate event is absent refuses: the audit must record the outcome", async () => {
+  await withDeliveryRun(
+    async (ctx) => {
+      const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(result.reason, /has no code_review\.gate\.pass audit event/);
+      assert.equal(
+        ctx.store.getStageChain(ctx.runId).some((s) => s.kind === "delivery_check"),
+        false
+      );
+      assert.equal(ctx.store.getRun(ctx.runId)!.status, "in_progress");
+    },
+    { noCodeReviewGateEvent: true }
+  );
+});
+
+test("a missing code-review record refuses by name", async () => {
+  await withDeliveryRun(async (ctx) => {
+    rmSync(join(ctx.root, ".governance", "code-review", String(ctx.runId), "result.json"));
+    const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /code-review record at .* is missing/);
+    assert.equal(
+      ctx.store.getStageChain(ctx.runId).some((s) => s.kind === "delivery_check"),
+      false
+    );
+    assert.equal(ctx.store.getRun(ctx.runId)!.status, "in_progress");
+  });
+});
+
+test("a code-review record edited to claim a block refuses as invalid", async () => {
+  await withDeliveryRun(async (ctx) => {
+    const recordPath = join(ctx.root, ".governance", "code-review", String(ctx.runId), "result.json");
+    const record = JSON.parse(readFileSync(recordPath, "utf8")) as Record<string, unknown>;
+    record.outcome = "block";
+    record.blocking = [
+      { findingId: 1, severity: "high", location: "src/a1.ts:1", cause: "severity" },
+    ];
+    writeFileSync(recordPath, JSON.stringify(record));
+    const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /code-review record at .* is invalid/);
+    assert.equal(
+      ctx.store.getStageChain(ctx.runId).some((s) => s.kind === "delivery_check"),
+      false
+    );
+    assert.equal(ctx.store.getRun(ctx.runId)!.status, "in_progress");
+  });
+});
+
+test("a code-review record naming a different verified commit refuses", async () => {
+  // The record parses on its own terms; only the cross-check against the
+  // verification record can see that the review read something else.
+  await withDeliveryRun(async (ctx) => {
+    const recordPath = join(ctx.root, ".governance", "code-review", String(ctx.runId), "result.json");
+    const record = JSON.parse(readFileSync(recordPath, "utf8")) as Record<string, unknown>;
+    record.verifiedCommit = "b".repeat(40);
+    writeFileSync(recordPath, JSON.stringify(record));
+    const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /code-review record at .* is invalid: it reviewed /);
+    assert.match(result.reason, /not the verified /);
+    assert.equal(
+      ctx.store.getStageChain(ctx.runId).some((s) => s.kind === "delivery_check"),
+      false
+    );
+    assert.equal(ctx.store.getRun(ctx.runId)!.status, "in_progress");
+  });
+});
+
+test("a verification stage that did not pass is refused by name", async () => {
   await withDeliveryRun(async (ctx) => {
     const stage = ctx.store.getStage(ctx.verificationStageId)!;
     ctx.store.completeStage(stage.id, stage.output_ref ?? "", "block");
     const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
     assert.equal(result.ok, false);
-    assert.match(result.reason, /last stage is verification \(blocked\), not a passed verification/);
+    if (result.ok) return;
+    assert.match(result.reason, /has no passed verification stage with a record to read/);
   });
 });
 
@@ -507,10 +699,7 @@ test("a forged patch base that is not on the run branch refuses by ancestry", as
     const foreign = git(ctx.root, ["-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "foreign"]);
     assert.equal(foreign.status, 0, foreign.stderr);
     const foreignHead = git(ctx.root, ["rev-parse", "HEAD"]).stdout.trim();
-    const recordPath = join(ctx.root, ".governance", "verification", String(ctx.runId), "result.json");
-    const record = JSON.parse(readFileSync(recordPath, "utf8")) as Record<string, unknown>;
-    record.patchBase = foreignHead;
-    writeFileSync(recordPath, JSON.stringify(record));
+    forgePatchBase(ctx, foreignHead);
     const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -621,10 +810,7 @@ test("the run's own projection documents never count as delivered: they sit befo
 
 test("a forged patch base equal to the starting commit refuses by strict descent", async () => {
   await withDeliveryRun(async (ctx) => {
-    const recordPath = join(ctx.root, ".governance", "verification", String(ctx.runId), "result.json");
-    const record = JSON.parse(readFileSync(recordPath, "utf8")) as Record<string, unknown>;
-    record.patchBase = ctx.startingCommit;
-    writeFileSync(recordPath, JSON.stringify(record));
+    forgePatchBase(ctx, ctx.startingCommit);
     const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
     assert.equal(result.ok, false);
     if (result.ok) return;

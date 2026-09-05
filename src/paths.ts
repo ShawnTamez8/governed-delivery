@@ -96,3 +96,18 @@ export function deliveryEvidenceRef(runId: number, name: string): string {
 export function proposalEvidenceRef(runId: number, name: string): string {
   return join(GOVERNANCE_DIR, "proposals", String(runId), name);
 }
+
+/** The directory holding one run's code-review records (the code_review stage). */
+export function codeReviewEvidenceDir(rootDir: string, runId: number): string {
+  return join(rootDir, GOVERNANCE_DIR, "code-review", String(runId));
+}
+
+/**
+ * The same file a code-review stage's `output_ref` stores it: relative to the
+ * repository root, mirroring `deliveryEvidenceRef`'s reasoning — the
+ * reference must survive the tree being read from elsewhere, and delivery
+ * reads this one as its own input (section 4).
+ */
+export function codeReviewEvidenceRef(runId: number, name: string): string {
+  return join(GOVERNANCE_DIR, "code-review", String(runId), name);
+}

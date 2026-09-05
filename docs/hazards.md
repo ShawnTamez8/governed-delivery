@@ -280,3 +280,46 @@ how each was identified are at
 replays are committed tests. What that run did not show: no claim carried a
 list marker, so hazard 3's tolerance was untouched, and its spec round produced
 no normative claim at all.
+
+## 18. Delivery proven, correctness never inspected
+
+A chain can prove that every declared path was committed — entry 5's remedy —
+and that every frozen verification command passed, and still have had nothing
+read the code. The two guarantees are about existence and about exit codes;
+neither is about whether the change does what the specification asked for.
+
+The observation is a completed run, not a filed defect. The web-calculator run
+of 2026-09-04 cost $1.34097, delivered four artifacts, and passed every gate to
+`completed`. Its frozen verification commands were `node --version` and
+`npm --version`, which prove that a runtime exists and nothing whatever about a
+calculator; `delivery_check` proved each declared file appeared in the patch
+range. The calculator did work — established by opening it by hand — but the
+system had no opinion either way, and would have recorded the same
+`completed` for a file that was present and wrong. Like entries 16 and 17,
+this is a gap found by reading a run's own record rather than a report of
+something that went wrong.
+
+Before a run may complete, at least two separately dispatched reviewers, each
+recorded as `configured_standalone` — section 6 is explicit that the audit can
+prove a separate process and never independence — must have read the committed
+change against the approved specification and plan; every finding must be
+retained as attributable, immutable evidence; and a deterministic gate over
+those findings must sit between verification and delivery.
+
+What now enforces it is the `code_review` stage: a fixed panel of every
+registered code reviewer, each handed the specification, the plan, the changed
+paths, and the full diff of the verified range with the worktree as a read-only
+working directory; every report stored on a canonical finding; a gate that
+blocks at or above the severity frozen in the run's profile; and an upstream
+block, at any severity, for a finding whose cause the reviewer places in the
+approved plan — which also raises a non-binding `blocking_dependency` proposal
+so the concern has somewhere to go.
+
+The residual is worth stating plainly. The gate proves that no reviewer
+asserted a severity at or above the frozen threshold and that none placed a
+defect's cause in the plan. It does not prove the code is correct, nothing
+confirms a below-threshold finding was harmless, and a change whose diff,
+specification, and plan exceed the frozen prompt ceiling is refused rather than
+reviewed in part. A verification configuration that proves nothing about the
+artifact — `node --version` against a calculator — is still accepted: a
+stronger `governed.yaml` is the operator's decision, not the system's.

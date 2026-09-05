@@ -1,6 +1,6 @@
 ---
 name: run-buildworks
-description: Run, drive, and smoke-test the BuildWorks bw CLI against a throwaway target repository. Use to run or start bw, launch a governed run end to end, exercise the stage chain and its gates, check what a run cost, or reproduce a stage failure outside this repository. Covers migrate, new-run, spec, approval-request, approve, plan, implement, verify, deliver, and verify-audit.
+description: Run, drive, and smoke-test the BuildWorks bw CLI against a throwaway target repository. Use to run or start bw, launch a governed run end to end, exercise the stage chain and its gates, check what a run cost, or reproduce a stage failure outside this repository. Covers migrate, new-run, spec, approval-request, approve, plan, implement, verify, review, deliver, and verify-audit.
 ---
 
 # Running BuildWorks
@@ -32,7 +32,7 @@ bin, but npm does not link a private package's own bin, and
 
 ## Run: the free smoke (start here)
 
-Twelve steps, no dispatches, no spend, about ten seconds:
+Thirteen steps, no dispatches, no spend, about ten seconds:
 
 ```bash
 node .claude/skills/run-buildworks/driver.mjs smoke
@@ -40,9 +40,9 @@ node .claude/skills/run-buildworks/driver.mjs smoke
 
 It builds a fresh scratch target (git repo, committed `governed.yaml` and
 `design.md`, throwaway Ed25519 keypair beside it), then drives `migrate` and
-`new-run` to success and eight refusals to their exact messages. Each step
+`new-run` to success and nine refusals to their exact messages. Each step
 declares an expected exit code and an expected pattern; the summary marks
-every step `ok` or `FAIL`, prints `12/12 steps as expected`, and exits
+every step `ok` or `FAIL`, prints `13/13 steps as expected`, and exits
 non-zero if any step drifted. Last line is the scratch repo's path — it is
 left on disk for you to poke at.
 
@@ -59,11 +59,15 @@ ok    new-run refuses an unspawnable model name             exit=2  invalid mode
 ok    approval-request refuses before a passed spec_review  exit=1  run 1 has no passed spec_review stage to approve
 ok    verify refuses without a passed implementation        exit=1  run 1's last stage is none, not a passed implementation
 ok    verify refuses a run that does not exist              exit=1  run 9999 does not exist
+ok    review refuses without a passed verification          exit=1  run 1's last stage is none, not a passed verification
 ok    verify-audit validates the chain                      exit=0  chain valid
 ok    an unknown command prints usage                       exit=2  usage: bw <command>
 
-12/12 steps as expected
+13/13 steps as expected
 ```
+
+The block above is the post-`code_review` shape: the review refusal is the
+step this stage added, and every step before it is unchanged.
 
 Other subcommands:
 
@@ -164,7 +168,11 @@ committed at
 `test/fixtures/recorded/plan-reconciliation-web-calculator-prd.json` and
 replayed by `test/reconciliation.test.ts`.
 
-**Budget $1.00–$2.00 for a full chain on this design, not the clamp's $0.25.**
+**Budget $1.25–$2.50 for a full chain on this design, not the clamp's $0.25.**
+The range rose with `code_review`: two more reviewer dispatches, each carrying
+the full diff of the run's patch range plus the approved specification and
+plan. On the recorded plan-panel costs ($0.13 to $0.18 a seat) that is roughly
+$0.25 to $0.35 on top of the figures below.
 The cost moved into review and implementation rather than authoring — the
 implementer alone was $0.40528 and the plan panel $0.31597 — so a run with an
 extra remediation round will sit at the top of that range or above it. The free
@@ -185,6 +193,20 @@ what is missing. The driver asserts `delivery_check=passed`, `run=completed`,
 and that the delivery record covers every signed artifact, then runs
 `verify-audit` over the chain including the delivery event. The 2026-08-31
 record above ends `in_progress` because it predates step 8.
+
+**The paid chain now reviews the code before it delivers it.** Between
+`verify` and `deliver` the driver calls `review`, which seats every
+registered code reviewer — two are seeded, `correctness` and `security` —
+and hands each the approved specification and plan, the changed paths, and the
+full diff of `patchBase..verifiedCommit`, with the worktree at the verified
+commit as a read-only working directory. The step expects exit 0 and a
+`result.json` reference; the record lives at
+`.governance/code-review/<run>/` beside its `report.md`. A block is a
+result, not a driver failure: the command exits 1 naming the blocking finding
+ids, their severities, and their locations, and the run stays `blocked` with
+the record and any raised proposals retained. The terminal-state step asserts
+`code_review=passed` alongside `delivery_check=passed` and
+`run=completed`.
 
 ## Driving it by hand
 
@@ -238,18 +260,20 @@ Then any command from `bw`'s usage. Keep `BW_APPROVAL_PUBLIC_KEY` set on
 - **Exit codes carry meaning: 2 is a usage error, 1 is a refusal, 0 is
   success.** Do not read them through a pipe — `cmd | grep` reports grep's
   status.
-- **`verify`, `deliver`, and `verify-audit` are unrelated.** `verify` runs the
-  frozen verification commands for one run; `deliver` (step 8) is the
-  deterministic terminal check that completes or blocks the run against the
-  signed declared artifacts; `verify-audit` recomputes the whole audit hash
-  chain.
+- **`verify`, `review`, `deliver`, and `verify-audit` are unrelated.**
+  `verify` runs the frozen verification commands for one run; `review` runs
+  the code-review panel over the verified change and is the only one of the
+  four that dispatches, so it is the only one that spends and the only one that
+  takes `--model`; `deliver` (step 8) is the deterministic terminal check that
+  completes or blocks the run against the signed declared artifacts;
+  `verify-audit` recomputes the whole audit hash chain.
 - Every invocation prints `ExperimentalWarning: SQLite is an experimental
   feature` on stderr. It is noise; the driver strips it.
 
 ## Test
 
 ```bash
-npm test              # node --test — 682 tests as of 2026-09-03 (681 pass,
+npm test              # node --test — 774 tests as of 2026-09-04 (773 pass,
                       # 1 pre-existing skip); prose count, drifts with the suite
 npm run typecheck     # strict tsc --noEmit
 npm run check:docs    # the documentation checker

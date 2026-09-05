@@ -792,3 +792,99 @@ Approved specification:
 
 ${specContent}`;
 }
+
+/**
+ * The code reviewer prompt: role (naming the agent id and its specialty
+ * lens), the approved specification and plan verbatim, the changed paths,
+ * and the complete unified diff of the range the run verified — plus the
+ * finding contract with every constrained field stated.
+ *
+ * The severity rubric is stated because the gate compares a reviewer's
+ * severity against a threshold frozen in the profile (hazard 3): a threshold
+ * over an unstated scale is a comparison against nothing, and two reviewers
+ * grading the same defect `low` and `high` would be one gate decided by
+ * whichever lens happened to be seated. One sentence per level is the
+ * smallest statement that makes the scale shared.
+ *
+ * The `Changed paths:` block shape — that heading, a blank line, then one
+ * `- <path>` line per entry — is a contract, exactly as the implementation
+ * prompt's scope block is: the harness fixture in the stage tests scrapes it
+ * to build findings from the prompt it actually received rather than from a
+ * literal it carries, so changing the shape changes the fixture.
+ *
+ * **No consequence is stated.** The prompt never names the threshold, never
+ * says which severity blocks, and never mentions a gate. The two review
+ * prompts state no consequences for the same reason: a reviewer writing to a
+ * gate grades to clear it, which is the bias section 12 keeps out of a
+ * deterministic gate by making the reviewer's verdict an input to it.
+ */
+export function buildCodeReviewPrompt(
+  agent: AgentDefinition,
+  specContent: string,
+  planContent: string,
+  changedPaths: string[],
+  diff: string,
+  verifiedCommit: string
+): string {
+  // The read-only sentence is UX, not a guard, exactly as it is in the
+  // implementation prompt: enforcement is the read-only executor command and
+  // the stage's clean-tree assertions before and after every dispatch.
+  return `you are the code reviewer ${agent.id} with specialty ${agent.specialty ?? "general review"}
+
+Report only findings within your specialty: ${agent.specialty ?? "general review"}. Judge the committed change below against the approved specification and plan it was written from. A concern outside your specialty must not be reported; other lenses will review it. An empty findings array is a valid result when you have no findings within your specialty.
+
+Your working directory is the repository checkout at commit ${verifiedCommit}.
+Read it to see the code surrounding the change. Run no git commands: the
+diff below is the complete statement of what changed, and no git tool is
+available to you. This checkout is read-only for you: do not create, modify,
+or delete any file. Only the findings you return are considered.
+
+Return exactly a JSON AgentResult object with this shape; your findings
+travel in the AgentResult's proposedContentChanges.findings:
+{"status": "proposed", "agent": "${agent.id}", "role": "reviewer", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"findings": [{"severity": "...", "classification": "...", "location": "...", "intentKey": "...", "subject": "..."}]}}
+
+Each finding has:
+- severity one of low, medium, high, critical, meaning:
+  - critical: the change is unsafe, or destroys data or state, in ordinary use
+  - high: the change fails to implement an acceptance criterion or a plan
+    task it claims to cover, or behaves incorrectly in ordinary use
+  - medium: a defect that does not fail an acceptance criterion
+  - low: a nit or a style concern
+- classification: current_artifact when the defect is in the changed code
+  below; upstream when the code cannot be corrected because the approved plan
+  leaves the decision unmade
+- location, by classification:
+  - current_artifact: one of the changed paths below, written exactly as it
+    is listed, optionally followed by :<line> where <line> is a
+    positive integer line number. Never a section heading, never a
+    description, and never a path that is not listed below
+  - upstream: exactly upstream:plan:<decision-key>, where <decision-key> is
+    lowercase kebab-case within 64 characters and names the absent decision
+    or obligation — never require or invent a heading for an omission, and
+    never use an upstream location for a current_artifact concern
+- intentKey: lowercase kebab-case, at most 64 characters, describing the
+  concern type
+- subject: one sentence naming the concern. For an upstream finding that
+  sentence must state the plan decision that is missing, because it is
+  recorded as the title of the concern raised against the plan
+
+Output the JSON object directly, with no surrounding prose, no markdown
+fences, and no commentary. Concerns within your specialty that you do not
+have are represented by an empty findings array, not by prose.
+
+Changed paths:
+
+${changedPaths.map((p) => `- ${p}`).join("\n")}
+
+Approved specification:
+
+${specContent}
+
+Approved plan:
+
+${planContent}
+
+Diff:
+
+${diff}`;
+}

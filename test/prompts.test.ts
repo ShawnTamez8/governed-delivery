@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  buildCodeReviewPrompt,
   buildImplementationAuthorPrompt,
   buildPlanAuthorPrompt,
   buildPlanReconcilePrompt,
@@ -17,6 +18,7 @@ import {
 } from "../src/prompts.ts";
 import { IMPLEMENTER } from "../src/agents/implementer.ts";
 import { PLAN_AUTHOR } from "../src/agents/plan-author.ts";
+import { CODE_REVIEWER_CORRECTNESS } from "../src/agents/code-reviewer-correctness.ts";
 import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
 import { SPEC_REVIEWER_TRACEABILITY } from "../src/agents/spec-reviewer-traceability.ts";
 import { validatePanelRequest } from "../src/select.ts";
@@ -83,6 +85,17 @@ const CONSTRAINT_STRINGS = [
   "deletion",
   "content",
   "A tasks.md path is prohibited",
+  // The code-review contract's constrained fields. The severity rubric is
+  // here because the gate compares severity against a threshold frozen in the
+  // profile (hazard 3): a threshold over an unstated scale is a comparison
+  // against nothing. `code-findings` is an output kind, not a prompt string,
+  // so it is deliberately absent.
+  "upstream:plan:",
+  "Changed paths:",
+  "one of the changed paths below",
+  "positive integer",
+  "state the plan decision that is missing",
+  "fails to implement an acceptance criterion",
   // The read-only constraint: hazard 3 applied to a constrained behaviour,
   // per docs/proposals/implementer-writes-files-it-also-proposes.md. The
   // sentence is UX, not a guard — enforcement is the invocation boundary
@@ -693,4 +706,53 @@ test("every finding id a reconcile prompt advertises is one the validator accept
   ]) {
     assert.ok(prompt.includes('"decisions": []'), "an empty round advertises an empty decisions list");
   }
+});
+
+test("the generated code review prompt states every field the validator and the gate act on", () => {
+  const prompt = buildCodeReviewPrompt(
+    CODE_REVIEWER_CORRECTNESS,
+    "SPEC-TEXT",
+    "PLAN-TEXT",
+    ["js/a.js", "css/b.css"],
+    "DIFF-TEXT",
+    "c".repeat(40)
+  );
+  for (const constraint of [
+    "code reviewer code-reviewer-correctness",
+    "Report only findings within your specialty: correctness",
+    "low, medium, high, critical",
+    // One distinguishing phrase per rubric level: a threshold over an
+    // unstated scale is a comparison against nothing (hazard 3).
+    "unsafe, or destroys data or state",
+    "fails to implement an acceptance criterion",
+    "does not fail an acceptance criterion",
+    "a nit or a style concern",
+    "current_artifact",
+    "upstream:plan:",
+    "lowercase kebab-case",
+    "64",
+    "An empty findings array is a valid result",
+    "read-only",
+    "- js/a.js",
+    "- css/b.css",
+    "state the plan decision that is missing",
+    "SPEC-TEXT",
+    "PLAN-TEXT",
+    "DIFF-TEXT",
+    "c".repeat(40),
+  ]) {
+    assert.ok(prompt.includes(constraint), `code review prompt is missing: ${constraint}`);
+  }
+  // No consequence a reviewer could write to. The sibling review prompts
+  // state none either: a reviewer grading to clear a gate is the bias
+  // section 12 keeps out by making the verdict an input to the gate.
+  assert.ok(!prompt.includes("threshold"), "the prompt must not name the gate threshold");
+  assert.ok(!prompt.includes("high or critical blocks"), "the prompt must not state a consequence");
+  assert.ok(!prompt.includes("blocks the run"), "the prompt must not state a consequence");
+
+  // The `Changed paths:` block shape is a contract the harness fixture
+  // scrapes. Asserted as the fixture reads it, not as prose.
+  const scraped = /Changed paths:\n\n([\s\S]*?)\n\n/.exec(prompt);
+  assert.ok(scraped, "the changed-paths block must be scrapable");
+  assert.deepEqual(scraped![1]!.split("\n"), ["- js/a.js", "- css/b.css"]);
 });
