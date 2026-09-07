@@ -12,13 +12,18 @@ memory holds it (`docs/proposals/durable-knowledge-tiers.md`).
 
 ## Current state (2026-09-06, end of session)
 
-**Four features are `Implemented` in the working tree and nothing since
-`4d71ad1` is committed.** Branch `code-review-stage`, HEAD `4d71ad1`, two
-commits ahead of `master`; local `master` = `origin/master` = `a12f3cf`, the
-branch point. 33 paths modified or untracked. The operator withheld the commit
-while the tree carried regressions; all are cleared and every check is green,
-so a commit is proposable, but it has not been asked for. Read the head with
-`git log -1` rather than trusting a commit id written here.
+**Four features are `Implemented`, committed as `ef88f4f` on
+`code-review-stage`, and pushed to `origin/code-review-stage` (2026-09-06).**
+The branch is three commits ahead of `master`; local `master` = `origin/master`
+= `a12f3cf`, the branch point. Merging into `master` is separate and unasked.
+Read the head with `git log -1` rather than trusting a commit id written here.
+
+**Pushing needs the personal GitHub account.** The remote is
+`ShawnTamez8/governed-delivery`; the repo-local credential helper is
+`gh auth git-credential`, which uses whichever `gh` account is *active*, and
+the active account is the work one (`TamezS_rush`), which gets a 403. Both are
+logged in. Push with `gh auth switch --user ShawnTamez8`, then switch back to
+`TamezS_rush` in the same command so other repositories are unaffected.
 
 - `docs/features/spec-section-membership/` — every structured spec section
   states its membership rule in the parser and all three authoring prompts.
