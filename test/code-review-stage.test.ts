@@ -19,6 +19,9 @@ import {
   type CodeReviewRecord,
 } from "../src/code-review-stage.ts";
 import { runVerificationStage } from "../src/verification-stage.ts";
+import { extractJsonBody } from "../src/parse-output.ts";
+import { validateAgentResult } from "../src/agent-result.ts";
+import { upstreamPrefixFor, validateReviewerReports } from "../src/reconciliation.ts";
 import { freezeProfile, loadProfile, type Profile } from "../src/profile.ts";
 import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
@@ -1132,4 +1135,159 @@ test("an unexpected throw lands in the same terminal state as any other failure"
       assert.equal(verifyAuditChain(ctx.store), null);
     }, "ok");
   });
+});
+
+// --- the recorded real responses (plan Task 10) -----------------------------
+
+/**
+ * The two reviewer responses from the first paid chain to reach `code_review`,
+ * 2026-09-06, target `bw-run-skill/1788742310835`. Hard rule 5 and section 21
+ * are why they are here: `emit-code-review.mjs` proves the stage matches its
+ * author's reading of the contract, and only a real response proves the
+ * contract with the provider — the envelope, the result shape, the case of a
+ * constrained field, and the form a live reviewer gives a location. Each
+ * fixture's `provenance.stageContext` carries the changed paths, the frozen
+ * severities and threshold, and the verdict the stage recorded, read from the
+ * run's own `result.json` rather than retyped.
+ */
+type RecordedReview = {
+  provenance: {
+    agent: string;
+    stageContext: {
+      changedPaths: string[];
+      severities: string[];
+      blockingSeverity: string;
+      recordedVerdict: "pass" | "block";
+      recordedBlocking: { location: string; severity: string; cause: string }[];
+      recordedFindingLocations: string[];
+    };
+  };
+  envelope: { result: string };
+};
+
+function recordedReview(name: string): RecordedReview {
+  return JSON.parse(
+    readFileSync(new URL(`./fixtures/recorded/${name}`, import.meta.url), "utf8")
+  ) as RecordedReview;
+}
+
+/**
+ * The chain the stage runs over one reviewer's body, in the stage's order and
+ * with the stage's arguments — `runCodeReviewStage` lines 683-747 — up to the
+ * rows it would insert. Returns the validated reports.
+ */
+function replayReviewer(fixture: RecordedReview) {
+  const { agent, stageContext } = fixture.provenance;
+  const body = extractJsonBody(fixture.envelope.result);
+  assert.equal(body.kind, "ok", `the recorded body must extract; got ${JSON.stringify(body)}`);
+  if (body.kind !== "ok") throw new Error("unreachable");
+  const result = validateAgentResult(agent, body.value);
+  assert.equal(result.ok, true, `the recorded result must validate; got ${JSON.stringify(result)}`);
+  if (!result.ok) throw new Error("unreachable");
+  assert.equal(result.value.status, "proposed");
+  const content = result.value.proposedContentChanges as { findings?: unknown };
+  assert.ok(Array.isArray(content.findings), "the recorded result carries proposedContentChanges.findings");
+  const reports = validateReviewerReports(content.findings, {
+    agentId: agent,
+    upstreamPrefix: upstreamPrefixFor("plan"),
+  });
+  assert.equal(reports.ok, true, `the recorded reports must validate; got ${JSON.stringify(reports)}`);
+  if (!reports.ok) throw new Error("unreachable");
+  assert.equal(validateCodeReviewLocations(reports.value, stageContext.changedPaths), null);
+  for (const report of reports.value) {
+    assert.ok(stageContext.severities.includes(report.severity), `severity ${report.severity} is frozen`);
+  }
+  return reports.value;
+}
+
+test("the recorded correctness response replays to the block the stage recorded", () => {
+  const fixture = recordedReview("code-review-web-calculator-correctness-two-high-findings.json");
+  const { stageContext } = fixture.provenance;
+  // Shape 1 of hazard 1, live: the body is bare JSON with no fence.
+  assert.ok(fixture.envelope.result.trim().startsWith("{"));
+
+  const reports = replayReviewer(fixture);
+  assert.equal(reports.length, 2);
+  // A live reviewer writes `path:line` inside the changed set — the location
+  // form the validator accepts and the plan named as the likeliest live
+  // refusal (a range, a column, a parenthetical). Neither happened.
+  assert.deepEqual(
+    reports.map((r) => r.location),
+    stageContext.recordedFindingLocations
+  );
+  assert.ok(reports.every((r) => r.classification === "current_artifact"));
+
+  // The gate, over rows shaped as the store would hold them, with the frozen
+  // threshold and order the run recorded.
+  const rows = reports.map((report, i) => ({
+    finding: { id: i + 2, stage_id: 8, round: 1, intent_key: report.intentKey, location: report.location },
+    reports: [
+      {
+        id: i + 2,
+        finding_id: i + 2,
+        agent_run_id: 12,
+        severity: report.severity,
+        classification: report.classification,
+        subject: report.subject,
+      },
+    ],
+  }));
+  const verdict = codeReviewGate(rows, stageContext.blockingSeverity, stageContext.severities);
+  assert.equal(stageContext.recordedVerdict, "block");
+  assert.equal(verdict.pass, false);
+  if (verdict.pass) return;
+  assert.deepEqual(
+    verdict.blocking.map((b) => ({ location: b.location, severity: b.severity, cause: b.cause })),
+    stageContext.recordedBlocking
+  );
+});
+
+test("the recorded security response — an empty panel in a fence — replays clean and proves only the pass path", () => {
+  const fixture = recordedReview("code-review-web-calculator-security-empty-fenced.json");
+  const { stageContext } = fixture.provenance;
+  // Shape 2 of hazard 1, live: the same run's other reviewer fenced its body.
+  assert.ok(fixture.envelope.result.trim().startsWith("```json"));
+
+  const reports = replayReviewer(fixture);
+  assert.equal(reports.length, 0);
+  // Alone, this reviewer would have passed the gate. It did not decide the
+  // run — the correctness reviewer did — and this test claims nothing about
+  // the finding or location contract.
+  const verdict = codeReviewGate([], stageContext.blockingSeverity, stageContext.severities);
+  assert.deepEqual(verdict, { pass: true });
+});
+
+test("the second recorded correctness response — prose, then a fence, one high finding — replays to its block", () => {
+  const fixture = recordedReview("code-review-web-calculator-correctness-enter-double-activation.json");
+  const { stageContext } = fixture.provenance;
+  // Shape 3 of hazard 1, live: a sentence of prose before a single fence. The
+  // same reviewer on a different implementation of the same design.
+  const body = fixture.envelope.result.trim();
+  assert.ok(!body.startsWith("{") && !body.startsWith("```") && body.includes("```json"));
+
+  const reports = replayReviewer(fixture);
+  assert.equal(reports.length, 1);
+  assert.deepEqual(reports.map((r) => r.location), stageContext.recordedFindingLocations);
+
+  const rows = reports.map((report) => ({
+    finding: { id: 3, stage_id: 8, round: 1, intent_key: report.intentKey, location: report.location },
+    reports: [
+      {
+        id: 3,
+        finding_id: 3,
+        agent_run_id: 12,
+        severity: report.severity,
+        classification: report.classification,
+        subject: report.subject,
+      },
+    ],
+  }));
+  const verdict = codeReviewGate(rows, stageContext.blockingSeverity, stageContext.severities);
+  assert.equal(stageContext.recordedVerdict, "block");
+  assert.equal(verdict.pass, false);
+  if (verdict.pass) return;
+  assert.deepEqual(
+    verdict.blocking.map((b) => ({ location: b.location, severity: b.severity, cause: b.cause })),
+    stageContext.recordedBlocking
+  );
 });

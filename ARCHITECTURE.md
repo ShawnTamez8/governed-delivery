@@ -266,6 +266,31 @@ The parser proves only format and uniqueness: before approval it cannot prove
 that a model preserved semantic identity or was authorized to delete an
 obligation.
 
+Each structured section of a specification states a membership rule, and the
+prompts that request those sections state it too. A declared-artifact line is
+one repo-relative path; an acceptance-criterion line is one `AC-NNN: <text>`
+entry. The canonical form of both carries a leading list marker, and the parser
+tolerates its absence on either section — a recorded provider response writes
+the artifacts section unbulleted — so the marker is conventional, not required.
+
+What each rule proves is narrower than the sentence above, and the difference
+matters. A line under `## Acceptance criteria` that does not open with an
+`AC`-prefixed token and a colon is refused by a message naming the section's
+rule, so prose there is diagnosed as prose; a line that does open that way is
+held to the ID pattern and refused as a malformed ID, because a wrong-case or
+wrongly padded ID is a broken criterion rather than a note. A line under
+`## Declared artifacts` is refused when it carries whitespace, which catches a
+sentence but not a path wearing Markdown decoration. Neither rule makes the
+section provably closed against everything that is not an entry: they close the
+shapes that have been measured reaching a gate, and the prompts carry the rest.
+
+Because IDs are stable and a removed obligation must be claimed and grounded
+rather than renumbered around, the numbering is expected to carry gaps: an ID
+withdrawn with its obligation stays out of use. A gap is therefore the
+ordinary residue of the removal accounting and not a defect, and the review
+prompts say so, so that no reviewer is invited to report the correct output of
+one guard as a finding for another to answer.
+
 A plan Coverage line copies only the approved criterion ID to the left of
 `->`; it never restates criterion prose. Before scope fitness is evaluated,
 the planning gate requires a bidirectional, unique relation: every approved ID
@@ -273,6 +298,27 @@ appears exactly once, no unknown ID appears, and no ID is repeated. Identity is
 exact after trimming field whitespace. The plan remains bound by `plan_for` to
 the same normalized specification hash the review and approval chain records,
 and artifact targets remain constrained by the separately signed scope.
+
+Each acceptance criterion has exactly one Coverage entry. An artifact-form
+entry names exactly one path copied from signed scope. **That path is the
+criterion's representative delivery anchor, not an exhaustive list of every
+contributing file** — the declared artifact most directly responsible for the
+criterion's observable outcome. Multiple criteria may name the same path; the
+uniqueness the planning gate proves is one entry per criterion, not one
+criterion per artifact.
+
+The consequence is that the plan document cannot express "this criterion also
+touches another file", and no revision can answer a finding asking it to. Work
+on the other contributing files is stated in `## Tasks`, which is where a
+reviewer reports it missing. All four plan prompts carry the same meaning — the
+author, self-critique and reconciliation prompts state the rule where the value
+is requested, and the review prompt states that a request for a second path is
+not a coverage finding while a missing task is. The scope refusal names the
+membership rule unconditionally rather than inferring from punctuation which
+mistake was made: a path may legally contain any separator, and the check
+already holds the stronger evidence that the target equals no signed entry. A
+reviewer inviting a change the schema forbids is a defect in the prompt, not a
+finding the author can answer.
 
 A coverage entry may say `not_applicable`, but only with a rationale and an
 alternative verification. Honest non-coverage beats a fabricated test.
@@ -955,12 +1001,14 @@ and it is invisible to a suite whose fixtures emit conforming bytes.*
 5. two fenced blocks
 6. a fenced block that is not JSON
 7. CRLF line endings inside the fence
+8. prose before an unfenced object — "I'll finalize the spec now." then `{…}`
 
 **Choose strictness by consequence, not by taste.** Where bytes are canonicalized
 into an immutable record, be strict and refuse prose outside the fence, because
 silently dropping it corrupts the record. Where the result is only
-schema-validated, tolerate one fenced block anywhere in the body. Refuse rather
-than guess when several are present.
+schema-validated, tolerate one fenced block anywhere in the body, and with no
+fence present read from the first `{` to the end of the body. Refuse rather
+than guess when several fences are present.
 
 Assert the operator-visible message on every refusal, not merely that an error
 was thrown. Several defects were diagnosable only because the message named the

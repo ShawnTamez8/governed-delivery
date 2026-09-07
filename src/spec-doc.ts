@@ -87,6 +87,27 @@ export function validateSpecDoc(
         reason: `declared artifact is prohibited because tasks belong in run-state database rows, not tasks.md: ${path}`,
       };
     }
+    // Section membership, checked last for each line so that a line breaking
+    // both a path rule and this one is answered by the rule that says
+    // something true about it. Until this check existed the section admitted
+    // any non-empty line: a prose line became a declared artifact, was signed
+    // into scope by `computeScope`, and could then only fail at
+    // `delivery_check`, because nothing was ever committed at that path.
+    //
+    // A path carries no internal whitespace, so that is the membership rule.
+    // It is deliberately not "the line begins with `- `": the marker is
+    // optional here and two recorded provider responses write this section
+    // without it, so a marker rule would refuse real output. The cost is a
+    // legitimate path containing a space, which this refuses. The rule does
+    // not close the section against every non-path — a Markdown-decorated
+    // path such as a backticked filename still parses — and the prompts, not
+    // this check, are where that is discouraged.
+    if (/\s/.test(path)) {
+      return {
+        ok: false,
+        reason: `every line under ## Declared artifacts must be one repo-relative file path with no whitespace; this line is not a path: ${path}`,
+      };
+    }
   }
   const criteriaSection = section(text, "Acceptance criteria");
   if (criteriaSection === null) {
@@ -99,17 +120,47 @@ export function validateSpecDoc(
   if (criterionLines.length === 0) {
     return { ok: false, reason: "acceptance criteria must not be empty" };
   }
+  // Section membership, on the same principle as the artifacts pass above.
+  // This section was already closed — a non-criterion line refused either as
+  // a malformed ID or as the obsolete prose shape — but neither message named
+  // the rule that was broken. Measured 2026-09-05, $0.41049: asked to resolve
+  // a finding about a gap in the numbering, a live author explained the gap
+  // in place, the first line under the heading was read as a criterion whose
+  // ID is `Note`, and the run blocked terminally.
+  //
+  // A criterion line is an `AC-`-prefixed token followed by a colon. The `/i`
+  // is load-bearing: `ac-001: text` is a malformed ID, not prose, and must
+  // keep reaching the ID check below rather than being answered with a
+  // message about section membership.
+  const isCriterionLine = (line: string): boolean => /^AC-\S*\s*:/i.test(line);
+  // The obsolete prose-only shape is a property of the whole section, not of
+  // one line. `runApprovalRequest` and the plan stage append "start a fresh
+  // run to mint stable criterion IDs" to this refusal, which is the right
+  // repair for a specification written before criterion IDs existed and the
+  // wrong one for any document whose criteria are present.
+  //
+  // The test is "does this section mention a criterion ID anywhere", not "is
+  // any line a well-formed criterion". Only the ASCII hyphen is stripped as a
+  // list marker above, so a section bulleted with `*`, `+`, a number, or an
+  // en dash has no well-formed criterion line at all — and telling an
+  // operator to discard a run and re-mint IDs the document already carries,
+  // over a bullet character, is worse than the refusal it decorates.
+  const mentionsCriterionId = criterionLines.some((line) => /AC-\d/i.test(line));
+  for (const line of criterionLines) {
+    if (isCriterionLine(line)) continue;
+    return {
+      ok: false,
+      reason: `every line under ## Acceptance criteria must be one criterion of the form '- AC-NNN: <criterion text>'; a note or explanation belongs in another section, and a criterion is never wrapped across lines; this line is not a criterion: ${line}`,
+      ...(mentionsCriterionId ? {} : { obsoleteCriterionShape: true as const }),
+    };
+  }
   const criteria: AcceptanceCriterion[] = [];
   const seenCriterionIds = new Set<string>();
   for (const line of criterionLines) {
+    // Every line here carries a colon: the membership pass above refused the
+    // ones that do not, which is also where `obsoleteCriterionShape` is now
+    // decided.
     const colon = line.indexOf(":");
-    if (colon < 0) {
-      return {
-        ok: false,
-        reason: `acceptance criterion must be '<criterion-id>: <criterion text>': ${line}`,
-        obsoleteCriterionShape: true,
-      };
-    }
     const id = line.slice(0, colon).trim();
     if (!isCriterionId(id) || line.slice(0, colon) !== id) {
       return {

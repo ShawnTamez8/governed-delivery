@@ -1,6 +1,6 @@
 # Code Review Stage Implementation Plan
 
-**Status:** Reconciled
+**Status:** Implemented
 
 **Goal:** Add the `code_review` stage to the chain between `verification` and
 `delivery_check`, so that before a run may complete, a fixed panel of two
@@ -1632,11 +1632,12 @@ to clear either without that decision.
 
 **Date:** 2026-09-04
 **Branch:** `code-review-stage`
-**Status of this plan:** `Reconciled`, deliberately not `Implemented`. Tasks 1
-through 9 are built and verified; Task 10 is outstanding, and by this plan's own
-Gate the status does not advance until one real reviewer response is committed
-and replayed. Outcome 1 — no paid run authorized — is where the work currently
-stands.
+**Status of this plan:** `Implemented` as of 2026-09-06. Tasks 1 through 9 were
+built and verified on 2026-09-04; Task 10 closed on 2026-09-06 when a paid run
+reached `code_review`, the panel blocked on two correct `high` findings, and
+both reviewer responses were committed and replayed — outcome 4, legitimate
+half. See "Task 10 closed" at the end of this note. The paragraphs between
+here and there record the state as it stood on 2026-09-04 and 2026-09-05.
 
 **Hazards considered:** 3, 4, 5, 7, 11, 12, 14, 15, 16, and the new 18, as the
 header states; no hazard was newly implicated during execution. 4 governed the
@@ -1771,3 +1772,32 @@ design, the model, and every prompt are unchanged, so whether the author writes 
 prose note again is chance rather than a plan (hazard 7). No prompt, fixture,
 validator, threshold, or gate change was made to clear the block, and none may be
 made without the operator's decision, per this plan's Gate.
+
+### Task 10 closed (2026-09-06)
+
+The operator authorized a third paid run after the stage-1 extractor defect was
+fixed (`docs/features/unfenced-json-extraction/plan.md`). Thirteen dispatches,
+$1.15759, target `bw-run-skill/1788742310835` retained. Seven stages passed and
+`code_review` blocked: `code-reviewer-correctness` returned two `current_artifact`
+findings at `high` — `src/calculator.js:97`, backspace after an operator resets
+the entry to `0` against AC-010, and `src/styles.css:17`, the light theme's
+`#ff9500` on white is about 2.2:1 against AC-019 — and `code-reviewer-security`
+returned an empty findings array inside a fence. Both findings were read against
+the verified worktree and are correct as stated, so this is outcome 4's
+legitimate half: the gate did its job on its first live run, and the block is
+the evidence this plan was written for, not a defect in it.
+
+Both responses are committed at
+`test/fixtures/recorded/code-review-web-calculator-correctness-two-high-findings.json`
+and `test/fixtures/recorded/code-review-web-calculator-security-empty-fenced.json`,
+each with a `provenance.stageContext` block read from the run's `result.json`,
+and replayed by `test/code-review-stage.test.ts` through `extractJsonBody`,
+`validateAgentResult`, `validateReviewerReports`, `validateCodeReviewLocations`
+and `codeReviewGate` to the recorded verdict. The replay was proved by breaking
+the gate's threshold comparison and the location validator's suffix check; each
+failed exactly the correctness replay and restored byte-identically. Detail,
+per-dispatch cost, and what the run does not establish — the `upstream` route,
+the pass path over real findings, and delivery after `code_review` — are in
+`real-run-evidence.md`. No rubric or threshold change was made; whether `high`
+is the right grade for a contrast ratio is a question the operator may take up,
+and nothing observed says it was wrong.

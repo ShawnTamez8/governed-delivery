@@ -27,11 +27,16 @@ The specification document schema is:
   the run itself writes (the design, spec, or plan under docs/features/):
   delivery proves each declared artifact by its exact committed path.
   Never declare a tasks.md file: task execution and status belong in run-state
-  database rows
+  database rows. Every non-blank line in this section is one path and nothing
+  else, and a path contains no whitespace
 - an ## Acceptance criteria section: one criterion per list line in exactly
   this form: \`- AC-001: <criterion text>\`. Criterion IDs must match
   \`AC-(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})\`. Mint them here, beginning at AC-001 and increasing monotonically; never reuse an ID for a different
-  criterion
+  criterion. Every non-blank line in this section is
+  one criterion and nothing else: no heading, no note, no explanation, and
+  never one criterion wrapped across two lines; put an explanation of a
+  numbering decision in your summary or an ordinary prose section,
+  not inside this section
 
 Design document:
 
@@ -146,12 +151,18 @@ The self-critique has:
     document the run itself writes (the design, spec, or plan under
     docs/features/): delivery proves each declared artifact by its exact
     committed path. Never declare a tasks.md file: task execution and status
-    belong in run-state database rows
+    belong in run-state database rows. Every non-blank line in this section
+    is one path and nothing else, and a path contains no whitespace
   - an ## Acceptance criteria section: one criterion per list line in exactly
     this form: \`- AC-001: <criterion text>\`. Criterion IDs must match
     \`AC-(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})\`. Preserve each existing ID
     when wording or reordering criteria; mint a greater unused ID only for a
-    genuinely new criterion, and never reuse an ID for a different criterion
+    genuinely new criterion, and never reuse an ID for a different criterion,
+    and never renumber criteria to close a gap. Every non-blank line here is
+    one criterion and nothing else: no heading, no note, no explanation, and
+    never one criterion wrapped across two lines; put an explanation of a
+    numbering decision in your summary or an ordinary prose section,
+    not inside this section
   A revised specification that does not validate blocks the run. There is no
   fallback to your draft.
 - panelRequest: the panel you propose for the independent review
@@ -224,6 +235,13 @@ Each finding has:
   concern type
 - subject: one sentence naming the concern
 
+Criterion IDs are stable identifiers, not a sequence: an obligation removed
+from the specification keeps its ID out of use afterwards, and every surviving
+criterion keeps the ID it was minted with, so the numbering is expected to
+carry gaps. A gap in the numbering is not by itself a finding. A finding about
+coverage names the design obligation the specification is missing, never a
+missing number.
+
 Output the JSON object directly, with no surrounding prose, no markdown
 fences, and no commentary. Concerns within your specialty that you do not
 have are represented by an empty findings array, not by prose.
@@ -287,8 +305,17 @@ The plan document schema is:
   An entry with only one of them is refused.
 
 Every artifact path you name in ## Coverage must be one of the approved scope
-paths below. A plan promising an artifact outside the approved scope is
-refused by the gate, so name only these:
+paths below, and each coverage line that names an artifact
+names exactly one of them, copied verbatim. That path is the criterion's
+representative delivery anchor, not an exhaustive list of every contributing
+file: when several files contribute, name the declared artifact
+most directly responsible for the criterion's observable outcome, and state
+the work on the others as tasks.
+A list of paths is not a path, and blocks the run. A criterion with no artifact
+at all takes the not_applicable form above; it is never answered by naming a
+file that does not implement it. Several criteria may name the same path. A plan
+promising an artifact outside the approved scope is refused by the gate, so
+name only these:
 
 ${scope.map((p) => `- ${p}`).join("\n")}
 
@@ -365,10 +392,24 @@ ${panel.registeredSpecialties.map((s) => `      - ${s}`).join("\n")}
     A specialty outside that list cannot be staffed.${seatAccountingBlock(panel.requiredSpecialties)}
 
 Every artifact path you name in ## Coverage must be one of the approved scope
-paths below. A plan promising an artifact outside the approved scope is
-refused by the gate, so name only these:
+paths below, and each coverage line that names an artifact
+names exactly one of them, copied verbatim. That path is the criterion's
+representative delivery anchor, not an exhaustive list of every contributing
+file: when several files contribute, name the declared artifact
+most directly responsible for the criterion's observable outcome, and state
+the work on the others as tasks.
+A list of paths is not a path, and blocks the run. A criterion with no artifact
+at all takes the not_applicable form above; it is never answered by naming a
+file that does not implement it. Several criteria may name the same path. A plan
+promising an artifact outside the approved scope is refused by the gate, so
+name only these:
 
 ${scope.map((p) => `- ${p}`).join("\n")}
+
+When a critique or a finding says a criterion
+needs a second artifact, the coverage line cannot carry it. Keep the
+representative delivery anchor and put the other contributing files in the task
+that builds them, or say why the concern does not hold.
 
 You may not add an obligation the approved specification below does not
 contain. Sharpening the plan, completing it, and making it consistent is the
@@ -423,6 +464,22 @@ Each finding has:
 - intentKey: lowercase kebab-case, at most 64 characters, describing the
   concern type
 - subject: one sentence naming the concern
+
+Coverage is one line per criterion: every acceptance criterion has exactly one
+coverage line, and a line that names an artifact names exactly one path. That
+path is the criterion's representative delivery anchor, not an exhaustive list
+of every contributing file. A
+criterion with no artifact of its own instead says not_applicable with a
+rationale and an alternative verification — that is a legitimate entry, not a
+defect. Several criteria may name the same artifact, which is also not a
+defect: the uniqueness required is one line per criterion, never one criterion
+per file. "This criterion also touches another file" is therefore
+not a coverage finding — the document cannot express it, so no revision can
+answer it. Report missing implementation work against the plan's tasks
+instead, where it can be fixed. A coverage finding
+names a criterion the plan does not deliver at all, a coverage line naming
+the wrong artifact, or a coverage line promising a path outside the approved
+scope.
 
 Output the JSON object directly, with no surrounding prose, no markdown
 fences, and no commentary. Concerns within your specialty that you do not
@@ -630,12 +687,18 @@ The revised specification must satisfy the same document schema as before:
   the run itself writes (the design, spec, or plan under docs/features/):
   delivery proves each declared artifact by its exact committed path.
   Never declare a tasks.md file: task execution and status belong in run-state
-  database rows
+  database rows. Every non-blank line in this section is one path and nothing
+  else, and a path contains no whitespace
 - an ## Acceptance criteria section: one criterion per list line in exactly
   this form: \`- AC-001: <criterion text>\`. Criterion IDs must match
   \`AC-(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})\`. Preserve each existing ID
   when wording or reordering criteria; mint a greater unused ID only for a
-  genuinely new criterion, and never reuse an ID for a different criterion
+  genuinely new criterion, and never reuse an ID for a different criterion,
+  and never renumber criteria to close a gap. Every non-blank line here is
+  one criterion and nothing else: no heading, no note, no explanation, and
+  never one criterion wrapped across two lines; put an explanation of a
+  numbering decision in your summary or an ordinary prose section,
+  not inside this section
 A revised specification that does not validate blocks the run.
 
 Design document:
@@ -710,10 +773,26 @@ The revised plan must satisfy the same document schema as before:
   the ID to the left of \`->\`; do not copy or paraphrase criterion prose there.
   not_applicable requires both a rationale and an alternative verification.
 Every artifact path you name in ## Coverage must be one of the approved scope
-paths below. A plan promising an artifact outside the approved scope is
-refused by the gate, so name only these:
+paths below, and each coverage line that names an artifact
+names exactly one of them, copied verbatim. That path is the criterion's
+representative delivery anchor, not an exhaustive list of every contributing
+file: when several files contribute, name the declared artifact
+most directly responsible for the criterion's observable outcome, and state
+the work on the others as tasks.
+A list of paths is not a path, and blocks the run. A criterion with no artifact
+at all takes the not_applicable form above; it is never answered by naming a
+file that does not implement it. Several criteria may name the same path. A plan
+promising an artifact outside the approved scope is refused by the gate, so
+name only these:
 
 ${scope.map((p) => `- ${p}`).join("\n")}
+
+When a critique or a finding says a criterion
+needs a second artifact, the coverage line cannot carry it. Keep the
+representative delivery anchor and put the other contributing files in the task
+that builds them — that is a change you can claim. If the concern cannot be
+answered inside the plan at all, route it upstream with a complete proposal
+candidate rather than rejecting it on a rule the specification never states.
 
 Approved specification:
 

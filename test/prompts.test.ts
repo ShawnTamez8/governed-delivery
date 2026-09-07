@@ -176,6 +176,43 @@ const CONSTRAINT_STRINGS = [
   "normativeChanges is",
   "proposal is allowed only on upstream_follow_up",
   "return no field at all that your disposition does not list",
+  // The membership rule of each structured section, which is as much a
+  // constrained field as the format of a value inside it. Measured
+  // 2026-09-05, $0.41049: an author answering a finding about a gap in the
+  // criterion numbering explained the gap as the first line under the
+  // heading, the section admitted nothing but criteria and never said so,
+  // and the run blocked terminally at the spec_review gate.
+  "a path contains no whitespace",
+  "one criterion and nothing else",
+  "not inside this section",
+  // The reviewer's half of the same incident: the gap the author was asked
+  // to explain is the ordinary residue of the removal accounting, so a
+  // reviewer told nothing about stable-ID semantics reports the correct
+  // output of another guard as a defect.
+  "not a sequence",
+  "gap in the numbering is not by itself a finding",
+  "never renumber criteria to close a gap",
+  // The coverage line's one-artifact rule, and the reviewer rule that stops
+  // the finding which provokes breaking it. Measured 2026-09-05, $1.25141:
+  // three reviewers said a coverage entry omitted a second implementing
+  // artifact, the author named both on one line, and the pair parsed as a
+  // single path outside the signed scope.
+  "names exactly one of them, copied verbatim",
+  "list of paths is not a path",
+  "needs a second artifact",
+  "not a coverage finding",
+  // The one-artifact rule must not withdraw the other legal coverage form.
+  // Stated on the author side as the alternative, and on the reviewer side as
+  // something that is not a defect.
+  "takes the not_applicable form above",
+  "says not_applicable with a",
+  // What the single path *means*. Without it the rule is a shape with no
+  // semantics, and an author asked for one path out of several contributing
+  // files has no stated basis for choosing. All four plan prompts carry it.
+  "representative delivery anchor",
+  "most directly responsible for the criterion's observable outcome",
+  "Several criteria may name the same path",
+  "Report missing implementation work against the plan's tasks",
 ];
 
 test("every constrained field's constraint appears in the prompt source", () => {
@@ -196,6 +233,12 @@ test("the generated author prompt states the schema constraints", () => {
     "beginning at AC-001 and increasing monotonically",
     "No git operations",
     "Output the JSON object",
+    // Both section membership rules reach the generated prompt, not only the
+    // source: the author is told what each section admits, not just how one
+    // entry inside it is shaped.
+    "a path contains no whitespace",
+    "one criterion and nothing else",
+    "not inside this section",
   ]) {
     assert.ok(prompt.includes(constraint), `author prompt missing: ${constraint}`);
   }
@@ -217,6 +260,10 @@ test("the generated spec reviewer prompt states the finding constraints and name
     "upstream:design:",
     "use that criterion's AC ID as the location",
     "never require or invent a heading",
+    // Stable-ID semantics: a gap is the residue of a claimed removal, not a
+    // defect, so the reviewer is told before it can report one.
+    "not a sequence",
+    "gap in the numbering is not by itself a finding",
   ]) {
     assert.ok(prompt.includes(constraint), `reviewer prompt missing: ${constraint}`);
   }
@@ -243,6 +290,14 @@ test("the generated plan author prompt states the schema, the hash, and the scop
     "proposedContentChanges",
     "No git operations",
     "Output the JSON object",
+    // The coverage line's one-artifact rule, asserted per prompt: three
+    // builders carry it and the whole-file scan passes while any one of them
+    // still does.
+    "names exactly one of them, copied verbatim",
+    "list of paths is not a path",
+    "takes the not_applicable form above",
+    "representative delivery anchor",
+    "most directly responsible for the criterion's observable outcome",
   ]) {
     assert.ok(prompt.includes(constraint), `plan author prompt missing: ${constraint}`);
   }
@@ -310,12 +365,32 @@ test("the generated plan reviewer prompt states the finding constraints and name
     "upstream:specification:",
     "use that entry's AC ID as the location",
     "never require or invent a heading",
+    // What the coverage relation can express, so the reviewer does not ask
+    // for a change the document forbids and the author cannot make. The
+    // not_applicable clause is asserted because this is the only plan prompt
+    // that never restates the document schema: without it, the sentence below
+    // is the whole description of a coverage line a reviewer ever receives,
+    // and it would read as forbidding a legitimate entry.
+    "Coverage is one line per criterion",
+    "says not_applicable with a",
+    "Several criteria may name the same artifact",
+    "representative delivery anchor",
+    "not a coverage finding",
+    // The redirect, not a silence: a criterion the plan genuinely fails to
+    // deliver must still be reportable, against the tasks that would deliver
+    // it.
+    "Report missing implementation work against the plan's tasks",
   ]) {
     assert.ok(prompt.includes(constraint), `plan reviewer prompt missing: ${constraint}`);
   }
   // Both documents reach the reviewer: judging coverage needs the criteria.
   assert.ok(prompt.includes("# plan"));
   assert.ok(prompt.includes("# spec"));
+  // The rule about what coverage can express must not read as "report fewer
+  // coverage findings": the sentence asking for exactly that judgement stays,
+  // and the enumeration of what a coverage finding *is* travels with it.
+  assert.ok(prompt.includes("actually deliver the specification's acceptance criteria"));
+  assert.ok(prompt.includes("names a criterion the plan does not deliver"));
 });
 
 test("the generated implementation author prompt states the patch contract", () => {
@@ -363,6 +438,13 @@ test("the generated spec self-critique prompt states the contract and carries bo
     "fallback to your draft",
     "Preserve each existing ID",
     "Output the JSON object",
+    // The section membership rules, asserted per prompt for the same reason
+    // the panel bounds are: three builders carry them, and the whole-file
+    // scan above passes while any one of them still does.
+    "a path contains no whitespace",
+    "one criterion and nothing else",
+    "not inside this section",
+    "never renumber criteria to close a gap",
     // Asserted here and again on the plan prompt, per prompt rather than per
     // file: both prompts carry these sentences, and the whole-file scan above
     // cannot tell which one dropped it.
@@ -424,6 +506,14 @@ test("the generated plan self-critique prompt restates the hash and the scope it
     "always seated and already consume seats",
     "      - requirements-traceability",
     "must fit inside the size you request",
+    // The one-artifact rule, and the move that answers a second-artifact
+    // critique without breaching it.
+    "names exactly one of them, copied verbatim",
+    "list of paths is not a path",
+    "takes the not_applicable form above",
+    "representative delivery anchor",
+    "most directly responsible for the criterion's observable outcome",
+    "needs a second artifact",
   ]) {
     assert.ok(prompt.includes(constraint), `plan self-critique prompt missing: ${constraint}`);
   }
@@ -554,6 +644,13 @@ test("the generated spec reconciliation prompt carries the decision contract and
     // two prompts state different forms and one builder renders both.
     "an acceptance criterion's node text is `AC-001: <criterion text>`",
     "Leave off the list marker",
+    // The section membership rules, asserted per prompt: the whole-file scan
+    // cannot tell which of the three builders carrying them dropped one, and
+    // this is the builder the measured block came from.
+    "a path contains no whitespace",
+    "one criterion and nothing else",
+    "not inside this section",
+    "never renumber criteria to close a gap",
     // Both directions of the normative delta, asserted on this prompt rather
     // than only in the whole-file scan: the two reconciliation prompts render
     // from one contract builder, so a sentence missing from one of them would
@@ -628,6 +725,15 @@ test("the generated plan reconciliation prompt carries the spec as governing inp
     "a task's node text is the task itself",
     "`AC-001 -> <artifact path>`",
     "Leave off the list marker",
+    // The one-artifact rule, and the move that answers a second-artifact
+    // finding without breaching it. This is the builder the measured block
+    // came from.
+    "names exactly one of them, copied verbatim",
+    "list of paths is not a path",
+    "takes the not_applicable form above",
+    "representative delivery anchor",
+    "most directly responsible for the criterion's observable outcome",
+    "needs a second artifact",
     // The plan side's own copy of the conditional-field matrix. These two
     // prompts share the contract builder, and nothing structural notices a
     // missing assertion on one of them.

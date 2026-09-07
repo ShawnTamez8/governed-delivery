@@ -1,0 +1,156 @@
+{
+  "provenance": {
+    "run": "paid chain, run 1 of target bw-run-skill/1788742310835, 2026-09-06 (dispatches dated 2026-09-07 UTC)",
+    "design": ".claude/skills/run-buildworks/web-calculator-design.md",
+    "stage": "code_review, stage 8 of the chain; panel code-reviewer-correctness + code-reviewer-security",
+    "agent": "code-reviewer-security",
+    "dispatch": "2026-09-07T01:02:46.669Z",
+    "captured": "2026-09-06",
+    "costUsd": 0.1162838,
+    "durationMs": 26655,
+    "effectiveModels": [
+      "claude-haiku-4-5-20251001",
+      "claude-sonnet-5"
+    ],
+    "whatThisRecords": "The security reviewer's response on the same dispatch round: an AgentResult inside a single ```json fence with an empty findings array and a summary explaining what was checked. The stage accepted it and recorded no finding from it.",
+    "provesWhat": "Exercises the fenced envelope shape (hazard 1 item 2), the result shape, and the shared validator's acceptance of an empty findings array; proves nothing about the finding or location contract.",
+    "droppedFromEnvelope": "session_id, uuid, and the per-request timing fields (ttft_ms, ttft_stream_ms, time_to_request_ms, first_content_frame_ms, duration_api_ms, queued_turn_count) are dropped: they identify one machine's session and vary per invocation, and nothing in the contract reads them.",
+    "sanitized": "Absolute machine paths replaced with <target> (0) and <home> (0). The result body is otherwise byte-for-byte as retained.",
+    "stageContext": {
+      "changedPaths": [
+        "index.html",
+        "src/calculator.js",
+        "src/styles.css",
+        "src/theme.js"
+      ],
+      "severities": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "blockingSeverity": "high",
+      "patchBase": "cede449f321eb8dff6571f262da2da5e2bc25e07",
+      "verifiedCommit": "539d1ba3761a673ec4a310659bf7f9b55ba8b9d5",
+      "recordedVerdict": "block",
+      "recordedBlocking": [
+        {
+          "location": "src/calculator.js:97",
+          "severity": "high",
+          "cause": "severity"
+        },
+        {
+          "location": "src/styles.css:17",
+          "severity": "high",
+          "cause": "severity"
+        }
+      ],
+      "recordedFindingLocations": [
+        "src/calculator.js:97",
+        "src/styles.css:17"
+      ]
+    }
+  },
+  "envelope": {
+    "stop_reason": "end_turn",
+    "total_cost_usd": 0.1162838,
+    "usage": {
+      "input_tokens": 12,
+      "cache_creation_input_tokens": 17216,
+      "cache_read_input_tokens": 112974,
+      "output_tokens": 1662,
+      "output_tokens_details": {
+        "thinking_tokens": 698
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 17216,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "global",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 221,
+          "cache_read_input_tokens": 24823,
+          "cache_creation_input_tokens": 255,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 255
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    },
+    "modelUsage": {
+      "claude-haiku-4-5-20251001": {
+        "inputTokens": 8121,
+        "outputTokens": 12,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "webSearchRequests": 0,
+        "costUSD": 0.008180999999999999,
+        "contextWindow": 200000,
+        "maxOutputTokens": 32000,
+        "thinkingTokens": 0,
+        "canonicalModel": "claude-haiku-4-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      },
+      "claude-sonnet-5": {
+        "inputTokens": 12,
+        "outputTokens": 1662,
+        "cacheReadInputTokens": 112974,
+        "cacheCreationInputTokens": 17216,
+        "webSearchRequests": 0,
+        "costUSD": 0.10810280000000001,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 64000,
+        "thinkingTokens": 698,
+        "canonicalModel": "claude-sonnet-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subagent_stats": {
+      "spawned": 0,
+      "requested": {
+        "background": 0,
+        "foreground": 0,
+        "unset": 0
+      },
+      "started_in_background": 0,
+      "max_depth": 0,
+      "spawned_by_subagents": 0,
+      "completed": 0,
+      "failed": 0,
+      "killed": {
+        "parent": 0,
+        "user": 0,
+        "system": 0
+      },
+      "refused": {
+        "depth_limit": 0,
+        "concurrency_limit": 0,
+        "budget": 0
+      },
+      "by_type": {}
+    },
+    "is_error": false,
+    "num_turns": 6,
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "```json\n{\"status\": \"proposed\", \"agent\": \"code-reviewer-security\", \"role\": \"reviewer\", \"executor\": \"claude-code\", \"summary\": \"Reviewed the calculator's HTML, CSS, and JS for security issues within a purely client-side, no-network, no-auth application. Display updates use textContent (no innerHTML/eval), the persisted theme value read from localStorage is validated against a strict allowlist before being applied to the DOM, and no external or dynamically constructed script/URL sources are introduced. No security defects found.\", \"proposedContentChanges\": {\"findings\": []}}\n```",
+    "type": "result",
+    "duration_ms": 26655
+  }
+}

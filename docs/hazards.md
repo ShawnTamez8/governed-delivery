@@ -20,6 +20,7 @@ Every parser that reads model output accepts or explicitly refuses each of:
 5. two fenced blocks
 6. a fenced block that is not JSON
 7. CRLF line endings inside the fence
+8. prose before an unfenced object, e.g. `I'll finalize the spec now.\n\n{…}`
 
 **Choose strictness by consequence.** Where bytes are canonicalized into an
 immutable record, refuse prose outside the fence: dropping it silently corrupts
@@ -29,6 +30,29 @@ anywhere in the body and refuse rather than guess when several are present.
 Assert the operator-visible message on every refusal, not merely that an error
 was thrown. A message that does not name the cause makes the failure
 undiagnosable from logs alone.
+
+**Measured, 2026-09-06, $0.08103.** The spec author of a paid chain wrote one
+sentence of prose, a blank line, and then a complete, valid `AgentResult` with
+no fence around it. `extractJsonBody` accepted a whole-body parse or exactly one
+fenced block; the whole body failed on the sentence and there was no fence to
+find, so it refused with "no JSON object found in output" — false as written,
+since `JSON.parse` from the first `{` yields the entire twenty-criterion
+specification — and the run blocked at stage 1. Unlike the two blocks before
+it, the constraint *was* stated: the prompt says to output the object directly
+with no surrounding prose, and the model added a sentence anyway. That is the
+case this entry's rule is written for. The extractor feeds schema validation and
+`src/raw-output.ts` retains the bytes in full, so it already tolerated prose
+around a fence on exactly those grounds; an unfenced object is the same two
+ingredients with less decoration, and it was the one arrangement with no path.
+It now parses from the first `{` to the end of the body when no fence is
+present, and each remaining refusal says what the body did contain: no fence
+and no `{`, or the offset the parse began at and why it stopped. The retained
+response is committed at
+`test/fixtures/recorded/spec-author-web-calculator-prose-before-unfenced-json.json`
+and is the contract test. What this instance adds: the enumeration above is the
+contract every parser is held to, and a shape missing from it is a shape no
+reviewer will ask about — items 3 and 4 named prose around a *fence*, and a
+suite that worked all seven passed while the eighth blocked a paid run.
 
 ## 2. Discarded output is undiagnosable
 
@@ -67,6 +91,58 @@ and is the contract test for the fix. The lesson generalizes past this field: a
 constraint stated as "the exact text of X" is not stated at all unless the
 prompt also says what X's text is, and a shape a document schema *requires* the
 author to read (`- AC-001: …`) will be the shape the author sends back.
+
+**Measured, 2026-09-05, $0.41049.** A live spec reconciliation answered two
+findings about a gap in the acceptance-criteria numbering the most direct way
+the document allows — by explaining the gap in place, as the first line under
+`## Acceptance criteria`. `validateSpecDoc` read every line under that heading
+as a criterion, so the explanation became a criterion whose ID is `Note`, and
+the run blocked terminally at the `spec_review` gate with no remediation round.
+The prompts stated the format of a criterion ID, which the author obeyed for
+all twenty-three real criteria; none of them stated what the *section* admits,
+so a line that is not a criterion at all was never ruled out. Both boundaries
+were needed again: the prompts now state that every non-blank line in each
+structured section is one entry and nothing else, and the parser now refuses a
+non-member line by naming the section's rule instead of describing it as a
+malformed entry of a kind the author never wrote. The retained response is
+committed at
+`test/fixtures/recorded/spec-reconciliation-web-calculator-numbering-note.json`
+and is the contract test for the fix. The lesson generalizes the entry one
+level up: the *membership rule of a section* is as much a constrained field as
+the format of a value inside it, and the section a schema forces an author to
+write in is the section that author will answer a finding in. The same run
+showed the second half of the shape — the finding that invited the note was
+itself the ordinary residue of another guard, since stable IDs leave gaps when
+an obligation is withdrawn, and the review prompt had never said so.
+
+**Measured, 2026-09-05, $1.25141.** The next paid chain, with the section-
+membership fix in place, passed `spec_review` and blocked three stages later at
+`plan_review` on the same shape one document over. Three plan reviewers reported
+that a coverage entry omitted a second implementing artifact, and the author
+answered by naming both: `AC-008 -> src/index.html, src/calculator.js`. A
+Coverage line admits exactly one artifact path, `plan-doc` takes the whole
+remainder after the first `->` as the target, and no prompt had ever said the
+right side was singular — so the pair became one path, no signed scope entry
+matched it, and the gate refused it as a promise nobody approved. Fixed at both
+boundaries again: the three authoring prompts state that a coverage line naming
+an artifact names exactly one approved scope path, and the refusal now names
+the failing target and appends that rule to the scope error unconditionally —
+inferring from punctuation whether the target "looks like" a list was rejected
+in design review, since a path may legally contain any of it — rather than
+leaving the operator with a criterion ID and the word "scope". The retained
+response is committed at
+`test/fixtures/recorded/plan-reconciliation-web-calculator-multi-artifact-coverage.json`.
+
+What this instance adds to the entry: **a finding a document's schema cannot
+express will be answered by breaking the schema.** The reviewers were factually
+right and the author was co-operative, and between them they produced a
+terminal block, because the only faithful answers — name one artifact, or reject
+the finding — were never stated anywhere the author could read them. So the
+prompt that requests a constrained field and the prompt that invites findings
+about it have to agree: stating the constraint to the author while the reviewer
+is still free to demand its violation buys one round of delay, not a fix. That
+is why the plan review prompt now says which coverage concerns the document can
+express.
 
 ## 4. Fixtures and code agreeing while both are wrong
 

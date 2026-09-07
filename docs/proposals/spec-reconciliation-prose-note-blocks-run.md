@@ -48,48 +48,98 @@ fresh run is the repair.
 ## Why this is a defect and not a model error
 
 The author was asked to resolve a finding *about the numbering itself*. The
-finding says an ID is orphaned; the honest resolutions are to renumber, to
-reinstate the missing criterion, or to say why the gap is deliberate. The document
-schema permits the first two and silently forbids the third — and the
-reconciliation prompt never states that the section admits nothing but
-`- AC-NNN: …` lines.
+finding says an ID is orphaned; the resolutions available are to reinstate the
+missing criterion or to say why the gap is deliberate. The document schema
+permits the first and silently forbids the second — and the reconciliation
+prompt never states that the section admits nothing but `- AC-NNN: …` lines.
+
+Renumbering was listed here as a third honest resolution in the first draft of
+this document, and that was wrong. The reconciliation and self-critique prompts
+already require every existing obligation to keep its ID, so renumbering is
+forbidden where it would be performed; and it is not free mechanically either,
+since each renumbered criterion is one removed node plus one added node that
+the reconciliation must claim and ground (`src/reconciliation.ts`,
+`deriveRemovedNormativeNodes` and the claim accounting beneath it). The harm
+available at this boundary is not to plan traceability — spec reconciliation
+runs at stage 2, before any plan exists and before approval binds the spec
+hash — but to the round itself: reviewers cite AC IDs as their finding
+locations, so renumbering invalidates the locations of the very findings being
+reconciled.
 
 That is hazard 3 with the constraint moved up a level. The prompt states the
-*format of a criterion ID*, which the author obeyed for all twenty-four real
-criteria; it does not state the *shape of the section*, so a line that is not a
-criterion at all was never ruled out. A constrained field whose constraint the
-prompt never states is the entry; the constrained thing here is the section's
-membership rule.
+*format of a criterion ID*, which the author obeyed for all twenty-three real
+criteria (AC-001 through AC-011 and AC-013 through AC-024; a count that returns
+twenty-four has counted the note's third line, which begins `AC-013`); it does
+not state the *shape of the section*, so a line that is not a criterion at all
+was never ruled out. A constrained field whose constraint the prompt never
+states is the entry; the constrained thing here is the section's membership
+rule.
+
+There is a second constraint the run exposed, upstream of this one. The finding
+the author was answering should not have been raised: stable IDs leave gaps
+whenever an obligation is withdrawn under the removal accounting, so a gap is
+the ordinary residue of another guard rather than a defect — and
+`buildSpecReviewPrompt` said nothing about stable-ID semantics, so the panel
+had no basis to know that.
 
 The cost is not a warning: it is the whole run. The block is terminal, the repair
 is a fresh chain, and a fresh chain against the same design, the same model, and
 the same prompts may write the same note again.
 
-## Candidate remedies, none applied
+## Candidate remedies
+
+Remedies 1, 3, 4 and 5 were applied on 2026-09-05 by
+`docs/features/spec-section-membership/plan.md`; remedy 2 is rejected. The
+list is kept in its original form, with the dispositions added, so what was
+considered stays legible beside what was chosen.
 
 1. **State the rule in the prompts.** Add one sentence to the spec author,
    self-critique, and reconciliation prompts: every line under
    `## Acceptance criteria` must be a `- AC-NNN: …` criterion, and an explanation
    of a numbering decision belongs in the summary rather than in the section.
    Smallest change; consistent with hazard 3's remedy, which is always to state
-   the constraint where the value is requested. Does not help a model that states
+   the constraint where the value is requested. Does not help a model that writes
    it anyway.
-2. **Let the validator tolerate a non-criterion line.** Skip lines that do not
-   begin with `- ` before applying the ID rule, so prose under the heading is
-   ignored rather than parsed as a criterion. Removes the terminal block, but
-   widens what a specification may contain, and a tolerance added on the
-   validator's side without the matching statement on the prompt's side is the
-   one-boundary defect this repository keeps re-learning — so this is only
-   correct *together with* remedy 1, never instead of it.
+2. **Let the validator tolerate a non-criterion line.** *Rejected, not
+   deferred.* Skipping lines that do not begin with `- ` before applying the ID
+   rule would remove the terminal block, but the list marker is optional in
+   this schema, so the same skip silently drops an unbulleted `AC-001: …`
+   criterion from the parsed document — after which the planning gate has no
+   ID to require from the plan and the obligation leaves the run unnoticed.
+   Whether a specification may ever carry an explanatory note is a product
+   question that would need its own note syntax, one that cannot conceal a
+   malformed criterion; it is not this defect's fix.
 3. **Refuse earlier, with a message that names the rule.** Keep the refusal but
    have it say that the section admits only criterion lines, rather than reporting
    the prose as a malformed ID. Does not stop the block; makes the block
    diagnosable, and makes the operator's next move obvious.
 
-Remedies 1 and 3 together are the smallest pair that leaves the contract honest:
-the prompt states the rule, and the refusal names it when a model ignores it.
-Whether to add remedy 2's tolerance is a product decision about what a
-specification may contain, not a defect fix.
+4. **State the stable-ID semantics in the review prompt.** Tell the reviewer
+   that criterion IDs are stable identifiers rather than a sequence, that a gap
+   is expected wherever an obligation was withdrawn, and that a coverage
+   finding names the missing design obligation and never a missing number.
+   This is the only remedy that addresses why the author was answering a
+   numbering finding at all; without it a different reviewer, or a different
+   sample from the same one, raises the same non-defect again.
+5. **Close `## Declared artifacts` on the same principle.** The sibling section
+   has the same open membership and is worse: any non-empty line becomes a
+   declared artifact, is signed into scope by `computeScope`, and can only fail
+   at `delivery_check` because nothing was ever committed at that path. Close
+   it on a whitespace rule rather than a list marker — two recorded provider
+   responses write that section unbulleted, so a marker rule would refuse real
+   output.
+
+Remedies 1, 3, 4 and 5 are the set that leaves the contract honest: the prompts
+state each section's rule, the refusal names it when a model ignores it, the
+reviewer is not invited to raise the finding that started this, and the sibling
+section is closed on the same principle rather than left to fail later and
+further away. Remedy 2 is rejected above. The plan that implements this set is
+`docs/features/spec-section-membership/plan.md`.
+
+Because remedies 1, 4 and 5 change the prompts, a paid run after them varies
+something systematically and is therefore a permitted experiment rather than
+the bare retry hazard 7 refuses — which is what lifts the objection recorded
+under "What happened" against re-running.
 
 ## Evidence
 
@@ -103,6 +153,18 @@ a hand-written fixture standing in for one.
 The retained target at `bw-run-skill/1788578130692` still holds the full run and
 has not been cleaned, but it is machine-local: the committed fixture is the copy
 anything may depend on.
+
+The fixture's provenance lists two `effectiveModels`, and only one of them
+wrote the response. `claude-sonnet-5` produced 6,857 output tokens including
+4,124 thinking tokens for $0.115408 of the $0.11971 dispatch; the
+`claude-haiku-4-5` entry produced 13 output tokens for $0.004302 and is an
+auxiliary harness query. The effective authoring model is Sonnet 5, and nothing
+here is evidence that two models authored one document.
+
+Changing the model is an experiment, not a remedy for this defect. The frozen
+profile maps every dispatching stage kind to the single value `new-run --model`
+was given, so a run with a different model varies the whole author-and-panel
+chain at once rather than isolating reconciliation behaviour.
 
 ## Scope
 

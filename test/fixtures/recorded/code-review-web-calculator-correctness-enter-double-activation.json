@@ -1,0 +1,150 @@
+{
+  "provenance": {
+    "run": "paid chain, run 1 of target bw-run-skill/1788745293903, 2026-09-06 (dispatches dated 2026-09-07 UTC); the second chain to reach code_review",
+    "design": ".claude/skills/run-buildworks/web-calculator-design.md",
+    "stage": "code_review, stage 8 of the chain; panel code-reviewer-correctness + code-reviewer-security",
+    "agent": "code-reviewer-correctness",
+    "dispatch": "2026-09-07T01:55:10.903Z",
+    "captured": "2026-09-06",
+    "costUsd": 0.34662040000000005,
+    "durationMs": 184992,
+    "effectiveModels": [
+      "claude-haiku-4-5-20251001",
+      "claude-sonnet-5"
+    ],
+    "whatThisRecords": "The correctness reviewer's response on the second paid chain to reach code_review, over a different implementation of the same design: one sentence of prose, then a single ```json fence carrying one current_artifact finding at severity high, located src/calculator.js:166. The keydown handler's Enter case calls equals() without preventDefault, so a focused keypad button also receives the browser's synthesized click. The security reviewer returned an empty findings array in the same prose-then-fence shape and is not committed. The stage recorded the finding as id 3 (ids 1 and 2 are the spec and plan reviews' findings) and the gate blocked at the frozen threshold high.",
+    "provesWhat": "A second live sample of the finding and location contract: a different implementation drew a different finding in the same path:line form, and the same chain of validators and gate reproduces the recorded block. Also the third envelope shape seen live from a code reviewer — prose before a fence (hazard 1 item 3).",
+    "droppedFromEnvelope": "session_id, uuid, and the per-request timing fields (ttft_ms, ttft_stream_ms, time_to_request_ms, first_content_frame_ms, duration_api_ms, queued_turn_count) are dropped: they identify one machine's session and vary per invocation, and nothing in the contract reads them.",
+    "sanitized": "Absolute machine paths replaced with <target> (0) and <home> (0). The result body is otherwise byte-for-byte as retained.",
+    "stageContext": {
+      "changedPaths": [
+        "index.html",
+        "src/calculator.js",
+        "src/styles.css",
+        "src/theme.js"
+      ],
+      "severities": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "blockingSeverity": "high",
+      "patchBase": "70a2d7f95afdd0c40e00d46df8eca28ff419be7c",
+      "verifiedCommit": "9a4a0ff49d63d24e009d7cc23aaa64e8ad6e5c8c",
+      "recordedVerdict": "block",
+      "recordedBlocking": [
+        {
+          "location": "src/calculator.js:166",
+          "severity": "high",
+          "cause": "severity"
+        }
+      ],
+      "recordedFindingLocations": [
+        "src/calculator.js:166"
+      ]
+    }
+  },
+  "envelope": {
+    "stop_reason": "end_turn",
+    "total_cost_usd": 0.34662040000000005,
+    "usage": {
+      "input_tokens": 18,
+      "cache_creation_input_tokens": 31240,
+      "cache_read_input_tokens": 265467,
+      "output_tokens": 16008,
+      "output_tokens_details": {
+        "thinking_tokens": 13874
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 31240,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "global",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 502,
+          "cache_read_input_tokens": 36937,
+          "cache_creation_input_tokens": 574,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 574
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    },
+    "modelUsage": {
+      "claude-haiku-4-5-20251001": {
+        "inputTokens": 8396,
+        "outputTokens": 11,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "webSearchRequests": 0,
+        "costUSD": 0.008451,
+        "contextWindow": 200000,
+        "maxOutputTokens": 32000,
+        "thinkingTokens": 0,
+        "canonicalModel": "claude-haiku-4-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      },
+      "claude-sonnet-5": {
+        "inputTokens": 18,
+        "outputTokens": 16008,
+        "cacheReadInputTokens": 265467,
+        "cacheCreationInputTokens": 31240,
+        "webSearchRequests": 0,
+        "costUSD": 0.33816940000000006,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 64000,
+        "thinkingTokens": 13874,
+        "canonicalModel": "claude-sonnet-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subagent_stats": {
+      "spawned": 0,
+      "requested": {
+        "background": 0,
+        "foreground": 0,
+        "unset": 0
+      },
+      "started_in_background": 0,
+      "max_depth": 0,
+      "spawned_by_subagents": 0,
+      "completed": 0,
+      "failed": 0,
+      "killed": {
+        "parent": 0,
+        "user": 0,
+        "system": 0
+      },
+      "refused": {
+        "depth_limit": 0,
+        "concurrency_limit": 0,
+        "budget": 0
+      },
+      "by_type": {}
+    },
+    "is_error": false,
+    "num_turns": 9,
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "All markup and wiring confirmed. Finalizing the review with the single correctness defect identified.\n\n```json\n{\"status\": \"proposed\", \"agent\": \"code-reviewer-correctness\", \"role\": \"reviewer\", \"executor\": \"claude-code\", \"summary\": \"Calculator arithmetic, digit/decimal entry, clear, backspace, theme persistence, and keyboard mappings are logically correct and satisfy their acceptance criteria. One defect: the Enter keydown handler never suppresses the browser's native button activation, so pressing Enter while any keypad button holds focus (the ordinary result of a prior mouse click) both runs equals() and re-fires a click on that focused button, corrupting the resulting state (e.g. re-appending a digit, or restarting a pending operation right after computing a result).\", \"proposedContentChanges\": {\"findings\": [{\"severity\": \"high\", \"classification\": \"current_artifact\", \"location\": \"src/calculator.js:166\", \"intentKey\": \"enter-key-double-activation\", \"subject\": \"The keydown handler's Enter case calls equals() without calling e.preventDefault(), so if a keypad button currently has focus (e.g. after a mouse click on it, an ordinary interaction), the browser's native Enter-activates-button behavior also fires that button's click handler, causing an unintended second state change (such as re-appending a digit or re-invoking chooseOperator and leaving a pending operation active) immediately after equals() runs, violating AC-014's requirement that Enter behave purely as equals.\"}]}}\n```",
+    "type": "result",
+    "duration_ms": 184992
+  }
+}

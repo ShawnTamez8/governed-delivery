@@ -3,7 +3,7 @@
 A repo-native control plane for AI-assisted software delivery. The system
 name is configuration; BuildWorks is the default.
 
-> Agents propose. The system decides.
+> A governed agentic SDLC
 
 Agents reason, draft, implement, review, and summarize. They never approve their
 own work, advance authoritative state, bypass policy, or write without

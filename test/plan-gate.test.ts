@@ -67,6 +67,41 @@ test("an artifact outside the signed scope is returned as unkeepable and named",
   assert.deepEqual(result.unkeepable, ["AC-002"]);
 });
 
+test("the refusal names the target that failed and the membership rule, without inferring intent", () => {
+  const RULE = "; an artifact-form coverage entry names exactly one path copied from the signed scope";
+
+  // An ordinary out-of-scope path: the operator sees the value that failed and
+  // the rule it failed against, not a criterion ID and the word "scope".
+  const plain = coverageFitsScope(planWith([covers("src/elsewhere.ts", "AC-002")]), SCOPE);
+  assert.equal(plain.ok, false);
+  if (plain.ok) return;
+  assert.equal(
+    plain.reason,
+    `plan promises coverage outside the approved scope: AC-002 -> src/elsewhere.ts${RULE}`
+  );
+
+  // The shape a live plan author actually wrote, quoted from the committed
+  // response at test/fixtures/recorded/
+  // plan-reconciliation-web-calculator-multi-artifact-coverage.json.
+  const list = coverageFitsScope(
+    planWith([covers("src/index.html, src/calculator.js", "AC-008")]),
+    SCOPE
+  );
+  assert.equal(list.ok, false);
+  if (list.ok) return;
+  assert.equal(
+    list.reason,
+    `plan promises coverage outside the approved scope: AC-008 -> src/index.html, src/calculator.js${RULE}`
+  );
+
+  // The same sentence in both cases, deliberately: the check does not guess
+  // from punctuation which kind of mistake was made, because a path may
+  // legally contain punctuation and the rule is true either way. The typed
+  // signal is what callers branch on.
+  assert.deepEqual(list.unkeepable, ["AC-008"]);
+  assert.ok(plain.reason.endsWith(RULE) && list.reason.endsWith(RULE));
+});
+
 test("a path differing from a signed entry only in case is unkeepable on every platform", () => {
   // The operator signs the paths exactly as declared, which is why
   // `computeScope` preserves spelling. Folding case here would silently widen
