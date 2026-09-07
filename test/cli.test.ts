@@ -9,6 +9,7 @@ import { codeReviewEvidenceDir, codeReviewEvidenceRef, deliveryEvidenceRef } fro
 import { openStore } from "../src/store.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { appendAudit } from "../src/audit.ts";
+import { formatCodeReviewGatePass } from "../src/code-review.ts";
 import { APPROVAL_DEFAULT_LIFETIME_SECONDS, buildPolicy, policyHash } from "../src/policy.ts";
 
 // Absolute path: the CLI is spawned from temp directories, so relative
@@ -1124,7 +1125,7 @@ test("the usage text introduces review between verify and deliver", () => {
   try {
     const r = runCli(cwd, "not-a-command");
     assert.equal(r.status, 2);
-    assert.match(r.stderr, /review --run <id> \[--model <name>\] +run the code_review stage/);
+    assert.match(r.stderr, /review --run <id> \[--model <name>\] +run the bounded code_review loop/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -1406,14 +1407,24 @@ function parkVerifiedRun(
             stageId: codeReviewStage.id,
             worktreePath,
             patchBase,
-            verifiedCommit,
-            changedPaths: commitFiles,
+            initialVerifiedCommit: verifiedCommit,
+            finalVerifiedCommit: verifiedCommit,
             panel: ["code-reviewer-correctness", "code-reviewer-security"],
+            panelSize: 2,
+            maxRounds: 2,
             blockingSeverity: "high",
             severities: ["low", "medium", "high", "critical"],
-            findings: [],
+            rounds: [
+              {
+                round: 1,
+                reviewedCommit: verifiedCommit,
+                changedPaths: commitFiles,
+                findings: [],
+                blocking: [],
+                remediation: null,
+              },
+            ],
             blocking: [],
-            proposals: [],
             outcome: "pass",
             createdAt: new Date().toISOString(),
           },
@@ -1428,7 +1439,13 @@ function parkVerifiedRun(
         actor: "system",
         actorType: "cli",
         action: "code_review.gate.pass",
-        summary: `code_review gate passed over ${patchBase}..${verifiedCommit}; findings=0; blocking=0; threshold=high`,
+        summary: formatCodeReviewGatePass({
+          round: 1,
+          maxRounds: 2,
+          commit: verifiedCommit,
+          findings: 0,
+          blockingSeverity: "high",
+        }),
       });
     } finally {
       after.close();
@@ -1438,7 +1455,7 @@ function parkVerifiedRun(
   return { worktreePath, verifiedCommit, startingCommit, patchBase, specStageId: specStage.id };
 }
 
-test("review runs the fixed panel through the CLI and prints the record reference", () => {
+test("review runs the frozen panel through the CLI and prints the record reference", () => {
   const cwd = tempCwd();
   const before = process.env.EMIT_MODE;
   try {

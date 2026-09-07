@@ -164,15 +164,13 @@ export function freezeProfile(
   if (shortfall !== null) {
     throw new Error(`cannot freeze a profile for run ${runId}: ${shortfall}`);
   }
-  // The same rule for the other candidate set. The code-review panel is fixed
-  // — every registered code reviewer — so the only question a profile can be
-  // asked at freeze time is whether the registry holds enough of them, with
-  // distinct lenses, on this executor. A registry that cannot seat the panel
+  // The same rule for the other candidate set. A registry that cannot seat the
+  // configured number of instructed, distinct code-review specialists
   // makes the default installation unable to complete a run (hazard 11), and
   // that must fail here rather than after the paid stages have spent.
   const codeReviewShortfall = codeReviewStaffingShortfall(
     agents,
-    policy.panelSizeMin,
+    policy.codeReviewPanelSize,
     CLAUDE_CODE.id
   );
   if (codeReviewShortfall !== null) {

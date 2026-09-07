@@ -22,8 +22,8 @@ Node v24.14.0, npm 11.18.0, git-bash and PowerShell, 2026-08-31.
 - **git** on PATH.
 - `npm install` once, for `typescript` and `@types/node`. No runtime
   dependencies — SQLite is `node:sqlite`.
-- Only for the paid chain: the `claude` CLI on PATH (`claude --version`
-  printed `2.1.252 (Claude Code)` here).
+- Only for the paid chain: the native `claude` CLI on PATH (`claude --version`
+  printed `2.1.263 (Claude Code)` here on 2026-09-07).
 
 There is **no `bw` binary** after `npm install`. `package.json` declares the
 bin, but npm does not link a private package's own bin, and
@@ -87,7 +87,7 @@ node .claude/skills/run-buildworks/driver.mjs paid --yes
 
 Without `--yes` it refuses. It drives the full sequence — `migrate`,
 `new-run`, `spec`, `approval-request` → `sign` → `approve`, `plan`,
-`implement`, `verify`, `deliver`, `verify-audit` — against the real `claude`
+`implement`, `verify`, `review`, `deliver`, `verify-audit` — against the real `claude`
 binary, then asserts the terminal state and prints the per-dispatch cost from
 the store.
 
@@ -169,14 +169,12 @@ committed at
 replayed by `test/reconciliation.test.ts`.
 
 **Budget $1.25–$2.50 for a full chain on this design, not the clamp's $0.25.**
-The range rose with `code_review`: two more reviewer dispatches, each carrying
-the full diff of the run's patch range plus the approved specification and
-plan. On the recorded plan-panel costs ($0.13 to $0.18 a seat) that is roughly
-$0.25 to $0.35 on top of the figures below.
-The cost moved into review and implementation rather than authoring — the
-implementer alone was $0.40528 and the plan panel $0.31597 — so a run with an
-extra remediation round will sit at the top of that range or above it. The free
-`smoke` still costs nothing: it reaches no dispatch.
+The clean default adds two code-reviewer dispatches, each carrying the full
+diff of the run's patch range plus the approved specification and plan. A
+finding before the final configured panel adds one implementer dispatch,
+post-patch verification, and another full reviewer panel, so a remediating run
+can exceed that historical range. The free `smoke` still costs nothing: it
+reaches no dispatch.
 
 **Cost is not fixed.** That run took 7 dispatches, not 5, because the plan gate
 passed in round 2 — `plan.gate.pass | plan_review gate passed in round 2` after
@@ -194,19 +192,26 @@ and that the delivery record covers every signed artifact, then runs
 `verify-audit` over the chain including the delivery event. The 2026-08-31
 record above ends `in_progress` because it predates step 8.
 
-**The paid chain now reviews the code before it delivers it.** Between
-`verify` and `deliver` the driver calls `review`, which seats every
-registered code reviewer — two are seeded, `correctness` and `security` —
-and hands each the approved specification and plan, the changed paths, and the
-full diff of `patchBase..verifiedCommit`, with the worktree at the verified
-commit as a read-only working directory. The step expects exit 0 and a
-`result.json` reference; the record lives at
-`.governance/code-review/<run>/` beside its `report.md`. A block is a
-result, not a driver failure: the command exits 1 naming the blocking finding
-ids, their severities, and their locations, and the run stays `blocked` with
-the record and any raised proposals retained. The terminal-state step asserts
-`code_review=passed` alongside `delivery_check=passed` and
-`run=completed`.
+**The paid chain reviews the code before it delivers it.** Between `verify`
+and `deliver` the driver calls `review` once. The frozen profile selects two
+through five explicitly specialized reviewers (two are seeded: `correctness`
+and `security`) and permits one through five total full-panel executions. The
+defaults in `src/policy.ts` are two reviewers and two panels. Any non-final
+panel findings go together to the frozen implementer; guarded patches are
+committed, the frozen verification commands run, and the full panel reviews
+the new commit. The final panel blocks only at or above the independently
+frozen `CODE_REVIEW_BLOCKING_SEVERITY` (default `high`); lower-severity
+findings remain in the record without blocking. Policy edits affect only new
+runs. Raising panel size also requires enough registered `code-findings`
+reviewers with distinct non-empty specialist instructions.
+
+The paid driver reports panel executions, remediation attempts, final commit,
+and final gate from `.governance/code-review/<run>/result.json`. A block is a
+result, not a driver failure: the command exits 1 with the final blocking
+finding ids, severities, and locations, and retains the run, worktree, reports,
+patch evidence, and verification logs. Code review creates no proposal, spike,
+waiver, or human-review decision. The fixture-backed `high-then-clean` stage
+test is the free remediation exercise; the 13-step smoke remains dispatch-free.
 
 ## Driving it by hand
 
@@ -236,10 +241,11 @@ Then any command from `bw`'s usage. Keep `BW_APPROVAL_PUBLIC_KEY` set on
   repository root* with `--out` pointing somewhere else — running it from the
   scratch root with `--out <scratch>/keys` fails with `refusing to write
   signing material inside the repository`.
-- **`claude` is an npm shim.** On Windows it is `claude.cmd`, which
-  `spawnSync` cannot resolve without `shell: true` — `spawnSync claude ENOENT`.
-  `src/harness.ts` spawns with `shell: WINDOWS` for exactly this (hazard 8);
-  the driver's probe had to do the same.
+- **The current Windows `claude` launcher is native.** `where claude` resolves
+  `claude.exe`; BuildWorks spawns it directly, which is the same executable
+  PowerShell reaches. Do not insert `cmd.exe` or PowerShell as a wrapper. If
+  `claude` cannot be resolved by direct spawning, fix PATH or install the
+  native launcher before a paid run.
 - **The free path stops at `approval-request`.** The approval gate reads the
   `spec.gate.pass` audit event the spec stage writes, so `stage-add` /
   `stage-complete` cannot fake a passed `spec_review`. Anything past the spec
@@ -260,11 +266,12 @@ Then any command from `bw`'s usage. Keep `BW_APPROVAL_PUBLIC_KEY` set on
 - **Exit codes carry meaning: 2 is a usage error, 1 is a refusal, 0 is
   success.** Do not read them through a pipe — `cmd | grep` reports grep's
   status.
-- **`verify`, `review`, `deliver`, and `verify-audit` are unrelated.**
+- **`verify`, `review`, `deliver`, and `verify-audit` are separate commands.**
   `verify` runs the frozen verification commands for one run; `review` runs
-  the code-review panel over the verified change and is the only one of the
-  four that dispatches, so it is the only one that spends and the only one that
-  takes `--model`; `deliver` (step 8) is the deterministic terminal check that
+  the bounded code-review loop over the verified change and is the only one of
+  the four that dispatches agents, so it is the only one that spends and the
+  only one that takes `--model`; its internal post-patch verification reuses
+  the frozen commands without adding a CLI stage. `deliver` (step 8) is the deterministic terminal check that
   completes or blocks the run against the signed declared artifacts;
   `verify-audit` recomputes the whole audit hash chain.
 - Every invocation prints `ExperimentalWarning: SQLite is an experimental
@@ -273,7 +280,7 @@ Then any command from `bw`'s usage. Keep `BW_APPROVAL_PUBLIC_KEY` set on
 ## Test
 
 ```bash
-npm test              # node --test — 774 tests as of 2026-09-04 (773 pass,
+npm test              # node --test — 822 tests as of 2026-09-07 (821 pass,
                       # 1 pre-existing skip); prose count, drifts with the suite
 npm run typecheck     # strict tsc --noEmit
 npm run check:docs    # the documentation checker
@@ -287,7 +294,7 @@ verification commands.
 | Symptom | Cause and fix |
 |---|---|
 | `keygen failed: refusing to write signing material inside the repository` | `--out` is under the cwd. Run the tool from the repo root, write the keys elsewhere. |
-| `Error: spawnSync claude ENOENT` | `claude` is a `.cmd` shim; spawn it with `shell: true` on Windows. |
+| `Error: spawnSync claude ENOENT` | The native `claude.exe` is not directly resolvable. Check `where claude` and repair PATH or the installation before spending; do not add a command-shell wrapper. |
 | `run N has no passed spec_review stage to approve` | Expected without a real `bw spec`. The free path ends here. |
 | `run N's last stage is none, not a passed implementation` | `verify` needs a passed implementation stage, not just a run. |
 | `the working tree is not clean` | The target has uncommitted changes — often a previous blocked run's projections. |

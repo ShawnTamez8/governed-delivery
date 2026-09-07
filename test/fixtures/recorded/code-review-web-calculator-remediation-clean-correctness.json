@@ -1,0 +1,147 @@
+{
+  "provenance": {
+    "run": "paid chain, run 1 of target bw-run-skill/1788794835268, 2026-09-07; first post-remediation live chain",
+    "design": ".claude/skills/run-buildworks/web-calculator-design.md",
+    "stage": "code_review, stage 8 of the chain; round 1 of maximum 2; panel code-reviewer-correctness + code-reviewer-security",
+    "agent": "code-reviewer-correctness",
+    "dispatch": "2026-09-07T15:43:17.377Z",
+    "captured": "2026-09-07",
+    "costUsd": 0.3492853999999999,
+    "durationMs": 406937,
+    "effectiveModels": [
+      "claude-haiku-4-5-20251001",
+      "claude-sonnet-5"
+    ],
+    "whatThisRecords": "The specialized correctness reviewer's first-panel response after the bounded remediation loop and native-launch correction shipped: one AgentResult in a single ```json fence, with an empty findings array and a summary of the behavior traced. The stage accepted it and recorded no correctness finding.",
+    "provesWhat": "One live response obeyed the current code-only result contract, exercised the specialized correctness prompt, and passed extraction plus validation. An empty report is evidence of what this reviewer asserted in one sample; it does not prove the implementation is defect-free or that another run will be clean.",
+    "droppedFromEnvelope": "session_id, uuid, and the per-request timing fields (ttft_ms, ttft_stream_ms, time_to_request_ms, first_content_frame_ms, duration_api_ms, queued_turn_count) are dropped: they identify one machine's session and vary per invocation, and nothing in the contract reads them.",
+    "sanitized": "Absolute machine paths replaced with <target> (0) and <home> (0). The result body is otherwise byte-for-byte as retained.",
+    "stageContext": {
+      "changedPaths": [
+        "index.html",
+        "src/calculator.js",
+        "src/styles.css",
+        "src/theme.js"
+      ],
+      "severities": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "panelSize": 2,
+      "maxRounds": 2,
+      "round": 1,
+      "blockingSeverity": "high",
+      "patchBase": "2476fb690321f2ed9c202d11b9a78c9a8990811f",
+      "initialVerifiedCommit": "b0b1104dc0b045dbc3d8c116ba44e9ed894200e4",
+      "finalVerifiedCommit": "b0b1104dc0b045dbc3d8c116ba44e9ed894200e4",
+      "recordedVerdict": "pass",
+      "recordedBlocking": [],
+      "recordedFindingLocations": [],
+      "recordedRemediations": 0
+    }
+  },
+  "envelope": {
+    "stop_reason": "end_turn",
+    "total_cost_usd": 0.3492853999999999,
+    "usage": {
+      "input_tokens": 16,
+      "cache_creation_input_tokens": 25387,
+      "cache_read_input_tokens": 274857,
+      "output_tokens": 18334,
+      "output_tokens_details": {
+        "thinking_tokens": 16845
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 25387,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "global",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 188,
+          "cache_read_input_tokens": 44029,
+          "cache_creation_input_tokens": 196,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 196
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    },
+    "modelUsage": {
+      "claude-haiku-4-5-20251001": {
+        "inputTokens": 9339,
+        "outputTokens": 11,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "webSearchRequests": 0,
+        "costUSD": 0.009394,
+        "contextWindow": 200000,
+        "maxOutputTokens": 32000,
+        "thinkingTokens": 0,
+        "canonicalModel": "claude-haiku-4-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      },
+      "claude-sonnet-5": {
+        "inputTokens": 16,
+        "outputTokens": 18334,
+        "cacheReadInputTokens": 274857,
+        "cacheCreationInputTokens": 25387,
+        "webSearchRequests": 0,
+        "costUSD": 0.33989139999999995,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 64000,
+        "thinkingTokens": 16845,
+        "canonicalModel": "claude-sonnet-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subagent_stats": {
+      "spawned": 0,
+      "requested": {
+        "background": 0,
+        "foreground": 0,
+        "unset": 0
+      },
+      "started_in_background": 0,
+      "max_depth": 0,
+      "spawned_by_subagents": 0,
+      "completed": 0,
+      "failed": 0,
+      "killed": {
+        "parent": 0,
+        "user": 0,
+        "system": 0
+      },
+      "refused": {
+        "depth_limit": 0,
+        "concurrency_limit": 0,
+        "budget": 0
+      },
+      "by_type": {}
+    },
+    "is_error": false,
+    "num_turns": 8,
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "```json\n{\"status\": \"proposed\", \"agent\": \"code-reviewer-correctness\", \"role\": \"reviewer\", \"executor\": \"claude-code\", \"summary\": \"Traced the calculator state machine and theme persistence logic against all correctness-related acceptance criteria (digit/decimal entry, all four operators, divide-by-zero, equals, clear, backspace, keyboard bindings, and theme load/toggle/persist). No reproducible behavioral defect, incorrect state transition, or broken error path was found.\", \"proposedContentChanges\": {\"findings\": []}}\n```",
+    "type": "result",
+    "duration_ms": 405142
+  }
+}

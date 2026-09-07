@@ -1,0 +1,147 @@
+{
+  "provenance": {
+    "run": "paid chain, run 1 of target bw-run-skill/1788794835268, 2026-09-07; first post-remediation live chain",
+    "design": ".claude/skills/run-buildworks/web-calculator-design.md",
+    "stage": "code_review, stage 8 of the chain; round 1 of maximum 2; panel code-reviewer-correctness + code-reviewer-security",
+    "agent": "code-reviewer-security",
+    "dispatch": "2026-09-07T15:43:40.332Z",
+    "captured": "2026-09-07",
+    "costUsd": 0.0813512,
+    "durationMs": 22584,
+    "effectiveModels": [
+      "claude-haiku-4-5-20251001",
+      "claude-sonnet-5"
+    ],
+    "whatThisRecords": "The specialized security reviewer's first-panel response from the same chain: explanatory prose followed by one ```json fence carrying an empty findings array. The stage accepted it and recorded no security finding.",
+    "provesWhat": "One live response obeyed the current code-only result contract, exercised the specialized security prompt, and passed the measured prose-before-fence extraction shape plus validation. An empty report is evidence of what this reviewer asserted in one small static-app sample; it does not prove security or that another run will be clean.",
+    "droppedFromEnvelope": "session_id, uuid, and the per-request timing fields (ttft_ms, ttft_stream_ms, time_to_request_ms, first_content_frame_ms, duration_api_ms, queued_turn_count) are dropped: they identify one machine's session and vary per invocation, and nothing in the contract reads them.",
+    "sanitized": "Absolute machine paths replaced with <target> (0) and <home> (0). The result body is otherwise byte-for-byte as retained.",
+    "stageContext": {
+      "changedPaths": [
+        "index.html",
+        "src/calculator.js",
+        "src/styles.css",
+        "src/theme.js"
+      ],
+      "severities": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ],
+      "panelSize": 2,
+      "maxRounds": 2,
+      "round": 1,
+      "blockingSeverity": "high",
+      "patchBase": "2476fb690321f2ed9c202d11b9a78c9a8990811f",
+      "initialVerifiedCommit": "b0b1104dc0b045dbc3d8c116ba44e9ed894200e4",
+      "finalVerifiedCommit": "b0b1104dc0b045dbc3d8c116ba44e9ed894200e4",
+      "recordedVerdict": "pass",
+      "recordedBlocking": [],
+      "recordedFindingLocations": [],
+      "recordedRemediations": 0
+    }
+  },
+  "envelope": {
+    "stop_reason": "end_turn",
+    "total_cost_usd": 0.0813512,
+    "usage": {
+      "input_tokens": 6,
+      "cache_creation_input_tokens": 12209,
+      "cache_read_input_tokens": 46391,
+      "output_tokens": 1383,
+      "output_tokens_details": {
+        "thinking_tokens": 788
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 12209,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "global",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 265,
+          "cache_read_input_tokens": 19721,
+          "cache_creation_input_tokens": 327,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 327
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    },
+    "modelUsage": {
+      "claude-haiku-4-5-20251001": {
+        "inputTokens": 9340,
+        "outputTokens": 11,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "webSearchRequests": 0,
+        "costUSD": 0.009394999999999999,
+        "contextWindow": 200000,
+        "maxOutputTokens": 32000,
+        "thinkingTokens": 0,
+        "canonicalModel": "claude-haiku-4-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      },
+      "claude-sonnet-5": {
+        "inputTokens": 6,
+        "outputTokens": 1383,
+        "cacheReadInputTokens": 46391,
+        "cacheCreationInputTokens": 12209,
+        "webSearchRequests": 0,
+        "costUSD": 0.0719562,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 64000,
+        "thinkingTokens": 788,
+        "canonicalModel": "claude-sonnet-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subagent_stats": {
+      "spawned": 0,
+      "requested": {
+        "background": 0,
+        "foreground": 0,
+        "unset": 0
+      },
+      "started_in_background": 0,
+      "max_depth": 0,
+      "spawned_by_subagents": 0,
+      "completed": 0,
+      "failed": 0,
+      "killed": {
+        "parent": 0,
+        "user": 0,
+        "system": 0
+      },
+      "refused": {
+        "depth_limit": 0,
+        "concurrency_limit": 0,
+        "budget": 0
+      },
+      "by_type": {}
+    },
+    "is_error": false,
+    "num_turns": 3,
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "No innerHTML/eval/document.write usage; all DOM writes use textContent, theme storage is a same-origin string only compared to a literal, and there's no server, network call, or credential handling in scope. No security defects found.\n\n```json\n{\"status\": \"proposed\", \"agent\": \"code-reviewer-security\", \"role\": \"reviewer\", \"executor\": \"claude-code\", \"summary\": \"Reviewed the static calculator app for trust-boundary, injection, authorization, secret-handling, and data-integrity defects. All DOM updates use textContent (no innerHTML/eval), localStorage values are only used in a strict string comparison, there are no network calls or credential handling, and no attacker-controlled input crosses a privilege or trust boundary. No security defects found.\", \"proposedContentChanges\": {\"findings\": []}}\n```",
+    "type": "result",
+    "duration_ms": 20757
+  }
+}

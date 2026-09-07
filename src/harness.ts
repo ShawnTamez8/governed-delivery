@@ -62,12 +62,11 @@ const WINDOWS = process.platform === "win32";
 
 /**
  * Kill the whole process tree, not the immediate child. On Windows the child
- * pid belongs to the cmd.exe wrapper (shell: true), so `taskkill /t` reaches
- * the harness binary and everything under it. `taskkill` runs by full path —
- * the harness environment deliberately has no guaranteed PATH (hazard 9's
- * class), and a PATH-miss that silently skips the kill is a timeout that
- * never fires. On POSIX the child is detached and the negative pid kills its
- * process group.
+ * pid belongs to the directly spawned harness executable, and `taskkill /t`
+ * reaches everything under it. `taskkill` runs by full path — the harness
+ * environment deliberately has no guaranteed PATH (hazard 9's class), and a
+ * PATH-miss that silently skips the kill is a timeout that never fires. On
+ * POSIX the child is detached and the negative pid kills its process group.
  */
 export function killTree(pid: number): void {
   if (WINDOWS) {
@@ -92,7 +91,7 @@ export function killTree(pid: number): void {
  */
 export function probeExecutor(executor: ExecutorDefinition): void {
   const result = spawnSync(executor.probe[0], executor.probe.slice(1), {
-    shell: WINDOWS,
+    shell: false,
     encoding: "utf8",
   });
   if (result.error) {
@@ -160,7 +159,10 @@ export function invokeHarness(executor: ExecutorDefinition, input: InvocationInp
   const argv = [...executor.command.slice(1)];
   if (input.model !== undefined) argv.push("--model", input.model);
   const child: ChildProcess = spawn(executor.command[0], argv, {
-    shell: WINDOWS, // hazard 8: npm-shimmed .cmd executables need shell resolution
+    // The installed Claude Code launcher is a native executable. Spawn it
+    // directly, as PowerShell does, so argv has one parser and no cmd.exe
+    // wrapper. Actual npm shims are handled by the verification-command path.
+    shell: false,
     stdio: ["pipe", "pipe", "pipe"],
     env,
     detached: !WINDOWS,

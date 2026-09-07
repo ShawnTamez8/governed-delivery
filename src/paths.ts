@@ -111,3 +111,24 @@ export function codeReviewEvidenceDir(rootDir: string, runId: number): string {
 export function codeReviewEvidenceRef(runId: number, name: string): string {
   return join(GOVERNANCE_DIR, "code-review", String(runId), name);
 }
+
+/** Collision-free verification evidence for one code-review remediation. */
+export function codeReviewVerificationDir(
+  rootDir: string,
+  runId: number,
+  round: number
+): string {
+  return join(codeReviewEvidenceDir(rootDir, runId), `round-${round}`, "verification");
+}
+
+/** The root-relative form stored inside retained command records. */
+export function codeReviewVerificationRef(runId: number, round: number, name: string): string {
+  return join(
+    GOVERNANCE_DIR,
+    "code-review",
+    String(runId),
+    `round-${round}`,
+    "verification",
+    name
+  );
+}

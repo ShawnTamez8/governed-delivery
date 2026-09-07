@@ -14,6 +14,8 @@ export interface AgentDefinition {
   executor: string;
   outputs: string[];
   tools: string[];
+  /** Required only for reviewers that emit `code-findings`. */
+  codeReviewInstructions?: string;
 }
 
 /**

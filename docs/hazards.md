@@ -187,8 +187,19 @@ slower failure with a larger bill.
 ## 8. Windows executable resolution
 
 Node's spawn hardening breaks npm-shimmed executables, which kills every
-external executor on Windows. Use a spawn wrapper that handles shim resolution
-and keep a regression test that spawns a shimmed binary.
+external executor on Windows. Handle a shim only on a path that actually uses
+one; do not route a native executable through `cmd.exe` on the assumption that
+it is still a shim.
+
+**Measured, 2026-09-07.** Claude Code 2.1.263 resolves on the development host
+as the native executable `~/.local/bin/claude.exe`, while the harness and paid
+driver still carried the older `claude.cmd` assumption and spawned through
+`COMSPEC`. Direct spawning resolves the same executable PowerShell launches,
+preserves stdin and captured UTF-8 bytes, removes the extra argv parser, and
+avoids Node's shell-argument security deprecation. Verification commands keep
+their separate shell path because `npm` is still an actual Windows shim. Test
+the concrete executor by direct spawn and test shims only at the command path
+that uses them.
 
 ## 9. Unverified hook interpreters
 
@@ -382,19 +393,27 @@ change against the approved specification and plan; every finding must be
 retained as attributable, immutable evidence; and a deterministic gate over
 those findings must sit between verification and delivery.
 
-What now enforces it is the `code_review` stage: a fixed panel of every
-registered code reviewer, each handed the specification, the plan, the changed
-paths, and the full diff of the verified range with the worktree as a read-only
-working directory; every report stored on a canonical finding; a gate that
-blocks at or above the severity frozen in the run's profile; and an upstream
-block, at any severity, for a finding whose cause the reviewer places in the
-approved plan — which also raises a non-binding `blocking_dependency` proposal
-so the concern has somewhere to go.
+Two later paid chains proved the reviewer boundary and exposed the next gap:
+both reached `code_review` and blocked on correct `high` findings, one with two
+defects and one with a different single defect. A fresh run merely produced a
+different implementation and finding; it did not repair the reviewed commit.
 
-The residual is worth stating plainly. The gate proves that no reviewer
-asserted a severity at or above the frozen threshold and that none placed a
-defect's cause in the plan. It does not prove the code is correct, nothing
-confirms a below-threshold finding was harmless, and a change whose diff,
+What now enforces the complete boundary is the bounded `code_review` loop. A
+frozen panel of two through five explicitly specialized reviewers reads the
+specification, plan, changed paths, and complete diff through the current
+verified commit. When a non-final panel reports actionable current-code
+findings, one frozen implementer receives all of them, its guarded patch is
+committed, the frozen verification commands run against that commit, and the
+full panel reviews it again. The profile permits one through five total panel
+executions. The last panel receives no remediation; it blocks only at or above
+the independently frozen severity threshold and retains lower-severity reports
+as non-blocking evidence. Code review accepts no upstream classification and
+creates no proposal, spike, waiver, or human-review decision.
+
+The residual is worth stating plainly. The final gate proves that no reviewer
+asserted a severity at or above the frozen threshold. It does not prove the
+code is correct, and accepting a below-threshold finding is an explicit release
+policy rather than proof that the finding is harmless. A change whose diff,
 specification, and plan exceed the frozen prompt ceiling is refused rather than
 reviewed in part. A verification configuration that proves nothing about the
 artifact — `node --version` against a calculator — is still accepted: a

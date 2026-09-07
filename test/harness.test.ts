@@ -8,6 +8,7 @@ import { invokeHarness, parseEnvelope, probeExecutor } from "../src/harness.ts";
 import { CLAUDE_CODE, type ExecutorDefinition } from "../src/executor.ts";
 
 const FIXTURES = join(process.cwd(), "test", "fixtures", "harness");
+const HARNESS_SOURCE = readFileSync(join(process.cwd(), "src", "harness.ts"), "utf8");
 
 function testExecutor(command: string[], overrides: Partial<ExecutorDefinition> = {}): ExecutorDefinition {
   return {
@@ -91,9 +92,16 @@ test("tree-kill reaches the grandchild", async () => {
   }
 });
 
-test("the real claude shim resolves through shell spawning", (t) => {
+test("the harness launches executables directly without a command-shell wrapper", () => {
+  assert.ok(
+    !HARNESS_SOURCE.includes("shell: WINDOWS"),
+    "native executables must not be routed through cmd.exe"
+  );
+});
+
+test("the real claude executable resolves through direct spawning", (t) => {
   const check = spawnSync(CLAUDE_CODE.probe[0], CLAUDE_CODE.probe.slice(1), {
-    shell: process.platform === "win32",
+    shell: false,
     encoding: "utf8",
   });
   if (check.status !== 0) {
@@ -127,15 +135,11 @@ test("parseEnvelope refuses non-JSON naming the executor", () => {
   assert.throws(() => parseEnvelope(CLAUDE_CODE, "not json"), /harness envelope for executor claude-code is not valid JSON/);
 });
 
-test("an unresolvable binary resolves with a named failure instead of rejecting", async () => {
-  // Under shell: true the shell itself starts and reports the unresolvable
-  // command on stderr with exit 1; the spawnError field covers the case
-  // where even the shell cannot start. Either way the promise resolves so
-  // the caller can retain evidence and audit the attempt.
+test("an unresolvable binary resolves with a named direct-spawn failure instead of rejecting", async () => {
   const executor = testExecutor(["definitely-not-a-real-binary"]);
   const outcome = await invokeHarness(executor, { prompt: "x" });
-  assert.equal(outcome.exitCode, 1);
-  assert.match(outcome.stderr, /definitely-not-a-real-binary/);
+  assert.equal(outcome.exitCode, null);
+  assert.match(outcome.spawnError ?? "", /ENOENT/);
 });
 
 test("the model override reaches the child argv", async () => {

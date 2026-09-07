@@ -10,104 +10,36 @@ durable one-liners so they load automatically, but the mirror is machine-local
 and per-clone-path: nothing is ever removed from here on the grounds that
 memory holds it (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-09-06, end of session)
+## Current state (2026-09-07, first full chain completed)
 
-**Four features are `Implemented`, committed as `ef88f4f` on
-`code-review-stage`, and pushed to `origin/code-review-stage` (2026-09-06).**
-The branch is three commits ahead of `master`; local `master` = `origin/master`
-= `a12f3cf`, the branch point. Merging into `master` is separate and unasked.
-Read the head with `git log -1` rather than trusting a commit id written here.
+**`docs/features/code-review-remediation/plan.md` is `Implemented` and its
+2026-09-07 code review is `reconciled` on the existing `code-review-stage`
+branch.** Tasks 1-10 and all three review remediations are committed at the
+current `HEAD`. After the first paid attempt blocked at implementation, one
+separately authorized fresh chain completed all stages in 13 dispatches for
+$1.39473. The operator then manually verified the delivered calculator output;
+the run's frozen commands themselves checked only Node and npm versions.
+Push, merge, and retained-target cleanup remain unasked.
 
-**Pushing needs the personal GitHub account.** The remote is
-`ShawnTamez8/governed-delivery`; the repo-local credential helper is
-`gh auth git-credential`, which uses whichever `gh` account is *active*, and
-the active account is the work one (`TamezS_rush`), which gets a 403. Both are
-logged in. Push with `gh auth switch --user ShawnTamez8`, then switch back to
-`TamezS_rush` in the same command so other repositories are unaffected.
+**Locked behavior:** `code_review` alone gets a bounded loop. Its frozen
+profile selects 2–5 explicitly specialized reviewers (default 2) and permits
+1–5 total panel executions (default 2). Every non-empty intermediate panel is
+sent once to the frozen implementer, its actionable findings are patched
+together, the new commit is verified with the frozen verification commands,
+and the full panel reviews again. On the last configured panel only findings
+at or above the independently frozen blocking threshold block; lower-severity
+findings remain recorded and do not block. There is no code-review human gate,
+waiver, proposal, spike, upstream classification, or findings-reconciliation
+schema. `spec_review` and `plan_review` are unchanged.
 
-- `docs/features/spec-section-membership/` — every structured spec section
-  states its membership rule in the parser and all three authoring prompts.
-  Proven live on three chains.
-- `docs/features/plan-coverage-single-artifact/` — a Coverage line names
-  exactly one path, the criterion's *representative delivery anchor*. Proven
-  live twice: forty single-path or `not_applicable` lines across two chains,
-  and each plan panel's one finding asked for a task, not a second artifact.
-- `docs/features/unfenced-json-extraction/` — with no fence present
-  `extractJsonBody` parses from the first `{` to the end; refusals say what the
-  body contained. Proved by replaying the recorded response; hazard 1 shape 8
-  has not recurred live, so the fallback is unexercised on a chain.
-- `docs/features/code-review-stage/` — Task 10 closed. Two chains reached
-  `code_review` and **both blocked on correct `high` findings**; three reviewer
-  responses are committed as `test/fixtures/recorded/code-review-web-calculator-*.json`
-  and replayed by three tests in `test/code-review-stage.test.ts`, break-tested
-  against the gate's `>=` and the location validator's suffix check. Outcome 4,
-  legitimate half. Unexercised live: the `upstream:plan:` route and its
-  proposal, the pass path over below-threshold findings, delivery after
-  `code_review`.
+**Open/deferred:** The fresh first panel was clean: live evidence covers both
+specialized prompts and final delivery, not remediation, post-patch
+verification, or panel 2. Two reviewer fixtures preserve that limit.
+`--json-schema` remains separate. Future QA should compose the concrete
+patch/verification modules without changing this loop.
 
-**Five paid chains on the web-calculator PRD since `code_review` landed, none
-complete:**
-
-| Run | Stopped at | Cost | Cause |
-| --- | --- | --- | --- |
-| 2026-09-05 | `spec_review`, stage 2 | $0.41049 | prose note inside `## Acceptance criteria` — hazard 3; fixed (spec-section-membership) |
-| 2026-09-05 | `plan_review`, stage 5 | $1.25141 | two artifacts on one Coverage line — hazard 3; fixed (plan-coverage-single-artifact) |
-| 2026-09-06 | `spec`, stage 1 | $0.08103 | prose before an unfenced JSON object — hazard 1 shape 8; fixed (unfenced-json-extraction) |
-| 2026-09-06 | `code_review`, stage 8 | $1.15759 | `src/calculator.js:97` backspace after an operator resets to `0` (AC-010); `src/styles.css:17` `#ff9500` on white ≈ 2.2:1 (AC-019). Both correct. |
-| 2026-09-06 | `code_review`, stage 8 | $1.40170 | different implementation: `Enter` keydown calls `equals()` without `preventDefault`, so a focused button also fires (AC-014). Correct. |
-
-The three upstream blocks were three defects, each invisible to the
-deterministic suite and each now closed at both boundaries. The two
-`code_review` blocks are the gate working: the code was wrong as the reviewer
-said. The stage did not cause the upstream blocks — its commit appended one
-prompt builder, touched no parser, and its reviewers emit only `code-findings`.
-Before it landed the same design's first run also blocked at `spec_review`.
-
-**The open product decision:** what a block at `code_review` should lead to.
-Section 12 deliberately built no remediation round, so the only path from a
-block is a fresh run, and two fresh runs in a row have ended on correct `high`
-findings. Options recorded in `docs/features/code-review-stage/real-run-evidence.md`
-and none taken: a remediation round; a `critical` first-delivery threshold; or
-accept that this design does not deliver in one shot. A third identical run
-varies only the sample (hazard 7) and is not one of the options.
-
-**Open and deferred, all listed once here:**
-
-- The code-review decision above. Merging `code-review-stage` into `master` is
-  separate and unasked.
-- Multi-artifact coverage (the proposal's remedy 4) — a product decision, not a
-  bug. The design review's wrong-anchor disagreement (second code review,
-  finding 2) has not arisen on a live panel; unobserved, not disproved.
-- Two deliberate membership gaps, neither measured on a run: `## Declared
-  artifacts` admits a Markdown-decorated path (fails only at `delivery_check`);
-  the plan's `## Tasks` admits any non-empty line (`src/plan-doc.ts:68-84`).
-- `AGENTS.md` is an exact copy of `CLAUDE.md` and `.agents/skills/**` of
-  `.claude/skills/**`, byte-identical as of this session, with no drift check
-  and outside `check:docs`'s tier list. A pointer file would end the
-  duplication; it is the operator's design choice.
-- `docs/proposals/github-project-projection-and-upstream-spikes.md` — undecided.
-- `scripts/doc-check.mjs` has no test. `npm test` intermittently leaks a
-  `moved` commit or `base.txt` onto the real repo; cause untraced; run the
-  suite in a `robocopy /MIR` mirror including `.git`. Two known flakes, both
-  intermittent and neither a regression: `test/harness.test.ts` tree-kill
-  timing under load, and `test/verify-command.test.ts` `EPERM` cleanup.
-- Delivery-check F3 and F12 deferred with triggers; `VERIFY_RETENTION_MAX_BYTES`
-  chosen, not derived; verification containment unbuilt; `.governance`
-  location configuration deferred; durable knowledge tiers.
-
-**Verification standing at end of session:** `npm run typecheck` exit 0;
-`npm run check:docs` clean (historical-tier path warnings only);
-`test/code-review-stage.test.ts` 39/39 before the third replay test was added
-and the three replays 3/3 after (the full file not re-run since); extractor and
-reconciliation tests 59/59; full suite 784/782/1 skip/1 flake in a mirror
-before the extractor fix, not re-run in full after it. Free smoke 13/13.
-
-**Nothing outside the repository is load-bearing.** Retained targets
-`C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\{1788668925127,1788674210677,1788742310835,1788745293903}`
-may be cleaned with `node .claude/skills/run-buildworks/driver.mjs clean`.
-
-**Next up:** the operator's decision on the code-review block, and whether to
-commit. Neither is engineering work.
+**Next up:** the operator decides whether to push or merge the feature and when
+to clean the two retained paid targets.
 
 ## Diagnostics quick-reference
 
@@ -121,6 +53,14 @@ committed to the repository. Most are mirrored into auto memory.
   constrained field as the format of a value inside it, and the section a
   schema forces an author to write in is where that author will answer a
   finding. Three paid runs died on this.
+- **“Fenced block is not valid JSON” names the candidate source, not the root
+  cause** — read the parser detail and retained bytes. A legal fence containing
+  Python's `\UXXXXXXXX` escape is still invalid JSON; the outer terminal cannot
+  manufacture that ASCII sequence while UTF-8 stdout is captured as bytes.
+- **Spawn the installed native `claude.exe` directly on Windows** — no shim was
+  deleted; BuildWorks removed a stale `claude.cmd` assumption. PowerShell
+  resolves the same binary. Direct spawn avoids a second argv parser and
+  `DEP0190`, preserves typed `ENOENT`, and cannot repair malformed JSON.
 - **Hazard 1's enumeration is the contract parsers are held to** — a shape
   missing from it is a shape no reviewer asks about; a suite working all listed
   shapes passed while the unlisted one blocked a paid run.
@@ -165,6 +105,68 @@ committed to the repository. Most are mirrored into auto memory.
 - **Read every review record beside a proposal before planning from it.**
 
 ## Session records
+
+### Paid evidence: implementation block, then clean completion (2026-09-07)
+
+#### Decisions and assumptions
+
+- The operator separately authorized two Claude Code chains, each bounded at 16
+  dispatches. The first used 11 and cost $1.00548; after its deterministic
+  correction, the fresh chain used 13 and cost $1.39473.
+
+#### What failed
+
+- `implementation.content.invalid`: the fenced body contained `\U0001f319` at
+  positions 1911 and 9505. It was malformed inner JSON, not a fence or
+  PowerShell failure; no patch or later stage ran. The two prior runs instead
+  reached `code_review` and correctly blocked on actionable findings.
+
+#### What worked
+
+- A byte-exact fixture reproduces the refusal; changing only both `\U` tokens
+  makes all five files validate. The actual launcher is native `claude.exe`;
+  captured bytes are decoded once, so neither shell manufactured the result.
+- The fresh implementation returned valid JSON, verification passed, both
+  specialized reviewers returned valid empty reports in panel 1, all four
+  artifacts delivered at `b0b1104dc0b045dbc3d8c116ba44e9ed894200e4`, and
+  the audit chain verified. The operator then manually verified the calculator
+  output. No remediation or second panel was needed.
+
+#### Running state
+
+- Blocked target: `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1788790553825\target`.
+  Completed target: `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1788794835268\target`.
+  No process remains; do not use broad `driver.mjs clean` yet.
+
+#### Verification
+
+- The new reviewer result bodies match the retained raw bytes exactly and all
+  five live code-review fixtures pass extraction and contract replay. Focused
+  replay is 9/9; typecheck, docs, and diff check are clean. Earlier local gates
+  remain 821/822 with one Windows symlink skip.
+- Operator manual check — the delivered calculator output was verified after
+  completion; no detailed manual test matrix was recorded.
+
+#### Deferred and open
+
+- Open: live remediation, post-patch verification, and panel 2 remain
+  unexercised because the successful first panel reported nothing.
+- Deferred: `--json-schema` needs a separate recorded contract investigation.
+
+#### Next up
+
+- Push/merge and cleanup are the only immediate operator decisions; do not buy
+  runs merely to force a remediation finding.
+
+### Bounded code-review remediation implemented and reconciled (2026-09-07)
+
+- The contract is 2–5 specialized reviewers, 1–5 panels, remediation of every
+  actionable intermediate finding, and a separately configurable final-panel
+  severity threshold. It has no human gate, spike, waiver, proposal, upstream
+  classification, or reconciliation schema.
+- Independent review closed three evidence defects in delivery binding,
+  verification labelling, and typed patch failures. Keep round count, panel
+  size, and threshold independent so policy changes remain profile edits.
 
 ### Regressions cleared, extractor fixed, two chains to `code_review` (2026-09-06, uncommitted)
 
@@ -243,10 +245,6 @@ implementation note; do not re-derive it.
 - **When a paid run is authorized, say what it can settle before spending**,
   and record the outcome under its own name even when it is a block.
 - **Read the criterion before writing an example about it.**
-
-#### Next up
-
-- The operator's decision on what a `code_review` block leads to; the commit.
 
 ### Two membership fixes and an agent-portability mirror (2026-09-05/06, uncommitted)
 

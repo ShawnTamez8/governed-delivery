@@ -13,11 +13,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
 import {
-  codeReviewGate,
   runCodeReviewStage,
-  validateCodeReviewLocations,
-  type CodeReviewRecord,
 } from "../src/code-review-stage.ts";
+import {
+  codeReviewGate,
+  validateCodeReviewReports as validateCodeReviewLocations,
+  type CodeReviewRecord,
+} from "../src/code-review.ts";
 import { runVerificationStage } from "../src/verification-stage.ts";
 import { extractJsonBody } from "../src/parse-output.ts";
 import { validateAgentResult } from "../src/agent-result.ts";
@@ -26,7 +28,7 @@ import { freezeProfile, loadProfile, type Profile } from "../src/profile.ts";
 import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { policyHash } from "../src/policy.ts";
-import { codeReviewEvidenceRef, proposalEvidenceRef } from "../src/paths.ts";
+import { codeReviewEvidenceRef } from "../src/paths.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
 
@@ -433,15 +435,16 @@ test("an empty panel result passes, records the panel, and leaves the run in pro
       }
 
       const record = readRecord(ctx.root, ctx.runId);
-      assert.deepEqual(record.changedPaths, [ARTIFACT]);
+      assert.deepEqual(record.rounds[0]!.changedPaths, [ARTIFACT]);
       assert.deepEqual(record.panel, ["code-reviewer-correctness", "code-reviewer-security"]);
       assert.equal(record.outcome, "pass");
       assert.deepEqual(record.blocking, []);
-      assert.deepEqual(record.proposals, []);
+      assert.equal(ctx.store.query("SELECT id FROM proposal").length, 0);
       assert.equal(record.blockingSeverity, "high");
       assert.deepEqual(record.severities, ["low", "medium", "high", "critical"]);
       assert.equal(record.patchBase, ctx.patchBase);
-      assert.equal(record.verifiedCommit, ctx.verifiedCommit);
+      assert.equal(record.initialVerifiedCommit, ctx.verifiedCommit);
+      assert.equal(record.finalVerifiedCommit, ctx.verifiedCommit);
       assert.ok(
         existsSync(join(ctx.root, ".governance", "code-review", String(ctx.runId), "report.md"))
       );
@@ -456,7 +459,7 @@ test("an empty panel result passes, records the panel, and leaves the run in pro
 
 // --- findings below the threshold -------------------------------------------
 
-test("a finding below the frozen threshold passes and is retained as evidence", async () => {
+test("a below-threshold final finding passes after one remediation and is retained", async () => {
   await withVerifiedRun(async (ctx) => {
     await withMode(async () => {
       const result = await review(ctx);
@@ -465,7 +468,7 @@ test("a finding below the frozen threshold passes and is retained as evidence", 
       assert.equal(stage.status, "passed");
 
       const findings = ctx.store.getCanonicalFindings(stage.id);
-      assert.equal(findings.length, 1);
+      assert.equal(findings.length, 2);
       assert.equal(findings[0]!.round, 1, "one panel, one round");
       assert.equal(findings[0]!.location, ARTIFACT);
       const reports = ctx.store.getFindingReports(findings[0]!.id);
@@ -474,13 +477,122 @@ test("a finding below the frozen threshold passes and is retained as evidence", 
       assert.equal(reports[0]!.classification, "current_artifact");
 
       const record = readRecord(ctx.root, ctx.runId);
-      assert.equal(record.findings.length, 1);
-      assert.equal(record.findings[0]!.reports[0]!.agent, "code-reviewer-correctness");
+      assert.equal(record.rounds.length, 2);
+      assert.equal(record.rounds[0]!.findings[0]!.reports[0]!.agent, "code-reviewer-correctness");
+      assert.equal(record.rounds[0]!.remediation?.verification.outcome, "pass");
+      assert.equal(record.rounds[1]!.findings[0]!.reports[0]!.severity, "low");
+      assert.equal(record.rounds[1]!.remediation, null);
       assert.deepEqual(record.blocking, []);
       assert.match(eventsOf(ctx, "code_review.gate.pass")[0]!.summary, /findings=1; blocking=0/);
-      assert.equal(eventsOf(ctx, "code_review.finding.record").length, 1);
+      assert.equal(eventsOf(ctx, "code_review.finding.record").length, 2);
+      assert.equal(agentRuns(ctx, stage.id).length, 5);
       assert.equal(verifyAuditChain(ctx.store), null);
     }, "low");
+  });
+});
+
+test("high-then-clean remediates once, verifies, and passes the full second panel", async () => {
+  await withVerifiedRun(async (ctx) => {
+    await withMode(async () => {
+      const result = await review(ctx);
+      assert.equal(result.ok, true, result.ok ? "" : result.reason);
+      const stage = stageOf(ctx)!;
+      const runs = agentRuns(ctx, stage.id);
+      assert.deepEqual(
+        runs.map((run) => run.agent),
+        [
+          "code-reviewer-correctness",
+          "code-reviewer-security",
+          "implementer",
+          "code-reviewer-correctness",
+          "code-reviewer-security",
+        ]
+      );
+      const record = readRecord(ctx.root, ctx.runId);
+      assert.equal(record.rounds.length, 2);
+      assert.equal(record.rounds[0]!.reviewedCommit, ctx.verifiedCommit);
+      assert.equal(record.rounds[0]!.findings.length, 1);
+      assert.equal(record.rounds[0]!.remediation?.verification.outcome, "pass");
+      assert.equal(
+        record.rounds[1]!.reviewedCommit,
+        record.rounds[0]!.remediation?.resultingCommit
+      );
+      assert.deepEqual(record.rounds[1]!.findings, []);
+      assert.equal(record.rounds[1]!.remediation, null);
+      assert.equal(record.finalVerifiedCommit, record.rounds[1]!.reviewedCommit);
+      assert.equal(git(ctx.worktreePath, ["rev-parse", "HEAD"]).stdout.trim(), record.finalVerifiedCommit);
+      assert.equal(verifyAuditChain(ctx.store), null);
+    }, "high-then-clean");
+  });
+});
+
+test("a frozen one-round profile blocks without dispatching remediation", async () => {
+  await withVerifiedRun(async (ctx) => {
+    refreeze(ctx.root, ctx.store, ctx.runId, (profile) => {
+      profile.policy.codeReviewMaxRounds = 1;
+    });
+    await withMode(async () => {
+      const result = await review(ctx);
+      assert.equal(result.ok, false);
+      const stage = stageOf(ctx)!;
+      assert.equal(agentRuns(ctx, stage.id).length, 2);
+      const record = readRecord(ctx.root, ctx.runId);
+      assert.equal(record.rounds.length, 1);
+      assert.equal(record.rounds[0]!.remediation, null);
+      assert.equal(record.finalVerifiedCommit, ctx.verifiedCommit);
+      assert.equal(git(ctx.worktreePath, ["rev-parse", "HEAD"]).stdout.trim(), ctx.verifiedCommit);
+    }, "high");
+  });
+});
+
+test("invalid remediation outputs fail closed before a second panel", async () => {
+  for (const [mode, message] of [
+    ["remediation-empty", /no proposed patches/],
+    ["remediation-wrong-base", /does not match the branch head/],
+    ["remediation-outside-scope", /outside the signed scope/],
+    ["remediation-mutate", /remediator-residue\.txt/],
+  ] as const) {
+    await withVerifiedRun(async (ctx) => {
+      await withMode(async () => {
+        const result = await review(ctx);
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+        assert.match(result.reason, message);
+        const stage = stageOf(ctx)!;
+        assert.equal(stage.status, "blocked");
+        assert.equal(agentRuns(ctx, stage.id).length, 3, `${mode} must stop before round 2`);
+        assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+      }, mode);
+    });
+  }
+});
+
+test("failed remediation verification retains its round record and stops", async () => {
+  await withVerifiedRun(async (ctx) => {
+    refreeze(ctx.root, ctx.store, ctx.runId, (profile) => {
+      profile.verification.commands = [
+        { name: "fails", command: ["node", join(process.cwd(), "test", "fixtures", "verify", "exit-two.mjs")] },
+      ];
+    });
+    await withMode(async () => {
+      const result = await review(ctx);
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(result.reason, /remediation verification blocked/);
+      const stage = stageOf(ctx)!;
+      assert.equal(agentRuns(ctx, stage.id).length, 3);
+      const record = readRecord(ctx.root, ctx.runId);
+      assert.equal(record.rounds.length, 1);
+      assert.equal(record.rounds[0]!.remediation?.verification.outcome, "block");
+      assert.equal(record.rounds[0]!.remediation?.verification.blockingCommand, "fails");
+      assert.equal(
+        record.finalVerifiedCommit,
+        ctx.verifiedCommit,
+        "a failed remediation candidate must not be labelled as the final verified commit"
+      );
+      assert.notEqual(record.rounds[0]!.remediation?.resultingCommit, record.finalVerifiedCommit);
+      assert.equal(stage.output_ref, codeReviewEvidenceRef(ctx.runId, "result.json"));
+    }, "high-then-clean");
   });
 });
 
@@ -494,7 +606,7 @@ test("a finding at the frozen threshold blocks the run and retains the record", 
       if (result.ok) return;
       assert.match(
         result.reason,
-        /code_review blocked: finding id\(s\) \d+ \(high, severity, [^)]+:12\).*threshold high/
+        /code_review blocked after round 2\/2: finding id\(s\) \d+ \(high, severity, [^)]+:12\).*threshold high/
       );
 
       const stage = stageOf(ctx)!;
@@ -510,12 +622,11 @@ test("a finding at the frozen threshold blocks the run and retains the record", 
       const record = readRecord(ctx.root, ctx.runId);
       assert.equal(record.outcome, "block");
       assert.equal(record.blocking.length, 1);
-      assert.equal(record.blocking[0]!.cause, "severity");
       assert.equal(record.blocking[0]!.severity, "high");
       assert.equal(eventsOf(ctx, "code_review.gate.block").length, 1);
       assert.ok(existsSync(ctx.worktreePath), "the worktree survives a block");
       // The panel completes before the gate decides, as the spec panel does.
-      assert.equal(agentRuns(ctx, stage.id).length, 2);
+      assert.equal(agentRuns(ctx, stage.id).length, 5);
       assert.equal(verifyAuditChain(ctx.store), null);
     }, "high");
   });
@@ -525,6 +636,7 @@ test("the gate reads the frozen threshold, not the live constant", async () => {
   await withVerifiedRun(async (ctx) => {
     refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
       p.policy.codeReviewBlockingSeverity = "critical";
+      p.policy.codeReviewMaxRounds = 1;
     });
     await withMode(async () => {
       const result = await review(ctx);
@@ -536,6 +648,7 @@ test("the gate reads the frozen threshold, not the live constant", async () => {
   await withVerifiedRun(async (ctx) => {
     refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
       p.policy.codeReviewBlockingSeverity = "low";
+      p.policy.codeReviewMaxRounds = 1;
     });
     await withMode(async () => {
       const result = await review(ctx);
@@ -554,6 +667,7 @@ test("the gate orders by the frozen severity list, not the live one", async () =
   await withVerifiedRun(async (ctx) => {
     refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
       p.policy.severities = ["critical", "high", "medium", "low"];
+      p.policy.codeReviewMaxRounds = 1;
     });
     await withMode(async () => {
       const result = await review(ctx);
@@ -569,6 +683,9 @@ test("the gate orders by the frozen severity list, not the live one", async () =
 
 test("two reviewers reporting one identity make one finding with two reports", async () => {
   await withVerifiedRun(async (ctx) => {
+    refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
+      p.policy.codeReviewMaxRounds = 1;
+    });
     await withMode(async () => {
       const result = await review(ctx);
       assert.equal(result.ok, false, "the high report blocks");
@@ -590,79 +707,22 @@ test("two reviewers reporting one identity make one finding with two reports", a
 
 // --- upstream ---------------------------------------------------------------
 
-test("an upstream finding blocks at any severity and raises a blocking_dependency proposal", async () => {
+test("an upstream finding is refused and never creates a proposal", async () => {
   await withVerifiedRun(async (ctx) => {
     await withMode(async () => {
       const result = await review(ctx);
-      assert.equal(result.ok, false, "an upstream finding blocks below the threshold");
+      assert.equal(result.ok, false);
       if (result.ok) return;
-      assert.match(result.reason, /\(low, upstream, upstream:plan:missing-rounding-decision\)/);
+      assert.match(result.reason, /classification "upstream" is not current_artifact/);
 
       const stage = stageOf(ctx)!;
       assert.equal(stage.status, "blocked");
-      assert.equal(stage.output_ref, codeReviewEvidenceRef(ctx.runId, "result.json"));
+      assert.equal(stage.output_ref, "");
       assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
 
-      const findings = ctx.store.getCanonicalFindings(stage.id);
-      assert.equal(findings[0]!.location, "upstream:plan:missing-rounding-decision");
-      assert.equal(ctx.store.getFindingReports(findings[0]!.id)[0]!.classification, "upstream");
-
-      const record = readRecord(ctx.root, ctx.runId);
-      assert.equal(record.blocking.length, 1);
-      assert.deepEqual(record.blocking[0], {
-        findingId: findings[0]!.id,
-        severity: "low",
-        location: "upstream:plan:missing-rounding-decision",
-        cause: "upstream",
-      });
-
-      const blocked = eventsOf(ctx, "code_review.gate.block")[0]!;
-      assert.match(blocked.summary, /cause=upstream/);
-      assert.match(blocked.summary, /location=upstream:plan:missing-rounding-decision/);
-      assert.match(blocked.summary, new RegExp(`finding=${findings[0]!.id}`));
-
-      // The proposal: a queryable row on the plan's backlog, not a line to
-      // dig out of a gate event.
-      const proposals = ctx.store.query<{ id: number; route: string; title: string; evidence_ref: string }>(
-        "SELECT id, route, title, evidence_ref FROM proposal WHERE stage_id = ?",
-        [stage.id]
-      );
-      assert.equal(proposals.length, 1);
-      assert.equal(proposals[0]!.route, "blocking_dependency");
-      assert.equal(
-        proposals[0]!.title,
-        "The approved plan does not state how monetary values are rounded."
-      );
-      const sources = ctx.store.query<{ finding_id: number }>(
-        "SELECT finding_id FROM proposal_source WHERE proposal_id = ?",
-        [proposals[0]!.id]
-      );
-      assert.deepEqual(sources.map((s) => s.finding_id), [findings[0]!.id]);
-
-      const expectedRef = proposalEvidenceRef(ctx.runId, `finding-${findings[0]!.id}.json`);
-      assert.equal(proposals[0]!.evidence_ref, expectedRef);
-      const evidence = JSON.parse(readFileSync(join(ctx.root, expectedRef), "utf8")) as {
-        candidate: { whyUpstream: string };
-        rationale: string;
-        route: string;
-      };
-      assert.match(evidence.candidate.whyUpstream, /missing-rounding-decision/);
-      assert.match(evidence.rationale, /upstream at severity low/);
-      assert.equal(evidence.route, "blocking_dependency");
-
-      assert.equal(eventsOf(ctx, "code_review.proposal.record").length, 1);
-      assert.deepEqual(record.proposals, [
-        {
-          proposalId: proposals[0]!.id,
-          findingId: findings[0]!.id,
-          route: "blocking_dependency",
-          evidenceRef: expectedRef,
-        },
-      ]);
-      assert.match(
-        blocked.summary,
-        new RegExp(`proposals=${findings[0]!.id}:${proposals[0]!.id}:blocking_dependency:created`)
-      );
+      assert.equal(ctx.store.getCanonicalFindings(stage.id).length, 0);
+      assert.equal(ctx.store.query("SELECT id FROM proposal").length, 0);
+      assert.equal(eventsOf(ctx, "code_review.reviewer.failed").length, 1);
       assert.equal(verifyAuditChain(ctx.store), null);
     }, "upstream");
   });
@@ -732,8 +792,8 @@ test("validateCodeReviewLocations accepts a changed path with an optional positi
   }
   // An empty changed set cannot admit any location at all.
   assert.notEqual(validateCodeReviewLocations(at("js/a.js"), []), null);
-  // Upstream reports are the shared validator's business, not this one's.
-  assert.equal(
+  // Code review accepts only findings its implementer can repair in code.
+  assert.notEqual(
     validateCodeReviewLocations(at("upstream:plan:missing-decision", "upstream"), changed),
     null
   );
@@ -1237,8 +1297,8 @@ test("the recorded correctness response replays to the block the stage recorded"
   assert.equal(verdict.pass, false);
   if (verdict.pass) return;
   assert.deepEqual(
-    verdict.blocking.map((b) => ({ location: b.location, severity: b.severity, cause: b.cause })),
-    stageContext.recordedBlocking
+    verdict.blocking.map((b) => ({ location: b.location, severity: b.severity })),
+    stageContext.recordedBlocking.map(({ location, severity }) => ({ location, severity }))
   );
 });
 
@@ -1287,7 +1347,7 @@ test("the second recorded correctness response — prose, then a fence, one high
   assert.equal(verdict.pass, false);
   if (verdict.pass) return;
   assert.deepEqual(
-    verdict.blocking.map((b) => ({ location: b.location, severity: b.severity, cause: b.cause })),
-    stageContext.recordedBlocking
+    verdict.blocking.map((b) => ({ location: b.location, severity: b.severity })),
+    stageContext.recordedBlocking.map(({ location, severity }) => ({ location, severity }))
   );
 });

@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
 import { runDeliveryStage } from "../src/delivery-stage.ts";
 import { runVerificationStage } from "../src/verification-stage.ts";
-import type { CodeReviewRecord } from "../src/code-review-stage.ts";
+import { formatCodeReviewGatePass, type CodeReviewRecord } from "../src/code-review.ts";
 import { codeReviewEvidenceDir, codeReviewEvidenceRef } from "../src/paths.ts";
 import { freezeProfile, loadProfile } from "../src/profile.ts";
 import { appendAudit, verifyAuditChain } from "../src/audit.ts";
@@ -44,6 +44,7 @@ interface Ctx {
   implementationStageId: number;
   verificationStageId: number;
   codeReviewStageId: number;
+  finalReviewedCommit: string;
 }
 
 interface Opts {
@@ -66,11 +67,11 @@ interface Opts {
    */
   noCodeReviewGateEvent?: boolean;
   /**
-   * A code review that blocked: the record carries an upstream finding and the
-   * stage and run are blocked. This is the shape the code-review stage
-   * produces on an upstream finding, and delivery must never follow it.
+   * A code review that blocked on its final configured panel.
    */
   blockedCodeReview?: boolean;
+  /** Add a verified code-review remediation commit after the initial verification. */
+  remediatedCodeReview?: boolean;
 }
 
 function git(cwd: string, args: string[]): { status: number; stdout: string; stderr: string } {
@@ -258,29 +259,78 @@ ${scope.map((p) => `- ${p}`).join("\n")}
     // crosses the executor boundary, and the record is written in the exported
     // shape the real stage writes so delivery reads one type, not two.
     const blockedReview = opts.blockedCodeReview === true;
+    let finalReviewedCommit = verifiedCommit;
+    if (opts.remediatedCodeReview === true) {
+      writeFileSync(join(worktreePath, ARTIFACT), "content after code-review remediation\n");
+      git(worktreePath, ["add", ARTIFACT]);
+      commitIn(worktreePath, `bw run ${run.id}: code review remediation round 1`);
+      finalReviewedCommit = git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim();
+    }
     const codeReviewStage = store.insertStage(run.id, "code_review", verificationStageId);
     const codeReviewRecord: CodeReviewRecord = {
       runId: run.id,
       stageId: codeReviewStage.id,
       worktreePath,
       patchBase,
-      verifiedCommit,
-      changedPaths: (opts.commitFiles ?? scope).length > 0 ? (opts.commitFiles ?? scope) : [ARTIFACT],
+      initialVerifiedCommit: verifiedCommit,
+      finalVerifiedCommit: finalReviewedCommit,
       panel: ["code-reviewer-correctness", "code-reviewer-security"],
+      panelSize: 2,
+      maxRounds: 2,
       blockingSeverity: "high",
       severities: ["low", "medium", "high", "critical"],
-      findings: [],
       blocking: blockedReview
         ? [
             {
               findingId: 1,
-              severity: "low",
-              location: "upstream:plan:missing-rounding-decision",
-              cause: "upstream",
+              severity: "high",
+              location: ARTIFACT,
             },
           ]
         : [],
-      proposals: [],
+      rounds:
+        opts.remediatedCodeReview === true
+          ? [
+              {
+                round: 1,
+                reviewedCommit: verifiedCommit,
+                changedPaths: [ARTIFACT],
+                findings: [],
+                blocking: [],
+                remediation: {
+                  author: "implementer",
+                  baseCommit: verifiedCommit,
+                  resultingCommit: finalReviewedCommit,
+                  changedPaths: [ARTIFACT],
+                  verification: {
+                    expectedCommit: finalReviewedCommit,
+                    outcome: "pass",
+                    blockingCommand: null,
+                    commands: [],
+                  },
+                },
+              },
+              {
+                round: 2,
+                reviewedCommit: finalReviewedCommit,
+                changedPaths: [ARTIFACT],
+                findings: [],
+                blocking: [],
+                remediation: null,
+              },
+            ]
+          : [
+              {
+                round: 1,
+                reviewedCommit: verifiedCommit,
+                changedPaths: (opts.commitFiles ?? scope).length > 0 ? (opts.commitFiles ?? scope) : [ARTIFACT],
+                findings: [],
+                blocking: blockedReview
+                  ? [{ findingId: 1, severity: "high", location: ARTIFACT }]
+                  : [],
+                remediation: null,
+              },
+            ],
       outcome: blockedReview ? "block" : "pass",
       createdAt: new Date().toISOString(),
     };
@@ -302,7 +352,13 @@ ${scope.map((p) => `- ${p}`).join("\n")}
           actor: "system",
           actorType: "cli",
           action: "code_review.gate.pass",
-          summary: `code_review gate passed over ${patchBase}..${verifiedCommit}; findings=0; blocking=0; threshold=high`,
+          summary: formatCodeReviewGatePass({
+            round: opts.remediatedCodeReview === true ? 2 : 1,
+            maxRounds: 2,
+            commit: finalReviewedCommit,
+            findings: 0,
+            blockingSeverity: "high",
+          }),
         });
       }
     }
@@ -325,6 +381,7 @@ ${scope.map((p) => `- ${p}`).join("\n")}
         implementationStageId: implementationStage.id,
         verificationStageId,
         codeReviewStageId: codeReviewStage.id,
+        finalReviewedCommit,
       })
     ).finally(() => {
       store.close();
@@ -382,6 +439,20 @@ test("every declared artifact committed on the run branch passes delivery and co
     assert.match(audit.summary, new RegExp(`delivered 1 artifact\\(s\\): ${ARTIFACT}`));
     assert.equal(verifyAuditChain(ctx.store), null);
   });
+});
+
+test("delivery certifies the final verified commit after code-review remediation", async () => {
+  await withDeliveryRun(
+    async (ctx) => {
+      const result = runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+      assert.equal(result.ok, true, result.ok ? "" : result.reason);
+      const record = deliveryRecord(ctx.root, ctx.runId);
+      assert.equal(record.verifiedCommit, ctx.finalReviewedCommit);
+      assert.notEqual(ctx.finalReviewedCommit, ctx.verifiedCommit);
+      assert.equal(git(ctx.worktreePath, ["rev-parse", "HEAD"]).stdout.trim(), ctx.finalReviewedCommit);
+    },
+    { remediatedCodeReview: true }
+  );
 });
 
 test("no agent_run row exists: the stage spends nothing", async () => {
@@ -607,24 +678,115 @@ test("a code-review record edited to claim a block refuses as invalid", async ()
   });
 });
 
-test("a code-review record naming a different verified commit refuses", async () => {
+test("a code-review record naming a different initial verified commit refuses", async () => {
   // The record parses on its own terms; only the cross-check against the
   // verification record can see that the review read something else.
   await withDeliveryRun(async (ctx) => {
     const recordPath = join(ctx.root, ".governance", "code-review", String(ctx.runId), "result.json");
     const record = JSON.parse(readFileSync(recordPath, "utf8")) as Record<string, unknown>;
-    record.verifiedCommit = "b".repeat(40);
+    const otherCommit = "b".repeat(40);
+    record.initialVerifiedCommit = otherCommit;
+    record.finalVerifiedCommit = otherCommit;
+    ((record.rounds as Record<string, unknown>[])[0]!).reviewedCommit = otherCommit;
     writeFileSync(recordPath, JSON.stringify(record));
     const result = await runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
     assert.equal(result.ok, false);
     if (result.ok) return;
-    assert.match(result.reason, /code-review record at .* is invalid: it reviewed /);
+    assert.match(result.reason, /code-review record at .* is invalid: it began from /);
     assert.match(result.reason, /not the verified /);
     assert.equal(
       ctx.store.getStageChain(ctx.runId).some((s) => s.kind === "delivery_check"),
       false
     );
     assert.equal(ctx.store.getRun(ctx.runId)!.status, "in_progress");
+  });
+});
+
+test("a remediated code-review record with a failed verification refuses delivery", async () => {
+  await withDeliveryRun(
+    async (ctx) => {
+      const recordPath = join(ctx.root, ".governance", "code-review", String(ctx.runId), "result.json");
+      const record = JSON.parse(readFileSync(recordPath, "utf8")) as Record<string, unknown>;
+      const firstRound = (record.rounds as Record<string, unknown>[])[0]!;
+      const remediation = firstRound.remediation as Record<string, unknown>;
+      (remediation.verification as Record<string, unknown>).outcome = "block";
+      writeFileSync(recordPath, JSON.stringify(record));
+
+      const result = runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(result.reason, /round 1 does not carry a passed verification for its remediation/);
+      assert.equal(
+        ctx.store.getStageChain(ctx.runId).some((stage) => stage.kind === "delivery_check"),
+        false
+      );
+    },
+    { remediatedCodeReview: true }
+  );
+});
+
+test("a remediated code-review record with a broken commit chain refuses delivery", async () => {
+  await withDeliveryRun(
+    async (ctx) => {
+      const recordPath = join(ctx.root, ".governance", "code-review", String(ctx.runId), "result.json");
+      const record = JSON.parse(readFileSync(recordPath, "utf8")) as Record<string, unknown>;
+      ((record.rounds as Record<string, unknown>[])[1]!).reviewedCommit = ctx.verifiedCommit;
+      writeFileSync(recordPath, JSON.stringify(record));
+
+      const result = runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(result.reason, /round 2 does not describe its reviewed commit/);
+      assert.equal(
+        ctx.store.getStageChain(ctx.runId).some((stage) => stage.kind === "delivery_check"),
+        false
+      );
+    },
+    { remediatedCodeReview: true }
+  );
+});
+
+test("a forged post-review commit cannot reuse a stale code-review pass event", async () => {
+  await withDeliveryRun(async (ctx) => {
+    writeFileSync(join(ctx.worktreePath, ARTIFACT), "content committed after code review\n");
+    git(ctx.worktreePath, ["add", ARTIFACT]);
+    commitIn(ctx.worktreePath, "unreviewed post-review commit");
+    const forgedCommit = git(ctx.worktreePath, ["rev-parse", "HEAD"]).stdout.trim();
+
+    const recordPath = join(ctx.root, ".governance", "code-review", String(ctx.runId), "result.json");
+    const record = JSON.parse(readFileSync(recordPath, "utf8")) as Record<string, unknown>;
+    const rounds = record.rounds as Record<string, unknown>[];
+    rounds[0]!.remediation = {
+      author: "implementer",
+      baseCommit: ctx.verifiedCommit,
+      resultingCommit: forgedCommit,
+      changedPaths: [ARTIFACT],
+      verification: {
+        expectedCommit: forgedCommit,
+        outcome: "pass",
+        blockingCommand: null,
+        commands: [],
+      },
+    };
+    rounds.push({
+      round: 2,
+      reviewedCommit: forgedCommit,
+      changedPaths: [ARTIFACT],
+      findings: [],
+      blocking: [],
+      remediation: null,
+    });
+    record.finalVerifiedCommit = forgedCommit;
+    writeFileSync(recordPath, JSON.stringify(record));
+
+    const result = runDeliveryStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+    assert.equal(result.ok, false, "the audit event binds the actual final reviewed commit");
+    if (result.ok) return;
+    assert.match(result.reason, /code_review\.gate\.pass audit event .* does not match/);
+    assert.equal(
+      ctx.store.getStageChain(ctx.runId).some((stage) => stage.kind === "delivery_check"),
+      false
+    );
   });
 });
 

@@ -10,6 +10,67 @@ import { readFileSync, writeFileSync } from "node:fs";
 // the failure mode hazard 4 names. A scrape that finds nothing throws: a
 // broken fixture must fail loudly, never pass by falling back to a literal.
 const stdin = readFileSync(0, "utf8");
+const mode = process.env.EMIT_MODE ?? "ok";
+
+function emitRaw(resultText) {
+  console.log(
+    JSON.stringify({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: resultText,
+      total_cost_usd: 0,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      modelUsage: { "fixture-model": { inputTokens: 1, outputTokens: 1 } },
+    })
+  );
+}
+
+function emit(agentResult) {
+  emitRaw(JSON.stringify(agentResult));
+}
+
+// The same executor also stands in for the frozen implementer between panel
+// executions. Its patch is derived from the prompt and current checkout.
+const remediationMatch = /you are the code-review remediator (\S+)/.exec(stdin);
+if (remediationMatch) {
+  const remediator = remediationMatch[1];
+  const baseCommit = /baseCommit must be exactly ([0-9a-f]{40,64})/.exec(stdin)?.[1];
+  const scopeBlock = /Approved scope:\n\n([\s\S]*?)\n\nFindings to remediate:/.exec(stdin)?.[1];
+  if (!baseCommit || !scopeBlock) {
+    throw new Error("emit-code-review: incomplete remediation prompt");
+  }
+  const scope = scopeBlock
+    .split("\n")
+    .map((line) => line.trim().replace(/^-\s*/, ""))
+    .filter((line) => line !== "");
+  if (scope.length === 0) throw new Error("emit-code-review: empty remediation scope");
+  const target = scope[0];
+  const current = readFileSync(target, "utf8");
+  const file = {
+    path: mode === "remediation-outside-scope" ? "outside.txt" : target,
+    action: "modify",
+    content: `${current.trimEnd()}\ncode-review-remediated\n`,
+  };
+  if (mode === "remediation-mutate") writeFileSync("remediator-residue.txt", "fixture wrote this\n");
+  emit({
+    status: "proposed",
+    agent: remediator,
+    role: "author",
+    executor: "claude-code",
+    summary: "fixture remediated the panel findings",
+    proposedPatches:
+      mode === "remediation-empty"
+        ? []
+        : [
+            {
+              baseCommit: mode === "remediation-wrong-base" ? "0".repeat(40) : baseCommit,
+              files: [file],
+            },
+          ],
+  });
+  process.exit(0);
+}
 
 // `you are the code reviewer <id> with specialty <lens>` — stated by
 // buildCodeReviewPrompt.
@@ -36,7 +97,6 @@ function changedPaths() {
   return paths;
 }
 
-const mode = process.env.EMIT_MODE ?? "ok";
 const paths = changedPaths();
 const first = paths[0];
 
@@ -75,24 +135,6 @@ function onlyFrom(seat, findings) {
   return proposed(agent === seat ? findings : []);
 }
 
-function emitRaw(resultText) {
-  console.log(
-    JSON.stringify({
-      type: "result",
-      subtype: "success",
-      is_error: false,
-      result: resultText,
-      total_cost_usd: 0,
-      usage: { input_tokens: 1, output_tokens: 1 },
-      modelUsage: { "fixture-model": { inputTokens: 1, outputTokens: 1 } },
-    })
-  );
-}
-
-function emit(agentResult) {
-  emitRaw(JSON.stringify(agentResult));
-}
-
 let agentResult;
 if (mode === "ok") {
   agentResult = proposed([]);
@@ -101,6 +143,22 @@ if (mode === "ok") {
 } else if (mode === "high") {
   agentResult = onlyFrom(SECURITY, [
     finding({ severity: "high", location: `${first}:12`, intentKey: "unsafe-input" }),
+  ]);
+} else if (mode === "high-then-clean") {
+  const remediated = readFileSync(first, "utf8").includes("code-review-remediated");
+  agentResult = remediated
+    ? proposed([])
+    : onlyFrom(CORRECTNESS, [
+        finding({ severity: "high", location: `${first}:1`, intentKey: "needs-remediation" }),
+      ]);
+} else if (
+  mode === "remediation-empty" ||
+  mode === "remediation-wrong-base" ||
+  mode === "remediation-outside-scope" ||
+  mode === "remediation-mutate"
+) {
+  agentResult = onlyFrom(CORRECTNESS, [
+    finding({ severity: "high", location: `${first}:1`, intentKey: "needs-remediation" }),
   ]);
 } else if (mode === "shared") {
   // Both seats report the same canonical identity — one location, one

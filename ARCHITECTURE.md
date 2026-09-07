@@ -401,6 +401,14 @@ Risk is computed once, deterministically, at intake — from the spec's
 paths. It travels into the authorization for the operator to sign. An agent
 never assesses its own risk.
 
+Code review has a separate configured panel size, default two and bounded from
+two through five. Its panel is selected deterministically in agent-id order
+from frozen reviewers that emit `code-findings`, carry distinct specialties,
+and carry code-review instructions specific to those specialties. The two
+seeded specialties are correctness and security. Raising the configured size
+requires registering enough additional distinct specialists before the profile
+can freeze; it does not change either document-review panel rule above.
+
 Keep it free of model routing and telemetry concerns. Entangling selection with
 semantic model tiers and capability preflight is what made the previous
 implementation resistant to change — three unrelated reasons for one function to
@@ -466,10 +474,11 @@ implementation stage writes only inside the run's signed scope.
 ### Invocation
 
 **Non-interactive, one process per invocation.** Prompt on **stdin**, never in
-argv. On Windows the executable usually needs shell resolution, and a shell
-concatenates arguments without escaping them — a prompt containing spaces or
-quotes arrives shredded, and the session runs without doing the work it was
-asked for, while appearing to succeed. Write the prompt to stdin and close it.
+argv. Resolve and spawn the executor's native binary directly, including on
+Windows; do not put `cmd.exe` or PowerShell between the harness and the binary.
+A shell concatenates arguments without escaping them, creating a second parser
+for fixed executor flags without helping stdin. Write the prompt to stdin and
+close it.
 
 **Probe before any run.** Run the probe command at setup and refuse to proceed
 if the executable does not resolve in the environment that will actually spawn
@@ -628,46 +637,68 @@ signature.
 **`verification`.** Fails closed when commands are missing or do not pass.
 Bounded remediation rounds are the retry budget; exhausting one blocks.
 
-**`code_review`.** Seats a fixed panel of every registered code reviewer —
-role `reviewer`, output kind `code-findings`, bound to the frozen executor —
-and hands each the approved specification and plan, the changed paths, and the
-unified diff of the recorded patch range, with the worktree at the verified
-commit as a read-only working directory. It asserts the worktree is at that
-commit and clean before the stage row exists and again after every dispatch,
-and records every report as immutable evidence on a canonical finding exactly
-as the two review stages do. It passes when no report carries a severity at or
-above the threshold frozen in the profile, and blocks otherwise, naming each
-blocking finding by id, severity, and location.
+**`code_review`.** Seats exactly the configured number of specialized code
+reviewers — role `reviewer`, output kind `code-findings`, bound to the frozen
+executor — and hands each the approved specification and plan, the complete
+changed-path set, and the unified diff from the original patch base through the
+current verified commit. The worktree is their read-only working directory. It
+asserts the worktree is at that commit and clean before the stage row exists
+and again after every dispatch, and records every report as immutable evidence
+on a canonical finding. Each selected definition contributes a distinct,
+protected specialty instruction to the prompt; the two seeded lenses are
+correctness and security. Reviewers may report only actionable defects in the
+current code. Style, preference, optional refactoring, speculative hardening,
+questions, and concerns that require changing the approved specification or
+plan are not findings in this stage.
 
-What the gate proves: that no reviewer asserted a severity at or above the
-frozen threshold, and that no reviewer placed a defect's cause in the approved
-plan. What it does not prove: that the code is correct. Nothing confirms a
-below-threshold finding was harmless, no author answers any finding, and the
-stage's reach is bounded by diff size — the prompt carries the specification,
-the plan, and the full diff under the frozen prompt ceiling, and a change that
-exceeds it is refused by name after implementation has already spent, never
-reviewed in part.
+Code review has a separate total panel-round budget, default two and bounded
+from one through five, frozen with its panel size and blocking severity at run
+start. A round is one complete execution of the configured panel. When any
+finding is reported and another round remains, every attributable report from
+that panel is handed together to the frozen `implementer`. The implementer
+proposes code patches bound to the current reviewed commit; the system applies
+them through the same scope, protected-path, base/head, link, staged-set,
+committed-set, and clean-tree guards as initial implementation, then runs the
+same frozen verification commands against the resulting commit. Only a passing
+verified commit reaches the next complete panel, which receives a newly
+computed full diff from the original patch base. A remediation that produces
+no patch or no new verified commit blocks instead of buying an identical
+retry.
 
-Severity gates here although this section removed severity gating from
-`spec_review` and `plan_review`. Those two have a reconciliation dispatch
-that produces decisions, so decision completeness is a question their state can
-answer; this stage has none, and no author exists to answer a finding. Blocking
-on any finding at all would make a default installation unable to complete a
-run against any design large enough to attract one, so the gate is a frozen
-threshold rather than a count.
+The final panel never triggers another patch. It passes with no findings, and
+also passes when every final finding is below the frozen
+`codeReviewBlockingSeverity`; those below-threshold reports remain attributable
+evidence and are not described as harmless or resolved. It blocks when any
+final report reaches the threshold, naming those findings by id, severity, and
+location. Setting the round budget to one therefore selects one-shot review
+with no remediation. Changing the threshold, panel size, or total round budget
+changes only profiles frozen after the configuration change.
 
-Where an upstream finding goes, so section 13's rule holds here too: a code
-reviewer's upstream finding carries the `upstream:plan:` prefix and blocks the
-run for a human at any severity, its finding id and decision key retained in
-the record and in the gate event, and every one of them also becomes a
-non-binding `blocking_dependency` proposal with retained evidence, which only
-a human promotes. A fresh run is the repair.
+What the gate proves: that the final reviewed commit passed the frozen
+verification commands and no reviewer on its final complete panel asserted a
+severity at or above the frozen threshold. It does not prove the code is
+correct or a below-threshold finding harmless. Its reach remains bounded by
+diff size — the prompt carries the specification, plan, and complete diff
+under the frozen prompt ceiling, and a change that exceeds it is refused by
+name and never reviewed in part.
 
-The panel is fixed: every registered code reviewer, seated in id order.
-Selection by scope, changed paths, technology, or risk is deferred. The two
-seeded reviewers are separately dispatched and recorded as
-`configured_standalone` — never described as independent; section 6 says what
-that label proves and what it does not.
+The pass audit event canonically binds the final round number, frozen round
+budget, final reviewed commit, final finding count, and blocking severity.
+`delivery_check` parses that event and matches every value to the retained
+record before it trusts the final commit; the existence of a pass event alone
+does not authorize a later or edited commit.
+
+This remediation is not document reconciliation. It records no finding
+decision, creates no proposal or spike, asks for no human reviewer or waiver,
+and admits no `upstream` classification. A reviewer response that attempts to
+route a concern outside the current code is invalid output and blocks the run;
+the prompt instead tells the reviewer to omit concerns this stage cannot fix.
+The `spec_review` and `plan_review` author-requested panels, reconciliation
+schemas, upstream routes, and no-closure-pass behavior are unchanged.
+
+Every panel reviewer and each intervening implementer are separately
+dispatched and recorded as `configured_standalone` — never described as
+independent; section 6 says what that label proves and what it does not.
 
 **`delivery_check`.** Before a run may complete, every declared artifact must
 be delivered by exact normalized equality, never by containment. The delivery
@@ -696,11 +727,11 @@ hash and policy snapshot, and let that be part of what is approved.
 
 ### Deferred before the step 9 milestone
 
-Five behaviours this section describes are deliberately not built yet. They
+Three behaviours this section describes are deliberately not built yet. They
 are recorded here rather than only in a plan, because this document is
 binding and a deferral nobody can find in it is indistinguishable from an
 omission. Each one blocks terminally with the cause named, and **a fresh run
-is the repair for all five** — there is no in-place resume.
+is the repair for all three** — there is no in-place resume.
 
 - **Verification remediation rounds.** `verification` fails closed on the
   first command that does not pass; the remediation budget above is not spent
@@ -712,19 +743,11 @@ is the repair for all five** — there is no in-place resume.
 - **The `status.md` projection.** Section 14 describes it as a projection of
   the run row. Nothing writes it, and the database is the only place a run's
   state can be read today.
-- **Code-review remediation.** `code_review` blocks terminally on a report at
-  or above the frozen severity, or on any upstream finding. No reconciliation
-  dispatch, patch round, or re-review exists, and a fresh run is the repair.
-- **Operator waiver.** No human can read a code-review finding, judge it wrong
-  or over-graded, and let the run continue. A fresh run against the same design
-  and model varies nothing, so a mistaken block ends at the design or the
-  rubric rather than at a retry. A waiver would be a signed operator decision
-  recorded against the finding id, in the approval's shape, and is not built.
-
 The stop at step 9 was lifted for exactly one deferred stage, `code_review`,
-by operator decision on 2026-09-04. The five behaviours here and the five
-stages still listed in section 5 each need their own; building past a deferral
-is not a matter of finding time.
+by operator decision on 2026-09-04, and for its bounded remediation behavior by
+operator decision on 2026-09-06. The three behaviours here and the five stages
+still listed in section 5 each need their own; building past a deferral is not
+a matter of finding time.
 
 ## 13. Conflict resolution
 
@@ -861,7 +884,7 @@ report lives there.
   verification/<run>/  retained command output, one file per command, plus the
                        structured result record handed to delivery_check
   proposals/<run>/  retained upstream-proposal evidence, one file per
-                    candidate; proposal.evidence_ref references only the
+candidate; proposal.evidence_ref references only the
                     creating candidate's file — a later candidate that
                     dedups onto the same proposal row gets its own evidence
                     file here too, but that file is reachable only through
@@ -871,11 +894,14 @@ report lives there.
                     delivered, and missing sets) and its human-readable
                     report.md companion; the delivery_check stage's
                     output_ref references the structured record
-  code-review/<run>/  the retained review record: result.json (changed paths,
-                      the panel, every finding with every report, the blocking
-                      list, and the outcome) and its human-readable report.md
-                      companion; the code_review stage's output_ref references
-                      the structured record, and delivery_check reads it
+  code-review/<run>/  the retained review record: result.json (initial and
+                      final verified commits, frozen panel policy, every panel
+                      round, remediation and verification evidence, final
+                      blocking list, and outcome) and its human-readable
+                      report.md companion; round-<n>/verification/ retains
+                      collision-free command evidence; the code_review stage's
+                      output_ref references the structured record, and
+                      delivery_check reads it
 ```
 
 **What is git-tracked and what is not.** The database and raw output are
@@ -1053,11 +1079,18 @@ price.
   but the flood.
 - **Concurrency.** One writer per repository, enforced by a lock. A second
   invocation fails fast with a clear diagnostic rather than interleaving writes.
-- **Review rounds.** A bounded budget per reviewed stage, set in configuration
-  and frozen in the profile — one round by default, configurable higher. A
-  round is one complete panel-and-reconciliation cycle; there is no closure
-  pass, and the count is unrelated to panel size. Exhausting the budget blocks;
-  it does not silently accept.
+- **Document-review rounds.** A bounded budget for `spec_review` and
+  `plan_review`, set in configuration and frozen in the profile — one round by
+  default, configurable higher. A round is one complete
+  panel-and-reconciliation cycle; there is no closure pass, and the count is
+  unrelated to panel size. Exhausting the budget blocks; it does not silently
+  accept.
+- **Code-review panel rounds.** A separate total panel-execution budget,
+  default two and configurable from one through five, frozen in the profile
+  independently of panel size. Findings on a non-final panel trigger one patch
+  proposal and verification before another full panel; the final panel is the
+  severity gate and never triggers an unreviewed patch. A breach blocks rather
+  than silently accepting or dispatching beyond the frozen budget.
 - **Verification retries.** No limit is in force, because there is no round
   loop: the first verification command that does not pass blocks the run.
   Adding retries later means adding a limit of its own, frozen in the profile

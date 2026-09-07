@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   buildCodeReviewPrompt,
+  buildCodeReviewRemediationPrompt,
   buildImplementationAuthorPrompt,
   buildPlanAuthorPrompt,
   buildPlanReconcilePrompt,
@@ -19,11 +20,13 @@ import {
 import { IMPLEMENTER } from "../src/agents/implementer.ts";
 import { PLAN_AUTHOR } from "../src/agents/plan-author.ts";
 import { CODE_REVIEWER_CORRECTNESS } from "../src/agents/code-reviewer-correctness.ts";
+import { CODE_REVIEWER_SECURITY } from "../src/agents/code-reviewer-security.ts";
 import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
 import { SPEC_REVIEWER_TRACEABILITY } from "../src/agents/spec-reviewer-traceability.ts";
 import { validatePanelRequest } from "../src/select.ts";
 import { validateSpecDoc } from "../src/spec-doc.ts";
 import { validatePlanDoc } from "../src/plan-doc.ts";
+import { validateAgentResult } from "../src/agent-result.ts";
 
 // Hazard 3: every constrained field the prompts request must state its
 // constraint in the prompt source. This test reads the file, never the
@@ -85,17 +88,23 @@ const CONSTRAINT_STRINGS = [
   "deletion",
   "content",
   "A tasks.md path is prohibited",
+  "JSON-standard escaping",
+  "literal UTF-8",
+  "\\uXXXX",
+  "\\UXXXXXXXX",
   // The code-review contract's constrained fields. The severity rubric is
   // here because the gate compares severity against a threshold frozen in the
   // profile (hazard 3): a threshold over an unstated scale is a comparison
   // against nothing. `code-findings` is an output kind, not a prompt string,
   // so it is deliberately absent.
-  "upstream:plan:",
   "Changed paths:",
   "one of the changed paths below",
   "positive integer",
-  "state the plan decision that is missing",
   "fails to implement an acceptance criterion",
+  "small but concrete defect with localized impact",
+  "reproducible impact",
+  "optional refactoring",
+  "speculative hardening",
   // The read-only constraint: hazard 3 applied to a constrained behaviour,
   // per docs/proposals/implementer-writes-files-it-also-proposes.md. The
   // sentence is UX, not a guard — enforcement is the invocation boundary
@@ -410,6 +419,10 @@ test("the generated implementation author prompt states the patch contract", () 
     "This checkout is read-only for you",
     "Patch only these paths:",
     "Output the JSON object",
+    "JSON-standard escaping",
+    "literal UTF-8",
+    "\\uXXXX",
+    "\\UXXXXXXXX",
   ]) {
     assert.ok(prompt.includes(constraint), `implementation author prompt missing: ${constraint}`);
   }
@@ -832,16 +845,18 @@ test("the generated code review prompt states every field the validator and the 
     "unsafe, or destroys data or state",
     "fails to implement an acceptance criterion",
     "does not fail an acceptance criterion",
-    "a nit or a style concern",
+    "small but concrete defect with localized impact",
     "current_artifact",
-    "upstream:plan:",
     "lowercase kebab-case",
     "64",
     "An empty findings array is a valid result",
     "read-only",
     "- js/a.js",
     "- css/b.css",
-    "state the plan decision that is missing",
+    CODE_REVIEWER_CORRECTNESS.codeReviewInstructions!,
+    "reproducible impact",
+    "optional refactoring",
+    "speculative hardening",
     "SPEC-TEXT",
     "PLAN-TEXT",
     "DIFF-TEXT",
@@ -855,10 +870,85 @@ test("the generated code review prompt states every field the validator and the 
   assert.ok(!prompt.includes("threshold"), "the prompt must not name the gate threshold");
   assert.ok(!prompt.includes("high or critical blocks"), "the prompt must not state a consequence");
   assert.ok(!prompt.includes("blocks the run"), "the prompt must not state a consequence");
+  assert.ok(!prompt.includes("upstream:plan:"), "code review must not advertise an upstream route");
 
   // The `Changed paths:` block shape is a contract the harness fixture
   // scrapes. Asserted as the fixture reads it, not as prose.
   const scraped = /Changed paths:\n\n([\s\S]*?)\n\n/.exec(prompt);
   assert.ok(scraped, "the changed-paths block must be scrapable");
   assert.deepEqual(scraped![1]!.split("\n"), ["- js/a.js", "- css/b.css"]);
+});
+
+test("the security and correctness prompts carry distinct protected specialist instructions", () => {
+  const security = buildCodeReviewPrompt(
+    CODE_REVIEWER_SECURITY,
+    "SPEC",
+    "PLAN",
+    ["src/a.ts"],
+    "DIFF",
+    "c".repeat(40)
+  );
+  const correctness = buildCodeReviewPrompt(
+    CODE_REVIEWER_CORRECTNESS,
+    "SPEC",
+    "PLAN",
+    ["src/a.ts"],
+    "DIFF",
+    "c".repeat(40)
+  );
+  assert.ok(correctness.includes("behavioral defects"));
+  assert.ok(security.includes("trust-boundary"));
+  assert.notEqual(correctness, security);
+});
+
+test("the remediation prompt carries every report and advertises a valid patch result", () => {
+  const base = "b".repeat(40);
+  const prompt = buildCodeReviewRemediationPrompt(
+    IMPLEMENTER,
+    "SPEC-TEXT",
+    "PLAN-TEXT",
+    ["src/a.ts"],
+    base,
+    ["src/a.ts"],
+    "DIFF-TEXT",
+    [
+      {
+        findingId: 7,
+        location: "src/a.ts:3",
+        intentKey: "wrong-result",
+        reports: [
+          {
+            reviewerId: "code-reviewer-correctness",
+            severity: "high",
+            classification: "current_artifact",
+            subject: "The calculation returns the wrong result for ordinary input.",
+          },
+        ],
+      },
+    ]
+  );
+  for (const text of [
+    "finding 7",
+    "src/a.ts:3",
+    "wrong-result",
+    "code-reviewer-correctness",
+    "severity high",
+    "classification current_artifact",
+    "The calculation returns the wrong result",
+    "SPEC-TEXT",
+    "PLAN-TEXT",
+    "DIFF-TEXT",
+    base,
+    "Do not return finding dispositions, proposals, waivers, questions",
+    "JSON-standard escaping",
+    "literal UTF-8",
+    "\\uXXXX",
+    "\\UXXXXXXXX",
+  ]) {
+    assert.ok(prompt.includes(text), `remediation prompt missing: ${text}`);
+  }
+  const advertised = /Return exactly a JSON AgentResult object with this shape:\n(\{[^\n]+\})/.exec(prompt);
+  assert.ok(advertised);
+  const result = validateAgentResult(IMPLEMENTER.id, JSON.parse(advertised![1]!));
+  assert.equal(result.ok, true, result.ok ? "" : result.reason);
 });

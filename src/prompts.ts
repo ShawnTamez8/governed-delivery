@@ -847,6 +847,10 @@ Return exactly a JSON AgentResult object with this shape:
 
 status must be one of proposed, blocked, failed. Output the JSON object
 directly, with no surrounding prose, no markdown fences, and no commentary.
+Every JSON string, including file content, must use JSON-standard escaping.
+Use literal UTF-8 for non-ASCII characters or valid \`\\uXXXX\` escapes (two
+UTF-16 surrogate escapes for a character above U+FFFF). Never use Python's
+\`\\UXXXXXXXX\` escape syntax; it is not valid JSON.
 
 Each patch has:
 - baseCommit must be exactly: ${baseCommit}
@@ -905,12 +909,21 @@ export function buildCodeReviewPrompt(
   diff: string,
   verifiedCommit: string
 ): string {
+  if (
+    !agent.outputs.includes("code-findings") ||
+    typeof agent.codeReviewInstructions !== "string" ||
+    agent.codeReviewInstructions.trim() === ""
+  ) {
+    throw new Error(`code reviewer ${agent.id} carries no code-review instructions`);
+  }
   // The read-only sentence is UX, not a guard, exactly as it is in the
   // implementation prompt: enforcement is the read-only executor command and
   // the stage's clean-tree assertions before and after every dispatch.
   return `you are the code reviewer ${agent.id} with specialty ${agent.specialty ?? "general review"}
 
-Report only findings within your specialty: ${agent.specialty ?? "general review"}. Judge the committed change below against the approved specification and plan it was written from. A concern outside your specialty must not be reported; other lenses will review it. An empty findings array is a valid result when you have no findings within your specialty.
+Specialist instructions: ${agent.codeReviewInstructions}
+
+Report only findings within your specialty: ${agent.specialty ?? "general review"}. Judge the committed change below against the approved specification and plan it was written from. A concern outside your specialty must not be reported; other lenses will review it. Report only actionable defects with a reproducible impact that can be corrected in the current changed code. Do not report style, preference, optional refactoring, speculative hardening, questions, or a concern that requires changing the approved specification or plan. An empty findings array is a valid result when you have no actionable finding within your specialty.
 
 Your working directory is the repository checkout at commit ${verifiedCommit}.
 Read it to see the code surrounding the change. Run no git commands: the
@@ -927,25 +940,18 @@ Each finding has:
   - critical: the change is unsafe, or destroys data or state, in ordinary use
   - high: the change fails to implement an acceptance criterion or a plan
     task it claims to cover, or behaves incorrectly in ordinary use
-  - medium: a defect that does not fail an acceptance criterion
-  - low: a nit or a style concern
-- classification: current_artifact when the defect is in the changed code
-  below; upstream when the code cannot be corrected because the approved plan
-  leaves the decision unmade
-- location, by classification:
-  - current_artifact: one of the changed paths below, written exactly as it
-    is listed, optionally followed by :<line> where <line> is a
-    positive integer line number. Never a section heading, never a
-    description, and never a path that is not listed below
-  - upstream: exactly upstream:plan:<decision-key>, where <decision-key> is
-    lowercase kebab-case within 64 characters and names the absent decision
-    or obligation — never require or invent a heading for an omission, and
-    never use an upstream location for a current_artifact concern
+  - medium: a concrete defect that does not fail an acceptance criterion
+  - low: a small but concrete defect with localized impact
+- classification: exactly current_artifact; omit any concern whose correction
+  belongs in the approved specification or plan
+- location: one of the changed paths below, written exactly as it is listed,
+  optionally followed by :<line> where <line> is a positive integer line
+  number. Never a section heading, never a description, and never a path that
+  is not listed below
 - intentKey: lowercase kebab-case, at most 64 characters, describing the
   concern type
-- subject: one sentence naming the concern. For an upstream finding that
-  sentence must state the plan decision that is missing, because it is
-  recorded as the title of the concern raised against the plan
+- subject: one sentence naming both the concrete defect and its reproducible
+  impact
 
 Output the JSON object directly, with no surrounding prose, no markdown
 fences, and no commentary. Concerns within your specialty that you do not
@@ -964,6 +970,86 @@ Approved plan:
 ${planContent}
 
 Diff:
+
+${diff}`;
+}
+
+export interface CodeReviewRemediationFindingInput {
+  findingId: number;
+  location: string;
+  intentKey: string;
+  reports: Array<{
+    reviewerId: string;
+    severity: string;
+    classification: "current_artifact";
+    subject: string;
+  }>;
+}
+
+/** One code-only repair request containing every report from one panel. */
+export function buildCodeReviewRemediationPrompt(
+  agent: AgentDefinition,
+  specContent: string,
+  planContent: string,
+  scope: string[],
+  baseCommit: string,
+  changedPaths: string[],
+  diff: string,
+  findings: CodeReviewRemediationFindingInput[]
+): string {
+  const renderedFindings = findings
+    .map((finding) => {
+      const reports = finding.reports
+        .map(
+          (report) =>
+            `  - reviewer ${report.reviewerId}; severity ${report.severity}; classification ${report.classification}; subject ${report.subject}`
+        )
+        .join("\n");
+      return `- finding ${finding.findingId}; location ${finding.location}; intentKey ${finding.intentKey}\n${reports}`;
+    })
+    .join("\n");
+  return `you are the code-review remediator ${agent.id}
+
+Fix every actionable finding below in the current code. Your working directory
+is the repository checkout at commit ${baseCommit}. Read the surrounding code,
+but run no git commands and do not create, modify, or delete files. The system
+applies and commits only the patches you return.
+
+Return exactly a JSON AgentResult object with this shape:
+{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedPatches": [{"baseCommit": "${baseCommit}", "files": [{"path": "${scope[0] ?? "approved/path"}", "action": "modify", "content": "<complete new file content>"}]}]}
+
+Return one or more proposedPatches. baseCommit must be exactly ${baseCommit}.
+Each file path must be one approved scope path below; action is add or modify,
+never deletion; content is the complete new file content, not a diff. Fix the
+code. Do not return finding dispositions, proposals, waivers, questions, or
+edits to the approved specification, plan, governance policy, or agent
+definitions. Output the JSON object directly with no surrounding prose or
+markdown fences. Every JSON string, including file content, must use
+JSON-standard escaping. Use literal UTF-8 for non-ASCII characters or valid
+\`\\uXXXX\` escapes (two UTF-16 surrogate escapes for a character above U+FFFF).
+Never use Python's \`\\UXXXXXXXX\` escape syntax; it is not valid JSON.
+
+Approved scope:
+
+${scope.map((path) => `- ${path}`).join("\n")}
+
+Findings to remediate:
+
+${renderedFindings}
+
+Complete changed paths at the current head:
+
+${changedPaths.map((path) => `- ${path}`).join("\n")}
+
+Approved specification:
+
+${specContent}
+
+Approved plan:
+
+${planContent}
+
+Complete diff from the original patch base through ${baseCommit}:
 
 ${diff}`;
 }

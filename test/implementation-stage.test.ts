@@ -517,6 +517,17 @@ test("a patch touching a protected path is refused naming it", () =>
 test("an empty delivery is refused naming the missing patches", () =>
   expectGateRefusal({ mode: "empty" }, /no proposed patches/));
 
+test("a patch with no files remains an invalid-content event after patch-helper extraction", () =>
+  expectGateRefusal({ mode: "empty-files" }, /patch with no files/, async ({ store, runId }) => {
+    assert.equal(
+      store.query<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM audit WHERE run_id = ? AND action = 'implementation.content.invalid'",
+        [runId]
+      )[0]!.n,
+      1
+    );
+  }));
+
 test("an add over an existing file is refused naming the rule", () =>
   expectGateRefusal(
     { mode: "add-existing", scope: ["docs/features/demo/spec.md"] },

@@ -1,33 +1,21 @@
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { appendAudit } from "./audit.ts";
 import { parseImplementationGate } from "./handoff.ts";
 import { verificationEvidenceDir } from "./paths.ts";
 import { loadVerifiedProfile } from "./profile.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
-import { runVerifyCommand, type CommandOutcome } from "./verify-command.ts";
+import {
+  checkCommitState,
+  verifyCommit,
+  type RecordedVerificationCommand,
+} from "./commit-verification.ts";
 
 export type VerificationStageResult =
   | { ok: true; stageId: number; resultRef: string }
   | { ok: false; reason: string };
 
 /** One command's outcome as the handoff record carries it. */
-interface RecordedCommand {
-  name: string;
-  argv: string[];
-  exitCode: number | null;
-  timedOut: boolean;
-  spawnError: string | null;
-  killError: string | null;
-  outputOverflow: boolean;
-  durationMs: number;
-  /** Relative to `rootDir`, so the record survives being read elsewhere. */
-  evidenceRef: string;
-  /** Null when the command neither failed nor disturbed the worktree. */
-  blockedBecause: string | null;
-}
-
 /**
  * The structured handoff `delivery_check` is handed (section 4: stage N's
  * `output_ref` is literally what stage N+1 was handed).
@@ -53,7 +41,7 @@ interface VerificationRecord {
   patchBase: string;
   outcome: "pass" | "block";
   blockingCommand: string | null;
-  commands: RecordedCommand[];
+  commands: RecordedVerificationCommand[];
 }
 
 /**
@@ -86,22 +74,6 @@ export async function runVerificationStage(
   input: { runId: number; rootDir: string }
 ): Promise<VerificationStageResult> {
   const { runId, rootDir } = input;
-
-  // Git is spawned directly, no shell, the way `resolveStartingCommit` and
-  // the implementation stage spawn it.
-  const runGit = (args: string[], cwd: string): { ok: true; stdout: string } | { ok: false; detail: string } => {
-    let result;
-    try {
-      result = spawnSync("git", args, { cwd, encoding: "utf8" });
-    } catch (err) {
-      return { ok: false, detail: (err as Error).message };
-    }
-    if (result.status !== 0) {
-      const detail = (result.stderr ?? "").trim();
-      return { ok: false, detail: detail || `git ${args[0]} exited with code ${result.status}` };
-    }
-    return { ok: true, stdout: result.stdout ?? "" };
-  };
 
   // --- preconditions, each refused by name before any state mutation ---
   const run = store.getRun(runId);
@@ -179,27 +151,8 @@ export async function runVerificationStage(
   // about to test exactly what implementation committed. A suite run against
   // a moved head or uncommitted bytes has verified something the branch does
   // not contain.
-  const headAtEntry = runGit(["rev-parse", "HEAD"], worktreePath);
-  if (!headAtEntry.ok) {
-    return { ok: false, reason: `cannot read the worktree head at ${worktreePath}: ${headAtEntry.detail}` };
-  }
-  if (headAtEntry.stdout.trim() !== verifiedCommit) {
-    return {
-      ok: false,
-      reason: `the worktree is at ${headAtEntry.stdout.trim()}, not the commit implementation left (${verifiedCommit})`,
-    };
-  }
-  const cleanAtEntry = runGit(["status", "--porcelain"], worktreePath);
-  if (!cleanAtEntry.ok) {
-    return { ok: false, reason: `cannot read the worktree state at ${worktreePath}: ${cleanAtEntry.detail}` };
-  }
-  const dirtyAtEntry = splitPaths(cleanAtEntry.stdout);
-  if (dirtyAtEntry.length > 0) {
-    return {
-      ok: false,
-      reason: `the worktree is not clean before verification: ${dirtyAtEntry.slice(0, 3).join(", ")}`,
-    };
-  }
+  const stateAtEntry = checkCommitState(worktreePath, verifiedCommit, "before verification");
+  if (stateAtEntry !== null) return { ok: false, reason: stateAtEntry };
 
   const audit = (stageId: number | null, action: string, summary: string): void => {
     appendAudit(store, { runId, stageId, actor: "system", actorType: "cli", action, summary });
@@ -218,94 +171,25 @@ export async function runVerificationStage(
       `created verification stage ${stage.id} for worktree ${worktreePath} at ${verifiedCommit}`
     );
 
-    mkdirSync(evidenceDir, { recursive: true });
-    const recorded: RecordedCommand[] = [];
-    let blockingCommand: string | null = null;
-    let blockReason: string | null = null;
-
-    for (const command of profile.verification.commands) {
-      const evidencePath = join(evidenceDir, `${command.name}.log`);
-      const outcome: CommandOutcome = await runVerifyCommand(command, {
-        cwd: worktreePath,
-        timeoutSeconds: profile.policy.verifyCommandTimeoutSeconds,
-        maxBytes: profile.policy.resultMaxBytes,
-        retentionMaxBytes: profile.policy.verifyRetentionMaxBytes,
-        envPassthrough: profile.policy.verifyEnvPassthrough,
-        evidencePath,
-      });
-
-      // The four command-failure conditions, most specific first: a timeout
-      // also reports an exit code, and naming it as a non-zero exit would send
-      // the operator to the wrong diagnosis.
-      let because: string | null = null;
-      if (outcome.spawnError !== null) {
-        because = `the command could not be started: ${outcome.spawnError}`;
-      } else if (outcome.timedOut) {
-        because = `the command exceeded the ${profile.policy.verifyCommandTimeoutSeconds}-second ceiling and its process tree was killed${outcome.killError !== null ? ` (the kill failed: ${outcome.killError})` : ""}`;
-      } else if (outcome.outputOverflow) {
-        // Section 20: refuse above the cap. The bytes are retained anyway, so
-        // the refusal is diagnosable.
-        because = `the command produced more than the ${profile.policy.resultMaxBytes}-byte output budget; the complete output is retained at ${relative(rootDir, evidencePath)}`;
-      } else if (outcome.exitCode !== 0) {
-        because = `the command exited with code ${outcome.exitCode}`;
-      }
-
-      // The integrity pair, re-checked after every command. A suite that
-      // rewrites snapshots and then passes has verified bytes the branch does
-      // not contain, so a moved head or a dirty tree blocks even on exit 0.
-      if (because === null) {
-        const headAfter = runGit(["rev-parse", "HEAD"], worktreePath);
-        if (!headAfter.ok) {
-          because = `the worktree head could not be re-read after the command: ${headAfter.detail}`;
-        } else if (headAfter.stdout.trim() !== verifiedCommit) {
-          because = `the command moved the worktree head from ${verifiedCommit} to ${headAfter.stdout.trim()}`;
-        } else {
-          const cleanAfter = runGit(["status", "--porcelain"], worktreePath);
-          if (!cleanAfter.ok) {
-            because = `the worktree state could not be re-read after the command: ${cleanAfter.detail}`;
-          } else {
-            const dirtyAfter = splitPaths(cleanAfter.stdout);
-            if (dirtyAfter.length > 0) {
-              because = `the command left the worktree dirty in: ${dirtyAfter.slice(0, 3).join(", ")}`;
-            }
-          }
-        }
-      }
-
-      recorded.push({
-        name: outcome.name,
-        argv: outcome.argv,
-        exitCode: outcome.exitCode,
-        timedOut: outcome.timedOut,
-        spawnError: outcome.spawnError,
-        killError: outcome.killError,
-        outputOverflow: outcome.outputOverflow,
-        durationMs: outcome.durationMs,
-        evidenceRef: relative(rootDir, evidencePath),
-        blockedBecause: because,
-      });
-      audit(
-        stage.id,
-        because === null ? "verification.command.pass" : "verification.command.fail",
-        `${command.name}: ${command.command.join(" ")}; exit=${outcome.exitCode}; timedOut=${outcome.timedOut}; durationMs=${outcome.durationMs}; evidence=${relative(rootDir, evidencePath)}${because === null ? "" : `; ${because}`}`
-      );
-      // One progress line per command as it finishes. Only the stage knows a
-      // command has completed before the run has, and printing the argv is
-      // what makes the effective, frozen configuration visible at the
-      // operator's surface (hazard 12). stderr, so stdout stays exactly the
-      // result path the CLI prints.
-      process.stderr.write(
-        `${because === null ? "pass" : "BLOCK"} ${command.name} (${command.command.join(" ")}) in ${outcome.durationMs}ms\n`
-      );
-
-      if (because !== null) {
-        blockingCommand = command.name;
-        blockReason = because;
-        break; // the decision is deterministic and the first failure is terminal
-      }
-    }
-
-    const outcome: "pass" | "block" = blockingCommand === null ? "pass" : "block";
+    const verifiedResult = await verifyCommit({
+      rootDir,
+      worktreePath,
+      expectedCommit: verifiedCommit,
+      commands: profile.verification.commands,
+      timeoutSeconds: profile.policy.verifyCommandTimeoutSeconds,
+      maxBytes: profile.policy.resultMaxBytes,
+      retentionMaxBytes: profile.policy.verifyRetentionMaxBytes,
+      envPassthrough: profile.policy.verifyEnvPassthrough,
+      evidenceDir,
+      audit: (action, summary) => audit(stage.id, `verification.${action}`, summary),
+      progress: (command, because, durationMs) => {
+        process.stderr.write(
+          `${because === null ? "pass" : "BLOCK"} ${command.name} (${command.command.join(" ")}) in ${durationMs}ms\n`
+        );
+      },
+    });
+    const { outcome, blockingCommand, commands } = verifiedResult.record;
+    const blockReason = verifiedResult.reason;
     const record: VerificationRecord = {
       runId,
       stageId: stage.id,
@@ -314,15 +198,17 @@ export async function runVerificationStage(
       patchBase,
       outcome,
       blockingCommand,
-      commands: recorded,
+      commands,
     };
     const recordPath = join(evidenceDir, "result.json");
     writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`);
     writeFileSync(join(evidenceDir, "report.md"), buildReport(record, blockReason));
     const resultRef = relative(rootDir, recordPath);
 
-    if (blockingCommand !== null) {
-      const reason = `verification blocked on ${blockingCommand}: ${blockReason}`;
+    if (outcome === "block") {
+      const reason = blockingCommand === null
+        ? `verification blocked: ${blockReason}`
+        : `verification blocked on ${blockingCommand}: ${blockReason}`;
       store.completeStage(stage.id, resultRef, "block");
       store.setRunStatus(runId, "blocked");
       audit(stage.id, "verification.gate.block", reason);
@@ -332,7 +218,7 @@ export async function runVerificationStage(
     audit(
       stage.id,
       "verification.gate.pass",
-      `verified ${verifiedCommit} in ${worktreePath} with ${recorded.length} command(s)`
+      `verified ${verifiedCommit} in ${worktreePath} with ${commands.length} command(s)`
     );
     return { ok: true, stageId: stage.id, resultRef };
   } catch (err) {
@@ -349,13 +235,6 @@ export async function runVerificationStage(
     store.setRunStatus(runId, "blocked");
     return { ok: false, reason };
   }
-}
-
-function splitPaths(porcelain: string): string[] {
-  return porcelain
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l !== "");
 }
 
 /**

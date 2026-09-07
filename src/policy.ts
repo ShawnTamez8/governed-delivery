@@ -52,6 +52,19 @@ export const PANEL_SIZE_CEILING = 5;
 export const PANEL_SIZE_MAX = 2;
 
 /**
+ * Code review has an operator-chosen panel and total panel-execution budget,
+ * separate from the author-requested document-review policy above. These are
+ * the two values an operator changes after measuring effectiveness; their
+ * absolute bounds are enforced against every frozen profile.
+ */
+export const CODE_REVIEW_PANEL_SIZE_FLOOR = 2;
+export const CODE_REVIEW_PANEL_SIZE_CEILING = 5;
+export const CODE_REVIEW_PANEL_SIZE = 2;
+export const CODE_REVIEW_MAX_ROUNDS_FLOOR = 1;
+export const CODE_REVIEW_MAX_ROUNDS_CEILING = 5;
+export const CODE_REVIEW_MAX_ROUNDS = 2;
+
+/**
  * The lowest severity at which one code-review report blocks the run.
  *
  * `high` rather than anything weaker because of hazard 11: a panel that
@@ -65,10 +78,9 @@ export const PANEL_SIZE_MAX = 2;
  * the reviewer in the prompt, because a threshold over an unstated scale is a
  * comparison against nothing (hazard 3).
  *
- * On breach (section 20's rule that every limit defines its behaviour): the
- * run blocks terminally, naming each blocking finding's id, severity, and
- * location. There is no reconciliation dispatch, no remediation round, and no
- * operator waiver; a fresh run is the repair.
+ * On the final panel, the run blocks when a report reaches this value and
+ * names each blocking finding's id, severity, and location. Earlier panels
+ * remediate every finding while the separately frozen round budget remains.
  *
  * Configuration, so its value is stated here and frozen per run through the
  * profile. The stage reads `profile.policy.codeReviewBlockingSeverity` and
@@ -177,6 +189,8 @@ export interface Policy {
   planReviewRounds: number;
   panelSizeMin: number;
   panelSizeMax: number;
+  codeReviewPanelSize: number;
+  codeReviewMaxRounds: number;
   codeReviewBlockingSeverity: string;
   severities: string[];
   requiredSpecialties: string[];
@@ -203,6 +217,8 @@ export function buildPolicy(): Policy {
     planReviewRounds: PLAN_REVIEW_ROUNDS,
     panelSizeMin: PANEL_SIZE_FLOOR,
     panelSizeMax: PANEL_SIZE_MAX,
+    codeReviewPanelSize: CODE_REVIEW_PANEL_SIZE,
+    codeReviewMaxRounds: CODE_REVIEW_MAX_ROUNDS,
     codeReviewBlockingSeverity: CODE_REVIEW_BLOCKING_SEVERITY,
     severities: [...SEVERITIES],
     requiredSpecialties: [...REQUIRED_SPECIALTIES],
@@ -234,6 +250,7 @@ function isStringArray(v: unknown): boolean {
 const POSITIVE_INT_FIELDS = [
   "specReviewRounds",
   "planReviewRounds",
+  "codeReviewMaxRounds",
   "promptMaxBytes",
   "resultMaxBytes",
   "approvalMaxLifetimeSeconds",
@@ -329,6 +346,25 @@ export function invalidPolicyReason(policy: unknown): string | null {
   }
   if (required.length > max) {
     return `the frozen policy has ${required.length} required specialties, which cannot fit in its maximum panel of ${max}`;
+  }
+  if (!isPositiveInt(p.codeReviewPanelSize)) {
+    return `the frozen policy field codeReviewPanelSize must be a positive integer, found ${JSON.stringify(
+      p.codeReviewPanelSize
+    )}`;
+  }
+  const codeReviewPanelSize = p.codeReviewPanelSize as number;
+  if (
+    codeReviewPanelSize < CODE_REVIEW_PANEL_SIZE_FLOOR ||
+    codeReviewPanelSize > CODE_REVIEW_PANEL_SIZE_CEILING
+  ) {
+    return `the frozen policy field codeReviewPanelSize ${codeReviewPanelSize} is outside the permitted ${CODE_REVIEW_PANEL_SIZE_FLOOR}-${CODE_REVIEW_PANEL_SIZE_CEILING}`;
+  }
+  const codeReviewMaxRounds = p.codeReviewMaxRounds as number;
+  if (
+    codeReviewMaxRounds < CODE_REVIEW_MAX_ROUNDS_FLOOR ||
+    codeReviewMaxRounds > CODE_REVIEW_MAX_ROUNDS_CEILING
+  ) {
+    return `the frozen policy field codeReviewMaxRounds ${codeReviewMaxRounds} is outside the permitted ${CODE_REVIEW_MAX_ROUNDS_FLOOR}-${CODE_REVIEW_MAX_ROUNDS_CEILING}`;
   }
   return null;
 }

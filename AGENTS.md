@@ -20,9 +20,55 @@ The hard rules are constraints, not aspirations:
 6. Config is frozen at run start.
 
 The build order has a deliberate stop at step 9 — one complete run with
-queryable cost. Do not build past it without an explicit decision. That
-decision has been taken exactly once, on 2026-09-04, for `code_review` alone;
-no other deferred stage or behaviour inherits it.
+queryable cost. Do not build past it without an explicit decision. The operator
+authorized `code_review` on 2026-09-04 and its bounded remediation loop on
+2026-09-06. Those decisions authorize only `code_review`; no other deferred
+stage or behaviour inherits either one.
+
+## Code-review operating contract
+
+The implemented `code_review` loop has three independent release-policy knobs
+in `src/policy.ts`: `CODE_REVIEW_PANEL_SIZE` permits 2-5 reviewers and defaults
+to 2; `CODE_REVIEW_MAX_ROUNDS` permits 1-5 complete panel executions and
+defaults to 2; and `CODE_REVIEW_BLOCKING_SEVERITY` defaults to `high`. These
+values freeze at run start. Raising panel size also requires enough registered
+`code-findings` agents with distinct, non-empty specialist instructions; an
+unstaffable profile refuses before the run spends money.
+
+Every non-empty panel before the final configured round sends all actionable
+findings together to the frozen implementer, commits the guarded patch, runs
+the frozen verification commands, and reviews that verified commit with the
+full panel. The final panel applies the frozen severity threshold without an
+unreviewed patch; below-threshold findings remain recorded and non-blocking.
+Code reviewers may report only actionable defects in the current code. They do
+not create a human gate, waiver, proposal, spike, upstream route, or findings
+reconciliation schema. Do not change `spec_review` or `plan_review` while
+maintaining this loop.
+
+`docs/features/code-review-remediation/plan.md` is `Implemented`; its review is
+`reconciled`, and Task 10 is complete. A separately authorized live chain on
+2026-09-07 completed all stages in 13 of the allowed 16 dispatches for a total
+cost of $1.39473. Its two specialized code reviewers returned a clean first
+panel, delivery passed, and the operator then manually verified the delivered
+calculator output. That manual check supplements the run record: the frozen
+verification commands themselves checked only `node --version` and
+`npm --version`. A completed paid run never authorizes another spend.
+
+## Windows harness launch
+
+The 2026-09-07 correction removed BuildWorks' obsolete *shim assumption*, not
+an installed shim. `where claude` showed that the current launcher is native
+`claude.exe`. `src/harness.ts` and both run-buildworks drivers now probe and
+invoke it directly with no command-shell wrapper. PowerShell resolves the same
+executable, so wrapping it in PowerShell or `cmd.exe` would only add a second
+argument parser. Direct launch also avoids Node's shell-argument deprecation
+warning (`DEP0190`) and retains a typed `ENOENT` when the executable is missing.
+
+The wrapper did not create the recorded invalid `\U0001f319` JSON bytes; they
+were already in the provider result. BuildWorks therefore also added explicit
+JSON-standard escaping instructions to both patch-producing prompts and
+regressions for direct launch, missing-executable reporting, and the prompt
+contract. The strict extractor remains unchanged; it does not guess repairs.
 
 ## How to work here
 
@@ -138,10 +184,12 @@ Run from the repository root. These commands live here and nowhere else.
 - `node .claude/skills/run-buildworks/driver.mjs smoke` — builds that scratch
   target and drives the CLI against it, spending nothing. `paid --yes` drives
   the full chain against the real `claude` binary and reports what it cost:
-  budget $1.00–$2.00, since the committed design is the 20-requirement
-  `web-calculator-design.md` beside the driver rather than the trivial clamp
-  design that preceded it. Change what a run exercises by editing that file.
-  See `.claude/skills/run-buildworks/SKILL.md`.
+  budget $1.25–$2.50 for a clean default run, potentially more when remediation
+  adds an implementer dispatch and another full reviewer panel. The committed
+  design is the 20-requirement `web-calculator-design.md` beside the driver
+  rather than the trivial clamp design that preceded it. Change what a run
+  exercises by editing that file. See
+  `.claude/skills/run-buildworks/SKILL.md`.
 - `node scripts/sign-approval.mjs keygen|sign` — the operator's signing tool.
   It holds the only private key path in the repository and the system never
   invokes it.

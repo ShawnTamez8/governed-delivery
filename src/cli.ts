@@ -31,10 +31,11 @@ commands:
   plan --run <id> [--model <name>]       run the plan and plan_review stages
   implement --run <id> [--model <name>]   run the implementation stage
   verify --run <id>                      run the verification stage
-  review --run <id> [--model <name>]     run the code_review stage: a fixed
-                                         reviewer panel reads the verified
-                                         change; a finding at or above the
-                                         frozen severity blocks the run
+  review --run <id> [--model <name>]     run the bounded code_review loop:
+                                         the frozen specialist panel reviews,
+                                         findings are patched and re-verified
+                                         while a round remains, and the final
+                                         panel applies the frozen severity gate
   deliver --run <id>                     run the delivery check (step 8): prove
                                          every declared artifact was committed,
                                          then complete or block the run
@@ -506,7 +507,8 @@ async function main(): Promise<void> {
       case "review": {
         // Hard rule 6: the stage runs against the executor the run froze.
         // Unlike verify and deliver this stage dispatches, so it accepts
-        // --model; the frozen-model mismatch refusal is the stage's.
+        // --model; one invocation owns every frozen panel, remediation, and
+        // post-patch verification in the bounded loop.
         const reviewRunId = numeric(args, "run");
         const reviewRun = store.getRun(reviewRunId);
         if (!reviewRun) {

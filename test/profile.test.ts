@@ -18,7 +18,13 @@ import {
 } from "../src/profile.ts";
 import { AGENTS } from "../src/agents.ts";
 import { CLAUDE_CODE } from "../src/executor.ts";
-import { PANEL_SIZE_MAX, REQUIRED_SPECIALTIES, buildPolicy, policyHash } from "../src/policy.ts";
+import {
+  CODE_REVIEW_PANEL_SIZE,
+  PANEL_SIZE_MAX,
+  REQUIRED_SPECIALTIES,
+  buildPolicy,
+  policyHash,
+} from "../src/policy.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
 import { canonicalJson, sha256Hex } from "../src/canonical.ts";
 
@@ -267,7 +273,15 @@ test("requireFrozenBinding refuses an unknown stage kind by name", () => {
  * of them. Only the difference the change actually made is stated here.
  */
 function preTask3Policy(): Record<string, unknown> {
-  const { specReviewRounds, planReviewRounds, panelSizeMin, panelSizeMax, ...carried } = buildPolicy();
+  const {
+    specReviewRounds,
+    planReviewRounds,
+    panelSizeMin,
+    panelSizeMax,
+    codeReviewPanelSize,
+    codeReviewMaxRounds,
+    ...carried
+  } = buildPolicy();
   return { ...carried, panelSizes: { low: 1, standard: 2, high: 3 }, remediationRounds: 3 };
 }
 
@@ -312,7 +326,7 @@ test("a correctly hashed pre-Task-3 profile is refused by name, not migrated", (
     if (verified.ok) return;
     // Named, so an operator can tell this from a tampered profile.
     assert.match(verified.reason, /run 1 cannot be executed/);
-    assert.match(verified.reason, /missing panelSizeMax, panelSizeMin, planReviewRounds, specReviewRounds/);
+    assert.match(verified.reason, /missing codeReviewMaxRounds, codeReviewPanelSize, panelSizeMax, panelSizeMin, planReviewRounds, specReviewRounds/);
     assert.match(verified.reason, /carrying obsolete panelSizes, remediationRounds/);
     // And it says what the operator can still do, because the run's evidence
     // is not what became invalid.
@@ -362,6 +376,8 @@ test("a profile with a policy value outside its bounds is refused", () => {
       { panelSizeMin: 1 },
       { specReviewRounds: 0 },
       { planReviewRounds: 1.5 },
+      { codeReviewPanelSize: 1 },
+      { codeReviewMaxRounds: 6 },
     ]) {
       const policy = { ...profile.policy, ...patch };
       // Hashed consistently, so the bounds check is what refuses it rather
@@ -386,6 +402,8 @@ test("a profile frozen under a different but legal configuration still executes"
       panelSizeMax: 5,
       specReviewRounds: 3,
       requiredSpecialties: ["security"],
+      codeReviewPanelSize: 5,
+      codeReviewMaxRounds: 4,
     };
     const candidate = { ...profile, policy, policyHash: policyHash(policy as never) };
     assert.equal(invalidProfileReason(candidate), null);
@@ -399,6 +417,7 @@ test("the default installation staffs the configured panel", () => {
     assert.doesNotThrow(() => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION));
   });
   assert.ok(PANEL_SIZE_MAX >= REQUIRED_SPECIALTIES.length);
+  assert.equal(CODE_REVIEW_PANEL_SIZE, 2);
 });
 
 test("a registry that cannot staff the configured panel refuses at freeze time", () => {
@@ -441,7 +460,7 @@ test("a registry that cannot staff the code-review panel refuses at freeze time"
     const noCodeReviewers = AGENTS.filter((a) => !a.outputs.includes("code-findings"));
     assert.throws(
       () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, { agents: noCodeReviewers }),
-      /cannot freeze a profile for run 1: the agent registry seats 0 code reviewers on executor claude-code \(none at all\), which cannot fill the code-review panel floor of 2/
+      /cannot freeze a profile for run 1: the agent registry seats 0 code reviewers on executor claude-code \(none at all\), which cannot fill the configured code-review panel of 2/
     );
     assert.equal(
       existsSync(join(root, ".governance", "profiles", "1", "profile.json")),
@@ -507,6 +526,7 @@ test("every stage reaches the frozen profile through loadVerifiedProfile, never 
     "plan-stage.ts",
     "implementation-stage.ts",
     "verification-stage.ts",
+    "code-review-stage.ts",
     "approval-stage.ts",
     "cli.ts",
   ]) {

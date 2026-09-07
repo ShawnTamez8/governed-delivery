@@ -2,10 +2,15 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendAudit } from "./audit.ts";
-import type { CodeReviewRecord } from "./code-review-stage.ts";
+import {
+  parseCodeReviewGatePass,
+  type CodeReviewRecord,
+  type CodeReviewRound,
+} from "./code-review.ts";
 import { deliveryCoverage } from "./delivery-coverage.ts";
 import { deliveryEvidenceDir, deliveryEvidenceRef } from "./paths.ts";
 import { loadVerifiedProfile } from "./profile.ts";
+import { codeReviewPanel } from "./select.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
 
 export type DeliveryStageResult =
@@ -188,7 +193,7 @@ export function runDeliveryStage(
   const codeReviewPath = join(rootDir, last.output_ref);
   let codeReview: Pick<
     CodeReviewRecord,
-    "worktreePath" | "patchBase" | "verifiedCommit" | "changedPaths"
+    "worktreePath" | "patchBase" | "initialVerifiedCommit" | "finalVerifiedCommit" | "rounds"
   >;
   if (!existsSync(codeReviewPath)) {
     return {
@@ -198,6 +203,11 @@ export function runDeliveryStage(
   }
   try {
     const parsed = JSON.parse(readFileSync(codeReviewPath, "utf8")) as Record<string, unknown>;
+    const expectedPanel = codeReviewPanel(
+      profile.agents,
+      profile.policy.codeReviewPanelSize,
+      profile.executor.id
+    ).map((agent) => agent.id);
     if (
       parsed.runId !== runId ||
       typeof parsed.stageId !== "number" ||
@@ -206,21 +216,88 @@ export function runDeliveryStage(
       !Array.isArray(parsed.blocking) ||
       parsed.blocking.length !== 0 ||
       typeof parsed.worktreePath !== "string" ||
-      typeof parsed.verifiedCommit !== "string" ||
-      !COMMIT.test(parsed.verifiedCommit) ||
+      typeof parsed.initialVerifiedCommit !== "string" ||
+      !COMMIT.test(parsed.initialVerifiedCommit) ||
+      typeof parsed.finalVerifiedCommit !== "string" ||
+      !COMMIT.test(parsed.finalVerifiedCommit) ||
       typeof parsed.patchBase !== "string" ||
       !COMMIT.test(parsed.patchBase) ||
-      !Array.isArray(parsed.changedPaths) ||
-      parsed.changedPaths.length === 0 ||
-      parsed.changedPaths.some((p) => typeof p !== "string")
+      !Array.isArray(parsed.panel) ||
+      parsed.panel.some((agent) => typeof agent !== "string") ||
+      JSON.stringify(parsed.panel) !== JSON.stringify(expectedPanel) ||
+      parsed.panelSize !== profile.policy.codeReviewPanelSize ||
+      parsed.panel.length !== parsed.panelSize ||
+      parsed.maxRounds !== profile.policy.codeReviewMaxRounds ||
+      parsed.blockingSeverity !== profile.policy.codeReviewBlockingSeverity ||
+      !Array.isArray(parsed.severities) ||
+      JSON.stringify(parsed.severities) !== JSON.stringify(profile.policy.severities) ||
+      !Array.isArray(parsed.rounds) ||
+      parsed.rounds.length === 0 ||
+      parsed.rounds.length > parsed.maxRounds
     ) {
       throw new Error("the record does not describe this run's passed code review");
     }
+    const rounds = parsed.rounds as Record<string, unknown>[];
+    let expectedReviewedCommit = parsed.initialVerifiedCommit;
+    for (let index = 0; index < rounds.length; index += 1) {
+      const round = rounds[index]!;
+      if (
+        round.round !== index + 1 ||
+        round.reviewedCommit !== expectedReviewedCommit ||
+        typeof round.reviewedCommit !== "string" ||
+        !COMMIT.test(round.reviewedCommit) ||
+        !Array.isArray(round.changedPaths) ||
+        round.changedPaths.length === 0 ||
+        round.changedPaths.some((path) => typeof path !== "string") ||
+        !Array.isArray(round.findings) ||
+        !Array.isArray(round.blocking)
+      ) {
+        throw new Error(`round ${index + 1} does not describe its reviewed commit`);
+      }
+      if (round.remediation === null) {
+        if (index !== rounds.length - 1) {
+          throw new Error(`round ${index + 1} has no remediation before another panel`);
+        }
+        expectedReviewedCommit = round.reviewedCommit;
+        continue;
+      }
+      if (typeof round.remediation !== "object" || Array.isArray(round.remediation)) {
+        throw new Error(`round ${index + 1} has an invalid remediation record`);
+      }
+      const remediation = round.remediation as Record<string, unknown>;
+      const verification = remediation.verification;
+      if (
+        remediation.baseCommit !== round.reviewedCommit ||
+        typeof remediation.resultingCommit !== "string" ||
+        !COMMIT.test(remediation.resultingCommit) ||
+        !Array.isArray(remediation.changedPaths) ||
+        remediation.changedPaths.length === 0 ||
+        remediation.changedPaths.some((path) => typeof path !== "string") ||
+        typeof verification !== "object" ||
+        verification === null ||
+        Array.isArray(verification) ||
+        (verification as Record<string, unknown>).expectedCommit !== remediation.resultingCommit ||
+        (verification as Record<string, unknown>).outcome !== "pass" ||
+        (verification as Record<string, unknown>).blockingCommand !== null ||
+        !Array.isArray((verification as Record<string, unknown>).commands)
+      ) {
+        throw new Error(`round ${index + 1} does not carry a passed verification for its remediation`);
+      }
+      expectedReviewedCommit = remediation.resultingCommit;
+    }
+    if (expectedReviewedCommit !== parsed.finalVerifiedCommit) {
+      throw new Error("the final verified commit is not the last commit the panel reviewed");
+    }
+    const lastRound = rounds[rounds.length - 1]!;
+    if (lastRound.remediation !== null || (lastRound.blocking as unknown[]).length !== 0) {
+      throw new Error("the passed final panel is not terminal and non-blocking");
+    }
     codeReview = {
       worktreePath: parsed.worktreePath,
-      verifiedCommit: parsed.verifiedCommit,
       patchBase: parsed.patchBase,
-      changedPaths: parsed.changedPaths as string[],
+      initialVerifiedCommit: parsed.initialVerifiedCommit,
+      finalVerifiedCommit: parsed.finalVerifiedCommit,
+      rounds: parsed.rounds as CodeReviewRound[],
     };
   } catch (err) {
     return {
@@ -275,7 +352,9 @@ export function runDeliveryStage(
       reason: `run ${runId}'s verification record at ${verificationStage.output_ref} is invalid: ${(err as Error).message}`,
     };
   }
-  const { worktreePath, verifiedCommit, patchBase } = record;
+  const { worktreePath, patchBase } = record;
+  const initiallyVerifiedCommit = record.verifiedCommit;
+  let verifiedCommit = initiallyVerifiedCommit;
 
   // The two records must describe the same change. A code-review record naming
   // a different worktree, base, or head is a review of something delivery is
@@ -283,13 +362,16 @@ export function runDeliveryStage(
   if (
     codeReview.worktreePath !== worktreePath ||
     codeReview.patchBase !== patchBase ||
-    codeReview.verifiedCommit !== verifiedCommit
+    codeReview.initialVerifiedCommit !== initiallyVerifiedCommit
   ) {
     return {
       ok: false,
-      reason: `run ${runId}'s code-review record at ${last.output_ref} is invalid: it reviewed ${codeReview.patchBase}..${codeReview.verifiedCommit} in ${codeReview.worktreePath}, not the verified ${patchBase}..${verifiedCommit} in ${worktreePath}`,
+      reason: `run ${runId}'s code-review record at ${last.output_ref} is invalid: it began from ${codeReview.patchBase}..${codeReview.initialVerifiedCommit} in ${codeReview.worktreePath}, not the verified ${patchBase}..${initiallyVerifiedCommit} in ${worktreePath}`,
     };
   }
+  // Delivery certifies the final commit reviewed after any remediation. The
+  // earlier verification record remains the authoritative initial handoff.
+  verifiedCommit = codeReview.finalVerifiedCommit;
 
   // The audit trail must carry the verdict delivery is about to extend.
   // Verification completes its stage and appends `verification.gate.pass` as
@@ -315,12 +397,30 @@ export function runDeliveryStage(
   // audit that never records the review passing.
   const reviewedEvent = store
     .getAuditEvents(runId)
-    .filter((e) => e.action === "code_review.gate.pass")
+    .filter(
+      (event) =>
+        event.action === "code_review.gate.pass" && event.stage_id === codeReviewStageId
+    )
     .pop();
   if (!reviewedEvent) {
     return {
       ok: false,
       reason: `run ${runId}'s passed code_review stage ${codeReviewStageId} has no code_review.gate.pass audit event: the audit trail does not record the review outcome — start a fresh run; the branch and evidence are retained`,
+    };
+  }
+  const reviewedHandoff = parseCodeReviewGatePass(reviewedEvent.summary);
+  const finalRound = codeReview.rounds[codeReview.rounds.length - 1]!;
+  if (
+    !reviewedHandoff.ok ||
+    reviewedHandoff.value.round !== finalRound.round ||
+    reviewedHandoff.value.maxRounds !== profile.policy.codeReviewMaxRounds ||
+    reviewedHandoff.value.commit !== codeReview.finalVerifiedCommit ||
+    reviewedHandoff.value.findings !== finalRound.findings.length ||
+    reviewedHandoff.value.blockingSeverity !== profile.policy.codeReviewBlockingSeverity
+  ) {
+    return {
+      ok: false,
+      reason: `run ${runId}'s code_review.gate.pass audit event for stage ${codeReviewStageId} does not match the final reviewed commit and frozen gate policy`,
     };
   }
 

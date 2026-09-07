@@ -64,11 +64,9 @@ function exec(file, argv, opts = {}) {
     env: opts.env ?? env,
     encoding: opts.encoding ?? "utf8",
     input: opts.input,
-    // node and git are real executables, so no shell and nothing to quote.
-    // The one exception is the claude probe: it is an npm shim (claude.cmd)
-    // on Windows, which spawnSync cannot resolve without one — hazard 8, the
-    // same reason src/harness.ts spawns with `shell: WINDOWS`.
-    shell: opts.shell ?? false,
+    // These are native executables. Keep one argv parser and no command-shell
+    // wrapper; actual npm shims are invoked only by BuildWorks verification.
+    shell: false,
   });
   if (r.error) throw r.error;
   return r;
@@ -217,7 +215,7 @@ const expiry = () => new Date(Date.now() + 3600 * 1000).toISOString();
 
 /** The chain that spends: every stage below dispatches the real claude binary. */
 function paidChain() {
-  const probe = exec("claude", ["--version"], { shell: process.platform === "win32" });
+  const probe = exec("claude", ["--version"]);
   if (probe.status !== 0) throw new Error("claude is not on PATH: the paid chain cannot run");
   console.log(`claude ${probe.stdout.trim()}`);
 
@@ -251,12 +249,25 @@ function paidChain() {
     bw(["implement", "--run", runId]));
   step("verify (frozen commands)", { exit: 0, match: /result\.json/ }, () =>
     bw(["verify", "--run", runId]));
-  // The first stage past the step 9 stop, by operator decision on 2026-09-04:
-  // nothing before it reads the code, so a chain without it can deliver a file
-  // that is present and wrong. Blocking output would name the finding ids and
-  // exit 1; that is a result, not a driver failure.
-  step("review (fixed panel + gate)", { exit: 0, match: /result\.json/ }, () =>
+  // One invocation owns the frozen panel, any bounded remediation and
+  // re-verification, and the final-panel severity gate.
+  step("review (bounded panel + remediation + gate)", { exit: 0, match: /result\.json/ }, () =>
     bw(["review", "--run", runId]));
+  step("review record names every panel and the final reviewed commit",
+    { exit: 0, match: /panelExecutions=\d+ remediations=\d+ finalCommit=[0-9a-f]+ finalGate=pass/ }, () => {
+      const rec = JSON.parse(readFileSync(
+        join(target.repo, ".governance", "code-review", String(runId), "result.json"), "utf8"));
+      const rounds = Array.isArray(rec.rounds) ? rec.rounds : [];
+      const remediations = rounds.filter((round) => round.remediation !== null).length;
+      const last = rounds[rounds.length - 1];
+      const valid = rec.outcome === "pass" && rounds.length > 0 &&
+        last.reviewedCommit === rec.finalVerifiedCommit && last.remediation === null;
+      return {
+        code: valid ? 0 : 1,
+        out: `panelExecutions=${rounds.length} remediations=${remediations} ` +
+          `finalCommit=${rec.finalVerifiedCommit ?? "missing"} finalGate=${rec.outcome ?? "missing"}`,
+      };
+    });
   // Step 8: the delivery check is what makes `completed` reachable from the
   // default paid workflow (hazard 11) — a chain that never reaches it has no
   // record that delivery ever happened. Success prints the result reference;

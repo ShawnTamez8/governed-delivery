@@ -71,8 +71,26 @@ test("the seeded reviewers can staff the code-review panel", () => {
     );
     assert.equal(agent.executor, "claude-code", `${agent.id} must be bound to the frozen executor`);
     assert.notEqual(agent.specialty, null, `${agent.id} must carry a lens`);
+    assert.equal(typeof agent.codeReviewInstructions, "string");
+    assert.ok(agent.codeReviewInstructions!.trim().length > 0, `${agent.id} must carry instructions`);
     assert.ok(!specialties.has(agent.specialty!), `${agent.id} repeats the lens ${agent.specialty}`);
     specialties.add(agent.specialty!);
+  }
+});
+
+test("only code reviewers carry code-review instructions, and the seeded lenses differ", () => {
+  const codeReviewers = AGENTS.filter((a) => a.outputs.includes("code-findings"));
+  assert.deepEqual(
+    codeReviewers.map((a) => a.specialty).sort(),
+    ["correctness", "security"]
+  );
+  assert.equal(new Set(codeReviewers.map((a) => a.codeReviewInstructions)).size, 2);
+  for (const agent of AGENTS.filter((a) => !a.outputs.includes("code-findings"))) {
+    assert.equal(
+      agent.codeReviewInstructions,
+      undefined,
+      `${agent.id} must not carry code-review instructions`
+    );
   }
 });
 
