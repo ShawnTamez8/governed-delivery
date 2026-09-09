@@ -20,6 +20,7 @@ Every parser that reads model output accepts or explicitly refuses each of:
 5. two fenced blocks
 6. a fenced block that is not JSON
 7. CRLF line endings inside the fence
+8. prose before an unfenced object, e.g. `I'll finalize the spec now.\n\n{…}`
 
 **Choose strictness by consequence.** Where bytes are canonicalized into an
 immutable record, refuse prose outside the fence: dropping it silently corrupts
@@ -29,6 +30,29 @@ anywhere in the body and refuse rather than guess when several are present.
 Assert the operator-visible message on every refusal, not merely that an error
 was thrown. A message that does not name the cause makes the failure
 undiagnosable from logs alone.
+
+**Measured, 2026-09-06, $0.08103.** The spec author of a paid chain wrote one
+sentence of prose, a blank line, and then a complete, valid `AgentResult` with
+no fence around it. `extractJsonBody` accepted a whole-body parse or exactly one
+fenced block; the whole body failed on the sentence and there was no fence to
+find, so it refused with "no JSON object found in output" — false as written,
+since `JSON.parse` from the first `{` yields the entire twenty-criterion
+specification — and the run blocked at stage 1. Unlike the two blocks before
+it, the constraint *was* stated: the prompt says to output the object directly
+with no surrounding prose, and the model added a sentence anyway. That is the
+case this entry's rule is written for. The extractor feeds schema validation and
+`src/raw-output.ts` retains the bytes in full, so it already tolerated prose
+around a fence on exactly those grounds; an unfenced object is the same two
+ingredients with less decoration, and it was the one arrangement with no path.
+It now parses from the first `{` to the end of the body when no fence is
+present, and each remaining refusal says what the body did contain: no fence
+and no `{`, or the offset the parse began at and why it stopped. The retained
+response is committed at
+`test/fixtures/recorded/spec-author-web-calculator-prose-before-unfenced-json.json`
+and is the contract test. What this instance adds: the enumeration above is the
+contract every parser is held to, and a shape missing from it is a shape no
+reviewer will ask about — items 3 and 4 named prose around a *fence*, and a
+suite that worked all seven passed while the eighth blocked a paid run.
 
 ## 2. Discarded output is undiagnosable
 
@@ -67,6 +91,58 @@ and is the contract test for the fix. The lesson generalizes past this field: a
 constraint stated as "the exact text of X" is not stated at all unless the
 prompt also says what X's text is, and a shape a document schema *requires* the
 author to read (`- AC-001: …`) will be the shape the author sends back.
+
+**Measured, 2026-09-05, $0.41049.** A live spec reconciliation answered two
+findings about a gap in the acceptance-criteria numbering the most direct way
+the document allows — by explaining the gap in place, as the first line under
+`## Acceptance criteria`. `validateSpecDoc` read every line under that heading
+as a criterion, so the explanation became a criterion whose ID is `Note`, and
+the run blocked terminally at the `spec_review` gate with no remediation round.
+The prompts stated the format of a criterion ID, which the author obeyed for
+all twenty-three real criteria; none of them stated what the *section* admits,
+so a line that is not a criterion at all was never ruled out. Both boundaries
+were needed again: the prompts now state that every non-blank line in each
+structured section is one entry and nothing else, and the parser now refuses a
+non-member line by naming the section's rule instead of describing it as a
+malformed entry of a kind the author never wrote. The retained response is
+committed at
+`test/fixtures/recorded/spec-reconciliation-web-calculator-numbering-note.json`
+and is the contract test for the fix. The lesson generalizes the entry one
+level up: the *membership rule of a section* is as much a constrained field as
+the format of a value inside it, and the section a schema forces an author to
+write in is the section that author will answer a finding in. The same run
+showed the second half of the shape — the finding that invited the note was
+itself the ordinary residue of another guard, since stable IDs leave gaps when
+an obligation is withdrawn, and the review prompt had never said so.
+
+**Measured, 2026-09-05, $1.25141.** The next paid chain, with the section-
+membership fix in place, passed `spec_review` and blocked three stages later at
+`plan_review` on the same shape one document over. Three plan reviewers reported
+that a coverage entry omitted a second implementing artifact, and the author
+answered by naming both: `AC-008 -> src/index.html, src/calculator.js`. A
+Coverage line admits exactly one artifact path, `plan-doc` takes the whole
+remainder after the first `->` as the target, and no prompt had ever said the
+right side was singular — so the pair became one path, no signed scope entry
+matched it, and the gate refused it as a promise nobody approved. Fixed at both
+boundaries again: the three authoring prompts state that a coverage line naming
+an artifact names exactly one approved scope path, and the refusal now names
+the failing target and appends that rule to the scope error unconditionally —
+inferring from punctuation whether the target "looks like" a list was rejected
+in design review, since a path may legally contain any of it — rather than
+leaving the operator with a criterion ID and the word "scope". The retained
+response is committed at
+`test/fixtures/recorded/plan-reconciliation-web-calculator-multi-artifact-coverage.json`.
+
+What this instance adds to the entry: **a finding a document's schema cannot
+express will be answered by breaking the schema.** The reviewers were factually
+right and the author was co-operative, and between them they produced a
+terminal block, because the only faithful answers — name one artifact, or reject
+the finding — were never stated anywhere the author could read them. So the
+prompt that requests a constrained field and the prompt that invites findings
+about it have to agree: stating the constraint to the author while the reviewer
+is still free to demand its violation buys one round of delay, not a fix. That
+is why the plan review prompt now says which coverage concerns the document can
+express.
 
 ## 4. Fixtures and code agreeing while both are wrong
 
@@ -111,8 +187,19 @@ slower failure with a larger bill.
 ## 8. Windows executable resolution
 
 Node's spawn hardening breaks npm-shimmed executables, which kills every
-external executor on Windows. Use a spawn wrapper that handles shim resolution
-and keep a regression test that spawns a shimmed binary.
+external executor on Windows. Handle a shim only on a path that actually uses
+one; do not route a native executable through `cmd.exe` on the assumption that
+it is still a shim.
+
+**Measured, 2026-09-07.** Claude Code 2.1.263 resolves on the development host
+as the native executable `~/.local/bin/claude.exe`, while the harness and paid
+driver still carried the older `claude.cmd` assumption and spawned through
+`COMSPEC`. Direct spawning resolves the same executable PowerShell launches,
+preserves stdin and captured UTF-8 bytes, removes the extra argv parser, and
+avoids Node's shell-argument security deprecation. Verification commands keep
+their separate shell path because `npm` is still an actual Windows shim. Test
+the concrete executor by direct spawn and test shims only at the command path
+that uses them.
 
 ## 9. Unverified hook interpreters
 
@@ -280,3 +367,54 @@ how each was identified are at
 replays are committed tests. What that run did not show: no claim carried a
 list marker, so hazard 3's tolerance was untouched, and its spec round produced
 no normative claim at all.
+
+## 18. Delivery proven, correctness never inspected
+
+A chain can prove that every declared path was committed — entry 5's remedy —
+and that every frozen verification command passed, and still have had nothing
+read the code. The two guarantees are about existence and about exit codes;
+neither is about whether the change does what the specification asked for.
+
+The observation is a completed run, not a filed defect. The web-calculator run
+of 2026-09-04 cost $1.34097, delivered four artifacts, and passed every gate to
+`completed`. Its frozen verification commands were `node --version` and
+`npm --version`, which prove that a runtime exists and nothing whatever about a
+calculator; `delivery_check` proved each declared file appeared in the patch
+range. The calculator did work — established by opening it by hand — but the
+system had no opinion either way, and would have recorded the same
+`completed` for a file that was present and wrong. Like entries 16 and 17,
+this is a gap found by reading a run's own record rather than a report of
+something that went wrong.
+
+Before a run may complete, at least two separately dispatched reviewers, each
+recorded as `configured_standalone` — section 6 is explicit that the audit can
+prove a separate process and never independence — must have read the committed
+change against the approved specification and plan; every finding must be
+retained as attributable, immutable evidence; and a deterministic gate over
+those findings must sit between verification and delivery.
+
+Two later paid chains proved the reviewer boundary and exposed the next gap:
+both reached `code_review` and blocked on correct `high` findings, one with two
+defects and one with a different single defect. A fresh run merely produced a
+different implementation and finding; it did not repair the reviewed commit.
+
+What now enforces the complete boundary is the bounded `code_review` loop. A
+frozen panel of two through five explicitly specialized reviewers reads the
+specification, plan, changed paths, and complete diff through the current
+verified commit. When a non-final panel reports actionable current-code
+findings, one frozen implementer receives all of them, its guarded patch is
+committed, the frozen verification commands run against that commit, and the
+full panel reviews it again. The profile permits one through five total panel
+executions. The last panel receives no remediation; it blocks only at or above
+the independently frozen severity threshold and retains lower-severity reports
+as non-blocking evidence. Code review accepts no upstream classification and
+creates no proposal, spike, waiver, or human-review decision.
+
+The residual is worth stating plainly. The final gate proves that no reviewer
+asserted a severity at or above the frozen threshold. It does not prove the
+code is correct, and accepting a below-threshold finding is an explicit release
+policy rather than proof that the finding is harmless. A change whose diff,
+specification, and plan exceed the frozen prompt ceiling is refused rather than
+reviewed in part. A verification configuration that proves nothing about the
+artifact — `node --version` against a calculator — is still accepted: a
+stronger `governed.yaml` is the operator's decision, not the system's.

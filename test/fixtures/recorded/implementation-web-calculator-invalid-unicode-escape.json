@@ -1,0 +1,146 @@
+{
+  "provenance": {
+    "run": "authorized paid Task 10 chain, run 1 of target bw-run-skill/1788790553825, 2026-09-07",
+    "design": ".claude/skills/run-buildworks/web-calculator-design.md",
+    "stage": "implementation, stage 6 of the chain; dispatch 11",
+    "agent": "implementer",
+    "dispatch": "2026-09-07T14:26:00.864Z",
+    "captured": "2026-09-07",
+    "costUsd": 0.19331440000000003,
+    "totalRunCostUsd": 1.0054846,
+    "durationMs": 113559,
+    "effectiveModels": [
+      "claude-haiku-4-5-20251001",
+      "claude-sonnet-5"
+    ],
+    "whatThisRecords": "The implementation author response from the authorized bounded-remediation Task 10 chain. It returned one fenced AgentResult containing two Python-style \\\\U0001f319 escapes, at zero-based positions 1911 and 9505 of the fenced body. JSON permits \\\\u followed by four hexadecimal digits but not \\\\U followed by eight, so the implementation stage recorded implementation.content.invalid and blocked before applying a patch.",
+    "provesWhat": "Production extractJsonBody returns refused with 'fenced block is not valid JSON: Bad escaped character in JSON at position 1912 (line 1 column 1913)'. Replacing only the two invalid escapes in memory with the literal U+1F319 character makes extraction succeed and validateAgentResult accept an implementer result with five patch files. This confirms malformed result JSON as the measured block; it does not establish that the unapplied patch would pass deterministic guards, verification, or code review.",
+    "droppedFromEnvelope": "session_id, uuid, and per-request timing fields (duration_api_ms, ttft_ms, ttft_stream_ms, time_to_request_ms, first_content_frame_ms, queued_turn_count) are dropped because they identify one provider session or vary per invocation and no contract reads them.",
+    "sanitized": "The retained result contains no absolute machine path, secret, or signing material. Its result body is otherwise byte-for-byte as retained.",
+    "stageContext": {
+      "runId": 1,
+      "stageId": 6,
+      "startingCommit": "ec859a1937178564e73242f9e27d8a3a6b255bb4",
+      "projectionCommit": "dee258883ceb10114d09b1334cf0e56d58f08993",
+      "profileHash": "c3cd47d7ba0cf1a2a500162e03c9459154964be269004812a2876650ce6343a4",
+      "inputHash": "3e4d9200a30a018621e0527da920ab40ebf0cf268dfbe9b767bc61dd9f24d8a8",
+      "outputHash": "b9181ac2662b8ecb91a8442ce565d34d607516fe8580b81dd1ac49dc5afe4d2c",
+      "signedScope": [
+        "css/styles.css",
+        "index.html",
+        "js/calculator.js",
+        "js/theme.js",
+        "package.json"
+      ],
+      "auditAction": "implementation.content.invalid",
+      "recordedRefusal": "implementer body refused: fenced block is not valid JSON: Bad escaped character in JSON at position 1912 (line 1 column 1913)",
+      "completedDispatches": 11,
+      "codeReviewReached": false,
+      "codeReviewPanelSize": 2,
+      "codeReviewMaxRounds": 2,
+      "codeReviewBlockingSeverity": "high"
+    }
+  },
+  "envelope": {
+    "stop_reason": "end_turn",
+    "total_cost_usd": 0.19331440000000003,
+    "usage": {
+      "input_tokens": 6,
+      "cache_creation_input_tokens": 11934,
+      "cache_read_input_tokens": 29037,
+      "output_tokens": 13653,
+      "output_tokens_details": {
+        "thinking_tokens": 6651
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 11934,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "global",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 6923,
+          "cache_read_input_tokens": 11489,
+          "cache_creation_input_tokens": 6716,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 6716
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    },
+    "modelUsage": {
+      "claude-haiku-4-5-20251001": {
+        "inputTokens": 3174,
+        "outputTokens": 11,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "webSearchRequests": 0,
+        "costUSD": 0.003229,
+        "contextWindow": 200000,
+        "maxOutputTokens": 32000,
+        "thinkingTokens": 0,
+        "canonicalModel": "claude-haiku-4-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      },
+      "claude-sonnet-5": {
+        "inputTokens": 6,
+        "outputTokens": 13653,
+        "cacheReadInputTokens": 29037,
+        "cacheCreationInputTokens": 11934,
+        "webSearchRequests": 0,
+        "costUSD": 0.19008540000000002,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 64000,
+        "thinkingTokens": 6651,
+        "canonicalModel": "claude-sonnet-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subagent_stats": {
+      "spawned": 0,
+      "requested": {
+        "background": 0,
+        "foreground": 0,
+        "unset": 0
+      },
+      "started_in_background": 0,
+      "max_depth": 0,
+      "spawned_by_subagents": 0,
+      "completed": 0,
+      "failed": 0,
+      "killed": {
+        "parent": 0,
+        "user": 0,
+        "system": 0
+      },
+      "refused": {
+        "depth_limit": 0,
+        "concurrency_limit": 0,
+        "budget": 0
+      },
+      "by_type": {}
+    },
+    "is_error": false,
+    "num_turns": 3,
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "```json\n{\"status\":\"proposed\",\"agent\":\"implementer\",\"role\":\"author\",\"executor\":\"claude-code\",\"summary\":\"Added a static, dependency-free web calculator: package.json with an npx-serve start script, index.html markup (digits, operators, decimal, clear, backspace, equals, theme toggle) linking theme.js before calculator.js, js/theme.js for light/dark theming with localStorage persistence and validation (default: light), js/calculator.js implementing arithmetic (no eval), keyboard support (Escape treated as Clear, documented as an explicit assumption per open RQ-012), safe textContent-based display updates, and css/styles.css with a responsive grid layout usable down to 320px plus visible hover/focus states and contrast-checked light/dark themes. Manual verification of initial page load time (<2s) is a non-code task and should be performed separately against the deployed/served app.\",\"proposedPatches\":[{\"baseCommit\":\"dee258883ceb10114d09b1334cf0e56d58f08993\",\"files\":[{\"path\":\"package.json\",\"action\":\"add\",\"content\":\"{\\n  \\\"name\\\": \\\"web-calculator\\\",\\n  \\\"version\\\": \\\"1.0.0\\\",\\n  \\\"description\\\": \\\"A browser-based calculator supporting basic arithmetic, decimal input, keyboard control, and light/dark themes.\\\",\\n  \\\"private\\\": true,\\n  \\\"scripts\\\": {\\n    \\\"start\\\": \\\"npx --yes serve -l 5000 .\\\"\\n  },\\n  \\\"license\\\": \\\"UNLICENSED\\\"\\n}\\n\"},{\"path\":\"index.html\",\"action\":\"add\",\"content\":\"<!doctype html>\\n<html lang=\\\"en\\\" data-theme=\\\"light\\\">\\n<head>\\n  <meta charset=\\\"UTF-8\\\">\\n  <meta name=\\\"viewport\\\" content=\\\"width=device-width, initial-scale=1.0\\\">\\n  <title>Calculator</title>\\n  <link rel=\\\"stylesheet\\\" href=\\\"css/styles.css\\\">\\n</head>\\n<body>\\n  <div class=\\\"app\\\">\\n    <header class=\\\"app-header\\\">\\n      <h1>Calculator</h1>\\n      <button id=\\\"theme-toggle\\\" class=\\\"theme-toggle\\\" type=\\\"button\\\" aria-pressed=\\\"false\\\">\\n        <span class=\\\"theme-toggle-icon\\\" aria-hidden=\\\"true\\\">\\U0001f319</span>\\n        <span class=\\\"theme-toggle-label\\\">Dark Mode</span>\\n      </button>\\n    </header>\\n\\n    <main class=\\\"calculator\\\">\\n      <div class=\\\"display\\\" id=\\\"display\\\" aria-live=\\\"polite\\\">0</div>\\n\\n      <div class=\\\"keypad\\\">\\n        <button class=\\\"btn btn-function\\\" data-action=\\\"clear\\\" type=\\\"button\\\">C</button>\\n        <button class=\\\"btn btn-function\\\" data-action=\\\"backspace\\\" type=\\\"button\\\" aria-label=\\\"Backspace\\\">\\u232b</button>\\n        <button class=\\\"btn btn-operator\\\" data-action=\\\"operator\\\" data-operator=\\\"/\\\" type=\\\"button\\\" aria-label=\\\"Divide\\\">\\u00f7</button>\\n        <button class=\\\"btn btn-operator\\\" data-action=\\\"operator\\\" data-operator=\\\"*\\\" type=\\\"button\\\" aria-label=\\\"Multiply\\\">\\u00d7</button>\\n\\n        <button class=\\\"btn btn-digit\\\" data-action=\\\"digit\\\" data-digit=\\\"7\\\" type=\\\"button\\\">7</button>\\n        <button class=\\\"btn btn-digit\\\" data-action=\\\"digit\\\" data-digit=\\\"8\\\" type=\\\"button\\\">8</button>\\n        <button class=\\\"btn btn-digit\\\" data-action=\\\"digit\\\" data-digit=\\\"9\\\" type=\\\"button\\\">9</button>\\n        <button class=\\\"btn btn-operator\\\" data-action=\\\"operator\\\" data-operator=\\\"-\\\" type=\\\"button\\\" aria-label=\\\"Subtract\\\">\\u2212</button>\\n\\n        <button class=\\\"btn btn-digit\\\" data-action=\\\"digit\\\" data-digit=\\\"4\\\" type=\\\"button\\\">4</button>\\n        <button class=\\\"btn btn-digit\\\" data-action=\\\"digit\\\" data-digit=\\\"5\\\" type=\\\"button\\\">5</button>\\n        <button class=\\\"btn btn-digit\\\" data-action=\\\"digit\\\" data-digit=\\\"6\\\" type=\\\"button\\\">6</button>\\n        <button class=\\\"btn btn-operator\\\" data-action=\\\"operator\\\" data-operator=\\\"+\\\" type=\\\"button\\\" aria-label=\\\"Add\\\">+</button>\\n\\n        <button class=\\\"btn btn-digit\\\" data-action=\\\"digit\\\" data-digit=\\\"1\\\" type=\\\"button\\\">1</button>\\n        <button class=\\\"btn btn-digit\\\" data-action=\\\"digit\\\" data-digit=\\\"2\\\" type=\\\"button\\\">2</button>\\n        <button class=\\\"btn btn-digit\\\" data-action=\\\"digit\\\" data-digit=\\\"3\\\" type=\\\"button\\\">3</button>\\n        <button class=\\\"btn btn-equals\\\" data-action=\\\"equals\\\" type=\\\"button\\\" aria-label=\\\"Equals\\\">=</button>\\n\\n        <button class=\\\"btn btn-digit btn-zero\\\" data-action=\\\"digit\\\" data-digit=\\\"0\\\" type=\\\"button\\\">0</button>\\n        <button class=\\\"btn btn-digit\\\" data-action=\\\"decimal\\\" type=\\\"button\\\" aria-label=\\\"Decimal point\\\">.</button>\\n      </div>\\n    </main>\\n  </div>\\n\\n  <script src=\\\"js/theme.js\\\"></script>\\n  <script src=\\\"js/calculator.js\\\"></script>\\n</body>\\n</html>\\n\"},{\"path\":\"css/styles.css\",\"action\":\"add\",\"content\":\"* {\\n  box-sizing: border-box;\\n}\\n\\n:root {\\n  --bg: #f5f5f7;\\n  --text: #1a1a1a;\\n  --surface: #ffffff;\\n  --surface-border: #d7d7dc;\\n  --digit-bg: #ffffff;\\n  --digit-bg-hover: #e8e8ed;\\n  --digit-text: #1a1a1a;\\n  --function-bg: #e3e3e8;\\n  --function-bg-hover: #d2d2d9;\\n  --function-text: #1a1a1a;\\n  --operator-bg: #005fcc;\\n  --operator-bg-hover: #0047a3;\\n  --operator-text: #ffffff;\\n  --equals-bg: #1f8a4c;\\n  --equals-bg-hover: #176a3a;\\n  --equals-text: #ffffff;\\n  --focus-ring: #005fcc;\\n}\\n\\nhtml[data-theme=\\\"dark\\\"] {\\n  --bg: #1a1a1a;\\n  --text: #f5f5f7;\\n  --surface: #2c2c2e;\\n  --surface-border: #444448;\\n  --digit-bg: #3a3a3c;\\n  --digit-bg-hover: #48484a;\\n  --digit-text: #f5f5f7;\\n  --function-bg: #545458;\\n  --function-bg-hover: #636366;\\n  --function-text: #f5f5f7;\\n  --operator-bg: #409cff;\\n  --operator-bg-hover: #6ab4ff;\\n  --operator-text: #0a1a2b;\\n  --equals-bg: #34c274;\\n  --equals-bg-hover: #59d190;\\n  --equals-text: #0a1a2b;\\n  --focus-ring: #83bfff;\\n}\\n\\nhtml, body {\\n  height: 100%;\\n}\\n\\nbody {\\n  margin: 0;\\n  min-height: 100vh;\\n  display: flex;\\n  align-items: center;\\n  justify-content: center;\\n  padding: 16px;\\n  background: var(--bg);\\n  color: var(--text);\\n  font-family: -apple-system, BlinkMacSystemFont, \\\"Segoe UI\\\", Roboto, Helvetica, Arial, sans-serif;\\n  transition: background-color 0.2s ease, color 0.2s ease;\\n}\\n\\n.app {\\n  width: 100%;\\n  max-width: 360px;\\n}\\n\\n.app-header {\\n  display: flex;\\n  align-items: center;\\n  justify-content: space-between;\\n  margin-bottom: 12px;\\n}\\n\\n.app-header h1 {\\n  font-size: 1.25rem;\\n  margin: 0;\\n}\\n\\n.theme-toggle {\\n  display: flex;\\n  align-items: center;\\n  gap: 6px;\\n  padding: 8px 12px;\\n  border-radius: 999px;\\n  border: 1px solid var(--surface-border);\\n  background: var(--surface);\\n  color: var(--text);\\n  font-size: 0.85rem;\\n  cursor: pointer;\\n}\\n\\n.theme-toggle:hover {\\n  background: var(--digit-bg-hover);\\n}\\n\\n.calculator {\\n  background: var(--surface);\\n  border: 1px solid var(--surface-border);\\n  border-radius: 16px;\\n  padding: 16px;\\n}\\n\\n.display {\\n  background: var(--bg);\\n  border-radius: 10px;\\n  padding: 20px 16px;\\n  margin-bottom: 16px;\\n  text-align: right;\\n  font-size: clamp(1.75rem, 8vw, 2.5rem);\\n  font-weight: 600;\\n  word-break: break-all;\\n  min-height: 1.2em;\\n}\\n\\n.keypad {\\n  display: grid;\\n  grid-template-columns: repeat(4, 1fr);\\n  grid-auto-rows: minmax(52px, 1fr);\\n  gap: 10px;\\n}\\n\\n.btn {\\n  border: none;\\n  border-radius: 10px;\\n  font-size: 1.1rem;\\n  font-weight: 600;\\n  cursor: pointer;\\n  padding: 0;\\n  background: var(--digit-bg);\\n  color: var(--digit-text);\\n  transition: background-color 0.15s ease, transform 0.05s ease;\\n}\\n\\n.btn:hover {\\n  background: var(--digit-bg-hover);\\n}\\n\\n.btn:active {\\n  transform: scale(0.97);\\n}\\n\\n.btn:focus-visible {\\n  outline: 3px solid var(--focus-ring);\\n  outline-offset: 2px;\\n}\\n\\n.btn-function {\\n  background: var(--function-bg);\\n  color: var(--function-text);\\n}\\n\\n.btn-function:hover {\\n  background: var(--function-bg-hover);\\n}\\n\\n.btn-operator {\\n  background: var(--operator-bg);\\n  color: var(--operator-text);\\n}\\n\\n.btn-operator:hover {\\n  background: var(--operator-bg-hover);\\n}\\n\\n.btn-equals {\\n  background: var(--equals-bg);\\n  color: var(--equals-text);\\n  grid-row: span 2;\\n}\\n\\n.btn-equals:hover {\\n  background: var(--equals-bg-hover);\\n}\\n\\n.btn-zero {\\n  grid-column: span 2;\\n}\\n\\n@media (max-width: 320px) {\\n  .app {\\n    max-width: 100%;\\n  }\\n\\n  .calculator {\\n    padding: 12px;\\n  }\\n\\n  .keypad {\\n    gap: 8px;\\n  }\\n\\n  .btn {\\n    font-size: 1rem;\\n  }\\n}\\n\"},{\"path\":\"js/theme.js\",\"action\":\"add\",\"content\":\"(function () {\\n  var STORAGE_KEY = 'calculator-theme';\\n  var VALID_THEMES = ['light', 'dark'];\\n  // Explicit default theme, since the spec leaves the default undecided.\\n  var DEFAULT_THEME = 'light';\\n\\n  function getStoredTheme() {\\n    var stored = null;\\n    try {\\n      stored = window.localStorage.getItem(STORAGE_KEY);\\n    } catch (error) {\\n      stored = null;\\n    }\\n    return VALID_THEMES.indexOf(stored) !== -1 ? stored : DEFAULT_THEME;\\n  }\\n\\n  function applyTheme(theme) {\\n    var resolved = VALID_THEMES.indexOf(theme) !== -1 ? theme : DEFAULT_THEME;\\n    document.documentElement.setAttribute('data-theme', resolved);\\n    return resolved;\\n  }\\n\\n  function storeTheme(theme) {\\n    try {\\n      window.localStorage.setItem(STORAGE_KEY, theme);\\n    } catch (error) {\\n      // localStorage unavailable (e.g. private browsing); theme just won't persist.\\n    }\\n  }\\n\\n  applyTheme(getStoredTheme());\\n\\n  function reflectToggleState(toggle, theme) {\\n    var isDark = theme === 'dark';\\n    toggle.setAttribute('aria-pressed', String(isDark));\\n    var label = toggle.querySelector('.theme-toggle-label');\\n    var icon = toggle.querySelector('.theme-toggle-icon');\\n    if (label) {\\n      label.textContent = isDark ? 'Light Mode' : 'Dark Mode';\\n    }\\n    if (icon) {\\n      icon.textContent = isDark ? '\\u2600\\ufe0f' : '\\U0001f319';\\n    }\\n  }\\n\\n  function setUpToggle() {\\n    var toggle = document.getElementById('theme-toggle');\\n    if (!toggle) {\\n      return;\\n    }\\n\\n    reflectToggleState(toggle, document.documentElement.getAttribute('data-theme'));\\n\\n    toggle.addEventListener('click', function () {\\n      var current = document.documentElement.getAttribute('data-theme');\\n      var next = current === 'dark' ? 'light' : 'dark';\\n      applyTheme(next);\\n      storeTheme(next);\\n      reflectToggleState(toggle, next);\\n    });\\n  }\\n\\n  if (document.readyState === 'loading') {\\n    document.addEventListener('DOMContentLoaded', setUpToggle);\\n  } else {\\n    setUpToggle();\\n  }\\n})();\\n\"},{\"path\":\"js/calculator.js\",\"action\":\"add\",\"content\":\"(function () {\\n  var display = document.getElementById('display');\\n\\n  var state = {\\n    currentInput: '0',\\n    previousValue: null,\\n    operator: null,\\n    overwrite: false,\\n  };\\n\\n  function updateDisplay() {\\n    display.textContent = state.currentInput;\\n  }\\n\\n  function inputDigit(digit) {\\n    if (state.overwrite) {\\n      state.currentInput = digit === '0' ? '0' : digit;\\n      state.overwrite = false;\\n      updateDisplay();\\n      return;\\n    }\\n    if (state.currentInput === '0') {\\n      state.currentInput = digit;\\n    } else {\\n      state.currentInput += digit;\\n    }\\n    updateDisplay();\\n  }\\n\\n  function inputDecimal() {\\n    if (state.overwrite) {\\n      state.currentInput = '0.';\\n      state.overwrite = false;\\n      updateDisplay();\\n      return;\\n    }\\n    if (state.currentInput.indexOf('.') === -1) {\\n      state.currentInput += '.';\\n      updateDisplay();\\n    }\\n  }\\n\\n  function clear() {\\n    state.currentInput = '0';\\n    state.previousValue = null;\\n    state.operator = null;\\n    state.overwrite = false;\\n    updateDisplay();\\n  }\\n\\n  function backspace() {\\n    if (state.overwrite) {\\n      return;\\n    }\\n    var isSingleCharacter = state.currentInput.length <= 1;\\n    var isLoneNegativeSign = state.currentInput.length === 2 && state.currentInput.charAt(0) === '-';\\n    if (isSingleCharacter || isLoneNegativeSign) {\\n      state.currentInput = '0';\\n    } else {\\n      state.currentInput = state.currentInput.slice(0, -1);\\n    }\\n    updateDisplay();\\n  }\\n\\n  function compute(a, b, operator) {\\n    switch (operator) {\\n      case '+':\\n        return a + b;\\n      case '-':\\n        return a - b;\\n      case '*':\\n        return a * b;\\n      case '/':\\n        // Division by zero is undefined by the spec; treated as an error result.\\n        return b === 0 ? NaN : a / b;\\n      default:\\n        return b;\\n    }\\n  }\\n\\n  function formatResult(value) {\\n    if (!isFinite(value)) {\\n      return 'Error';\\n    }\\n    var rounded = Math.round(value * 1e10) / 1e10;\\n    return String(rounded);\\n  }\\n\\n  function chooseOperator(nextOperator) {\\n    var inputValue = parseFloat(state.currentInput);\\n\\n    if (state.operator !== null && state.overwrite) {\\n      state.operator = nextOperator;\\n      return;\\n    }\\n\\n    if (state.previousValue === null) {\\n      state.previousValue = inputValue;\\n    } else if (state.operator !== null) {\\n      var result = compute(state.previousValue, inputValue, state.operator);\\n      state.previousValue = result;\\n      state.currentInput = formatResult(result);\\n      updateDisplay();\\n    }\\n\\n    state.operator = nextOperator;\\n    state.overwrite = true;\\n  }\\n\\n  function equals() {\\n    if (state.operator === null || state.previousValue === null) {\\n      return;\\n    }\\n    var inputValue = parseFloat(state.currentInput);\\n    var result = compute(state.previousValue, inputValue, state.operator);\\n    state.currentInput = formatResult(result);\\n    state.previousValue = null;\\n    state.operator = null;\\n    state.overwrite = true;\\n    updateDisplay();\\n  }\\n\\n  var actions = {\\n    digit: function (button) {\\n      inputDigit(button.getAttribute('data-digit'));\\n    },\\n    decimal: function () {\\n      inputDecimal();\\n    },\\n    operator: function (button) {\\n      chooseOperator(button.getAttribute('data-operator'));\\n    },\\n    clear: function () {\\n      clear();\\n    },\\n    backspace: function () {\\n      backspace();\\n    },\\n    equals: function () {\\n      equals();\\n    },\\n  };\\n\\n  var buttons = document.querySelectorAll('.keypad .btn');\\n  for (var i = 0; i < buttons.length; i += 1) {\\n    (function (button) {\\n      button.addEventListener('click', function () {\\n        var action = actions[button.getAttribute('data-action')];\\n        if (action) {\\n          action(button);\\n        }\\n      });\\n    })(buttons[i]);\\n  }\\n\\n  var KEY_TO_OPERATOR = {\\n    '+': '+',\\n    '-': '-',\\n    '*': '*',\\n    '/': '/',\\n  };\\n\\n  document.addEventListener('keydown', function (event) {\\n    var key = event.key;\\n\\n    if (/^[0-9]$/.test(key)) {\\n      inputDigit(key);\\n      return;\\n    }\\n\\n    if (key === '.') {\\n      inputDecimal();\\n      return;\\n    }\\n\\n    if (KEY_TO_OPERATOR[key]) {\\n      chooseOperator(KEY_TO_OPERATOR[key]);\\n      return;\\n    }\\n\\n    if (key === 'Enter' || key === '=') {\\n      event.preventDefault();\\n      equals();\\n      return;\\n    }\\n\\n    if (key === 'Backspace') {\\n      backspace();\\n      return;\\n    }\\n\\n    if (key === 'Escape') {\\n      // Assumption: Escape behaves like the Clear button (RQ-012 leaves this open; flagged for future clarification).\\n      clear();\\n    }\\n  });\\n\\n  updateDisplay();\\n})();\\n\"}]}]}\n```",
+    "type": "result",
+    "duration_ms": 111502
+  }
+}

@@ -313,6 +313,7 @@ const PINNED_SEQUENCE = [
   "plan_review",
   "implementation",
   "verification",
+  "code_review",
   "delivery_check",
   "completed",
 ];
@@ -320,7 +321,6 @@ const PINNED_SEQUENCE = [
 const PINNED_DEFERRED = [
   "task_decomposition",
   "test_authoring",
-  "code_review",
   "documentation",
   "final_verification",
   "pr_summary",

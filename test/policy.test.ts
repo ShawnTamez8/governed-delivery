@@ -2,6 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   APPROVAL_MAX_LIFETIME_SECONDS,
+  CODE_REVIEW_BLOCKING_SEVERITY,
+  CODE_REVIEW_MAX_ROUNDS,
+  CODE_REVIEW_MAX_ROUNDS_CEILING,
+  CODE_REVIEW_MAX_ROUNDS_FLOOR,
+  CODE_REVIEW_PANEL_SIZE,
+  CODE_REVIEW_PANEL_SIZE_CEILING,
+  CODE_REVIEW_PANEL_SIZE_FLOOR,
   PANEL_SIZE_CEILING,
   PANEL_SIZE_FLOOR,
   PANEL_SIZE_MAX,
@@ -35,7 +42,10 @@ test("every policy value is the one the enforcing module actually uses", () => {
   assert.equal(p.planReviewRounds, PLAN_REVIEW_ROUNDS);
   assert.equal(p.panelSizeMin, PANEL_SIZE_FLOOR);
   assert.equal(p.panelSizeMax, PANEL_SIZE_MAX);
+  assert.equal(p.codeReviewPanelSize, CODE_REVIEW_PANEL_SIZE);
+  assert.equal(p.codeReviewMaxRounds, CODE_REVIEW_MAX_ROUNDS);
   assert.deepEqual(p.severities, [...SEVERITIES]);
+  assert.equal(p.codeReviewBlockingSeverity, CODE_REVIEW_BLOCKING_SEVERITY);
   assert.deepEqual(p.requiredSpecialties, [...REQUIRED_SPECIALTIES]);
   assert.deepEqual(p.protectedPathPrefixes, [...PROTECTED_PATH_PREFIXES]);
   assert.equal(p.promptMaxBytes, PROMPT_MAX_BYTES);
@@ -68,6 +78,8 @@ test("any change to policy changes its hash", () => {
   assert.notEqual(policyHash({ ...base, specReviewRounds: base.specReviewRounds + 1 }), before);
   assert.notEqual(policyHash({ ...base, planReviewRounds: base.planReviewRounds + 1 }), before);
   assert.notEqual(policyHash({ ...base, panelSizeMax: base.panelSizeMax + 1 }), before);
+  assert.notEqual(policyHash({ ...base, codeReviewPanelSize: base.codeReviewPanelSize + 1 }), before);
+  assert.notEqual(policyHash({ ...base, codeReviewMaxRounds: base.codeReviewMaxRounds + 1 }), before);
 });
 
 test("every value computeRisk can return is a declared risk value", () => {
@@ -90,6 +102,15 @@ test("the configured panel maximum lies within the permitted bounds", () => {
   assert.ok(Number.isInteger(PANEL_SIZE_MAX));
   assert.ok(PANEL_SIZE_MAX >= PANEL_SIZE_FLOOR, `${PANEL_SIZE_MAX} is below the floor ${PANEL_SIZE_FLOOR}`);
   assert.ok(PANEL_SIZE_MAX <= PANEL_SIZE_CEILING, `${PANEL_SIZE_MAX} is above the ceiling ${PANEL_SIZE_CEILING}`);
+});
+
+test("the configured code-review values lie within their independent bounds", () => {
+  assert.ok(Number.isInteger(CODE_REVIEW_PANEL_SIZE));
+  assert.ok(CODE_REVIEW_PANEL_SIZE >= CODE_REVIEW_PANEL_SIZE_FLOOR);
+  assert.ok(CODE_REVIEW_PANEL_SIZE <= CODE_REVIEW_PANEL_SIZE_CEILING);
+  assert.ok(Number.isInteger(CODE_REVIEW_MAX_ROUNDS));
+  assert.ok(CODE_REVIEW_MAX_ROUNDS >= CODE_REVIEW_MAX_ROUNDS_FLOOR);
+  assert.ok(CODE_REVIEW_MAX_ROUNDS <= CODE_REVIEW_MAX_ROUNDS_CEILING);
 });
 
 test("the policy this code builds is one it accepts", () => {
@@ -122,7 +143,32 @@ test("a round count that is not a positive integer is refused", () => {
       /planReviewRounds must be a positive integer/,
       `planReviewRounds ${JSON.stringify(bad)} must be refused`
     );
+    assert.match(
+      String(invalidPolicyReason({ ...buildPolicy(), codeReviewMaxRounds: bad })),
+      /codeReviewMaxRounds must be a positive integer/,
+      `codeReviewMaxRounds ${JSON.stringify(bad)} must be refused`
+    );
   }
+});
+
+test("code-review panel size and total rounds accept only their frozen absolute bounds", () => {
+  for (const bad of [1, 6]) {
+    assert.match(
+      String(invalidPolicyReason({ ...buildPolicy(), codeReviewPanelSize: bad })),
+      /codeReviewPanelSize .* outside the permitted 2-5/
+    );
+  }
+  for (const bad of [0, 6]) {
+    assert.match(
+      String(invalidPolicyReason({ ...buildPolicy(), codeReviewMaxRounds: bad })),
+      bad === 0
+        ? /codeReviewMaxRounds must be a positive integer/
+        : /codeReviewMaxRounds 6 is outside the permitted 1-5/
+    );
+  }
+  assert.equal(invalidPolicyReason({ ...buildPolicy(), codeReviewPanelSize: 5 }), null);
+  assert.equal(invalidPolicyReason({ ...buildPolicy(), codeReviewMaxRounds: 1 }), null);
+  assert.equal(invalidPolicyReason({ ...buildPolicy(), codeReviewMaxRounds: 5 }), null);
 });
 
 test("a panel maximum outside 2-5 is refused, and both ends are tested", () => {
@@ -181,6 +227,55 @@ test("something that is not a policy object at all is refused", () => {
 });
 
 
+test("the code-review threshold must occur exactly once in the policy's own frozen severities", () => {
+  // Checked against the frozen list rather than the live `SEVERITIES` because
+  // that frozen list is what the gate indexes. A threshold valid against the
+  // live constant but absent from the list this run froze would index to -1
+  // and block nothing — a gate that silently stopped gating.
+  const notASeverity = invalidPolicyReason({
+    ...buildPolicy(),
+    codeReviewBlockingSeverity: "severe",
+  });
+  assert.match(String(notASeverity), /codeReviewBlockingSeverity/);
+  assert.match(String(notASeverity), /\["low","medium","high","critical"\]/);
+  assert.match(String(notASeverity), /found "severe"/);
+
+  // Valid against the live constant, absent from this policy's frozen list.
+  assert.match(
+    String(invalidPolicyReason({ ...buildPolicy(), severities: ["low", "medium"] })),
+    /codeReviewBlockingSeverity must occur exactly once/
+  );
+
+  // Twice is refused too: the comparison must not depend on which index won.
+  assert.match(
+    String(
+      invalidPolicyReason({
+        ...buildPolicy(),
+        severities: ["low", "medium", "high", "critical", "high"],
+      })
+    ),
+    /codeReviewBlockingSeverity must occur exactly once/
+  );
+
+  for (const bad of [null, undefined, 7, ["high"]]) {
+    assert.match(
+      String(invalidPolicyReason({ ...buildPolicy(), codeReviewBlockingSeverity: bad })),
+      /codeReviewBlockingSeverity must occur exactly once/,
+      `threshold ${JSON.stringify(bad)} must be refused`
+    );
+  }
+
+  // Every member of the seeded vocabulary is a legal threshold: an operator
+  // may freeze a stricter or looser gate without changing this code.
+  for (const severity of SEVERITIES) {
+    assert.equal(
+      invalidPolicyReason({ ...buildPolicy(), codeReviewBlockingSeverity: severity }),
+      null,
+      `${severity} must be a legal threshold`
+    );
+  }
+});
+
 // --- the review configuration has one source, read where it is enforced -----
 
 const SRC = join(fileURLToPath(new URL("..", import.meta.url)), "src");
@@ -198,6 +293,9 @@ const FROZEN_ONLY = [
   "PANEL_SIZE_FLOOR",
   "PANEL_SIZE_CEILING",
   "REQUIRED_SPECIALTIES",
+  "CODE_REVIEW_BLOCKING_SEVERITY",
+  "CODE_REVIEW_PANEL_SIZE",
+  "CODE_REVIEW_MAX_ROUNDS",
 ];
 
 /** The modules that execute a run, as opposed to those that configure one. */
@@ -207,6 +305,7 @@ const STAGE_MODULES = [
   "plan-gate.ts",
   "implementation-stage.ts",
   "verification-stage.ts",
+  "code-review-stage.ts",
 ];
 
 test("no stage reads a review-policy constant directly: it comes from the frozen profile", () => {
@@ -250,5 +349,16 @@ test("configured round counts are read from the frozen profile, and the legacy c
     const source = readFileSync(join(SRC, file), "utf8");
     assert.ok(source.includes(`profile.policy.${field}`), `${file} must activate ${field}`);
     assert.ok(!source.includes("LEGACY_CLOSURE_PASSES"), `${file} must not carry the legacy closure budget`);
+  }
+});
+
+test("code review reads size, total rounds, and threshold from the frozen profile", () => {
+  const source = readFileSync(join(SRC, "code-review-stage.ts"), "utf8");
+  for (const field of [
+    "codeReviewPanelSize",
+    "codeReviewMaxRounds",
+    "codeReviewBlockingSeverity",
+  ]) {
+    assert.ok(source.includes(`profile.policy.${field}`), `code-review-stage.ts must activate ${field}`);
   }
 });

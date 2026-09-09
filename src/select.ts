@@ -296,3 +296,112 @@ export function staffingShortfall(
   }
   return null;
 }
+
+/**
+ * The configured code-review panel: eligible frozen reviewers in id order,
+ * truncated to exactly the frozen size. There is no model-authored request or
+ * ranked fill; changing the size is an operator policy decision at run start.
+ *
+ * The candidate filter is what partitions the two reviewer registries.
+ * `selectReviewers` and `staffingShortfall` filter on `findings`; this filters
+ * on `code-findings`. A code reviewer can therefore never be ranked into a
+ * spec or plan panel, and a spec reviewer can never be seated here, whatever
+ * lens names the two registries happen to share.
+ */
+export function codeReviewPanel(
+  candidates: readonly AgentDefinition[],
+  size: number,
+  executorId: string
+): AgentDefinition[] {
+  return candidates
+    .filter(
+      (a) =>
+        a.role === "reviewer" &&
+        a.outputs.includes("code-findings") &&
+        a.executor === executorId
+    )
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .slice(0, size);
+}
+
+/**
+ * Can this registry seat the fixed code-review panel on the named executor?
+ * Returns the refusal, or null when it can.
+ *
+ * The sibling of `staffingShortfall` for the other candidate set, asked at the
+ * same two moments: when the profile is frozen, before a run row exists and
+ * before anything has been spent (hazard 11 — a default installation that
+ * cannot complete a run must fail at configuration time, not after the paid
+ * stages), and again at the stage boundary, because a tolerance applied at one
+ * boundary and not its sibling is this repository's recurring defect.
+ *
+ * There is no requested or required specialty set here: the panel is fixed, so
+ * the only questions are whether it is large enough and whether its members are
+ * distinct agents carrying distinct lenses. Two reviewers sharing a lens are
+ * one lens twice, which is not the coverage a panel of that size is claiming.
+ */
+export function codeReviewStaffingShortfall(
+  candidates: readonly AgentDefinition[],
+  size: number,
+  executorId: string
+): string | null {
+  if (!Number.isInteger(size) || size < 2 || size > 5) {
+    return `the configured code-review panel size ${JSON.stringify(size)} is outside the permitted 2-5`;
+  }
+  const codeReviewers = candidates.filter((a) => a.outputs.includes("code-findings"));
+  const wronglyInstructed = candidates.filter(
+    (a) => !a.outputs.includes("code-findings") && a.codeReviewInstructions !== undefined
+  );
+  if (wronglyInstructed.length > 0) {
+    return `the non-code-review agent${wronglyInstructed.length === 1 ? "" : "s"} ${wronglyInstructed
+      .map((a) => a.id)
+      .sort()
+      .join(", ")} carr${wronglyInstructed.length === 1 ? "ies" : "y"} code-review instructions`;
+  }
+  const missingInstructions = codeReviewers
+    .filter(
+      (a) =>
+        typeof a.codeReviewInstructions !== "string" ||
+        a.codeReviewInstructions.trim() === ""
+    )
+    .map((a) => a.id);
+  if (missingInstructions.length > 0) {
+    return `the code reviewer${missingInstructions.length === 1 ? "" : "s"} ${missingInstructions
+      .sort()
+      .join(", ")} carr${missingInstructions.length === 1 ? "ies" : "y"} no code-review instructions`;
+  }
+  const eligible = codeReviewers.filter(
+    (a) => a.role === "reviewer" && a.executor === executorId
+  );
+  const repeatedIds = eligible
+    .map((a) => a.id)
+    .filter((id, index, ids) => ids.indexOf(id) !== index);
+  if (repeatedIds.length > 0) {
+    return `the eligible code reviewer registry contains duplicate agent ids: ${[
+      ...new Set(repeatedIds),
+    ]
+      .sort()
+      .join(", ")}`;
+  }
+  const unlensed = eligible.filter((a) => a.specialty === null).map((a) => a.id);
+  if (unlensed.length > 0) {
+    return `the code reviewer${unlensed.length === 1 ? "" : "s"} ${unlensed
+      .sort()
+      .join(", ")} carr${unlensed.length === 1 ? "ies" : "y"} no specialty`;
+  }
+  const specialties = eligible.map((a) => a.specialty as string);
+  const repeated = specialties.filter((s, index) => specialties.indexOf(s) !== index);
+  if (repeated.length > 0) {
+    return `the code reviewer registry seats the specialt${
+      repeated.length === 1 ? "y" : "ies"
+    } ${[...new Set(repeated)].sort().join(", ")} more than once`;
+  }
+  if (eligible.length < size) {
+    return `the agent registry seats ${eligible.length} code reviewer${
+      eligible.length === 1 ? "" : "s"
+    } on executor ${executorId} (${
+      eligible.map((a) => a.id).sort().join(", ") || "none at all"
+    }), which cannot fill the configured code-review panel of ${size}`;
+  }
+  return null;
+}

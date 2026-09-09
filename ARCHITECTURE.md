@@ -102,13 +102,18 @@ one run are worth less than eight that close the loop.
 
 ```
 spec  ->  spec_review  ->  awaiting_approval  ->  plan  ->  plan_review
-      ->  implementation  ->  verification  ->  delivery_check  ->  completed
+      ->  implementation  ->  verification  ->  code_review
+      ->  delivery_check  ->  completed
 ```
 
-Deferred until the above completes end to end at least once:
-`task_decomposition`, `test_authoring`, `code_review`, `documentation`,
-`final_verification`, `pr_summary`. Each is real work; none is worth building
-before the loop closes.
+The loop above closed end to end on 2026-09-03. On 2026-09-04 the operator
+lifted the stop for exactly one of the deferred stages, the code review, on
+the evidence that a run could deliver every declared artifact and pass every
+gate while nothing in the system had read the code; it is in the sequence
+above. Still deferred, each behind its own decision:
+`task_decomposition`, `test_authoring`, `documentation`,
+`final_verification`, `pr_summary`. Each is real work; none is built
+because the loop closed.
 
 ## 6. Trust boundaries
 
@@ -261,6 +266,31 @@ The parser proves only format and uniqueness: before approval it cannot prove
 that a model preserved semantic identity or was authorized to delete an
 obligation.
 
+Each structured section of a specification states a membership rule, and the
+prompts that request those sections state it too. A declared-artifact line is
+one repo-relative path; an acceptance-criterion line is one `AC-NNN: <text>`
+entry. The canonical form of both carries a leading list marker, and the parser
+tolerates its absence on either section — a recorded provider response writes
+the artifacts section unbulleted — so the marker is conventional, not required.
+
+What each rule proves is narrower than the sentence above, and the difference
+matters. A line under `## Acceptance criteria` that does not open with an
+`AC`-prefixed token and a colon is refused by a message naming the section's
+rule, so prose there is diagnosed as prose; a line that does open that way is
+held to the ID pattern and refused as a malformed ID, because a wrong-case or
+wrongly padded ID is a broken criterion rather than a note. A line under
+`## Declared artifacts` is refused when it carries whitespace, which catches a
+sentence but not a path wearing Markdown decoration. Neither rule makes the
+section provably closed against everything that is not an entry: they close the
+shapes that have been measured reaching a gate, and the prompts carry the rest.
+
+Because IDs are stable and a removed obligation must be claimed and grounded
+rather than renumbered around, the numbering is expected to carry gaps: an ID
+withdrawn with its obligation stays out of use. A gap is therefore the
+ordinary residue of the removal accounting and not a defect, and the review
+prompts say so, so that no reviewer is invited to report the correct output of
+one guard as a finding for another to answer.
+
 A plan Coverage line copies only the approved criterion ID to the left of
 `->`; it never restates criterion prose. Before scope fitness is evaluated,
 the planning gate requires a bidirectional, unique relation: every approved ID
@@ -268,6 +298,27 @@ appears exactly once, no unknown ID appears, and no ID is repeated. Identity is
 exact after trimming field whitespace. The plan remains bound by `plan_for` to
 the same normalized specification hash the review and approval chain records,
 and artifact targets remain constrained by the separately signed scope.
+
+Each acceptance criterion has exactly one Coverage entry. An artifact-form
+entry names exactly one path copied from signed scope. **That path is the
+criterion's representative delivery anchor, not an exhaustive list of every
+contributing file** — the declared artifact most directly responsible for the
+criterion's observable outcome. Multiple criteria may name the same path; the
+uniqueness the planning gate proves is one entry per criterion, not one
+criterion per artifact.
+
+The consequence is that the plan document cannot express "this criterion also
+touches another file", and no revision can answer a finding asking it to. Work
+on the other contributing files is stated in `## Tasks`, which is where a
+reviewer reports it missing. All four plan prompts carry the same meaning — the
+author, self-critique and reconciliation prompts state the rule where the value
+is requested, and the review prompt states that a request for a second path is
+not a coverage finding while a missing task is. The scope refusal names the
+membership rule unconditionally rather than inferring from punctuation which
+mistake was made: a path may legally contain any separator, and the check
+already holds the stronger evidence that the target equals no signed entry. A
+reviewer inviting a change the schema forbids is a defect in the prompt, not a
+finding the author can answer.
 
 A coverage entry may say `not_applicable`, but only with a rationale and an
 alternative verification. Honest non-coverage beats a fabricated test.
@@ -350,6 +401,14 @@ Risk is computed once, deterministically, at intake — from the spec's
 paths. It travels into the authorization for the operator to sign. An agent
 never assesses its own risk.
 
+Code review has a separate configured panel size, default two and bounded from
+two through five. Its panel is selected deterministically in agent-id order
+from frozen reviewers that emit `code-findings`, carry distinct specialties,
+and carry code-review instructions specific to those specialties. The two
+seeded specialties are correctness and security. Raising the configured size
+requires registering enough additional distinct specialists before the profile
+can freeze; it does not change either document-review panel rule above.
+
 Keep it free of model routing and telemetry concerns. Entangling selection with
 semantic model tiers and capability preflight is what made the previous
 implementation resistant to change — three unrelated reasons for one function to
@@ -415,10 +474,11 @@ implementation stage writes only inside the run's signed scope.
 ### Invocation
 
 **Non-interactive, one process per invocation.** Prompt on **stdin**, never in
-argv. On Windows the executable usually needs shell resolution, and a shell
-concatenates arguments without escaping them — a prompt containing spaces or
-quotes arrives shredded, and the session runs without doing the work it was
-asked for, while appearing to succeed. Write the prompt to stdin and close it.
+argv. Resolve and spawn the executor's native binary directly, including on
+Windows; do not put `cmd.exe` or PowerShell between the harness and the binary.
+A shell concatenates arguments without escaping them, creating a second parser
+for fixed executor flags without helping stdin. Write the prompt to stdin and
+close it.
 
 **Probe before any run.** Run the probe command at setup and refuse to proceed
 if the executable does not resolve in the environment that will actually spawn
@@ -577,6 +637,69 @@ signature.
 **`verification`.** Fails closed when commands are missing or do not pass.
 Bounded remediation rounds are the retry budget; exhausting one blocks.
 
+**`code_review`.** Seats exactly the configured number of specialized code
+reviewers — role `reviewer`, output kind `code-findings`, bound to the frozen
+executor — and hands each the approved specification and plan, the complete
+changed-path set, and the unified diff from the original patch base through the
+current verified commit. The worktree is their read-only working directory. It
+asserts the worktree is at that commit and clean before the stage row exists
+and again after every dispatch, and records every report as immutable evidence
+on a canonical finding. Each selected definition contributes a distinct,
+protected specialty instruction to the prompt; the two seeded lenses are
+correctness and security. Reviewers may report only actionable defects in the
+current code. Style, preference, optional refactoring, speculative hardening,
+questions, and concerns that require changing the approved specification or
+plan are not findings in this stage.
+
+Code review has a separate total panel-round budget, default two and bounded
+from one through five, frozen with its panel size and blocking severity at run
+start. A round is one complete execution of the configured panel. When any
+finding is reported and another round remains, every attributable report from
+that panel is handed together to the frozen `implementer`. The implementer
+proposes code patches bound to the current reviewed commit; the system applies
+them through the same scope, protected-path, base/head, link, staged-set,
+committed-set, and clean-tree guards as initial implementation, then runs the
+same frozen verification commands against the resulting commit. Only a passing
+verified commit reaches the next complete panel, which receives a newly
+computed full diff from the original patch base. A remediation that produces
+no patch or no new verified commit blocks instead of buying an identical
+retry.
+
+The final panel never triggers another patch. It passes with no findings, and
+also passes when every final finding is below the frozen
+`codeReviewBlockingSeverity`; those below-threshold reports remain attributable
+evidence and are not described as harmless or resolved. It blocks when any
+final report reaches the threshold, naming those findings by id, severity, and
+location. Setting the round budget to one therefore selects one-shot review
+with no remediation. Changing the threshold, panel size, or total round budget
+changes only profiles frozen after the configuration change.
+
+What the gate proves: that the final reviewed commit passed the frozen
+verification commands and no reviewer on its final complete panel asserted a
+severity at or above the frozen threshold. It does not prove the code is
+correct or a below-threshold finding harmless. Its reach remains bounded by
+diff size — the prompt carries the specification, plan, and complete diff
+under the frozen prompt ceiling, and a change that exceeds it is refused by
+name and never reviewed in part.
+
+The pass audit event canonically binds the final round number, frozen round
+budget, final reviewed commit, final finding count, and blocking severity.
+`delivery_check` parses that event and matches every value to the retained
+record before it trusts the final commit; the existence of a pass event alone
+does not authorize a later or edited commit.
+
+This remediation is not document reconciliation. It records no finding
+decision, creates no proposal or spike, asks for no human reviewer or waiver,
+and admits no `upstream` classification. A reviewer response that attempts to
+route a concern outside the current code is invalid output and blocks the run;
+the prompt instead tells the reviewer to omit concerns this stage cannot fix.
+The `spec_review` and `plan_review` author-requested panels, reconciliation
+schemas, upstream routes, and no-closure-pass behavior are unchanged.
+
+Every panel reviewer and each intervening implementer are separately
+dispatched and recorded as `configured_standalone` — never described as
+independent; section 6 says what that label proves and what it does not.
+
 **`delivery_check`.** Before a run may complete, every declared artifact must
 be delivered by exact normalized equality, never by containment. The delivery
 stage diffs the patch range — between the recorded patch base and the verified
@@ -620,9 +743,11 @@ is the repair for all three** — there is no in-place resume.
 - **The `status.md` projection.** Section 14 describes it as a projection of
   the run row. Nothing writes it, and the database is the only place a run's
   state can be read today.
-
-These stay deferred until the deliberate stop at step 9 is lifted by an
-explicit decision. Building past it is not a matter of finding time.
+The stop at step 9 was lifted for exactly one deferred stage, `code_review`,
+by operator decision on 2026-09-04, and for its bounded remediation behavior by
+operator decision on 2026-09-06. The three behaviours here and the five stages
+still listed in section 5 each need their own; building past a deferral is not
+a matter of finding time.
 
 ## 13. Conflict resolution
 
@@ -759,7 +884,7 @@ report lives there.
   verification/<run>/  retained command output, one file per command, plus the
                        structured result record handed to delivery_check
   proposals/<run>/  retained upstream-proposal evidence, one file per
-                    candidate; proposal.evidence_ref references only the
+candidate; proposal.evidence_ref references only the
                     creating candidate's file — a later candidate that
                     dedups onto the same proposal row gets its own evidence
                     file here too, but that file is reachable only through
@@ -769,6 +894,14 @@ report lives there.
                     delivered, and missing sets) and its human-readable
                     report.md companion; the delivery_check stage's
                     output_ref references the structured record
+  code-review/<run>/  the retained review record: result.json (initial and
+                      final verified commits, frozen panel policy, every panel
+                      round, remediation and verification evidence, final
+                      blocking list, and outcome) and its human-readable
+                      report.md companion; round-<n>/verification/ retains
+                      collision-free command evidence; the code_review stage's
+                      output_ref references the structured record, and
+                      delivery_check reads it
 ```
 
 **What is git-tracked and what is not.** The database and raw output are
@@ -894,12 +1027,14 @@ and it is invisible to a suite whose fixtures emit conforming bytes.*
 5. two fenced blocks
 6. a fenced block that is not JSON
 7. CRLF line endings inside the fence
+8. prose before an unfenced object — "I'll finalize the spec now." then `{…}`
 
 **Choose strictness by consequence, not by taste.** Where bytes are canonicalized
 into an immutable record, be strict and refuse prose outside the fence, because
 silently dropping it corrupts the record. Where the result is only
-schema-validated, tolerate one fenced block anywhere in the body. Refuse rather
-than guess when several are present.
+schema-validated, tolerate one fenced block anywhere in the body, and with no
+fence present read from the first `{` to the end of the body. Refuse rather
+than guess when several fences are present.
 
 Assert the operator-visible message on every refusal, not merely that an error
 was thrown. Several defects were diagnosable only because the message named the
@@ -944,11 +1079,18 @@ price.
   but the flood.
 - **Concurrency.** One writer per repository, enforced by a lock. A second
   invocation fails fast with a clear diagnostic rather than interleaving writes.
-- **Review rounds.** A bounded budget per reviewed stage, set in configuration
-  and frozen in the profile — one round by default, configurable higher. A
-  round is one complete panel-and-reconciliation cycle; there is no closure
-  pass, and the count is unrelated to panel size. Exhausting the budget blocks;
-  it does not silently accept.
+- **Document-review rounds.** A bounded budget for `spec_review` and
+  `plan_review`, set in configuration and frozen in the profile — one round by
+  default, configurable higher. A round is one complete
+  panel-and-reconciliation cycle; there is no closure pass, and the count is
+  unrelated to panel size. Exhausting the budget blocks; it does not silently
+  accept.
+- **Code-review panel rounds.** A separate total panel-execution budget,
+  default two and configurable from one through five, frozen in the profile
+  independently of panel size. Findings on a non-final panel trigger one patch
+  proposal and verification before another full panel; the final panel is the
+  severity gate and never triggers an unreviewed patch. A breach blocks rather
+  than silently accepting or dispatching beyond the frozen budget.
 - **Verification retries.** No limit is in force, because there is no round
   loop: the first verification command that does not pass blocks the run.
   Adding retries later means adding a limit of its own, frozen in the profile
@@ -989,7 +1131,7 @@ block.
 
 ## 22. Known hazards
 
-`docs/hazards.md` states seventeen failure modes this kind of system is subject
+`docs/hazards.md` states eighteen failure modes this kind of system is subject
 to and what each requires. They are requirements, not an appendix: model output
 in shapes the schema refuses, discarded output being undiagnosable, constrained
 fields whose constraint the prompt never states, fixtures and code agreeing
@@ -1000,8 +1142,8 @@ install that cannot complete a run, configuration divergence between targets,
 specifications inventing obligations, independence that cannot be proven,
 proposal subprocesses that are requested rather than enforced to be read-only,
 a remediation loop aimed at the wrong artifact that cannot repair an upstream
-omission, and a reconciliation that answers a finding by deleting the
-obligation.
+omission, a reconciliation that answers a finding by deleting the obligation,
+and a delivery proven complete that nothing ever read.
 
 When a new failure mode is found, add it there rather than here. Two lists drift
 apart, and the one that drifts is the one people stop trusting.
@@ -1018,7 +1160,8 @@ apart, and the one that drifts is the one people stop trusting.
 8. Delivery check.
 9. **Stop. One complete run, with queryable cost.** This is the milestone that
    decides whether the project continues.
-10. Only then: the deferred stages, then a dashboard, then notifications, then —
+10. Only then: the deferred stages (`code_review` was the first, by operator
+    decision on 2026-09-04), then a dashboard, then notifications, then —
     if ever — a second harness.
 
 ## 24. Non-goals

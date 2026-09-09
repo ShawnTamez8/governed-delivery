@@ -3,7 +3,7 @@
 A repo-native control plane for AI-assisted software delivery. The system
 name is configuration; BuildWorks is the default.
 
-> Agents propose. The system decides.
+> A governed agentic SDLC
 
 Agents reason, draft, implement, review, and summarize. They never approve their
 own work, advance authoritative state, bypass policy, or write without
@@ -36,10 +36,19 @@ named environment passthrough and bounded per-command time and output limits,
 proving the worktree still holds the commit implementation left and is clean
 before and after every command, retaining each command's complete output, and
 handing the next stage a structured record naming the worktree and the
-verified commit); and the delivery stage (`bw deliver` — the final
+verified commit); the code review stage (`bw review` — a frozen panel of two
+specialized code reviewers by default reads the verified change against the
+approved specification and plan, with the worktree as a read-only working
+directory; while another configured panel execution remains, all actionable
+findings are sent together to the frozen implementer, the resulting commit is
+verified with the frozen commands, and the full panel reviews it again; the
+last panel retains below-threshold findings without blocking and blocks only
+on findings at or above the independently frozen severity threshold); and
+the delivery stage (`bw deliver` — the final
 deterministic gate, no dispatch and no model: it re-reads the verification
-record and the retained worktree, diffs the patch range between the recorded
-base and the verified commit, and completes the run only when every declared
+record and the code-review record it is handed, cross-checks the two, re-reads
+the retained worktree, diffs the patch range between the recorded
+base and the final reviewed, verified commit, and completes the run only when every declared
 artifact the operator signed for appears there as an exact changed path —
 otherwise it blocks the run naming what is missing). The model each stage
 uses is frozen
@@ -60,9 +69,28 @@ promotion to active work stays a human `git mv`. Step 8 shipped next:
 [`docs/features/delivery-check/plan.md`](docs/features/delivery-check/plan.md)
 implemented the terminal delivery check described above — the delivery_check
 stage, `bw deliver`, and the audit events that transition a run to
-`completed` or `blocked`. All eight build-order stages now exist; step 9's
-stop is the milestone itself: one feature run that reaches `completed` with
-queryable per-stage cost.
+`completed` or `blocked`. All eight build-order stages exist, and step 9's
+stop — one feature run reaching `completed` with queryable per-stage cost —
+was met on 2026-09-03. The first stage past that stop exists by explicit
+operator decision on 2026-09-04 and by that decision alone:
+[`docs/features/code-review-stage/plan.md`](docs/features/code-review-stage/plan.md)
+added `code_review` between verification and delivery, because a run had
+delivered every declared artifact and passed every gate while nothing in the
+system had read the code. The five stages still deferred in
+[`ARCHITECTURE.md`](ARCHITECTURE.md) section 5 each need their own decision.
+
+The code-review controls live together in [`src/policy.ts`](src/policy.ts) and
+are frozen into each new run's profile:
+
+| Constant | Default | Legal range / effect |
+| --- | --- | --- |
+| `CODE_REVIEW_PANEL_SIZE` | `2` | `2`–`5`; increasing it also requires enough registered `code-findings` reviewers with distinct, non-empty specialist instructions. |
+| `CODE_REVIEW_MAX_ROUNDS` | `2` | `1`–`5` total full-panel executions; `1` disables remediation because no re-review remains. |
+| `CODE_REVIEW_BLOCKING_SEVERITY` | `high` | Release-policy threshold applied only to the final panel in the frozen severity order. |
+
+Changing one of these constants affects profiles frozen by later `new-run`
+commands only. It does not rewrite an in-flight run, and changing the final
+threshold does not require changing the review-loop implementation.
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the design, and its binding
   constraints.

@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 import {
   GOVERNANCE_DIR,
   GOVERNANCE_PREFIX,
+  codeReviewEvidenceDir,
+  codeReviewEvidenceRef,
+  codeReviewVerificationDir,
+  codeReviewVerificationRef,
   lockDir,
   profileDir,
   profilePath,
@@ -109,4 +113,17 @@ test("every location is the one shipped before the module existed", () => {
   assert.equal(verificationEvidenceDir(root, 7), p("verification", "7"));
   assert.equal(worktreePath(root, 7), p("worktrees", "7"));
   assert.equal(proposalEvidenceDir(root, 7), p("proposals", "7"));
+  assert.equal(codeReviewEvidenceDir(root, 7), p("code-review", "7"));
+  assert.equal(
+    codeReviewEvidenceRef(7, "result.json"),
+    join(".governance", "code-review", "7", "result.json")
+  );
+  assert.equal(
+    codeReviewVerificationDir(root, 7, 2),
+    p("code-review", "7", "round-2", "verification")
+  );
+  assert.equal(
+    codeReviewVerificationRef(7, 2, "test.log"),
+    join(".governance", "code-review", "7", "round-2", "verification", "test.log")
+  );
 });

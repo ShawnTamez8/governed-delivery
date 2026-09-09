@@ -1,6 +1,6 @@
 ---
 name: run-buildworks
-description: Run, drive, and smoke-test the BuildWorks bw CLI against a throwaway target repository. Use to run or start bw, launch a governed run end to end, exercise the stage chain and its gates, check what a run cost, or reproduce a stage failure outside this repository. Covers migrate, new-run, spec, approval-request, approve, plan, implement, verify, deliver, and verify-audit.
+description: Run, drive, and smoke-test the BuildWorks bw CLI against a throwaway target repository. Use to run or start bw, launch a governed run end to end, exercise the stage chain and its gates, check what a run cost, or reproduce a stage failure outside this repository. Covers migrate, new-run, spec, approval-request, approve, plan, implement, verify, review, deliver, and verify-audit.
 ---
 
 # Running BuildWorks
@@ -22,8 +22,8 @@ Node v24.14.0, npm 11.18.0, git-bash and PowerShell, 2026-08-31.
 - **git** on PATH.
 - `npm install` once, for `typescript` and `@types/node`. No runtime
   dependencies — SQLite is `node:sqlite`.
-- Only for the paid chain: the `claude` CLI on PATH (`claude --version`
-  printed `2.1.252 (Claude Code)` here).
+- Only for the paid chain: the native `claude` CLI on PATH (`claude --version`
+  printed `2.1.263 (Claude Code)` here on 2026-09-07).
 
 There is **no `bw` binary** after `npm install`. `package.json` declares the
 bin, but npm does not link a private package's own bin, and
@@ -32,7 +32,7 @@ bin, but npm does not link a private package's own bin, and
 
 ## Run: the free smoke (start here)
 
-Twelve steps, no dispatches, no spend, about ten seconds:
+Thirteen steps, no dispatches, no spend, about ten seconds:
 
 ```bash
 node .claude/skills/run-buildworks/driver.mjs smoke
@@ -40,9 +40,9 @@ node .claude/skills/run-buildworks/driver.mjs smoke
 
 It builds a fresh scratch target (git repo, committed `governed.yaml` and
 `design.md`, throwaway Ed25519 keypair beside it), then drives `migrate` and
-`new-run` to success and eight refusals to their exact messages. Each step
+`new-run` to success and nine refusals to their exact messages. Each step
 declares an expected exit code and an expected pattern; the summary marks
-every step `ok` or `FAIL`, prints `12/12 steps as expected`, and exits
+every step `ok` or `FAIL`, prints `13/13 steps as expected`, and exits
 non-zero if any step drifted. Last line is the scratch repo's path — it is
 left on disk for you to poke at.
 
@@ -59,11 +59,15 @@ ok    new-run refuses an unspawnable model name             exit=2  invalid mode
 ok    approval-request refuses before a passed spec_review  exit=1  run 1 has no passed spec_review stage to approve
 ok    verify refuses without a passed implementation        exit=1  run 1's last stage is none, not a passed implementation
 ok    verify refuses a run that does not exist              exit=1  run 9999 does not exist
+ok    review refuses without a passed verification          exit=1  run 1's last stage is none, not a passed verification
 ok    verify-audit validates the chain                      exit=0  chain valid
 ok    an unknown command prints usage                       exit=2  usage: bw <command>
 
-12/12 steps as expected
+13/13 steps as expected
 ```
+
+The block above is the post-`code_review` shape: the review refusal is the
+step this stage added, and every step before it is unchanged.
 
 Other subcommands:
 
@@ -83,7 +87,7 @@ node .claude/skills/run-buildworks/driver.mjs paid --yes
 
 Without `--yes` it refuses. It drives the full sequence — `migrate`,
 `new-run`, `spec`, `approval-request` → `sign` → `approve`, `plan`,
-`implement`, `verify`, `deliver`, `verify-audit` — against the real `claude`
+`implement`, `verify`, `review`, `deliver`, `verify-audit` — against the real `claude`
 binary, then asserts the terminal state and prints the per-dispatch cost from
 the store.
 
@@ -164,11 +168,13 @@ committed at
 `test/fixtures/recorded/plan-reconciliation-web-calculator-prd.json` and
 replayed by `test/reconciliation.test.ts`.
 
-**Budget $1.00–$2.00 for a full chain on this design, not the clamp's $0.25.**
-The cost moved into review and implementation rather than authoring — the
-implementer alone was $0.40528 and the plan panel $0.31597 — so a run with an
-extra remediation round will sit at the top of that range or above it. The free
-`smoke` still costs nothing: it reaches no dispatch.
+**Budget $1.25–$2.50 for a full chain on this design, not the clamp's $0.25.**
+The clean default adds two code-reviewer dispatches, each carrying the full
+diff of the run's patch range plus the approved specification and plan. A
+finding before the final configured panel adds one implementer dispatch,
+post-patch verification, and another full reviewer panel, so a remediating run
+can exceed that historical range. The free `smoke` still costs nothing: it
+reaches no dispatch.
 
 **Cost is not fixed.** That run took 7 dispatches, not 5, because the plan gate
 passed in round 2 — `plan.gate.pass | plan_review gate passed in round 2` after
@@ -185,6 +191,27 @@ what is missing. The driver asserts `delivery_check=passed`, `run=completed`,
 and that the delivery record covers every signed artifact, then runs
 `verify-audit` over the chain including the delivery event. The 2026-08-31
 record above ends `in_progress` because it predates step 8.
+
+**The paid chain reviews the code before it delivers it.** Between `verify`
+and `deliver` the driver calls `review` once. The frozen profile selects two
+through five explicitly specialized reviewers (two are seeded: `correctness`
+and `security`) and permits one through five total full-panel executions. The
+defaults in `src/policy.ts` are two reviewers and two panels. Any non-final
+panel findings go together to the frozen implementer; guarded patches are
+committed, the frozen verification commands run, and the full panel reviews
+the new commit. The final panel blocks only at or above the independently
+frozen `CODE_REVIEW_BLOCKING_SEVERITY` (default `high`); lower-severity
+findings remain in the record without blocking. Policy edits affect only new
+runs. Raising panel size also requires enough registered `code-findings`
+reviewers with distinct non-empty specialist instructions.
+
+The paid driver reports panel executions, remediation attempts, final commit,
+and final gate from `.governance/code-review/<run>/result.json`. A block is a
+result, not a driver failure: the command exits 1 with the final blocking
+finding ids, severities, and locations, and retains the run, worktree, reports,
+patch evidence, and verification logs. Code review creates no proposal, spike,
+waiver, or human-review decision. The fixture-backed `high-then-clean` stage
+test is the free remediation exercise; the 13-step smoke remains dispatch-free.
 
 ## Driving it by hand
 
@@ -214,10 +241,11 @@ Then any command from `bw`'s usage. Keep `BW_APPROVAL_PUBLIC_KEY` set on
   repository root* with `--out` pointing somewhere else — running it from the
   scratch root with `--out <scratch>/keys` fails with `refusing to write
   signing material inside the repository`.
-- **`claude` is an npm shim.** On Windows it is `claude.cmd`, which
-  `spawnSync` cannot resolve without `shell: true` — `spawnSync claude ENOENT`.
-  `src/harness.ts` spawns with `shell: WINDOWS` for exactly this (hazard 8);
-  the driver's probe had to do the same.
+- **The current Windows `claude` launcher is native.** `where claude` resolves
+  `claude.exe`; BuildWorks spawns it directly, which is the same executable
+  PowerShell reaches. Do not insert `cmd.exe` or PowerShell as a wrapper. If
+  `claude` cannot be resolved by direct spawning, fix PATH or install the
+  native launcher before a paid run.
 - **The free path stops at `approval-request`.** The approval gate reads the
   `spec.gate.pass` audit event the spec stage writes, so `stage-add` /
   `stage-complete` cannot fake a passed `spec_review`. Anything past the spec
@@ -238,18 +266,21 @@ Then any command from `bw`'s usage. Keep `BW_APPROVAL_PUBLIC_KEY` set on
 - **Exit codes carry meaning: 2 is a usage error, 1 is a refusal, 0 is
   success.** Do not read them through a pipe — `cmd | grep` reports grep's
   status.
-- **`verify`, `deliver`, and `verify-audit` are unrelated.** `verify` runs the
-  frozen verification commands for one run; `deliver` (step 8) is the
-  deterministic terminal check that completes or blocks the run against the
-  signed declared artifacts; `verify-audit` recomputes the whole audit hash
-  chain.
+- **`verify`, `review`, `deliver`, and `verify-audit` are separate commands.**
+  `verify` runs the frozen verification commands for one run; `review` runs
+  the bounded code-review loop over the verified change and is the only one of
+  the four that dispatches agents, so it is the only one that spends and the
+  only one that takes `--model`; its internal post-patch verification reuses
+  the frozen commands without adding a CLI stage. `deliver` (step 8) is the deterministic terminal check that
+  completes or blocks the run against the signed declared artifacts;
+  `verify-audit` recomputes the whole audit hash chain.
 - Every invocation prints `ExperimentalWarning: SQLite is an experimental
   feature` on stderr. It is noise; the driver strips it.
 
 ## Test
 
 ```bash
-npm test              # node --test — 682 tests as of 2026-09-03 (681 pass,
+npm test              # node --test — 822 tests as of 2026-09-07 (821 pass,
                       # 1 pre-existing skip); prose count, drifts with the suite
 npm run typecheck     # strict tsc --noEmit
 npm run check:docs    # the documentation checker
@@ -263,7 +294,7 @@ verification commands.
 | Symptom | Cause and fix |
 |---|---|
 | `keygen failed: refusing to write signing material inside the repository` | `--out` is under the cwd. Run the tool from the repo root, write the keys elsewhere. |
-| `Error: spawnSync claude ENOENT` | `claude` is a `.cmd` shim; spawn it with `shell: true` on Windows. |
+| `Error: spawnSync claude ENOENT` | The native `claude.exe` is not directly resolvable. Check `where claude` and repair PATH or the installation before spending; do not add a command-shell wrapper. |
 | `run N has no passed spec_review stage to approve` | Expected without a real `bw spec`. The free path ends here. |
 | `run N's last stage is none, not a passed implementation` | `verify` needs a passed implementation stage, not just a run. |
 | `the working tree is not clean` | The target has uncommitted changes — often a previous blocked run's projections. |

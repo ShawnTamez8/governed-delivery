@@ -51,6 +51,44 @@ export const PANEL_SIZE_FLOOR = 2;
 export const PANEL_SIZE_CEILING = 5;
 export const PANEL_SIZE_MAX = 2;
 
+/**
+ * Code review has an operator-chosen panel and total panel-execution budget,
+ * separate from the author-requested document-review policy above. These are
+ * the two values an operator changes after measuring effectiveness; their
+ * absolute bounds are enforced against every frozen profile.
+ */
+export const CODE_REVIEW_PANEL_SIZE_FLOOR = 2;
+export const CODE_REVIEW_PANEL_SIZE_CEILING = 5;
+export const CODE_REVIEW_PANEL_SIZE = 2;
+export const CODE_REVIEW_MAX_ROUNDS_FLOOR = 1;
+export const CODE_REVIEW_MAX_ROUNDS_CEILING = 5;
+export const CODE_REVIEW_MAX_ROUNDS = 2;
+
+/**
+ * The lowest severity at which one code-review report blocks the run.
+ *
+ * `high` rather than anything weaker because of hazard 11: a panel that
+ * returns nothing is the exception, not the rule — every web-calculator panel
+ * returned findings — so a gate that blocked on any finding at all would make
+ * the default installation unable to complete a run against any design large
+ * enough to attract one. `high` is the first level at which a reviewer is
+ * asserting the change fails an acceptance criterion or a plan task it claims
+ * to cover, or behaves incorrectly in ordinary use; the two levels below it
+ * are a defect that fails no criterion, and a nit. That rubric is stated to
+ * the reviewer in the prompt, because a threshold over an unstated scale is a
+ * comparison against nothing (hazard 3).
+ *
+ * On the final panel, the run blocks when a report reaches this value and
+ * names each blocking finding's id, severity, and location. Earlier panels
+ * remediate every finding while the separately frozen round budget remains.
+ *
+ * Configuration, so its value is stated here and frozen per run through the
+ * profile. The stage reads `profile.policy.codeReviewBlockingSeverity` and
+ * orders it within `profile.policy.severities` — never this constant, and
+ * never the live `SEVERITIES`.
+ */
+export const CODE_REVIEW_BLOCKING_SEVERITY = "high";
+
 export const REQUIRED_SPECIALTIES = ["requirements-traceability"];
 
 /**
@@ -151,6 +189,9 @@ export interface Policy {
   planReviewRounds: number;
   panelSizeMin: number;
   panelSizeMax: number;
+  codeReviewPanelSize: number;
+  codeReviewMaxRounds: number;
+  codeReviewBlockingSeverity: string;
   severities: string[];
   requiredSpecialties: string[];
   protectedPathPrefixes: string[];
@@ -176,6 +217,9 @@ export function buildPolicy(): Policy {
     planReviewRounds: PLAN_REVIEW_ROUNDS,
     panelSizeMin: PANEL_SIZE_FLOOR,
     panelSizeMax: PANEL_SIZE_MAX,
+    codeReviewPanelSize: CODE_REVIEW_PANEL_SIZE,
+    codeReviewMaxRounds: CODE_REVIEW_MAX_ROUNDS,
+    codeReviewBlockingSeverity: CODE_REVIEW_BLOCKING_SEVERITY,
     severities: [...SEVERITIES],
     requiredSpecialties: [...REQUIRED_SPECIALTIES],
     protectedPathPrefixes: [...PROTECTED_PATH_PREFIXES],
@@ -206,6 +250,7 @@ function isStringArray(v: unknown): boolean {
 const POSITIVE_INT_FIELDS = [
   "specReviewRounds",
   "planReviewRounds",
+  "codeReviewMaxRounds",
   "promptMaxBytes",
   "resultMaxBytes",
   "approvalMaxLifetimeSeconds",
@@ -270,6 +315,18 @@ export function invalidPolicyReason(policy: unknown): string | null {
       return `the frozen policy field ${field} must be an array of strings, found ${JSON.stringify(p[field])}`;
     }
   }
+  // Checked against the policy's own frozen vocabulary, not the live
+  // `SEVERITIES`, because that frozen list is what the gate indexes: a
+  // threshold valid against the live constant but absent from the frozen list
+  // would index to -1 and block nothing. Exactly once, so a list carrying the
+  // threshold twice cannot make the comparison depend on which index won.
+  const severities = p.severities as string[];
+  const threshold = p.codeReviewBlockingSeverity;
+  if (typeof threshold !== "string" || severities.filter((s) => s === threshold).length !== 1) {
+    return `the frozen policy field codeReviewBlockingSeverity must occur exactly once in the frozen severities ${JSON.stringify(
+      severities
+    )}, found ${JSON.stringify(threshold)}`;
+  }
   if (!isPositiveInt(p.panelSizeMin) || !isPositiveInt(p.panelSizeMax)) {
     return `the frozen policy panel sizes must be positive integers, found min ${JSON.stringify(
       p.panelSizeMin
@@ -289,6 +346,25 @@ export function invalidPolicyReason(policy: unknown): string | null {
   }
   if (required.length > max) {
     return `the frozen policy has ${required.length} required specialties, which cannot fit in its maximum panel of ${max}`;
+  }
+  if (!isPositiveInt(p.codeReviewPanelSize)) {
+    return `the frozen policy field codeReviewPanelSize must be a positive integer, found ${JSON.stringify(
+      p.codeReviewPanelSize
+    )}`;
+  }
+  const codeReviewPanelSize = p.codeReviewPanelSize as number;
+  if (
+    codeReviewPanelSize < CODE_REVIEW_PANEL_SIZE_FLOOR ||
+    codeReviewPanelSize > CODE_REVIEW_PANEL_SIZE_CEILING
+  ) {
+    return `the frozen policy field codeReviewPanelSize ${codeReviewPanelSize} is outside the permitted ${CODE_REVIEW_PANEL_SIZE_FLOOR}-${CODE_REVIEW_PANEL_SIZE_CEILING}`;
+  }
+  const codeReviewMaxRounds = p.codeReviewMaxRounds as number;
+  if (
+    codeReviewMaxRounds < CODE_REVIEW_MAX_ROUNDS_FLOOR ||
+    codeReviewMaxRounds > CODE_REVIEW_MAX_ROUNDS_CEILING
+  ) {
+    return `the frozen policy field codeReviewMaxRounds ${codeReviewMaxRounds} is outside the permitted ${CODE_REVIEW_MAX_ROUNDS_FLOOR}-${CODE_REVIEW_MAX_ROUNDS_CEILING}`;
   }
   return null;
 }

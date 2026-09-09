@@ -18,7 +18,13 @@ import {
 } from "../src/profile.ts";
 import { AGENTS } from "../src/agents.ts";
 import { CLAUDE_CODE } from "../src/executor.ts";
-import { PANEL_SIZE_MAX, REQUIRED_SPECIALTIES, buildPolicy, policyHash } from "../src/policy.ts";
+import {
+  CODE_REVIEW_PANEL_SIZE,
+  PANEL_SIZE_MAX,
+  REQUIRED_SPECIALTIES,
+  buildPolicy,
+  policyHash,
+} from "../src/policy.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
 import { canonicalJson, sha256Hex } from "../src/canonical.ts";
 
@@ -176,6 +182,7 @@ test("the profile freezes one model entry per stage kind", () => {
       plan: "chosen-model",
       plan_review: "chosen-model",
       implementation: "chosen-model",
+      code_review: "chosen-model",
     });
     assert.deepEqual(resolveStageModel(profile, "plan"), { ok: true, model: "chosen-model" });
   });
@@ -190,16 +197,17 @@ test("resolveStageModel refuses an unmapped stage kind naming the mapped ones", 
     // Section 10: the failure is at configuration time and must name what the
     // frozen profile does map, so the operator can see what is missing.
     assert.match(result.reason, /no model configured for stage verification/);
-    assert.match(result.reason, /spec, spec_review, plan, plan_review, implementation/);
+    assert.match(result.reason, /spec, spec_review, plan, plan_review, implementation, code_review/);
   });
 });
 
-test("requiredCapability maps the five dispatchable stage kinds", () => {
+test("requiredCapability maps the six dispatchable stage kinds", () => {
   assert.equal(requiredCapability("spec"), "spec");
   assert.equal(requiredCapability("spec_review"), "review");
   assert.equal(requiredCapability("plan"), "plan");
   assert.equal(requiredCapability("plan_review"), "review");
   assert.equal(requiredCapability("implementation"), "implementation");
+  assert.equal(requiredCapability("code_review"), "review");
   assert.equal(requiredCapability("verification"), null);
 });
 
@@ -265,7 +273,15 @@ test("requireFrozenBinding refuses an unknown stage kind by name", () => {
  * of them. Only the difference the change actually made is stated here.
  */
 function preTask3Policy(): Record<string, unknown> {
-  const { specReviewRounds, planReviewRounds, panelSizeMin, panelSizeMax, ...carried } = buildPolicy();
+  const {
+    specReviewRounds,
+    planReviewRounds,
+    panelSizeMin,
+    panelSizeMax,
+    codeReviewPanelSize,
+    codeReviewMaxRounds,
+    ...carried
+  } = buildPolicy();
   return { ...carried, panelSizes: { low: 1, standard: 2, high: 3 }, remediationRounds: 3 };
 }
 
@@ -310,7 +326,7 @@ test("a correctly hashed pre-Task-3 profile is refused by name, not migrated", (
     if (verified.ok) return;
     // Named, so an operator can tell this from a tampered profile.
     assert.match(verified.reason, /run 1 cannot be executed/);
-    assert.match(verified.reason, /missing panelSizeMax, panelSizeMin, planReviewRounds, specReviewRounds/);
+    assert.match(verified.reason, /missing codeReviewMaxRounds, codeReviewPanelSize, panelSizeMax, panelSizeMin, planReviewRounds, specReviewRounds/);
     assert.match(verified.reason, /carrying obsolete panelSizes, remediationRounds/);
     // And it says what the operator can still do, because the run's evidence
     // is not what became invalid.
@@ -360,6 +376,8 @@ test("a profile with a policy value outside its bounds is refused", () => {
       { panelSizeMin: 1 },
       { specReviewRounds: 0 },
       { planReviewRounds: 1.5 },
+      { codeReviewPanelSize: 1 },
+      { codeReviewMaxRounds: 6 },
     ]) {
       const policy = { ...profile.policy, ...patch };
       // Hashed consistently, so the bounds check is what refuses it rather
@@ -384,6 +402,8 @@ test("a profile frozen under a different but legal configuration still executes"
       panelSizeMax: 5,
       specReviewRounds: 3,
       requiredSpecialties: ["security"],
+      codeReviewPanelSize: 5,
+      codeReviewMaxRounds: 4,
     };
     const candidate = { ...profile, policy, policyHash: policyHash(policy as never) };
     assert.equal(invalidProfileReason(candidate), null);
@@ -397,6 +417,7 @@ test("the default installation staffs the configured panel", () => {
     assert.doesNotThrow(() => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION));
   });
   assert.ok(PANEL_SIZE_MAX >= REQUIRED_SPECIALTIES.length);
+  assert.equal(CODE_REVIEW_PANEL_SIZE, 2);
 });
 
 test("a registry that cannot staff the configured panel refuses at freeze time", () => {
@@ -426,6 +447,38 @@ test("a registry with reviewers but too few distinct lenses is refused, naming t
     assert.throws(
       () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, { agents: oneLens }),
       /seats 1 distinct reviewer specialty .* which cannot fill a panel of 2/
+    );
+  });
+});
+
+test("a registry that cannot staff the code-review panel refuses at freeze time", () => {
+  // The sibling of the spec-panel refusal above, for the other candidate set.
+  // Without it a registry holding no code reviewer would freeze cleanly and
+  // fail at the code_review stage, after implementation and verification have
+  // already spent — the exact ordering hazard 11 exists to prevent.
+  withRoot((root) => {
+    const noCodeReviewers = AGENTS.filter((a) => !a.outputs.includes("code-findings"));
+    assert.throws(
+      () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, { agents: noCodeReviewers }),
+      /cannot freeze a profile for run 1: the agent registry seats 0 code reviewers on executor claude-code \(none at all\), which cannot fill the configured code-review panel of 2/
+    );
+    assert.equal(
+      existsSync(join(root, ".governance", "profiles", "1", "profile.json")),
+      false,
+      "nothing may be written when the configuration is refused"
+    );
+  });
+});
+
+test("the seeded registry staffs both panels, so a default installation freezes", () => {
+  // Hazard 11 read forwards rather than backwards: the two staffing refusals
+  // are only safe to add if the shipped registry satisfies both.
+  withRoot((root) => {
+    assert.doesNotThrow(() => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION));
+    const { profile } = freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION);
+    assert.deepEqual(
+      profile.agents.filter((a) => a.outputs.includes("code-findings")).map((a) => a.id),
+      ["code-reviewer-correctness", "code-reviewer-security"]
     );
   });
 });
@@ -473,6 +526,7 @@ test("every stage reaches the frozen profile through loadVerifiedProfile, never 
     "plan-stage.ts",
     "implementation-stage.ts",
     "verification-stage.ts",
+    "code-review-stage.ts",
     "approval-stage.ts",
     "cli.ts",
   ]) {

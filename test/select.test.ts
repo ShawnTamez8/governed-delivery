@@ -2,12 +2,19 @@ import { AGENTS } from "../src/agents.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  codeReviewPanel,
+  codeReviewStaffingShortfall,
   computeRisk,
   selectReviewers,
   staffingShortfall,
   validatePanelRequest,
 } from "../src/select.ts";
-import { PANEL_SIZE_FLOOR, PANEL_SIZE_MAX, REQUIRED_SPECIALTIES } from "../src/policy.ts";
+import {
+  CODE_REVIEW_PANEL_SIZE,
+  PANEL_SIZE_FLOOR,
+  PANEL_SIZE_MAX,
+  REQUIRED_SPECIALTIES,
+} from "../src/policy.ts";
 import type { PanelRequest } from "../src/self-critique.ts";
 import { CLAUDE_CODE } from "../src/executor.ts";
 
@@ -369,4 +376,132 @@ test("duplicate eligible reviewer ids are refused before selection can collapse 
   );
   assert.match(String(reason), /duplicate agent ids/);
   assert.match(String(reason), new RegExp(duplicate.id));
+});
+
+// --- the fixed code-review panel --------------------------------------------
+
+test("the code-review panel takes exactly the frozen size in id order", () => {
+  assert.deepEqual(
+    codeReviewPanel(AGENTS, CODE_REVIEW_PANEL_SIZE, CLAUDE_CODE.id).map((a) => a.id),
+    ["code-reviewer-correctness", "code-reviewer-security"]
+  );
+  const base = AGENTS.find((a) => a.id === "code-reviewer-correctness")!;
+  const added = ["database", "performance", "ui"].map((specialty, index) => ({
+    ...base,
+    id: `code-reviewer-${String(index + 3).padStart(2, "0")}-${specialty}`,
+    specialty,
+    codeReviewInstructions: `Review concrete ${specialty} defects in current code.`,
+  }));
+  assert.deepEqual(
+    codeReviewPanel([...AGENTS, ...added], 5, CLAUDE_CODE.id).map((a) => a.id),
+    [
+      "code-reviewer-03-database",
+      "code-reviewer-04-performance",
+      "code-reviewer-05-ui",
+      "code-reviewer-correctness",
+      "code-reviewer-security",
+    ]
+  );
+});
+
+test("no code reviewer can be ranked into a spec or plan panel", () => {
+  // The ranked fill sorts `code-reviewer-*` before `spec-reviewer-*` by id, so
+  // a leaked eligibility would seat one first rather than last. Asking for more
+  // seats than the registry holds makes the selector take everything it
+  // considers a candidate, which is the strongest form of the question.
+  const panel = selectReviewers(AGENTS, 5, []);
+  assert.ok(panel.length > 0, "the selector must still seat the spec reviewers");
+  for (const agent of panel) {
+    assert.ok(
+      !agent.outputs.includes("code-findings"),
+      `${agent.id} leaked into a spec or plan panel`
+    );
+  }
+});
+
+test("no spec or plan reviewer can be seated on the code-review panel", () => {
+  // The partition read from the other side: the two candidate sets are
+  // disjoint, so neither function can reach the other's registry.
+  for (const agent of codeReviewPanel(AGENTS, CODE_REVIEW_PANEL_SIZE, CLAUDE_CODE.id)) {
+    assert.ok(!agent.outputs.includes("findings"), `${agent.id} leaked into the code-review panel`);
+  }
+});
+
+test("the default registry staffs the code-review panel", () => {
+  assert.equal(codeReviewStaffingShortfall(AGENTS, CODE_REVIEW_PANEL_SIZE, CLAUDE_CODE.id), null);
+});
+
+test("a registry holding one code reviewer cannot staff the panel floor", () => {
+  const thinned = AGENTS.filter((a) => a.id !== "code-reviewer-security");
+  const reason = codeReviewStaffingShortfall(thinned, CODE_REVIEW_PANEL_SIZE, CLAUDE_CODE.id);
+  assert.match(String(reason), /seats 1 code reviewer/);
+  assert.match(String(reason), /code-reviewer-correctness/);
+  assert.match(String(reason), new RegExp(`configured code-review panel of ${CODE_REVIEW_PANEL_SIZE}`));
+});
+
+test("two code reviewers sharing a lens are one lens twice, not a panel of two", () => {
+  const cloned = AGENTS.map((a) =>
+    a.outputs.includes("code-findings") ? { ...a, specialty: "correctness" } : a
+  );
+  const reason = codeReviewStaffingShortfall(cloned, CODE_REVIEW_PANEL_SIZE, CLAUDE_CODE.id);
+  assert.match(String(reason), /seats the specialty correctness more than once/);
+});
+
+test("a code reviewer without a lens is refused by name", () => {
+  const unlensed = AGENTS.map((a) =>
+    a.id === "code-reviewer-security" ? { ...a, specialty: null } : a
+  );
+  const reason = codeReviewStaffingShortfall(unlensed, CODE_REVIEW_PANEL_SIZE, CLAUDE_CODE.id);
+  assert.match(String(reason), /code-reviewer-security carries no specialty/);
+});
+
+test("a code reviewer on another executor is not counted toward the panel", () => {
+  const wrongExecutor = AGENTS.map((a) =>
+    a.id === "code-reviewer-security" ? { ...a, executor: "another-executor" } : a
+  );
+  assert.deepEqual(
+    codeReviewPanel(wrongExecutor, CODE_REVIEW_PANEL_SIZE, CLAUDE_CODE.id).map((a) => a.id),
+    ["code-reviewer-correctness"]
+  );
+  const reason = codeReviewStaffingShortfall(wrongExecutor, CODE_REVIEW_PANEL_SIZE, CLAUDE_CODE.id);
+  assert.match(String(reason), /seats 1 code reviewer on executor claude-code/);
+});
+
+test("duplicate eligible code reviewer ids are refused before the panel is seated", () => {
+  const duplicate = {
+    ...codeReviewPanel(AGENTS, CODE_REVIEW_PANEL_SIZE, CLAUDE_CODE.id)[0]!,
+    specialty: "concurrency",
+  };
+  const reason = codeReviewStaffingShortfall(
+    [...AGENTS, duplicate],
+    CODE_REVIEW_PANEL_SIZE,
+    CLAUDE_CODE.id
+  );
+  assert.match(String(reason), /duplicate agent ids/);
+  assert.match(String(reason), new RegExp(duplicate.id));
+});
+
+test("code-review staffing validates size bounds and specialist instructions", () => {
+  assert.match(
+    String(codeReviewStaffingShortfall(AGENTS, 1, CLAUDE_CODE.id)),
+    /panel size 1 is outside the permitted 2-5/
+  );
+  assert.match(
+    String(codeReviewStaffingShortfall(AGENTS, 6, CLAUDE_CODE.id)),
+    /panel size 6 is outside the permitted 2-5/
+  );
+  const missing = AGENTS.map((a) =>
+    a.id === "code-reviewer-security" ? { ...a, codeReviewInstructions: "" } : a
+  );
+  assert.match(
+    String(codeReviewStaffingShortfall(missing, 2, CLAUDE_CODE.id)),
+    /code-reviewer-security carries no code-review instructions/
+  );
+  const misplaced = AGENTS.map((a) =>
+    a.id === "implementer" ? { ...a, codeReviewInstructions: "not allowed" } : a
+  );
+  assert.match(
+    String(codeReviewStaffingShortfall(misplaced, 2, CLAUDE_CODE.id)),
+    /non-code-review agent implementer carries code-review instructions/
+  );
 });

@@ -1,292 +1,302 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-**Current state** below is rewritten every pass, never appended to. It is the
-resume point. Everything under **Session records** is history, ordered newest
-first, and may name state that has since been superseded — when the two
-disagree, Current state wins.
+## Current state (2026-09-09, PowerShell chain completed with live remediation)
 
-This file is the system of record. Harness auto memory mirrors some of its
-durable one-liners so they load automatically, but the mirror is machine-local
-and per-clone-path: nothing is ever removed from here on the grounds that
-memory holds it (`docs/proposals/durable-knowledge-tiers.md`).
+This block is the resume point, rewritten in place. Session records below are
+history; Current state wins when they disagree. This repository file is the
+system of record. Machine-local memory is only a cache and never replaces
+durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-09-04, evening)
+**Working branch:** `code-review-stage`. The feature implementation baseline is
+`55b12b8` (`feat:bounded-code-review-remediation`). The operator authorized
+committing this session's skill-routing docs, learning updates, two dated session
+records, and paid-run fixture on this branch. No push, merge, or cleanup was
+requested. Global skill edits remain outside this repository, installed locally
+and backed up; recovery paths and the exact changed files are in
+`2026-09-08-copilot-skills-audit.md`.
 
-**Shipped and pushed.** Build order steps 1-8 are complete and step 9's
-milestone — one complete run with queryable cost — is reached. Hazard 17 is
-closed (`a2db2a0`), the list-marker remedy is in, and the driver's committed
-design is the web calculator. `master` is the only local branch and is level
-with `origin/master` at `a2db2a0`. Read the head with `git log -1` rather than
-trusting a commit id written here.
+**Paid PowerShell result:** The operator-authorized fresh chain completed all
+stages in 16 dispatches for $2.40174. It ran from
+`2026-09-09T05:08:01.322Z` to `2026-09-09T05:28:41.759Z` under
+`C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\20260909-powershell-000531\target`.
+The first code-review panel found one high and one medium calculator defect;
+one guarded remediation and the frozen verification commands passed, then both
+reviewers returned a clean second panel. Delivery and audit validation passed.
+The observed ancestry was PowerShell -> Node driver -> Node CLI -> native Claude,
+without a command-shell wrapper around Claude. No paid process remains. Read
+`2026-09-09-paid-powershell-chain.md` beside this record for transcript, source
+hashes, durable fixture, authorization, and outcome limits. No further paid
+attempt or cleanup is authorized.
 
-**Committed on 2026-09-04, working tree clean:**
-`docs/features/code-review-stage/plan.md` (Status `Reconciled`) and
-`2026-09-04-plan-review.md` (Status `reconciled`, five findings accepted), in
-the commit after `a2db2a0`. No source file has changed. Nothing is built, and
-the operator said not to begin Task 1 in that session.
+**Tooling continuity:** Copilot keeps this file as the canonical learning record.
+The canonical project skills remain under `.claude/skills/`; their `.agents`
+entries forward there. The six frequently used global workflows have one
+implementation under the user's `.copilot/skills/`, with Windows junctions from
+their shared `.agents` locations. Skills invoke doc-check for document rules;
+neither this record nor doc-check is an automatic workflow hook. The skill audit
+itself authorized no spend or cleanup. Detailed audit: `2026-09-08-copilot-skills-audit.md`
+beside this record.
 
-**The stop is lifted for exactly one deferred stage, by operator decision on
-2026-09-04: `code_review`.** Every other deferred stage, the dashboard, and
-notifications remain behind their own decision. The plan is the design of
-record for the stage; its ten tasks are ordered so each leaves the suite green.
-Read it before touching `src/select.ts`, `src/policy.ts`, `src/profile.ts`,
-`src/delivery-stage.ts`, or `scripts/doc-check.mjs`, all of which it changes.
+**`docs/features/code-review-remediation/plan.md` is `Implemented` and its
+2026-09-07 code review is `reconciled` on the existing `code-review-stage`
+branch.** Tasks 1-10 and all three review remediations are committed at the
+current `HEAD`. After the first paid attempt blocked at implementation, one
+separately authorized fresh chain completed all stages in 13 dispatches for
+$1.39473. The operator then manually verified the delivered calculator output;
+the run's frozen commands themselves checked only Node and npm versions.
+Push, merge, and retained-target cleanup remain unasked.
 
-**Decisions locked in the plan (operator, 2026-09-04):**
+**Locked behavior:** `code_review` alone gets a bounded loop. Its frozen
+profile selects 2–5 explicitly specialized reviewers (default 2) and permits
+1–5 total panel executions (default 2). Every non-empty intermediate panel is
+sent once to the frozen implementer, its actionable findings are patched
+together, the new commit is verified with the frozen verification commands,
+and the full panel reviews again. On the last configured panel only findings
+at or above the independently frozen blocking threshold block; lower-severity
+findings remain recorded and do not block. There is no code-review human gate,
+waiver, proposal, spike, upstream classification, or findings-reconciliation
+schema. `spec_review` and `plan_review` are unchanged.
 
-- Placement `implementation -> verification -> code_review -> delivery_check`;
-  a fixed panel of every registered reviewer with output kind `code-findings`
-  (two seeded: correctness, security); item 4's specialist selection deferred
-  until the stage exists.
-- The gate blocks at or above the frozen `codeReviewBlockingSeverity` (seeded
-  `high`), ordered by the frozen `policy.severities`, never a live constant.
-- **Every upstream finding blocks the run for a human at any severity and
-  writes a `blocking_dependency` proposal** through the existing proposal
-  machinery, with the candidate derived from the finding. The operator first
-  scoped the proposal to the threshold, then chose one rule for every severity.
-- A block is terminal, a fresh run is the repair, and there is no operator
-  waiver; both are recorded as deferred behaviours in section 12 by Task 8.
-- **Task 10's paid run is load-bearing, not optional** (section 21): the plan
-  is not complete until one real reviewer response is committed under
-  `test/fixtures/recorded/` and replayed. Budget $1.25–$2.50. Outcome 5 — an
-  abort on a location form the validator refuses, most likely a line range —
-  is expected to be the first live result and is an operator decision, not a
-  defect to fix on the spot.
+**Open/deferred:** The September 9 capture now covers the live remediation,
+post-patch frozen commands, and panel 2 that the clean September 7 chain did
+not exercise. The frozen commands still check only Node/npm versions; no
+manual browser check was made for the September 9 output. `--json-schema`
+remains separate. Future QA should compose the concrete patch/verification
+modules without changing this loop.
 
-**Reconciliation facts — read before touching that area:**
-
-- Both stages abort on an unclaimed node *before* any decision row is inserted
-  and before the `*.reconcile.record` summary is written; a failed round has
-  only the `*.reconcile.invalid` event and the retained response.
-- A recorded response cannot be replayed without the governing document it
-  was dispatched with; all recorded fixtures carry their governing text.
-- `test/spec-stage.test.ts` and `test/plan-stage.test.ts` each carry eight
-  copies of their emitter's decision block as substitution strings — change
-  the emitter's payload and those copies move with it.
-- The coverage split in `src/plan-doc.ts` is the **first** `->`; `listItems`
-  strips only `^-\s*`.
-- Still unproven live: a `spec_review` pass over a spec-side replacement, where
-  the list marker actually appears.
-
-**Delivery stage facts:** the recorded patch base is the starting commit's
-child; delivery enforces strict descent and certifies existence per declared
-artifact with an `ls-tree` blob check; the record is written inside the final
-transaction; terminal wedges name the repair (restore evidence or fresh run).
-
-**Driver:** `.claude/skills/run-buildworks/web-calculator-design.md` is the
-committed design, read by `driver.mjs`; a paid chain costs $1.00–$2.00 today
-and the plan raises it to $1.25–$2.50; the free `smoke` (12 steps, 13 after
-Task 8) spends nothing.
-
-**Open and deferred:**
-
-- A live spec-side replacement is unproven; needs its own authorization and a
-  design shaped to provoke a criterion reword (hazard 7 forbids rerunning).
-- The narrower ID-aware removal rule stays deferred; reopened only if a live
-  run falsely refuses a legitimate reword.
-- `scripts/doc-check.mjs` has no test — a committed test would write into the
-  real `docs/` tree. Considered tradeoff.
-- `npm test` intermittently leaks empty `moved` commits and a stray `base.txt`
-  onto the real repo; root cause untraced; run the suite in a disposable copy.
-  The code-review stage tests will add another real-repo fixture.
-- Cosmetic: `taskArtifacts`'s checkbox regex reports the line one short.
-- `docs/features/step6-trust-boundary/plan.md` names a session file that was
-  never written; historical tier, so `check:docs` only warns.
-- Delivery-check F3 and F12 deferred with triggers; `VERIFY_RETENTION_MAX_BYTES`
-  is chosen, not derived; verification containment unbuilt; `.governance`
-  location configuration deferred; durable knowledge tiers —
-  `docs/proposals/durable-knowledge-tiers.md`.
-
-**Nothing outside the repository is load-bearing.** Every recorded response a
-test depends on is committed under `test/fixtures/recorded/` with provenance.
-Scratch targets under `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\` are
-disposable; query a store before `driver.mjs clean`.
-
-**Next up:** Task 1 of the plan — the two failing registry assertions in
-`test/agents.test.ts` — when the operator says to begin. Resuming starts from
-`git log -1`, `git status`, this block, and the plan.
+**Next up:** the PowerShell reproduction is complete; the operator can decide
+the next scoped change. Skill reload, push/merge, and retained-target cleanup
+remain separate operator actions.
 
 ## Diagnostics quick-reference
 
-Durable one-liners that recur, kept here because the file is the only tier
-committed to the repository:
+Durable project facts belong here, regardless of whether a host also caches them.
 
 - **A tolerance applied at one boundary and not its sibling is a defect** —
-  `normalizeText`, case-folding, PowerShell's BOM, `proposalIdentity`, the two
-  task-artifact guards, and `normalizeNodeText` each caused one here.
+  seven have occurred here, the last in `validateCodeReviewLocations`.
+- **A constrained field's constraint must be stated in the prompt, not only
+  enforced in the parser** — the *membership rule of a section* is as much a
+  constrained field as the format of a value inside it, and the section a
+  schema forces an author to write in is where that author will answer a
+  finding. Three paid runs died on this.
+- **“Fenced block is not valid JSON” names the candidate source, not the root
+  cause** — read the parser detail and retained bytes. A legal fence containing
+  Python's `\UXXXXXXXX` escape is still invalid JSON; the outer terminal cannot
+  manufacture that ASCII sequence while UTF-8 stdout is captured as bytes.
+- **Spawn the installed native `claude.exe` directly on Windows** — no shim was
+  deleted; BuildWorks removed a stale `claude.cmd` assumption. PowerShell
+  resolves the same binary. Direct spawn avoids a second argv parser and
+  `DEP0190`, preserves typed `ENOENT`, and cannot repair malformed JSON.
+- **Hazard 1's enumeration is the contract parsers are held to** — a shape
+  missing from it is a shape no reviewer asks about; a suite working all listed
+  shapes passed while the unlisted one blocked a paid run.
+- **A block at `code_review` is a result, not a driver failure** — the driver
+  reports failed downstream expectations when `review` blocks. Read the finding
+  against the worktree rather than diagnosing from a driver step-count summary.
 - **Identify a recorded artifact revision by hash, never by dispatch order.**
-  The revision on disk before reconciliation is the self-critique round's
-  output, not the authoring dispatch's.
 - **A zero counter in an audit summary is not evidence of a guard firing.**
-  Prove the delta by replay with the mechanism's input suppressed.
-- **Break-test `doc-check` against a scratchpad mirror, not the working tree.**
-- **`doc-check` derives section 5's deferred list from every backticked
-  `[a-z_]+` token in the whole section.** Prose added to section 5 must not
-  backtick a stage name or it is counted as a deferred stage and fails the
-  pin; decision records belong in sections 12 and 23.
-- **Query a run's store before `driver.mjs clean`** — clean deletes the only
-  record.
-- **Byte-exact approval mechanics under PowerShell:** capture with
-  `cmd /c "node <cli> approval-request ... > payload.json"` and sign with
+- **Break-test `doc-check` against a scratchpad mirror, not the working tree**.
+  `checkPaths()` recursively scans repository Markdown, including `AGENTS.md`
+  and `.agents`; explicit tier lists classify files, not select them. The rooted
+  path regex recognizes fewer prefixes than the scanner visits. Section 5's
+  deferred list is every backticked `[a-z_]+` token.
+- **Query a run's store before `driver.mjs clean`** — clean deletes the record.
+  `agent_run.cost` keyed by `stage_id`; the audit table is `audit`; the
+  `finding` table is shared across stages, so code-review ids continue from the
+  plan review's.
+- **Backgrounding through `| tail -N` buffers until exit** — redirect a paid
+  chain to a file and poll `state.db`. The chain outlives the 600 s tool
+  timeout when backgrounded; do not restart it.
+- **The driver signs exact bytes without a shell:** it captures the approval
+  payload as a Buffer and sends it to the signer on stdin. Historical manual
+  PowerShell workaround (not the Claude harness launch): capture with
+  `cmd /c "node <cli> approval-request ... > payload.json"`, sign with
   `cmd /c "node scripts/sign-approval.mjs sign --key <key> < payload.json"`.
 - **Reverse a break-it mutation by editing it back, never `git checkout --`**,
-  when the file also carries uncommitted work.
-- **The Bash tool mangles long quoted heredocs and regex-bearing `node -e`.**
-  Use the Write tool for documents and a scratch `.mjs` for escapes.
+  and drive mutations from a scratch `.mjs` that hashes before and after.
+  Anchor on a unique expression, never on indentation or a trailing newline —
+  the tree is CRLF. `spawnSync` with `shell: true` eats `(` and `|` in
+  `--test-name-pattern` and exits 255 silently; spawn `node` directly.
+- **The Bash tool mangles long heredocs and regex-bearing `node -e`** — use
+  Write and a scratch `.mjs`; a bare `python - <<'PY'` with no python hangs.
+- **A phrase pinned in `CONSTRAINT_STRINGS` is scanned in the *source*** — a
+  prompt that reads correctly fails when the phrase wraps across a
+  template-literal line. Three times now.
 - **A shared validator reused by a new stage checks only what it was written
-  for.** `validateReviewerReports` accepts any non-empty `current_artifact`
-  location and checks the live `SEVERITIES`; a stage that needs a path set or
-  a frozen vocabulary adds its own check and says so.
+  for** — a new caller adds its own check.
+- **`Store.exec` refuses every write to the audit table.** Build a missing-gate
+  state by never appending the event.
+- **A mechanical rename across a documentation tree invents facts** — paths,
+  binaries, versions and model IDs do not survive find-and-replace; restore
+  from the original after diffing.
+- **A review record with no `**Status:**` line and no dispositions is not
+  reconciled**, even when its findings are already fixed.
+- **Read every review record beside a proposal before planning from it.**
 
 ## Session records
 
-### The code_review stage plan, reviewed and reconciled (2026-09-04)
-
-Operator decision to build `code_review` next, minimal, fixed panel, on the
-evidence of paid run 3: four artifacts delivered, every gate passed, nothing
-read the code. Wrote `docs/features/code-review-stage/plan.md` via
-`write-plan` (full path, ten tasks, one self-review pass, nine findings
-reconciled), then reconciled the operator's standalone plan review
-(`2026-09-04-plan-review.md`, five high-risk findings, all accepted). No
-source touched, no spend.
+### PowerShell paid chain exercises remediation and completes (2026-09-09)
 
 #### Decisions and assumptions
 
-- **Upstream route, decided in two steps:** first "block always, proposal at
-  or above the threshold"; then, on the reconciler's recommendation, one rule
-  — every upstream finding blocks and writes a `blocking_dependency` proposal.
-  The candidate is derived from the finding's `subject` and decision key, so
-  the shared report validator's field set does not change.
-- **The paid run is the completion condition.** Section 21 and hard rule 5
-  determined it, so the reconciler applied it without asking; the operator
-  was told plainly that the plan cannot be called done without a $1.25–$2.50
-  run.
-- **The location rule is strict by design** (`path` or `path:<positive int>`)
-  and a live reviewer writing a line range aborts the run. Recorded as
-  outcome 5 with the remedy (accept ranges on both sides at once) named and
-  not applied.
-- **Severity gates here because there is no reconciliation dispatch**, and
-  blocking on any finding would violate hazard 11; hazard 18 records the gap.
-
-#### What failed
-
-- **The plan's self-review missed four contract gaps the standalone review
-  caught:** live `SEVERITIES` indexed instead of the frozen order; the shared
-  validator's location tolerance; delivery not reading the code-review record
-  from `last.output_ref`; the paid run marked optional against section 21.
-  Each was a reuse described as stricter than the reused code is.
-- **Task ordering defects in the first draft:** the CLI task extended the
-  delivery fixture before delivery changed, and the policy test's module scan
-  (`readFileSync`, unguarded) was fed a module that did not exist yet.
+- One paid chain was authorized before any further skill/driver changes.
+  The successful result authorizes neither another run nor a new wrapper.
 
 #### What worked
 
-- **Verifying the reviewer's claims against source before dispositioning:**
-  all five held (`src/reconciliation.ts:169-225`, `src/policy.ts:149-180`,
-  `src/delivery-stage.ts:113-223`, `test/fixtures/recorded/`), so every
-  finding was mechanical except the one product decision, which was asked
-  once with symmetric options.
-- **Reusing the proposal machinery as a third caller** (`writeProposalEvidence`,
-  `proposalIdentity`, `store.upsertProposal`; the `route` CHECK already admits
-  `blocking_dependency`) gave section 13's "somewhere to go" at near-zero code.
+- One separately authorized chain used the unchanged driver, design, and
+  native Claude harness. PowerShell 7.6.5 launched Node v26.4.0; the observed
+  model process was native Claude Code 2.1.263 with no intervening cmd wrapper.
+- Both first-panel findings went to one implementer dispatch; its single-file
+  patch and version-command verification passed. Both reviewers returned a
+  clean second panel, delivery passed, and the audit chain was valid.
+- Cost: $2.40174 over 16 dispatches. Target:
+  `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\20260909-powershell-000531\target`.
+  No process remains; cleanup is not authorized.
+- Full provenance, five unchanged provider result bodies, stage and audit rows,
+  and post-patch logs are in
+  `test/fixtures/recorded/code-review-web-calculator-powershell-remediation-chain.json`.
+  The adjacent `2026-09-09-paid-powershell-chain.md` records the experiment and
+  its limits: no browser validation and no causal cmd-versus-PowerShell comparison.
 
-#### Verification
+#### What failed
 
-- `npm run check:docs` — clean after every edit pass; the only warnings are
-  path references to files the plan will create.
+- The evidence export initially rejected SQLite null-prototype rows after a
+  lossless JSON round trip. Comparing serialized values fixed only that assertion;
+  the existing capture was verified without another paid dispatch or file rewrite.
 
-#### Deferred and open
+#### Verification and continuation
 
-- Deferred: operator waiver for a mistaken block — recorded as a fifth
-  deferred behaviour for section 12; a signed decision in the approval's shape.
-- Deferred: chunked review for diffs beyond `PROMPT_MAX_BYTES` — the stage's
-  reach is bounded by diff size and the plan says so.
-- Open: whether a live reviewer meets the strict location form — settled only
-  by Task 10.
+- The paid driver returned exit 0 and `15/15 steps as expected`; free smoke
+  returned 13/13. `node scripts/doc-check.mjs --json` and `git diff --check`
+  passed after capture; source hashes matched before and after the chain.
+- The paid shell is completed and the auxiliary skill-audit agent is idle.
+  No active paid work remains. The free-smoke target is also retained at
+  `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\20260909-powershell-000531-smoke\target`.
+- Next up: resume only a newly requested scope; do not repeat the paid run to
+  rediscover the result. Existing Copilot sessions may need `/skills reload`.
 
-#### Next time
+### Copilot skill portability aligned (2026-09-08)
 
-- When a plan reuses a shared validator or parser, write down what it does
-  *not* check for the new caller before claiming the constraint is enforced.
-- Order fixture changes with the production change they depend on; a test
-  helper extended one task early fails every dependent test in the interval.
+- The operator selected the existing `.claude` project skills and this learning
+  record as canonical for Copilot too. Global priority copies now share one
+  implementation through local Windows junctions; project `.agents` entries
+  forward to `.claude`. Markdown records are context, not automatic skill hooks.
+- All 17 discovered personal skills have valid name/description frontmatter.
+  Two directory-name mismatches and oversized entry files were corrected;
+  unavailable tool calls, stale harness paths, and task-document defaults were
+  removed. Detailed guidance and global rollback copies were retained.
+- The source disproved an older quick-reference claim: doc-check recursively
+  scans Markdown paths, including AGENTS and `.agents`; its explicit lists
+  classify tiers rather than restrict discovery. The quick-reference is corrected.
+- Audit, local recovery paths, and limitations are recorded in
+  `2026-09-08-copilot-skills-audit.md` beside this file. No application runtime,
+  paid-run state, retained target, or global Codex/Claude skill installation changed.
 
-#### Next up
+### Paid evidence: implementation block, then clean completion (2026-09-07)
 
-- Task 1 of the plan, when the operator says to begin.
+- Two chains were separately authorized, each with a stated 16-dispatch bound:
+  11 dispatches/$1.00548 blocked, then 13/$1.39473 completed.
+- `implementation.content.invalid` came from `\U0001f319` at positions 1911
+  and 9505 in provider JSON. A byte-exact fixture reproduces it; changing only
+  those tokens makes all five files validate. Neither shell manufactured them.
+- The fresh chain's first panel was clean; four artifacts delivered at
+  `b0b1104dc0b045dbc3d8c116ba44e9ed894200e4`, audit passed, and the operator
+  manually checked the calculator. No detailed manual matrix was recorded.
+- Five reviewer fixtures passed extraction/contract replay; focused replay was
+  9/9, with typecheck/docs/diff clean. The earlier full gate was 821/822 with one
+  Windows symlink skip. This run did not need remediation.
+- Known retained targets, with no cleanup authorized:
+  `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1788790553825\target` (blocked)
+  and `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1788794835268\target` (completed).
 
-### Hazard 17 implemented, the list-marker remedy, three paid runs, and the driver design swap (2026-09-04, `a2db2a0`)
+### Bounded code-review remediation implemented and reconciled (2026-09-07)
 
-Executed `docs/features/normative-removal-accounting/plan.md` end to end: six
-tasks, one code review (two findings, reconciled), an operator decision, and
-three authorized paid runs totalling $1.98227. Run 3 completed a chain in
-which a live author claimed both halves of a real replacement
-(`unclaimedRemoved=0`, 11 dispatches, $1.34097). Evidence in
-`docs/features/normative-removal-accounting/real-run-evidence.md`.
+- The contract is 2–5 specialized reviewers, 1–5 panels, remediation of every
+  actionable intermediate finding, and a separately configurable final-panel
+  severity threshold. It has no human gate, spike, waiver, proposal, upstream
+  classification, or reconciliation schema.
+- Independent review closed three evidence defects in delivery binding,
+  verification labelling, and typed patch failures. Keep round count, panel
+  size, and threshold independent so policy changes remain profile edits.
 
-- **Both list-marker remedies were chosen**: `normalizeNodeText` on both sides
-  of every claim comparison *and* a `nodeForm` argument stating the node form
-  in the prompt. Hazards entry 3 carries the incident. General rule: "the exact
-  text of X" is not a stated constraint until the prompt says what X's text
-  is; the form the schema forces the author to read is the form sent back.
-- **Run 2 blocked at `spec_review` for $0.39572** on that mismatch, not on the
-  plan's change — measured, remedies named, none applied until the decision.
-- **The clamp design was replaced by the web calculator** because a design too
-  small to attract a finding exercises nothing; blast radius two constants plus
-  the skill doc.
-- **A rationale that cannot be broken is not a rationale** — the two claim
-  counters were kept, with the comment saying what the break-it run showed.
-- Suite in an isolated copy: 711 tests, 710 pass, 0 fail, 1 environmental
-  skip; `HEAD` unmoved; no leak reproduced in four copies.
+### Extractor fixed; two chains correctly block at code_review (2026-09-06)
 
-### Small-findings commit and the hazard 17 plan (2026-09-04, `c7fc5e0`)
+- Cleared regressions, built `docs/features/unfenced-json-extraction/`, and
+  closed code-review-stage Task 10 and plan-coverage-single-artifact Task 7 on
+  retained evidence. Each feature's implementation note and real-run-evidence
+  record hold the detail. The extractor fix and both attempts were separately authorized.
+- Run 3 exposed prose before unfenced JSON; remedies 1-3 fixed extraction.
+  Restating the prompt (remedy 4) was deliberately not taken; prose after an
+  unfenced object remained unbuilt for lack of measured need. The `a2db2a0`
+  list-marker normalization acts at a different layer and could not fix extraction.
+- Runs 4 and 5 each used 13 dispatches ($1.15759 and $1.40170) and correctly
+  blocked on high code findings. No gate policy was weakened to clear them.
+  Plan coverage redirected two live panels to task findings rather than asking
+  for a second artifact. Dispositions were checked against code, not session prose.
+- Three reviewer responses were extracted with stage context derived from run
+  records. An invented AC-016 example was caught before doc-check: read the
+  criterion before illustrating it. Trace a blamed stage's changed files against
+  the failing path, not just stage order. CRLF/shell break-test traps are above.
+- A disposable full-suite mirror kept HEAD unchanged: 784 tests, 782 passed,
+  one skip and one load flake (3/3 isolated). Parse/reconciliation tests passed
+  59/59; removing the fallback failed exactly four new assertions and restored
+  byte-identically. Code-review-stage tests passed 39/39 before the third replay;
+  the three replays passed, and threshold/location mutations broke both
+  correctness replays. Smoke was 13/13; typecheck and doc-check were clean.
+- Historical branch baseline: code-review-stage branched at `a12f3cf`, then
+  local master and origin/master. This is not a claim about their current tips.
 
-Three tasks-as-state findings fixed and pushed with `9a12cba`; hazard 17
-recommended and accepted on the argument that stable criterion IDs make the
-symmetric delta cheap. Live proof was ruled supplementary for that plan; the
-recorded replay plus deterministic tests carried it. Baseline 695/694/0/1.
+### Two membership fixes and an agent-portability mirror (2026-09-05/06)
 
-### Stable criterion IDs shipped (2026-09-04, `9a12cba`)
+`spec-section-membership` (eight tasks) and `plan-coverage-single-artifact`
+(seven tasks) executed on `code-review-stage` with two independent reviews each.
+The plan-coverage change added meaning the plan never specified — the path is
+the representative delivery anchor — and its separator heuristic was removed
+rather than refined after design review rejected inferring a list from
+punctuation. Two paid runs blocked (stage 5, $1.25141; stage 1, $0.08103); the
+membership fix was proven against a live author on the second. The governing
+proposal's design review was not read until after the run. `AGENTS.md` and
+`.agents/skills/**` were produced by find-and-replace and asserted paths, a
+binary, and model IDs that do not exist; restored byte-identical from their
+originals. The independent reviews caught two prompts withdrawing the legal
+`not_applicable` form by omission and two `ARCHITECTURE.md` sentences claiming
+the parser stricter than it is.
 
-Spec-minted canonical IDs and the exact bidirectional Coverage relation at
-three plan checkpoints, proved by two paid chains (`stats` $0.63735,
-`web-calculator` $0.84567). The last-arrow coverage split falsely refused
-valid plans — re-derive a split when a constrained ID moves to one side of a
-delimiter. Panel composition adapts to content: web-calculator seated a
-security reviewer where `stats` drew consistency.
+### The code_review stage implemented (2026-09-05, `6fb5412`, `4d71ad1`)
 
-### Coverage-gate investigation and the knowledge-tier gap (2026-09-03)
+Tasks 1-9 of `docs/features/code-review-stage/plan.md` shipped with an independent
+review and 19 guard mutations. Only code_review lifted the step-9 stop.
+Delivery bound the review record to verification. The initial terminal-block
+and upstream-proposal policy was later replaced by the bounded code-only loop;
+do not restore that obsolete policy from old review records. A standalone
+design review caught four reused contracts described as stricter than their
+code: verify those claims before dispositioning. The first paid attempt blocked
+at spec_review.
 
-No source changed; four scratch runs, $0.83080; diagnosis in
-`.claude/sessions/2026-09-03-debug-plan-coverage-gate-paraphrase-mismatch.md`.
-Hazard 17 was raised out of it. The repository already held the answer in
-`docs/proposals/spec-kit-harness-review.md` and it was not found; a decision
-that lives only in the narrative tier dies at the next compaction — durable
-content belongs in `docs/hazards.md` or a proposal
-(`docs/proposals/durable-knowledge-tiers.md`).
+### Hazard 17, the list-marker remedy, and the driver design swap (2026-09-04, `a2db2a0`)
 
-### Step 8: delivery check, the standalone review, the paid milestone (2026-09-02 to 2026-09-03)
+Both list-marker remedies chosen: `normalizeNodeText` on both sides *and* a
+`nodeForm` argument in the prompt — "the exact text of X" is not stated until
+the prompt says what X's text is. The clamp design was replaced by the web
+calculator because a design too small to attract a finding exercises nothing;
+run 3 completed a chain with a live replacement claimed (`unclaimedRemoved=0`,
+$1.34097). A rationale that cannot be broken is not a rationale.
 
-Tasks 1-6 as `1890503`…`36a726d`, then `cf19f57`, `8646d75`, `d033595`.
-Review reconciled 11 accepted, 1 deferred. The operator chose a billed
-`configured_standalone` review over the in-session subagent (hazard 14) and it
-earned its cost. A break mutation must change the outcome class the test pins.
-The first paid attempt failed closed on an expired `claude` OAuth session with
-the refusal audited. `doc-check` cannot see prose numbers.
+### Earlier history (2026-08-29 to 2026-09-04)
 
-### Step 5b: reviews, storage rebuild, proposals (2026-08-31 to 2026-09-03)
-
-Tasks 1-13 across `60587fc`…`39d5432`. Only the operator rules on a wrong task
-boundary. A reconciliation stamp is a claim, not evidence — trace the promised
-result through prompt, parser, storage, and gate. A scratch `.mjs` can import
-the repo's `.ts` modules via `await import(pathToFileURL(...).href)`.
-
-### Steps 1-7: build order to the deliberate stop (2026-08-29 to 2026-08-31)
-
-Steps 1-5 `83d88c0` and earlier; step 6 `32a714e`; step 7 smoke runs under
-$0.08 each. `bw new-run` could never create a run in a repository that had not
-gitignored `.governance/` (hazard 11). `resolveExisting` resolved dangling
-links lexically — refuse what cannot be verified. Real smoke output must drive
-prompt iteration. The plan stage mirrors the spec stage without a shared
-abstraction (hard rule 4); its round-2 finding is the observation behind
-hazard 16.
+- **Stable criterion IDs** (`9a12cba`): spec-minted canonical IDs and the exact
+  bidirectional Coverage relation, proved by two paid chains.
+- **Coverage-gate investigation** (2026-09-03): the answer already lived in
+  `docs/proposals/spec-kit-harness-review.md` and was not found — a decision
+  that lives only in the narrative tier dies at the next compaction.
+- **Step 8, delivery check** (`d033595`): a billed standalone review beat an
+  in-session subagent (hazard 14); a break mutation must change the outcome
+  class the test pins; the recorded patch base is the starting commit's child.
+- **Step 5b** (`60587fc`…`39d5432`): only the operator rules on a wrong task
+  boundary; a reconciliation stamp is a claim, not evidence.
+- **Steps 1-7** (`83d88c0`, `32a714e`): `bw new-run` could never create a run
+  in a repository that had not gitignored `.governance/` (hazard 11);
+  `resolveExisting` resolved dangling links lexically — refuse what cannot be
+  verified; the plan stage mirrors the spec stage without a shared abstraction
+  (hard rule 4).

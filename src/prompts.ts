@@ -27,11 +27,16 @@ The specification document schema is:
   the run itself writes (the design, spec, or plan under docs/features/):
   delivery proves each declared artifact by its exact committed path.
   Never declare a tasks.md file: task execution and status belong in run-state
-  database rows
+  database rows. Every non-blank line in this section is one path and nothing
+  else, and a path contains no whitespace
 - an ## Acceptance criteria section: one criterion per list line in exactly
   this form: \`- AC-001: <criterion text>\`. Criterion IDs must match
   \`AC-(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})\`. Mint them here, beginning at AC-001 and increasing monotonically; never reuse an ID for a different
-  criterion
+  criterion. Every non-blank line in this section is
+  one criterion and nothing else: no heading, no note, no explanation, and
+  never one criterion wrapped across two lines; put an explanation of a
+  numbering decision in your summary or an ordinary prose section,
+  not inside this section
 
 Design document:
 
@@ -146,12 +151,18 @@ The self-critique has:
     document the run itself writes (the design, spec, or plan under
     docs/features/): delivery proves each declared artifact by its exact
     committed path. Never declare a tasks.md file: task execution and status
-    belong in run-state database rows
+    belong in run-state database rows. Every non-blank line in this section
+    is one path and nothing else, and a path contains no whitespace
   - an ## Acceptance criteria section: one criterion per list line in exactly
     this form: \`- AC-001: <criterion text>\`. Criterion IDs must match
     \`AC-(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})\`. Preserve each existing ID
     when wording or reordering criteria; mint a greater unused ID only for a
-    genuinely new criterion, and never reuse an ID for a different criterion
+    genuinely new criterion, and never reuse an ID for a different criterion,
+    and never renumber criteria to close a gap. Every non-blank line here is
+    one criterion and nothing else: no heading, no note, no explanation, and
+    never one criterion wrapped across two lines; put an explanation of a
+    numbering decision in your summary or an ordinary prose section,
+    not inside this section
   A revised specification that does not validate blocks the run. There is no
   fallback to your draft.
 - panelRequest: the panel you propose for the independent review
@@ -224,6 +235,13 @@ Each finding has:
   concern type
 - subject: one sentence naming the concern
 
+Criterion IDs are stable identifiers, not a sequence: an obligation removed
+from the specification keeps its ID out of use afterwards, and every surviving
+criterion keeps the ID it was minted with, so the numbering is expected to
+carry gaps. A gap in the numbering is not by itself a finding. A finding about
+coverage names the design obligation the specification is missing, never a
+missing number.
+
 Output the JSON object directly, with no surrounding prose, no markdown
 fences, and no commentary. Concerns within your specialty that you do not
 have are represented by an empty findings array, not by prose.
@@ -287,8 +305,17 @@ The plan document schema is:
   An entry with only one of them is refused.
 
 Every artifact path you name in ## Coverage must be one of the approved scope
-paths below. A plan promising an artifact outside the approved scope is
-refused by the gate, so name only these:
+paths below, and each coverage line that names an artifact
+names exactly one of them, copied verbatim. That path is the criterion's
+representative delivery anchor, not an exhaustive list of every contributing
+file: when several files contribute, name the declared artifact
+most directly responsible for the criterion's observable outcome, and state
+the work on the others as tasks.
+A list of paths is not a path, and blocks the run. A criterion with no artifact
+at all takes the not_applicable form above; it is never answered by naming a
+file that does not implement it. Several criteria may name the same path. A plan
+promising an artifact outside the approved scope is refused by the gate, so
+name only these:
 
 ${scope.map((p) => `- ${p}`).join("\n")}
 
@@ -365,10 +392,24 @@ ${panel.registeredSpecialties.map((s) => `      - ${s}`).join("\n")}
     A specialty outside that list cannot be staffed.${seatAccountingBlock(panel.requiredSpecialties)}
 
 Every artifact path you name in ## Coverage must be one of the approved scope
-paths below. A plan promising an artifact outside the approved scope is
-refused by the gate, so name only these:
+paths below, and each coverage line that names an artifact
+names exactly one of them, copied verbatim. That path is the criterion's
+representative delivery anchor, not an exhaustive list of every contributing
+file: when several files contribute, name the declared artifact
+most directly responsible for the criterion's observable outcome, and state
+the work on the others as tasks.
+A list of paths is not a path, and blocks the run. A criterion with no artifact
+at all takes the not_applicable form above; it is never answered by naming a
+file that does not implement it. Several criteria may name the same path. A plan
+promising an artifact outside the approved scope is refused by the gate, so
+name only these:
 
 ${scope.map((p) => `- ${p}`).join("\n")}
+
+When a critique or a finding says a criterion
+needs a second artifact, the coverage line cannot carry it. Keep the
+representative delivery anchor and put the other contributing files in the task
+that builds them, or say why the concern does not hold.
 
 You may not add an obligation the approved specification below does not
 contain. Sharpening the plan, completing it, and making it consistent is the
@@ -423,6 +464,22 @@ Each finding has:
 - intentKey: lowercase kebab-case, at most 64 characters, describing the
   concern type
 - subject: one sentence naming the concern
+
+Coverage is one line per criterion: every acceptance criterion has exactly one
+coverage line, and a line that names an artifact names exactly one path. That
+path is the criterion's representative delivery anchor, not an exhaustive list
+of every contributing file. A
+criterion with no artifact of its own instead says not_applicable with a
+rationale and an alternative verification — that is a legitimate entry, not a
+defect. Several criteria may name the same artifact, which is also not a
+defect: the uniqueness required is one line per criterion, never one criterion
+per file. "This criterion also touches another file" is therefore
+not a coverage finding — the document cannot express it, so no revision can
+answer it. Report missing implementation work against the plan's tasks
+instead, where it can be fixed. A coverage finding
+names a criterion the plan does not deliver at all, a coverage line naming
+the wrong artifact, or a coverage line promising a path outside the approved
+scope.
 
 Output the JSON object directly, with no surrounding prose, no markdown
 fences, and no commentary. Concerns within your specialty that you do not
@@ -630,12 +687,18 @@ The revised specification must satisfy the same document schema as before:
   the run itself writes (the design, spec, or plan under docs/features/):
   delivery proves each declared artifact by its exact committed path.
   Never declare a tasks.md file: task execution and status belong in run-state
-  database rows
+  database rows. Every non-blank line in this section is one path and nothing
+  else, and a path contains no whitespace
 - an ## Acceptance criteria section: one criterion per list line in exactly
   this form: \`- AC-001: <criterion text>\`. Criterion IDs must match
   \`AC-(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})\`. Preserve each existing ID
   when wording or reordering criteria; mint a greater unused ID only for a
-  genuinely new criterion, and never reuse an ID for a different criterion
+  genuinely new criterion, and never reuse an ID for a different criterion,
+  and never renumber criteria to close a gap. Every non-blank line here is
+  one criterion and nothing else: no heading, no note, no explanation, and
+  never one criterion wrapped across two lines; put an explanation of a
+  numbering decision in your summary or an ordinary prose section,
+  not inside this section
 A revised specification that does not validate blocks the run.
 
 Design document:
@@ -710,10 +773,26 @@ The revised plan must satisfy the same document schema as before:
   the ID to the left of \`->\`; do not copy or paraphrase criterion prose there.
   not_applicable requires both a rationale and an alternative verification.
 Every artifact path you name in ## Coverage must be one of the approved scope
-paths below. A plan promising an artifact outside the approved scope is
-refused by the gate, so name only these:
+paths below, and each coverage line that names an artifact
+names exactly one of them, copied verbatim. That path is the criterion's
+representative delivery anchor, not an exhaustive list of every contributing
+file: when several files contribute, name the declared artifact
+most directly responsible for the criterion's observable outcome, and state
+the work on the others as tasks.
+A list of paths is not a path, and blocks the run. A criterion with no artifact
+at all takes the not_applicable form above; it is never answered by naming a
+file that does not implement it. Several criteria may name the same path. A plan
+promising an artifact outside the approved scope is refused by the gate, so
+name only these:
 
 ${scope.map((p) => `- ${p}`).join("\n")}
+
+When a critique or a finding says a criterion
+needs a second artifact, the coverage line cannot carry it. Keep the
+representative delivery anchor and put the other contributing files in the task
+that builds them — that is a change you can claim. If the concern cannot be
+answered inside the plan at all, route it upstream with a complete proposal
+candidate rather than rejecting it on a rule the specification never states.
 
 Approved specification:
 
@@ -768,6 +847,10 @@ Return exactly a JSON AgentResult object with this shape:
 
 status must be one of proposed, blocked, failed. Output the JSON object
 directly, with no surrounding prose, no markdown fences, and no commentary.
+Every JSON string, including file content, must use JSON-standard escaping.
+Use literal UTF-8 for non-ASCII characters or valid \`\\uXXXX\` escapes (two
+UTF-16 surrogate escapes for a character above U+FFFF). Never use Python's
+\`\\UXXXXXXXX\` escape syntax; it is not valid JSON.
 
 Each patch has:
 - baseCommit must be exactly: ${baseCommit}
@@ -791,4 +874,182 @@ ${planContent}
 Approved specification:
 
 ${specContent}`;
+}
+
+/**
+ * The code reviewer prompt: role (naming the agent id and its specialty
+ * lens), the approved specification and plan verbatim, the changed paths,
+ * and the complete unified diff of the range the run verified — plus the
+ * finding contract with every constrained field stated.
+ *
+ * The severity rubric is stated because the gate compares a reviewer's
+ * severity against a threshold frozen in the profile (hazard 3): a threshold
+ * over an unstated scale is a comparison against nothing, and two reviewers
+ * grading the same defect `low` and `high` would be one gate decided by
+ * whichever lens happened to be seated. One sentence per level is the
+ * smallest statement that makes the scale shared.
+ *
+ * The `Changed paths:` block shape — that heading, a blank line, then one
+ * `- <path>` line per entry — is a contract, exactly as the implementation
+ * prompt's scope block is: the harness fixture in the stage tests scrapes it
+ * to build findings from the prompt it actually received rather than from a
+ * literal it carries, so changing the shape changes the fixture.
+ *
+ * **No consequence is stated.** The prompt never names the threshold, never
+ * says which severity blocks, and never mentions a gate. The two review
+ * prompts state no consequences for the same reason: a reviewer writing to a
+ * gate grades to clear it, which is the bias section 12 keeps out of a
+ * deterministic gate by making the reviewer's verdict an input to it.
+ */
+export function buildCodeReviewPrompt(
+  agent: AgentDefinition,
+  specContent: string,
+  planContent: string,
+  changedPaths: string[],
+  diff: string,
+  verifiedCommit: string
+): string {
+  if (
+    !agent.outputs.includes("code-findings") ||
+    typeof agent.codeReviewInstructions !== "string" ||
+    agent.codeReviewInstructions.trim() === ""
+  ) {
+    throw new Error(`code reviewer ${agent.id} carries no code-review instructions`);
+  }
+  // The read-only sentence is UX, not a guard, exactly as it is in the
+  // implementation prompt: enforcement is the read-only executor command and
+  // the stage's clean-tree assertions before and after every dispatch.
+  return `you are the code reviewer ${agent.id} with specialty ${agent.specialty ?? "general review"}
+
+Specialist instructions: ${agent.codeReviewInstructions}
+
+Report only findings within your specialty: ${agent.specialty ?? "general review"}. Judge the committed change below against the approved specification and plan it was written from. A concern outside your specialty must not be reported; other lenses will review it. Report only actionable defects with a reproducible impact that can be corrected in the current changed code. Do not report style, preference, optional refactoring, speculative hardening, questions, or a concern that requires changing the approved specification or plan. An empty findings array is a valid result when you have no actionable finding within your specialty.
+
+Your working directory is the repository checkout at commit ${verifiedCommit}.
+Read it to see the code surrounding the change. Run no git commands: the
+diff below is the complete statement of what changed, and no git tool is
+available to you. This checkout is read-only for you: do not create, modify,
+or delete any file. Only the findings you return are considered.
+
+Return exactly a JSON AgentResult object with this shape; your findings
+travel in the AgentResult's proposedContentChanges.findings:
+{"status": "proposed", "agent": "${agent.id}", "role": "reviewer", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"findings": [{"severity": "...", "classification": "...", "location": "...", "intentKey": "...", "subject": "..."}]}}
+
+Each finding has:
+- severity one of low, medium, high, critical, meaning:
+  - critical: the change is unsafe, or destroys data or state, in ordinary use
+  - high: the change fails to implement an acceptance criterion or a plan
+    task it claims to cover, or behaves incorrectly in ordinary use
+  - medium: a concrete defect that does not fail an acceptance criterion
+  - low: a small but concrete defect with localized impact
+- classification: exactly current_artifact; omit any concern whose correction
+  belongs in the approved specification or plan
+- location: one of the changed paths below, written exactly as it is listed,
+  optionally followed by :<line> where <line> is a positive integer line
+  number. Never a section heading, never a description, and never a path that
+  is not listed below
+- intentKey: lowercase kebab-case, at most 64 characters, describing the
+  concern type
+- subject: one sentence naming both the concrete defect and its reproducible
+  impact
+
+Output the JSON object directly, with no surrounding prose, no markdown
+fences, and no commentary. Concerns within your specialty that you do not
+have are represented by an empty findings array, not by prose.
+
+Changed paths:
+
+${changedPaths.map((p) => `- ${p}`).join("\n")}
+
+Approved specification:
+
+${specContent}
+
+Approved plan:
+
+${planContent}
+
+Diff:
+
+${diff}`;
+}
+
+export interface CodeReviewRemediationFindingInput {
+  findingId: number;
+  location: string;
+  intentKey: string;
+  reports: Array<{
+    reviewerId: string;
+    severity: string;
+    classification: "current_artifact";
+    subject: string;
+  }>;
+}
+
+/** One code-only repair request containing every report from one panel. */
+export function buildCodeReviewRemediationPrompt(
+  agent: AgentDefinition,
+  specContent: string,
+  planContent: string,
+  scope: string[],
+  baseCommit: string,
+  changedPaths: string[],
+  diff: string,
+  findings: CodeReviewRemediationFindingInput[]
+): string {
+  const renderedFindings = findings
+    .map((finding) => {
+      const reports = finding.reports
+        .map(
+          (report) =>
+            `  - reviewer ${report.reviewerId}; severity ${report.severity}; classification ${report.classification}; subject ${report.subject}`
+        )
+        .join("\n");
+      return `- finding ${finding.findingId}; location ${finding.location}; intentKey ${finding.intentKey}\n${reports}`;
+    })
+    .join("\n");
+  return `you are the code-review remediator ${agent.id}
+
+Fix every actionable finding below in the current code. Your working directory
+is the repository checkout at commit ${baseCommit}. Read the surrounding code,
+but run no git commands and do not create, modify, or delete files. The system
+applies and commits only the patches you return.
+
+Return exactly a JSON AgentResult object with this shape:
+{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedPatches": [{"baseCommit": "${baseCommit}", "files": [{"path": "${scope[0] ?? "approved/path"}", "action": "modify", "content": "<complete new file content>"}]}]}
+
+Return one or more proposedPatches. baseCommit must be exactly ${baseCommit}.
+Each file path must be one approved scope path below; action is add or modify,
+never deletion; content is the complete new file content, not a diff. Fix the
+code. Do not return finding dispositions, proposals, waivers, questions, or
+edits to the approved specification, plan, governance policy, or agent
+definitions. Output the JSON object directly with no surrounding prose or
+markdown fences. Every JSON string, including file content, must use
+JSON-standard escaping. Use literal UTF-8 for non-ASCII characters or valid
+\`\\uXXXX\` escapes (two UTF-16 surrogate escapes for a character above U+FFFF).
+Never use Python's \`\\UXXXXXXXX\` escape syntax; it is not valid JSON.
+
+Approved scope:
+
+${scope.map((path) => `- ${path}`).join("\n")}
+
+Findings to remediate:
+
+${renderedFindings}
+
+Complete changed paths at the current head:
+
+${changedPaths.map((path) => `- ${path}`).join("\n")}
+
+Approved specification:
+
+${specContent}
+
+Approved plan:
+
+${planContent}
+
+Complete diff from the original patch base through ${baseCommit}:
+
+${diff}`;
 }

@@ -1,20 +1,19 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync, type Stats } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { ExecutorDefinition } from "./executor.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
 import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
 import { dispatchOnce } from "./dispatch.ts";
-import { validateAgentResult, type ProposedPatch, type ProposedPatchFile } from "./agent-result.ts";
+import { validateAgentResult, type ProposedPatch } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import { worktreePath as governanceWorktreePath } from "./paths.ts";
-import { isPathInside, normalizePath, resolveExisting, touchesProtected } from "./scope.ts";
 import { buildImplementationAuthorPrompt } from "./prompts.ts";
-import { gatePatchPaths, movedPaths } from "./implementation-gate.ts";
 import { formatImplementationGate } from "./handoff.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
 import { SYSTEM_NAME } from "./policy.ts";
+import { applyProposedPatches, checkWorktreeClean } from "./patch-application.ts";
 
 export type ImplementationStageResult =
   | { ok: true; stageId: number; worktreePath: string }
@@ -253,20 +252,6 @@ export async function runImplementationStage(
    * the evidence that the executor boundary failed. A git failure is treated
    * as dirty, and the refusal names the git detail.
    */
-  const worktreeClean = (
-    cwd: string
-  ): { ok: true } | { ok: false; entries: string[]; detail?: string } => {
-    const status = runGit(
-      ["status", "--porcelain", "-z", "--untracked-files=all", "--ignored=matching"],
-      cwd
-    );
-    if (!status.ok) {
-      return { ok: false, entries: [], detail: status.detail };
-    }
-    const entries = status.stdout.split("\0").filter((e) => e !== "");
-    return entries.length === 0 ? { ok: true } : { ok: false, entries };
-  };
-
   /** The cleanliness refusals share one shape: name what is dirty. */
   const refuseDirty = (
     sid: number,
@@ -357,7 +342,7 @@ export async function runImplementationStage(
     // gate later treats this tree as the base every patch is validated
     // against, and a dirty start would inherit residue the implementer never
     // caused.
-    const cleanBeforeDispatch = worktreeClean(worktreePath);
+    const cleanBeforeDispatch = checkWorktreeClean(worktreePath);
     if (!cleanBeforeDispatch.ok) {
       return refuseDirty(stage.id, "before dispatch", cleanBeforeDispatch);
     }
@@ -411,7 +396,7 @@ export async function runImplementationStage(
     // it was invited to read. Any change — tracked, staged, untracked, or
     // ignored — blocks the run and names the paths before anything is
     // parsed or applied. A prompt is a request; this is the check.
-    const cleanAfterDispatch = worktreeClean(worktreePath);
+    const cleanAfterDispatch = checkWorktreeClean(worktreePath);
     if (!cleanAfterDispatch.ok) {
       return refuseDirty(stage.id, "after dispatch", cleanAfterDispatch);
     }
@@ -441,215 +426,34 @@ export async function runImplementationStage(
       );
     }
 
-    // --- the gate, per patch, in order — every refusal terminal ---
-    for (const patch of patches as ProposedPatch[]) {
-      if (!Array.isArray(patch.files) || patch.files.length === 0) {
-        return abort(stage.id, "implementation.content.invalid", "implementer returned a patch with no files");
-      }
-      for (const file of patch.files as ProposedPatchFile[]) {
-        if (typeof file.content !== "string") {
-          return abort(stage.id, "implementation.content.invalid", `patch file ${file.path} is missing string content`);
-        }
-      }
-      const patchPaths = (patch.files as ProposedPatchFile[]).map((f) => f.path);
-
-      // (a) scope and protected-path enforcement, lexically.
-      const gate = gatePatchPaths(patchPaths, scope, run.slug);
-      if (!gate.ok) {
-        return abort(stage.id, "implementation.patch.refused", gate.reason);
-      }
-      // (b) the patch must name the base commit it was proposed against.
-      if (patch.baseCommit !== headAtProposal) {
-        return abort(
-          stage.id,
-          "implementation.patch.refused",
-          `patch base commit ${patch.baseCommit} does not match the branch head ${headAtProposal}`
-        );
-      }
-      // (c) the head-moved re-validation (section 8): `headAtProposal` is
-      // fixed at dispatch and each applied patch advances the branch, so a
-      // later patch touching a path an earlier patch touched is refused here
-      // — one patch per file per dispatch, and the designed re-validation in
-      // action.
-      const currentHeadResult = runGit(["rev-parse", "HEAD"], worktreePath);
-      if (!currentHeadResult.ok) {
-        return abort(stage.id, "implementation.patch.refused", `cannot read the worktree head: ${currentHeadResult.detail}`);
-      }
-      const currentHead = currentHeadResult.stdout.trim();
-      if (currentHead !== headAtProposal) {
-        const diffResult = runGit(["diff", "--name-only", headAtProposal, currentHead], worktreePath);
-        if (!diffResult.ok) {
-          return abort(stage.id, "implementation.patch.refused", `cannot read the moved paths: ${diffResult.detail}`);
-        }
-        const moved = movedPaths(
-          diffResult.stdout
-            .split(/\r?\n/)
-            .map((l) => l.trim())
-            .filter((l) => l !== ""),
-          patchPaths
-        );
-        if (moved.length > 0) {
-          return abort(stage.id, "implementation.patch.refused", `branch moved since proposal in: ${moved.join(", ")}`);
-        }
-      }
-
-      for (const file of patch.files as ProposedPatchFile[]) {
-        const target = join(worktreePath, file.path);
-        // (d) the fail-closed link rule, first: the write follows the link,
-        // so a symlinked or junctioned ancestor redirects bytes the gate
-        // checked only lexically. Refusing every link component is smaller
-        // and safer than modelling another "safe" target category — the
-        // redirect class has already required multiple corrections, and the
-        // design does not require linked patch paths. A dangling link is
-        // refused by this same walk: lstat sees the link itself, whose
-        // target need not exist. Each component is lstat'ed because the
-        // link may sit above the file itself. (On Windows, junctions are
-        // symbolic links as far as lstat is concerned.)
-        {
-          let current = worktreePath;
-          for (const segment of normalizePath(relative(worktreePath, target)).split("/")) {
-            current = join(current, segment);
-            let st: Stats | null = null;
-            try {
-              st = lstatSync(current);
-            } catch {
-              // No node at this component; a later one may still be a link.
-            }
-            if (st?.isSymbolicLink()) {
-              return abort(
-                stage.id,
-                "implementation.patch.refused",
-                `patch path ${file.path} contains a link component: ${normalizePath(relative(worktreePath, current))}`
-              );
-            }
-          }
-        }
-        // The resolved-target backstops remain as defence in depth for a
-        // link appearing between the walk and the write: `isPathInside`
-        // proves the resolved target is still somewhere inside the worktree.
-        const resolvedTarget = resolveExisting(target);
-        if (!isPathInside(worktreePath, resolvedTarget)) {
-          return abort(stage.id, "implementation.patch.refused", `patch path ${file.path} escapes the worktree`);
-        }
-        // The resolved-protected re-check: `touchesProtected` inside
-        // `gatePatchPaths` is lexical, so a link redirecting the write into a
-        // protected path would pass it. Compare the way the filesystem
-        // compares, because the write follows the link. `resolveExisting`
-        // resolves the nearest existing ancestor, which catches a symlinked
-        // parent directory for an `add`.
-        const relResolved = normalizePath(relative(worktreePath, resolvedTarget));
-        if (touchesProtected([relResolved], run.slug)) {
-          return abort(stage.id, "implementation.patch.refused", `resolves to protected path ${relResolved}`);
-        }
-        // (e) existence semantics, after the security checks: a symlinked
-        // target is refused for what it resolves to, never for what happens
-        // to exist.
-        const exists = existsSync(target);
-        if (file.action === "add" && exists) {
-          return abort(stage.id, "implementation.patch.refused", `add requires the file not to exist: ${file.path}`);
-        }
-        if (file.action === "modify" && !exists) {
-          return abort(stage.id, "implementation.patch.refused", `modify requires the file to exist: ${file.path}`);
-        }
-      }
-
-      // (f) apply, (g) commit — one commit per patch, authored as the system
-      // identity so run commits are never attributed to the operator.
-      try {
-        for (const file of patch.files as ProposedPatchFile[]) {
-          const target = join(worktreePath, file.path);
-          mkdirSync(dirname(target), { recursive: true });
-          writeFileSync(target, file.content as string);
-        }
-      } catch (err) {
-        return abort(stage.id, "implementation.patch.refused", `patch write failed: ${(err as Error).message}`);
-      }
-      // Every untrusted path travels literally: the global
-      // `--literal-pathspecs` disables pathspec magic and `--` terminates
-      // options, so a path named `-A` is a path, never `--all`. (The global
-      // form is required — `git add --literal-pathspecs` is refused; the
-      // invocation was verified at plan time.)
-      const addedPatch = runGit(["--literal-pathspecs", "add", "--", ...patchPaths], worktreePath);
-      if (!addedPatch.ok) {
-        return abort(stage.id, "implementation.patch.refused", `git add failed: ${addedPatch.detail}`);
-      }
-      // The staged set must be exactly the proposed set. This is the layered
-      // backstop behind the cleanliness gate: if anything else ever enters
-      // the index — a path expanded by magic, an option consumed as --all, a
-      // concurrent write — the run blocks on the observed difference.
-      const stagedResult = runGit(["diff", "--cached", "--name-only", "-z"], worktreePath);
-      if (!stagedResult.ok) {
-        return abort(
-          stage.id,
-          "implementation.patch.refused",
-          `cannot read the staged set: ${stagedResult.detail}`
-        );
-      }
-      const stagedSet = [...new Set(stagedResult.stdout.split("\0").filter((l) => l !== "").map(normalizePath))].sort();
-      const proposedSet = [...new Set(patchPaths.map(normalizePath))].sort();
-      if (JSON.stringify(stagedSet) !== JSON.stringify(proposedSet)) {
-        return abort(
-          stage.id,
-          "implementation.patch.refused",
-          `staged set differs from the proposed patch: staged ${stagedSet.join(", ")}, proposed ${proposedSet.join(", ")}`
-        );
-      }
-      const committedPatch = runGit(
-        [
-          "-c",
-          `user.name=${SYSTEM_NAME}`,
-          "-c",
-          "user.email=buildworks@buildworks.invalid",
-          "commit",
-          "-m",
-          `bw run ${runId}: apply patch (base ${headAtProposal.slice(0, 8)})`,
-        ],
-        worktreePath
+    // The patch helper is now shared with code-review remediation. It owns the
+    // complete write-path guard sequence but never mutates run or stage state.
+    const applied = applyProposedPatches({
+      worktreePath,
+      runId,
+      slug: run.slug,
+      scope,
+      proposalBase: headAtProposal,
+      patches: patches as ProposedPatch[],
+      commitMessage: `bw run ${runId}: apply patch (base ${headAtProposal.slice(0, 8)})`,
+      audit: (action, summary) => audit(stage.id, `implementation.${action}`, summary.replace(`; run ${runId}`, "")),
+    });
+    if (!applied.ok) {
+      const action =
+        applied.kind === "content_invalid"
+          ? "implementation.content.invalid"
+          : applied.kind === "worktree_dirty"
+            ? "implementation.worktree.dirty"
+            : applied.kind === "gate_failed"
+              ? "implementation.gate.failed"
+              : "implementation.patch.refused";
+      return abort(
+        stage.id,
+        action,
+        applied.reason
       );
-      if (!committedPatch.ok) {
-        return abort(stage.id, "implementation.patch.refused", `git commit failed: ${committedPatch.detail}`);
-      }
-      // The commit's changed paths are compared again — the record on the
-      // branch is the final word, and a mismatch here means the commit
-      // carried content the patch never proposed.
-      const committedResult = runGit(
-        ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "HEAD"],
-        worktreePath
-      );
-      if (!committedResult.ok) {
-        return abort(
-          stage.id,
-          "implementation.patch.refused",
-          `cannot read the committed set: ${committedResult.detail}`
-        );
-      }
-      const committedSet = [...new Set(committedResult.stdout.split("\0").filter((l) => l !== "").map(normalizePath))].sort();
-      if (JSON.stringify(committedSet) !== JSON.stringify(proposedSet)) {
-        return abort(
-          stage.id,
-          "implementation.patch.refused",
-          `committed set differs from the proposed patch: committed ${committedSet.join(", ")}, proposed ${proposedSet.join(", ")}`
-        );
-      }
-      // (h) the audit names the observed committed set and the base commit,
-      // never the proposal — what git actually committed is the record.
-      audit(stage.id, "implementation.patch.apply", `applied patch to ${committedSet.join(", ")} (base ${headAtProposal})`);
     }
-
-    // The pass hands verification a clean worktree and an exact final commit:
-    // anything left behind — by the implementer, a hook, or the stage itself
-    // — is evidence the boundary failed, and the run blocks on it.
-    const cleanBeforePass = worktreeClean(worktreePath);
-    if (!cleanBeforePass.ok) {
-      return refuseDirty(stage.id, "after applying patches", cleanBeforePass);
-    }
-
-    // --- the pass ---
-    const finalHeadResult = runGit(["rev-parse", "HEAD"], worktreePath);
-    if (!finalHeadResult.ok) {
-      return abort(stage.id, "implementation.gate.failed", `cannot read the final worktree head: ${finalHeadResult.detail}`);
-    }
-    const finalHead = finalHeadResult.stdout.trim();
+    const finalHead = applied.resultingCommit;
     store.completeStage(stage.id, worktreePath, "pass");
     // The handoff carries both commits (step 8, task 2): the base the
     // implementer's patches bound to and the final head. Verification and

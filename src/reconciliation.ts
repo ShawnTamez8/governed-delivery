@@ -60,12 +60,23 @@ export type Disposition = (typeof DISPOSITIONS)[number];
  * second hand-written copy there would drift silently the moment a source is
  * added (Task 7: import each vocabulary from the module that owns it).
  */
-export const UPSTREAM_SOURCES = ["design", "specification"] as const;
+/**
+ * `plan` is the code-review stage's upstream: a code reviewer that concludes
+ * the approved plan left a decision unmade reports it with the
+ * `upstream:plan:` prefix rather than being forced to express a plan defect
+ * as a code defect (section 13). No decision path cites it — the code-review
+ * stage has no reconciliation dispatch — so its appearance among the
+ * grounding sources `insertFindingDecision` accepts is vocabulary, not a
+ * reachable write.
+ */
+export const UPSTREAM_SOURCES = ["design", "specification", "plan"] as const;
 export type UpstreamSource = (typeof UPSTREAM_SOURCES)[number];
 
 /** The exact upstream location token prefix an artifact's review may cite. */
 export function upstreamPrefixFor(source: UpstreamSource): string {
-  return source === "design" ? "upstream:design:" : "upstream:specification:";
+  if (source === "design") return "upstream:design:";
+  if (source === "plan") return "upstream:plan:";
+  return "upstream:specification:";
 }
 
 // The kebab-case body, held separately from the anchored form so the

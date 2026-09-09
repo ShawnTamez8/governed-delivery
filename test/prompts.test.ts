@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  buildCodeReviewPrompt,
+  buildCodeReviewRemediationPrompt,
   buildImplementationAuthorPrompt,
   buildPlanAuthorPrompt,
   buildPlanReconcilePrompt,
@@ -17,11 +19,14 @@ import {
 } from "../src/prompts.ts";
 import { IMPLEMENTER } from "../src/agents/implementer.ts";
 import { PLAN_AUTHOR } from "../src/agents/plan-author.ts";
+import { CODE_REVIEWER_CORRECTNESS } from "../src/agents/code-reviewer-correctness.ts";
+import { CODE_REVIEWER_SECURITY } from "../src/agents/code-reviewer-security.ts";
 import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
 import { SPEC_REVIEWER_TRACEABILITY } from "../src/agents/spec-reviewer-traceability.ts";
 import { validatePanelRequest } from "../src/select.ts";
 import { validateSpecDoc } from "../src/spec-doc.ts";
 import { validatePlanDoc } from "../src/plan-doc.ts";
+import { validateAgentResult } from "../src/agent-result.ts";
 
 // Hazard 3: every constrained field the prompts request must state its
 // constraint in the prompt source. This test reads the file, never the
@@ -83,6 +88,23 @@ const CONSTRAINT_STRINGS = [
   "deletion",
   "content",
   "A tasks.md path is prohibited",
+  "JSON-standard escaping",
+  "literal UTF-8",
+  "\\uXXXX",
+  "\\UXXXXXXXX",
+  // The code-review contract's constrained fields. The severity rubric is
+  // here because the gate compares severity against a threshold frozen in the
+  // profile (hazard 3): a threshold over an unstated scale is a comparison
+  // against nothing. `code-findings` is an output kind, not a prompt string,
+  // so it is deliberately absent.
+  "Changed paths:",
+  "one of the changed paths below",
+  "positive integer",
+  "fails to implement an acceptance criterion",
+  "small but concrete defect with localized impact",
+  "reproducible impact",
+  "optional refactoring",
+  "speculative hardening",
   // The read-only constraint: hazard 3 applied to a constrained behaviour,
   // per docs/proposals/implementer-writes-files-it-also-proposes.md. The
   // sentence is UX, not a guard — enforcement is the invocation boundary
@@ -163,6 +185,43 @@ const CONSTRAINT_STRINGS = [
   "normativeChanges is",
   "proposal is allowed only on upstream_follow_up",
   "return no field at all that your disposition does not list",
+  // The membership rule of each structured section, which is as much a
+  // constrained field as the format of a value inside it. Measured
+  // 2026-09-05, $0.41049: an author answering a finding about a gap in the
+  // criterion numbering explained the gap as the first line under the
+  // heading, the section admitted nothing but criteria and never said so,
+  // and the run blocked terminally at the spec_review gate.
+  "a path contains no whitespace",
+  "one criterion and nothing else",
+  "not inside this section",
+  // The reviewer's half of the same incident: the gap the author was asked
+  // to explain is the ordinary residue of the removal accounting, so a
+  // reviewer told nothing about stable-ID semantics reports the correct
+  // output of another guard as a defect.
+  "not a sequence",
+  "gap in the numbering is not by itself a finding",
+  "never renumber criteria to close a gap",
+  // The coverage line's one-artifact rule, and the reviewer rule that stops
+  // the finding which provokes breaking it. Measured 2026-09-05, $1.25141:
+  // three reviewers said a coverage entry omitted a second implementing
+  // artifact, the author named both on one line, and the pair parsed as a
+  // single path outside the signed scope.
+  "names exactly one of them, copied verbatim",
+  "list of paths is not a path",
+  "needs a second artifact",
+  "not a coverage finding",
+  // The one-artifact rule must not withdraw the other legal coverage form.
+  // Stated on the author side as the alternative, and on the reviewer side as
+  // something that is not a defect.
+  "takes the not_applicable form above",
+  "says not_applicable with a",
+  // What the single path *means*. Without it the rule is a shape with no
+  // semantics, and an author asked for one path out of several contributing
+  // files has no stated basis for choosing. All four plan prompts carry it.
+  "representative delivery anchor",
+  "most directly responsible for the criterion's observable outcome",
+  "Several criteria may name the same path",
+  "Report missing implementation work against the plan's tasks",
 ];
 
 test("every constrained field's constraint appears in the prompt source", () => {
@@ -183,6 +242,12 @@ test("the generated author prompt states the schema constraints", () => {
     "beginning at AC-001 and increasing monotonically",
     "No git operations",
     "Output the JSON object",
+    // Both section membership rules reach the generated prompt, not only the
+    // source: the author is told what each section admits, not just how one
+    // entry inside it is shaped.
+    "a path contains no whitespace",
+    "one criterion and nothing else",
+    "not inside this section",
   ]) {
     assert.ok(prompt.includes(constraint), `author prompt missing: ${constraint}`);
   }
@@ -204,6 +269,10 @@ test("the generated spec reviewer prompt states the finding constraints and name
     "upstream:design:",
     "use that criterion's AC ID as the location",
     "never require or invent a heading",
+    // Stable-ID semantics: a gap is the residue of a claimed removal, not a
+    // defect, so the reviewer is told before it can report one.
+    "not a sequence",
+    "gap in the numbering is not by itself a finding",
   ]) {
     assert.ok(prompt.includes(constraint), `reviewer prompt missing: ${constraint}`);
   }
@@ -230,6 +299,14 @@ test("the generated plan author prompt states the schema, the hash, and the scop
     "proposedContentChanges",
     "No git operations",
     "Output the JSON object",
+    // The coverage line's one-artifact rule, asserted per prompt: three
+    // builders carry it and the whole-file scan passes while any one of them
+    // still does.
+    "names exactly one of them, copied verbatim",
+    "list of paths is not a path",
+    "takes the not_applicable form above",
+    "representative delivery anchor",
+    "most directly responsible for the criterion's observable outcome",
   ]) {
     assert.ok(prompt.includes(constraint), `plan author prompt missing: ${constraint}`);
   }
@@ -297,12 +374,32 @@ test("the generated plan reviewer prompt states the finding constraints and name
     "upstream:specification:",
     "use that entry's AC ID as the location",
     "never require or invent a heading",
+    // What the coverage relation can express, so the reviewer does not ask
+    // for a change the document forbids and the author cannot make. The
+    // not_applicable clause is asserted because this is the only plan prompt
+    // that never restates the document schema: without it, the sentence below
+    // is the whole description of a coverage line a reviewer ever receives,
+    // and it would read as forbidding a legitimate entry.
+    "Coverage is one line per criterion",
+    "says not_applicable with a",
+    "Several criteria may name the same artifact",
+    "representative delivery anchor",
+    "not a coverage finding",
+    // The redirect, not a silence: a criterion the plan genuinely fails to
+    // deliver must still be reportable, against the tasks that would deliver
+    // it.
+    "Report missing implementation work against the plan's tasks",
   ]) {
     assert.ok(prompt.includes(constraint), `plan reviewer prompt missing: ${constraint}`);
   }
   // Both documents reach the reviewer: judging coverage needs the criteria.
   assert.ok(prompt.includes("# plan"));
   assert.ok(prompt.includes("# spec"));
+  // The rule about what coverage can express must not read as "report fewer
+  // coverage findings": the sentence asking for exactly that judgement stays,
+  // and the enumeration of what a coverage finding *is* travels with it.
+  assert.ok(prompt.includes("actually deliver the specification's acceptance criteria"));
+  assert.ok(prompt.includes("names a criterion the plan does not deliver"));
 });
 
 test("the generated implementation author prompt states the patch contract", () => {
@@ -322,6 +419,10 @@ test("the generated implementation author prompt states the patch contract", () 
     "This checkout is read-only for you",
     "Patch only these paths:",
     "Output the JSON object",
+    "JSON-standard escaping",
+    "literal UTF-8",
+    "\\uXXXX",
+    "\\UXXXXXXXX",
   ]) {
     assert.ok(prompt.includes(constraint), `implementation author prompt missing: ${constraint}`);
   }
@@ -350,6 +451,13 @@ test("the generated spec self-critique prompt states the contract and carries bo
     "fallback to your draft",
     "Preserve each existing ID",
     "Output the JSON object",
+    // The section membership rules, asserted per prompt for the same reason
+    // the panel bounds are: three builders carry them, and the whole-file
+    // scan above passes while any one of them still does.
+    "a path contains no whitespace",
+    "one criterion and nothing else",
+    "not inside this section",
+    "never renumber criteria to close a gap",
     // Asserted here and again on the plan prompt, per prompt rather than per
     // file: both prompts carry these sentences, and the whole-file scan above
     // cannot tell which one dropped it.
@@ -411,6 +519,14 @@ test("the generated plan self-critique prompt restates the hash and the scope it
     "always seated and already consume seats",
     "      - requirements-traceability",
     "must fit inside the size you request",
+    // The one-artifact rule, and the move that answers a second-artifact
+    // critique without breaching it.
+    "names exactly one of them, copied verbatim",
+    "list of paths is not a path",
+    "takes the not_applicable form above",
+    "representative delivery anchor",
+    "most directly responsible for the criterion's observable outcome",
+    "needs a second artifact",
   ]) {
     assert.ok(prompt.includes(constraint), `plan self-critique prompt missing: ${constraint}`);
   }
@@ -541,6 +657,13 @@ test("the generated spec reconciliation prompt carries the decision contract and
     // two prompts state different forms and one builder renders both.
     "an acceptance criterion's node text is `AC-001: <criterion text>`",
     "Leave off the list marker",
+    // The section membership rules, asserted per prompt: the whole-file scan
+    // cannot tell which of the three builders carrying them dropped one, and
+    // this is the builder the measured block came from.
+    "a path contains no whitespace",
+    "one criterion and nothing else",
+    "not inside this section",
+    "never renumber criteria to close a gap",
     // Both directions of the normative delta, asserted on this prompt rather
     // than only in the whole-file scan: the two reconciliation prompts render
     // from one contract builder, so a sentence missing from one of them would
@@ -615,6 +738,15 @@ test("the generated plan reconciliation prompt carries the spec as governing inp
     "a task's node text is the task itself",
     "`AC-001 -> <artifact path>`",
     "Leave off the list marker",
+    // The one-artifact rule, and the move that answers a second-artifact
+    // finding without breaching it. This is the builder the measured block
+    // came from.
+    "names exactly one of them, copied verbatim",
+    "list of paths is not a path",
+    "takes the not_applicable form above",
+    "representative delivery anchor",
+    "most directly responsible for the criterion's observable outcome",
+    "needs a second artifact",
     // The plan side's own copy of the conditional-field matrix. These two
     // prompts share the contract builder, and nothing structural notices a
     // missing assertion on one of them.
@@ -693,4 +825,130 @@ test("every finding id a reconcile prompt advertises is one the validator accept
   ]) {
     assert.ok(prompt.includes('"decisions": []'), "an empty round advertises an empty decisions list");
   }
+});
+
+test("the generated code review prompt states every field the validator and the gate act on", () => {
+  const prompt = buildCodeReviewPrompt(
+    CODE_REVIEWER_CORRECTNESS,
+    "SPEC-TEXT",
+    "PLAN-TEXT",
+    ["js/a.js", "css/b.css"],
+    "DIFF-TEXT",
+    "c".repeat(40)
+  );
+  for (const constraint of [
+    "code reviewer code-reviewer-correctness",
+    "Report only findings within your specialty: correctness",
+    "low, medium, high, critical",
+    // One distinguishing phrase per rubric level: a threshold over an
+    // unstated scale is a comparison against nothing (hazard 3).
+    "unsafe, or destroys data or state",
+    "fails to implement an acceptance criterion",
+    "does not fail an acceptance criterion",
+    "small but concrete defect with localized impact",
+    "current_artifact",
+    "lowercase kebab-case",
+    "64",
+    "An empty findings array is a valid result",
+    "read-only",
+    "- js/a.js",
+    "- css/b.css",
+    CODE_REVIEWER_CORRECTNESS.codeReviewInstructions!,
+    "reproducible impact",
+    "optional refactoring",
+    "speculative hardening",
+    "SPEC-TEXT",
+    "PLAN-TEXT",
+    "DIFF-TEXT",
+    "c".repeat(40),
+  ]) {
+    assert.ok(prompt.includes(constraint), `code review prompt is missing: ${constraint}`);
+  }
+  // No consequence a reviewer could write to. The sibling review prompts
+  // state none either: a reviewer grading to clear a gate is the bias
+  // section 12 keeps out by making the verdict an input to the gate.
+  assert.ok(!prompt.includes("threshold"), "the prompt must not name the gate threshold");
+  assert.ok(!prompt.includes("high or critical blocks"), "the prompt must not state a consequence");
+  assert.ok(!prompt.includes("blocks the run"), "the prompt must not state a consequence");
+  assert.ok(!prompt.includes("upstream:plan:"), "code review must not advertise an upstream route");
+
+  // The `Changed paths:` block shape is a contract the harness fixture
+  // scrapes. Asserted as the fixture reads it, not as prose.
+  const scraped = /Changed paths:\n\n([\s\S]*?)\n\n/.exec(prompt);
+  assert.ok(scraped, "the changed-paths block must be scrapable");
+  assert.deepEqual(scraped![1]!.split("\n"), ["- js/a.js", "- css/b.css"]);
+});
+
+test("the security and correctness prompts carry distinct protected specialist instructions", () => {
+  const security = buildCodeReviewPrompt(
+    CODE_REVIEWER_SECURITY,
+    "SPEC",
+    "PLAN",
+    ["src/a.ts"],
+    "DIFF",
+    "c".repeat(40)
+  );
+  const correctness = buildCodeReviewPrompt(
+    CODE_REVIEWER_CORRECTNESS,
+    "SPEC",
+    "PLAN",
+    ["src/a.ts"],
+    "DIFF",
+    "c".repeat(40)
+  );
+  assert.ok(correctness.includes("behavioral defects"));
+  assert.ok(security.includes("trust-boundary"));
+  assert.notEqual(correctness, security);
+});
+
+test("the remediation prompt carries every report and advertises a valid patch result", () => {
+  const base = "b".repeat(40);
+  const prompt = buildCodeReviewRemediationPrompt(
+    IMPLEMENTER,
+    "SPEC-TEXT",
+    "PLAN-TEXT",
+    ["src/a.ts"],
+    base,
+    ["src/a.ts"],
+    "DIFF-TEXT",
+    [
+      {
+        findingId: 7,
+        location: "src/a.ts:3",
+        intentKey: "wrong-result",
+        reports: [
+          {
+            reviewerId: "code-reviewer-correctness",
+            severity: "high",
+            classification: "current_artifact",
+            subject: "The calculation returns the wrong result for ordinary input.",
+          },
+        ],
+      },
+    ]
+  );
+  for (const text of [
+    "finding 7",
+    "src/a.ts:3",
+    "wrong-result",
+    "code-reviewer-correctness",
+    "severity high",
+    "classification current_artifact",
+    "The calculation returns the wrong result",
+    "SPEC-TEXT",
+    "PLAN-TEXT",
+    "DIFF-TEXT",
+    base,
+    "Do not return finding dispositions, proposals, waivers, questions",
+    "JSON-standard escaping",
+    "literal UTF-8",
+    "\\uXXXX",
+    "\\UXXXXXXXX",
+  ]) {
+    assert.ok(prompt.includes(text), `remediation prompt missing: ${text}`);
+  }
+  const advertised = /Return exactly a JSON AgentResult object with this shape:\n(\{[^\n]+\})/.exec(prompt);
+  assert.ok(advertised);
+  const result = validateAgentResult(IMPLEMENTER.id, JSON.parse(advertised![1]!));
+  assert.equal(result.ok, true, result.ok ? "" : result.reason);
 });

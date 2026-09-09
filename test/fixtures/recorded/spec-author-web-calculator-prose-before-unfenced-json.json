@@ -1,0 +1,123 @@
+{
+  "provenance": {
+    "run": "paid chain, run 1 of target bw-run-skill/1788674210677, 2026-09-06",
+    "design": ".claude/skills/run-buildworks/web-calculator-design.md",
+    "stage": "spec (authoring dispatch), stage 1 of the chain",
+    "agent": "spec-author",
+    "dispatch": "2026-09-06T05:57:31.442Z",
+    "captured": "2026-09-06",
+    "costUsd": 0.0810302,
+    "durationMs": 36950,
+    "effectiveModels": [
+      "claude-haiku-4-5-20251001",
+      "claude-sonnet-5"
+    ],
+    "whatThisRecords": "The spec authoring response that blocked the run at its first stage with spec.content.invalid: 'spec author body refused: no JSON object found in output'. The body is one line of prose, a blank line, then a complete and valid AgentResult JSON object with no code fence. extractJsonBody accepts bare JSON (the whole body parses) or exactly one fenced block; it has no path for prose followed by an unfenced object, so a well-formed result was discarded.",
+    "provesWhat": "JSON.parse over the substring from the first '{' to the end of the body succeeds and yields the full AgentResult, so the refusal is a gap in the extractor rather than a malformed response.",
+    "droppedFromEnvelope": "session_id, uuid, and the per-request timing fields (ttft_ms, ttft_stream_ms, time_to_request_ms, first_content_frame_ms, duration_api_ms, queued_turn_count) are dropped: they identify one machine's session and vary per invocation, and nothing in the contract reads them.",
+    "sanitized": "Absolute machine paths replaced with <target> and <home>. The result body is otherwise byte-for-byte as retained.",
+    "relationToOtherFixtures": "The third paid chain in three days to block on an unstated contract, and the first to block inside src/parse-output.ts rather than in a document schema. Unrelated to docs/features/plan-coverage-single-artifact/plan.md, whose change is in the plan stage and was never reached."
+  },
+  "envelope": {
+    "stop_reason": "end_turn",
+    "total_cost_usd": 0.0810302,
+    "usage": {
+      "input_tokens": 14,
+      "cache_creation_input_tokens": 8365,
+      "cache_read_input_tokens": 78321,
+      "output_tokens": 2985,
+      "output_tokens_details": {
+        "thinking_tokens": 796
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 8365,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "global",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 1479,
+          "cache_read_input_tokens": 14274,
+          "cache_creation_input_tokens": 362,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 362
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    },
+    "modelUsage": {
+      "claude-haiku-4-5-20251001": {
+        "inputTokens": 1973,
+        "outputTokens": 11,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "webSearchRequests": 0,
+        "costUSD": 0.002028,
+        "contextWindow": 200000,
+        "maxOutputTokens": 32000,
+        "thinkingTokens": 0,
+        "canonicalModel": "claude-haiku-4-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      },
+      "claude-sonnet-5": {
+        "inputTokens": 14,
+        "outputTokens": 2985,
+        "cacheReadInputTokens": 78321,
+        "cacheCreationInputTokens": 8365,
+        "webSearchRequests": 0,
+        "costUSD": 0.0790022,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 64000,
+        "thinkingTokens": 796,
+        "canonicalModel": "claude-sonnet-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subagent_stats": {
+      "spawned": 0,
+      "requested": {
+        "background": 0,
+        "foreground": 0,
+        "unset": 0
+      },
+      "started_in_background": 0,
+      "max_depth": 0,
+      "spawned_by_subagents": 0,
+      "completed": 0,
+      "failed": 0,
+      "killed": {
+        "parent": 0,
+        "user": 0,
+        "system": 0
+      },
+      "refused": {
+        "depth_limit": 0,
+        "concurrency_limit": 0,
+        "budget": 0
+      },
+      "by_type": {}
+    },
+    "is_error": false,
+    "num_turns": 7,
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "Repo has no existing source files, confirming this is a greenfield build. I'll finalize the spec now.\n\n{\"status\": \"proposed\", \"agent\": \"spec-author\", \"role\": \"author\", \"executor\": \"claude-code\", \"summary\": \"Authored the specification for the Web Calculator feature, declaring three concrete artifacts (index.html, css/styles.css, js/app.js) since the repo is currently empty of source files, and minting 20 acceptance criteria (AC-001 through AC-020) that map one-to-one to the 15 functional requirements (RQ-001..RQ-015) followed by the 5 non-functional requirements (NFR-001..NFR-005) in their original order.\", \"proposedContentChanges\": {\"spec\": \"---\\nfeature: web-calculator\\nchange_kind: feature\\n---\\n\\n# Web Calculator Specification\\n\\n## Summary\\n\\nA static, browser-based calculator delivering basic arithmetic\\n(addition, subtraction, multiplication, division, decimals), a visible\\ndisplay with clear/backspace/equals controls, full keyboard input, and a\\nuser-selectable light/dark theme that persists across sessions. The\\napplication is a single-page static site (HTML/CSS/JS) requiring no\\nbuild step, backend, or authentication, and must render usably from a\\n320px-wide viewport up through desktop widths.\\n\\n## Declared artifacts\\n\\nindex.html\\ncss/styles.css\\njs/app.js\\n\\n## Acceptance criteria\\n\\n- AC-001: The application loads and runs entirely by opening index.html in a modern web browser, with no server, build step, or installation required.\\n- AC-002: The calculator displays number buttons for each digit 0 through 9, and selecting a digit button appends that digit to the current entry.\\n- AC-003: Selecting the addition (+) operator applies addition between the current operand and the next entered operand.\\n- AC-004: Selecting the subtraction (-) operator applies subtraction between the current operand and the next entered operand.\\n- AC-005: Selecting the multiplication (\\u00d7) operator applies multiplication between the current operand and the next entered operand.\\n- AC-006: Selecting the division (\\u00f7) operator applies division between the current operand and the next entered operand.\\n- AC-007: The calculator accepts a decimal point entry and correctly parses and computes with decimal values, allowing at most one decimal point per operand.\\n- AC-008: The current entry and calculation results are shown in a visible display area, updating immediately as digits, operators, and results are entered or produced.\\n- AC-009: Selecting the clear (C) control resets the current entry, pending operator, and display back to the initial zero state.\\n- AC-010: Selecting the backspace/delete control removes the most recently entered character from the current entry without clearing the entire calculation.\\n- AC-011: Selecting the equals (=) control computes and displays the result of the pending operation using the entered operands and operator.\\n- AC-012: Pressing number keys, operator keys, Enter, Backspace, and Escape on the physical keyboard produces the same effect as selecting the corresponding on-screen control (digits, operators, equals, backspace, and clear respectively).\\n- AC-013: The application provides a control that switches the interface between a Light Mode theme and a Dark Mode theme.\\n- AC-014: After selecting a theme, reloading the page or opening the application in a new browser session restores the previously selected theme without requiring the user to reselect it.\\n- AC-015: The layout renders correctly and remains fully operable across desktop, tablet, and mobile viewport sizes without clipped or overlapping controls.\\n- AC-016: On a typical broadband connection, the application's HTML, CSS, and JS assets load and the calculator becomes interactive within 2 seconds.\\n- AC-017: At a viewport width of 320 pixels, all calculator controls remain visible, unclipped, and operable without requiring horizontal scrolling.\\n- AC-018: Each calculator button exhibits a visibly distinct style on mouse hover and on keyboard focus compared to its resting state.\\n- AC-019: In both Light Mode and Dark Mode, display and button text maintains a contrast ratio sufficient to meet WCAG 2.1 AA (at least 4.5:1 for normal text).\\n- AC-020: The application is fully usable without any sign-in, account creation, or credential entry.\\n\"}}",
+    "type": "result",
+    "duration_ms": 36950
+  }
+}

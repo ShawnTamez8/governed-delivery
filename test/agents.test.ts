@@ -53,6 +53,73 @@ test("the seeded reviewers can staff a standard-risk plan panel", () => {
   assert.ok(reviewers.length >= 2, "standard risk seats two reviewers");
 });
 
+test("the seeded reviewers can staff the code-review panel", () => {
+  // Hazard 11, the code-review sibling of "the seeded reviewers can staff a
+  // standard-risk plan panel": the fixed panel is every registered code
+  // reviewer, so a default installation that seats fewer than two lenses
+  // cannot complete a run at all.
+  const codeReviewers = AGENTS.filter(
+    (a) => a.role === "reviewer" && a.outputs.includes("code-findings")
+  );
+  assert.ok(codeReviewers.length >= 2, "the code-review panel seats two lenses");
+  const specialties = new Set<string>();
+  for (const agent of codeReviewers) {
+    assert.deepEqual(
+      agent.outputs,
+      ["code-findings"],
+      `${agent.id} must produce code findings and nothing else`
+    );
+    assert.equal(agent.executor, "claude-code", `${agent.id} must be bound to the frozen executor`);
+    assert.notEqual(agent.specialty, null, `${agent.id} must carry a lens`);
+    assert.equal(typeof agent.codeReviewInstructions, "string");
+    assert.ok(agent.codeReviewInstructions!.trim().length > 0, `${agent.id} must carry instructions`);
+    assert.ok(!specialties.has(agent.specialty!), `${agent.id} repeats the lens ${agent.specialty}`);
+    specialties.add(agent.specialty!);
+  }
+});
+
+test("only code reviewers carry code-review instructions, and the seeded lenses differ", () => {
+  const codeReviewers = AGENTS.filter((a) => a.outputs.includes("code-findings"));
+  assert.deepEqual(
+    codeReviewers.map((a) => a.specialty).sort(),
+    ["correctness", "security"]
+  );
+  assert.equal(new Set(codeReviewers.map((a) => a.codeReviewInstructions)).size, 2);
+  for (const agent of AGENTS.filter((a) => !a.outputs.includes("code-findings"))) {
+    assert.equal(
+      agent.codeReviewInstructions,
+      undefined,
+      `${agent.id} must not carry code-review instructions`
+    );
+  }
+});
+
+test("no author allows code-findings output", () => {
+  // Section 9: the dispatcher derives the required output from the performer,
+  // so an author that could return code findings would be the implementer
+  // reviewing its own patch.
+  for (const agent of AGENTS.filter((a) => a.role === "author")) {
+    assert.ok(
+      !agent.outputs.includes("code-findings"),
+      `${agent.id} must not allow code-findings output`
+    );
+  }
+});
+
+test("the two review output kinds are disjoint across the registry", () => {
+  // The output kind is what partitions the two reviewer registries:
+  // `findings` seats a spec or plan panel, `code-findings` seats the
+  // code-review panel. An agent carrying both would be eligible for both,
+  // which is the item-4 specialist drift this stage defers arriving by
+  // accident rather than by decision.
+  for (const agent of AGENTS) {
+    assert.ok(
+      !(agent.outputs.includes("findings") && agent.outputs.includes("code-findings")),
+      `${agent.id} must not be eligible for both review panels`
+    );
+  }
+});
+
 test("the implementer allows patches output, nothing else, and never reviews", () => {
   // Section 9: a dispatcher that derived the required output from the result
   // kind rather than the performer would let another author satisfy the
@@ -63,7 +130,7 @@ test("the implementer allows patches output, nothing else, and never reviews", (
   assert.equal(author.role, "author");
   assert.equal(author.specialty, null);
   assert.ok(author.outputs.includes("patches"), "the implementer must allow patches output");
-  for (const forbidden of ["spec", "plan", "plan-revision", "findings"]) {
+  for (const forbidden of ["spec", "plan", "plan-revision", "findings", "code-findings"]) {
     assert.ok(!author.outputs.includes(forbidden), `the implementer must not allow ${forbidden} output`);
   }
   // The implementer is an author, and selectReviewers filters to role

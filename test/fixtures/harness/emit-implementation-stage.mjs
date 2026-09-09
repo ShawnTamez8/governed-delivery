@@ -147,6 +147,8 @@ if (mode === "ok") {
   agentResult = proposed([{ path: "src/alias.md", action: "modify", content: markerContent() }]);
 } else if (mode === "empty") {
   agentResult = { ...proposed([]), proposedPatches: [] };
+} else if (mode === "empty-files") {
+  agentResult = proposed([]);
 } else if (mode === "two-patches") {
   agentResult = {
     ...proposed([]),

@@ -1,9 +1,21 @@
 ---
 name: doc-check
-description: Check this repository's documentation against the source. Use before claiming a documentation change is consistent, after changing the schema, migrations, or stage sequence, when adding a document under docs/features/, or when ARCHITECTURE.md and the code appear to disagree. This is the project documentation skill that write-plan, implement-plan, and review-design defer to.
+description: Check this repository's documentation against source and enforce document layout, hazards, and task-artifact rules. Use when writing or reviewing project documents, reconciling findings, updating project learnings, or changing schema or stage sequence. Canonical project documentation workflow for all agent hosts.
 ---
 
 # doc-check
+
+This is the canonical skill for Claude, Copilot, and other agents. The
+`.agents` registration forwards here; do not maintain a second rule set.
+`write-plan`, `implement-plan`, `review-design`, `review-code`,
+`reconcile-findings`, and `context-compaction` defer to these document rules.
+The direction is workflow -> doc-check: neither this file nor the learning
+record is a hook that launches global skills.
+
+Keep session continuity in `.claude/sessions/project-learnings.md`.
+Load that record through the repository's session-start instructions and
+update it with `context-compaction`; do not create a competing Codex or
+Copilot learning record.
 
 `CLAUDE.md` declares that `ARCHITECTURE.md` is the design. That rule was prose,
 so documents could drift from the source anyway. `scripts/doc-check.mjs` is the
@@ -44,6 +56,11 @@ status belong in run-state database rows.
 
 Adding a current-state document means adding it to `CURRENT_DOCS` in the script,
 or it is silently held to the weaker reference standard.
+
+Path checks recursively scan repository Markdown, including `AGENTS.md` and
+`.agents` files; tier selection uses explicit current and historical lists with
+a reference-tier default. Rooted path recognition is narrower than file discovery.
+The checker does not validate global skill YAML or resolve skill registrations.
 
 ## Derived facts and pins
 

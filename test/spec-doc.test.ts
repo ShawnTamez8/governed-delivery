@@ -84,7 +84,10 @@ test("acceptance criteria require an ID, unique identity, and non-empty text", (
   );
   assert.equal(proseOnly.ok, false);
   if (!proseOnly.ok) {
-    assert.match(proseOnly.reason, /acceptance criterion must be '<criterion-id>: <criterion text>'/);
+    // The section carries no criterion line at all, which is the obsolete
+    // prose-only shape the fresh-run repair is written for.
+    assert.match(proseOnly.reason, /must be one criterion of the form '- AC-NNN: <criterion text>'/);
+    assert.match(proseOnly.reason, /this line is not a criterion: the parser accepts the documented shapes/);
     assert.equal(proseOnly.obsoleteCriterionShape, true);
   }
 
@@ -102,6 +105,68 @@ test("acceptance criteria require an ID, unique identity, and non-empty text", (
   );
   assert.equal(empty.ok, false);
   if (!empty.ok) assert.match(empty.reason, /acceptance criterion AC-001 has empty text/);
+});
+
+test("a note among valid criteria refuses by name without claiming the obsolete shape", () => {
+  // The three lines are the note a live spec author wrote on 2026-09-05,
+  // quoted from the committed response at
+  // test/fixtures/recorded/spec-reconciliation-web-calculator-numbering-note.json.
+  // Its specification carried twenty-three valid criteria; the operator must
+  // not be told to start a fresh run to mint IDs the document already has.
+  const note = [
+    "Note: AC-012 is intentionally unassigned. No requirement or criterion was",
+    "dropped; the ID was reserved in an earlier draft and numbering resumes at",
+    "AC-013 so that previously assigned criterion IDs are preserved unchanged.",
+  ];
+  const withNote = validSpec().replace(
+    "- AC-001: the parser accepts the documented shapes",
+    `${note.join("\n")}\n\n- AC-001: the parser accepts the documented shapes\n- AC-013: the parser rejects the rest`
+  );
+  const result = validateSpecDoc(withNote);
+  assert.deepEqual(result, {
+    ok: false,
+    reason: `every line under ## Acceptance criteria must be one criterion of the form '- AC-NNN: <criterion text>'; a note or explanation belongs in another section, and a criterion is never wrapped across lines; this line is not a criterion: ${note[0]}`,
+  });
+
+  // The note's third line begins with an AC ID and carries no colon. Only its
+  // position kept it from being the line that refused, and before the
+  // membership pass it would have refused as the obsolete prose-only shape
+  // against a document whose criteria are all present.
+  const trailingLineOnly = validSpec().replace(
+    "- AC-001: the parser accepts the documented shapes",
+    `${note[2]}\n\n- AC-001: the parser accepts the documented shapes`
+  );
+  const trailing = validateSpecDoc(trailingLineOnly);
+  assert.equal(trailing.ok, false);
+  if (trailing.ok) return;
+  assert.match(trailing.reason, /this line is not a criterion: AC-013 so that previously assigned/);
+  assert.equal(trailing.obsoleteCriterionShape, undefined);
+});
+
+test("a criterion bulleted with anything but a hyphen is not called an obsolete prose spec", () => {
+  // Only the ASCII hyphen is stripped as a list marker, so a section bulleted
+  // any other way has no well-formed criterion line — but it plainly carries
+  // criterion IDs, and the fresh-run repair the flag triggers would tell the
+  // operator to discard a run and re-mint IDs the document already has.
+  for (const marker of ["*", "+", "1.", "–"]) {
+    const spec = validSpec().replace("- AC-001:", `${marker} AC-001:`);
+    const result = validateSpecDoc(spec);
+    assert.equal(result.ok, false, marker);
+    if (result.ok) continue;
+    assert.match(result.reason, /must be one criterion of the form/, marker);
+    assert.equal(result.obsoleteCriterionShape, undefined, marker);
+  }
+});
+
+test("a wrong-case criterion ID stays an ID refusal, not a membership refusal", () => {
+  // `ac-001: text` is a malformed ID, not prose. The membership predicate is
+  // case-insensitive so this reaches the ID check and is answered by the rule
+  // it actually broke.
+  const result = validateSpecDoc(validSpec().replace("AC-001:", "ac-001:"));
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  assert.match(result.reason, /invalid acceptance criterion ID ac-001/);
+  assert.equal(result.obsoleteCriterionShape, undefined);
 });
 
 test("writeSpecDoc writes the file and refuses invalid content without touching the filesystem", () => {
@@ -150,6 +215,72 @@ test("a declared artifact spelled with a trailing slash refuses as a directory s
     ok: false,
     reason: "declared artifact must be an exact file path, not a directory: src/parser.ts/",
   });
+});
+
+test("a line under the artifacts heading that is not a path refuses by naming the section rule", () => {
+  // The line is the one a live spec author wrote on 2026-09-05, quoted from
+  // the committed response at
+  // test/fixtures/recorded/spec-reconciliation-web-calculator-numbering-note.json
+  // — it was written under ## Acceptance criteria, and the same prose under
+  // ## Declared artifacts is what this section admitted until now: it became
+  // a declared artifact, was signed into scope, and could only fail at
+  // delivery.
+  const prose = "Note: AC-012 is intentionally unassigned. No requirement or criterion was";
+  const withProse = validSpec().replace("- src/parser.ts", prose);
+  assert.deepEqual(validateSpecDoc(withProse), {
+    ok: false,
+    reason: `every line under ## Declared artifacts must be one repo-relative file path with no whitespace; this line is not a path: ${prose}`,
+  });
+  // Membership is decided before the path rules, so prose wins over a
+  // malformed path on a later line rather than the other way round.
+  const proseAndBadPath = validSpec()
+    .replace("- src/parser.ts", prose)
+    .replace("- test/parser.test.ts", "- ../secrets.ts");
+  assert.equal(validateSpecDoc(proseAndBadPath).ok, false);
+  assert.match(
+    (validateSpecDoc(proseAndBadPath) as { reason: string }).reason,
+    /must be one repo-relative file path with no whitespace/
+  );
+});
+
+test("a line breaking both a path rule and the membership rule is answered by the path rule", () => {
+  // The membership check runs last for each line, so a line that really is a
+  // path keeps the diagnostic that says something true about it. The tasks.md
+  // case is the one that matters: architecture section 14's prohibition is the
+  // operator's only signal there, and a membership message would suppress it.
+  for (const [path, reason] of [
+    [
+      "docs/my feature/tasks.md",
+      "declared artifact is prohibited because tasks belong in run-state database rows, not tasks.md: docs/my feature/tasks.md",
+    ],
+    [
+      "C:\\Program Files\\a.ts",
+      "declared artifact must be a repo-relative path: C:\\Program Files\\a.ts",
+    ],
+    [
+      "src/my dir/",
+      "declared artifact must be an exact file path, not a directory: src/my dir/",
+    ],
+  ] as const) {
+    assert.deepEqual(validateSpecDoc(validSpec().replace("- src/parser.ts", `- ${path}`)), {
+      ok: false,
+      reason,
+    });
+  }
+});
+
+test("the artifacts section tolerates a missing list marker and surrounding padding", () => {
+  // Two recorded provider responses write this section unbulleted, so the
+  // marker is optional here and the membership rule above must not assume it.
+  const expected = validateSpecDoc(validSpec());
+  assert.equal(expected.ok, true);
+  for (const form of ["src/parser.ts", "  src/parser.ts  ", "-   src/parser.ts"]) {
+    const spec = validSpec().replace("- src/parser.ts", form);
+    const result = validateSpecDoc(spec);
+    assert.equal(result.ok, true, form);
+    if (!result.ok) continue;
+    assert.deepEqual(result.value.declaredArtifacts, ["src/parser.ts", "test/parser.test.ts"], form);
+  }
 });
 
 test("a declared tasks.md artifact is refused wherever it is proposed", () => {

@@ -333,14 +333,11 @@ export async function runPlanStage(
     if (invalidCoverage) return invalidCoverage;
     const coverage = coverageFitsScope(written.doc, scope);
     if (!coverage.ok) {
-      // The audit event carries the criteria names, not just a count — the
-      // reason string is the operator's only diagnosable record of what the
-      // plan promised that nobody approved.
-      return abort(
-        planStage.id,
-        "plan.coverage.unkeepable",
-        `plan promises coverage outside the approved scope: ${coverage.unkeepable.join("; ")}`
-      );
+      // The audit event carries the criteria names and the targets, not just a
+      // count — the reason string is the operator's only diagnosable record of
+      // what the plan promised that nobody approved. The gate builds it, so
+      // all three refusal sites say the same thing.
+      return abort(planStage.id, "plan.coverage.unkeepable", coverage.reason);
     }
     // --- self-critique: the author's own pass, before any reviewer sees it ---
     // One dispatch per artifact, under the author's frozen definition and the
@@ -427,11 +424,7 @@ export async function runPlanStage(
     if (invalidCritiqueCoverage) return invalidCritiqueCoverage;
     const critiqueCoverage = coverageFitsScope(critiqueParsed.value, scope);
     if (!critiqueCoverage.ok) {
-      return abort(
-        planStage.id,
-        "plan.coverage.unkeepable",
-        `plan promises coverage outside the approved scope: ${critiqueCoverage.unkeepable.join("; ")}`
-      );
+      return abort(planStage.id, "plan.coverage.unkeepable", critiqueCoverage.reason);
     }
     try {
       written = writePlanDoc(rootDir, run.slug, critique.value.artifact);
@@ -672,11 +665,7 @@ export async function runPlanStage(
       if (invalidReconcileCoverage) return invalidReconcileCoverage;
       const reconcileCoverage = coverageFitsScope(reconciledDoc, scope);
       if (!reconcileCoverage.ok) {
-        return abort(
-          reviewStage.id,
-          "plan.coverage.unkeepable",
-          `plan promises coverage outside the approved scope: ${reconcileCoverage.unkeepable.join("; ")}`
-        );
+        return abort(reviewStage.id, "plan.coverage.unkeepable", reconcileCoverage.reason);
       }
       const reconciliation = validateReconciliation(reconcileContent.decisions, {
         canonicalFindingIds: reconcileFindings.map((f) => f.findingId),

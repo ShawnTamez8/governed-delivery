@@ -1,3 +1,5 @@
+import { CODE_REVIEWER_CORRECTNESS } from "./agents/code-reviewer-correctness.ts";
+import { CODE_REVIEWER_SECURITY } from "./agents/code-reviewer-security.ts";
 import { IMPLEMENTER } from "./agents/implementer.ts";
 import { PLAN_AUTHOR } from "./agents/plan-author.ts";
 import { SPEC_AUTHOR } from "./agents/spec-author.ts";
@@ -12,6 +14,8 @@ export interface AgentDefinition {
   executor: string;
   outputs: string[];
   tools: string[];
+  /** Required only for reviewers that emit `code-findings`. */
+  codeReviewInstructions?: string;
 }
 
 /**
@@ -19,6 +23,12 @@ export interface AgentDefinition {
  * Version-controlled protected content — no write path touches these files.
  * `executor` and `tools` are carried because the architecture's definition
  * shape requires them; enforcement arrives with executor binding.
+ *
+ * Two reviewer output kinds partition the registry into two candidate sets:
+ * `findings` seats a spec or plan panel through `selectReviewers`, and
+ * `code-findings` seats the code-review panel through `codeReviewPanel`. The
+ * output kind is what keeps them apart — a specialty name may appear in both
+ * sets, because a specialty is a lens and not an eligibility.
  */
 export const AGENTS: readonly AgentDefinition[] = [
   SPEC_AUTHOR,
@@ -27,6 +37,8 @@ export const AGENTS: readonly AgentDefinition[] = [
   SPEC_REVIEWER_TRACEABILITY,
   SPEC_REVIEWER_SECURITY,
   SPEC_REVIEWER_CONSISTENCY,
+  CODE_REVIEWER_CORRECTNESS,
+  CODE_REVIEWER_SECURITY,
 ];
 
 export function agentById(id: string): AgentDefinition | undefined {

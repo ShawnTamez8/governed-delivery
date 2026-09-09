@@ -12,6 +12,8 @@ import {
   validateReconciliation,
   validateReviewerReports,
 } from "../src/reconciliation.ts";
+import { extractJsonBody } from "../src/parse-output.ts";
+import { coverageFitsScope } from "../src/plan-gate.ts";
 import { validateSpecDoc } from "../src/spec-doc.ts";
 import type { SpecDoc } from "../src/spec-doc.ts";
 import type { PlanDoc } from "../src/plan-doc.ts";
@@ -998,6 +1000,130 @@ function markerRunNodes(): { before: string[]; after: string[] } {
   if (!before.ok || !after.ok) throw new Error("unreachable");
   return { before: specNormativeNodes(before.value), after: specNormativeNodes(after.value) };
 }
+
+/**
+ * The second recorded spec reconciliation, from the paid chain of 2026-09-05
+ * that blocked at the `spec_review` gate for $0.41049: asked to resolve two
+ * findings about a gap in the acceptance-criteria numbering, the author
+ * explained the gap in place, as the first line under the heading. The
+ * section admitted nothing but criteria and no prompt said so, so the
+ * explanation was read as a criterion whose ID is `Note`.
+ *
+ * Hard rule 5 and section 21 are why the fix is pinned here rather than on a
+ * hand-written specification: a fixture and the code that consumes it can
+ * agree while both are wrong, and this document is what a real provider
+ * actually returned.
+ */
+const NOTE_RUN = JSON.parse(
+  readFileSync(
+    new URL("./fixtures/recorded/spec-reconciliation-web-calculator-numbering-note.json", import.meta.url),
+    "utf8"
+  )
+) as { envelope: { result: string } };
+
+/** The specification the recorded response proposed, as the stage would read it. */
+function noteRunSpec(): string {
+  const body = extractJsonBody(NOTE_RUN.envelope.result);
+  assert.equal(body.kind, "ok", "the recorded response must yield a JSON body");
+  if (body.kind !== "ok") throw new Error("unreachable");
+  const spec = (body.value as { proposedContentChanges?: { spec?: unknown } }).proposedContentChanges?.spec;
+  assert.equal(typeof spec, "string", "the recorded response carries a proposed specification");
+  return spec as string;
+}
+
+test("the recorded prose note is refused by the rule it broke, not as a malformed ID", () => {
+  const result = validateSpecDoc(noteRunSpec());
+  assert.equal(result.ok, false, "the recorded revision must still be refused");
+  if (result.ok) return;
+  // The refusal names the section's membership rule and the line that broke
+  // it. Before the rule existed the same document refused with `invalid
+  // acceptance criterion ID Note:`, which describes a criterion the author
+  // never wrote and leaves the operator no next move.
+  assert.match(result.reason, /every line under ## Acceptance criteria must be one criterion/);
+  assert.match(
+    result.reason,
+    /this line is not a criterion: Note: AC-012 is intentionally unassigned\./
+  );
+  // Twenty-three criteria are present and correct, so the fresh-run repair
+  // for the obsolete prose-only shape must not be offered.
+  assert.equal(result.obsoleteCriterionShape, undefined);
+});
+
+test("the recorded specification's unbulleted declared artifacts are not what refuses it", () => {
+  // The same document writes `## Declared artifacts` with no list marker —
+  // index.html, css/styles.css, js/calculator.js, js/theme.js — which is what
+  // a real author returns. A membership rule requiring the marker would
+  // refuse this section, so the rule is whitespace, and removing only the
+  // three note lines must leave a valid specification.
+  const spec = noteRunSpec();
+  assert.match(spec, /## Declared artifacts\n\nindex\.html\n/);
+  const withoutNote = spec
+    .split("\n")
+    .filter((line) => !/^Note: AC-012 |^dropped; the ID was reserved |^AC-013 so that previously /.test(line))
+    .join("\n");
+  const result = validateSpecDoc(withoutNote);
+  assert.equal(result.ok, true, result.ok ? "" : result.reason);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.declaredArtifacts, [
+    "index.html",
+    "css/styles.css",
+    "js/calculator.js",
+    "js/theme.js",
+  ]);
+  assert.equal(result.value.acceptanceCriteria.length, 23);
+  assert.equal(result.value.acceptanceCriteria[11].id, "AC-013", "the gap at AC-012 survives");
+});
+
+/**
+ * The plan reconciliation from the paid chain of 2026-09-05 that blocked at
+ * `plan_review` for $1.25141. Three reviewers said a coverage entry omitted a
+ * second implementing artifact; the author named both on one line, the pair
+ * parsed as a single path no signed scope entry matches, and the gate refused.
+ *
+ * The scope below is the one that run's operator actually signed — the four
+ * paths the approved specification declared — not a set invented here.
+ */
+const COVERAGE_RUN = JSON.parse(
+  readFileSync(
+    new URL(
+      "./fixtures/recorded/plan-reconciliation-web-calculator-multi-artifact-coverage.json",
+      import.meta.url
+    ),
+    "utf8"
+  )
+) as { provenance: { signedScope: string[] }; envelope: { result: string } };
+
+// Read from the fixture's provenance, not restated here: the scope the run's
+// operator signed is a property of that run, and a constant retyped beside the
+// assertion would be an expected value invented in this session.
+const COVERAGE_RUN_SCOPE = COVERAGE_RUN.provenance.signedScope;
+
+test("the recorded multi-artifact coverage line is refused by a message naming the one-path rule", () => {
+  const body = extractJsonBody(COVERAGE_RUN.envelope.result);
+  assert.equal(body.kind, "ok", "the recorded response must yield a JSON body");
+  if (body.kind !== "ok") return;
+  const plan = (body.value as { proposedContentChanges?: { plan?: unknown } }).proposedContentChanges?.plan;
+  assert.equal(typeof plan, "string", "the recorded response carries a revised plan");
+  const parsed = parsePlan(plan as string);
+  assert.equal(parsed.ok, true, parsed.ok ? "" : parsed.reason);
+  if (!parsed.ok) return;
+
+  const result = coverageFitsScope(parsed.value, COVERAGE_RUN_SCOPE);
+  assert.equal(result.ok, false, "the recorded revision must still be refused");
+  if (result.ok) return;
+  // Exactly the two the run reported, and no more: the change must not newly
+  // refuse any of the other twenty-four entries, which name in-scope paths.
+  assert.deepEqual(result.unkeepable, ["AC-008", "AC-017"]);
+  assert.equal(parsed.value.coverage.length, 26);
+  // The operator now sees the value that failed and the rule it broke, rather
+  // than two criterion IDs and the word "scope".
+  assert.match(result.reason, /AC-008 -> src\/index\.html, src\/calculator\.js/);
+  assert.match(result.reason, /AC-017 -> src\/index\.html, src\/theme\.js/);
+  assert.match(
+    result.reason,
+    /an artifact-form coverage entry names exactly one path copied from the signed scope/
+  );
+});
 
 test("a claim carrying the artifact's list marker matches the derived node", () => {
   // The tolerance, in both directions, on the smallest case that shows it: the

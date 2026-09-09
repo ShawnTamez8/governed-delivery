@@ -513,7 +513,7 @@ test("insertFindingDecision refuses a grounding source that is not a governing i
             grounding: { source: "specification.md", location: "## R", excerpt: "e" },
           })
         ),
-      /invalid grounding source specification\.md: allowed values are design, specification/
+      /invalid grounding source specification\.md: allowed values are design, specification, plan/
     );
     // Including the grounding nested inside a normative change, which the
     // top-level check never sees.
@@ -530,7 +530,7 @@ test("insertFindingDecision refuses a grounding source that is not a governing i
             ],
           })
         ),
-      /invalid grounding source the spec itself: allowed values are design, specification/
+      /invalid grounding source the spec itself: allowed values are design, specification, plan/
     );
   });
 });

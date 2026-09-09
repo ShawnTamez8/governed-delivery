@@ -1,4 +1,4 @@
-import type { PlanDoc } from "./plan-doc.ts";
+import type { CoverageEntry, PlanDoc } from "./plan-doc.ts";
 import type { AcceptanceCriterion } from "./spec-doc.ts";
 import type { FindingDecisionRow } from "./store.ts";
 
@@ -59,16 +59,46 @@ export function planReviewGate(
 export function coverageFitsScope(
   doc: PlanDoc,
   scope: string[]
-): { ok: true } | { ok: false; unkeepable: string[] } {
+): { ok: true } | { ok: false; unkeepable: string[]; reason: string } {
   const signed = new Set(scope);
-  const unkeepable = doc.coverage
+  const offending = doc.coverage.filter(
     // A `not_applicable` entry promises no artifact at all — it carries a
     // rationale and an alternative verification instead, which section 8 says
     // is preferable to a fabricated test. There is nothing to be outside the
     // scope, so it can never be unkeepable.
-    .filter((entry) => entry.artifact !== null && !signed.has(entry.artifact))
-    .map((entry) => entry.criterionId);
-  return unkeepable.length === 0 ? { ok: true } : { ok: false, unkeepable };
+    (entry): entry is CoverageEntry & { artifact: string } =>
+      entry.artifact !== null && !signed.has(entry.artifact)
+  );
+  if (offending.length === 0) return { ok: true };
+  // The criterion is what the operator can act on, so that is what
+  // `unkeepable` carries and what the callers' tests pin. The target belongs
+  // in the message: an operator told only "AC-008" has to open the plan to
+  // find out what AC-008 promised.
+  const unkeepable = offending.map((entry) => entry.criterionId);
+  const listed = offending.map((entry) => `${entry.criterionId} -> ${entry.artifact}`).join("; ");
+  // Measured 2026-09-05, $1.25141: three reviewers said a coverage entry
+  // omitted a second implementing artifact, and the author answered by naming
+  // both on one line. A coverage entry admits exactly one path, so the pair
+  // parsed as a single target no scope entry matches, and the refusal reported
+  // it as a scope error — which reads as "you chose the wrong file" when the
+  // fault is "that is not one path".
+  //
+  // The membership rule is stated unconditionally rather than when the target
+  // looks like a list. Inferring intent from punctuation is guessing, a path
+  // may legally contain any of it, and the check already holds the stronger
+  // evidence: this target equals no signed entry. Saying the rule every time
+  // is both simpler and true in every case, including the ordinary one where
+  // the author simply named a file nobody approved.
+  //
+  // The machine signal stays typed — `unkeepable` is what callers branch on.
+  // Nothing may come to depend on matching this text.
+  return {
+    ok: false,
+    unkeepable,
+    reason:
+      `plan promises coverage outside the approved scope: ${listed}` +
+      "; an artifact-form coverage entry names exactly one path copied from the signed scope",
+  };
 }
 
 /**
