@@ -1,16 +1,41 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-**Current state** below is rewritten every pass, never appended to. It is the
-resume point. Everything under **Session records** is history, ordered newest
-first, and may name state that has since been superseded — when the two
-disagree, Current state wins.
+## Current state (2026-09-09, PowerShell chain completed with live remediation)
 
-This file is the system of record. Harness auto memory mirrors some of its
-durable one-liners so they load automatically, but the mirror is machine-local
-and per-clone-path: nothing is ever removed from here on the grounds that
-memory holds it (`docs/proposals/durable-knowledge-tiers.md`).
+This block is the resume point, rewritten in place. Session records below are
+history; Current state wins when they disagree. This repository file is the
+system of record. Machine-local memory is only a cache and never replaces
+durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-09-07, first full chain completed)
+**Working branch:** `code-review-stage`. The feature implementation baseline is
+`55b12b8` (`feat:bounded-code-review-remediation`). The operator authorized
+committing this session's skill-routing docs, learning updates, two dated session
+records, and paid-run fixture on this branch. No push, merge, or cleanup was
+requested. Global skill edits remain outside this repository, installed locally
+and backed up; recovery paths and the exact changed files are in
+`2026-09-08-copilot-skills-audit.md`.
+
+**Paid PowerShell result:** The operator-authorized fresh chain completed all
+stages in 16 dispatches for $2.40174. It ran from
+`2026-09-09T05:08:01.322Z` to `2026-09-09T05:28:41.759Z` under
+`C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\20260909-powershell-000531\target`.
+The first code-review panel found one high and one medium calculator defect;
+one guarded remediation and the frozen verification commands passed, then both
+reviewers returned a clean second panel. Delivery and audit validation passed.
+The observed ancestry was PowerShell -> Node driver -> Node CLI -> native Claude,
+without a command-shell wrapper around Claude. No paid process remains. Read
+`2026-09-09-paid-powershell-chain.md` beside this record for transcript, source
+hashes, durable fixture, authorization, and outcome limits. No further paid
+attempt or cleanup is authorized.
+
+**Tooling continuity:** Copilot keeps this file as the canonical learning record.
+The canonical project skills remain under `.claude/skills/`; their `.agents`
+entries forward there. The six frequently used global workflows have one
+implementation under the user's `.copilot/skills/`, with Windows junctions from
+their shared `.agents` locations. Skills invoke doc-check for document rules;
+neither this record nor doc-check is an automatic workflow hook. The skill audit
+itself authorized no spend or cleanup. Detailed audit: `2026-09-08-copilot-skills-audit.md`
+beside this record.
 
 **`docs/features/code-review-remediation/plan.md` is `Implemented` and its
 2026-09-07 code review is `reconciled` on the existing `code-review-stage`
@@ -32,19 +57,20 @@ findings remain recorded and do not block. There is no code-review human gate,
 waiver, proposal, spike, upstream classification, or findings-reconciliation
 schema. `spec_review` and `plan_review` are unchanged.
 
-**Open/deferred:** The fresh first panel was clean: live evidence covers both
-specialized prompts and final delivery, not remediation, post-patch
-verification, or panel 2. Two reviewer fixtures preserve that limit.
-`--json-schema` remains separate. Future QA should compose the concrete
-patch/verification modules without changing this loop.
+**Open/deferred:** The September 9 capture now covers the live remediation,
+post-patch frozen commands, and panel 2 that the clean September 7 chain did
+not exercise. The frozen commands still check only Node/npm versions; no
+manual browser check was made for the September 9 output. `--json-schema`
+remains separate. Future QA should compose the concrete patch/verification
+modules without changing this loop.
 
-**Next up:** the operator decides whether to push or merge the feature and when
-to clean the two retained paid targets.
+**Next up:** the PowerShell reproduction is complete; the operator can decide
+the next scoped change. Skill reload, push/merge, and retained-target cleanup
+remain separate operator actions.
 
 ## Diagnostics quick-reference
 
-Durable one-liners that recur, kept here because the file is the only tier
-committed to the repository. Most are mirrored into auto memory.
+Durable project facts belong here, regardless of whether a host also caches them.
 
 - **A tolerance applied at one boundary and not its sibling is a defect** —
   seven have occurred here, the last in `validateCodeReviewLocations`.
@@ -65,14 +91,15 @@ committed to the repository. Most are mirrored into auto memory.
   missing from it is a shape no reviewer asks about; a suite working all listed
   shapes passed while the unlisted one blocked a paid run.
 - **A block at `code_review` is a result, not a driver failure** — the driver
-  prints `10/14 steps as expected` because `review` exits 1 and the three
-  delivery steps cannot run. Read the finding against the worktree before
-  calling it anything.
+  reports failed downstream expectations when `review` blocks. Read the finding
+  against the worktree rather than diagnosing from a driver step-count summary.
 - **Identify a recorded artifact revision by hash, never by dispatch order.**
 - **A zero counter in an audit summary is not evidence of a guard firing.**
-- **Break-test `doc-check` against a scratchpad mirror, not the working tree**;
-  its tiers are an explicit path list, so `AGENTS.md` and `.agents/**` are
-  never scanned. Section 5's deferred list is every backticked `[a-z_]+` token.
+- **Break-test `doc-check` against a scratchpad mirror, not the working tree**.
+  `checkPaths()` recursively scans repository Markdown, including `AGENTS.md`
+  and `.agents`; explicit tier lists classify files, not select them. The rooted
+  path regex recognizes fewer prefixes than the scanner visits. Section 5's
+  deferred list is every backticked `[a-z_]+` token.
 - **Query a run's store before `driver.mjs clean`** — clean deletes the record.
   `agent_run.cost` keyed by `stage_id`; the audit table is `audit`; the
   `finding` table is shared across stages, so code-review ids continue from the
@@ -80,7 +107,9 @@ committed to the repository. Most are mirrored into auto memory.
 - **Backgrounding through `| tail -N` buffers until exit** — redirect a paid
   chain to a file and poll `state.db`. The chain outlives the 600 s tool
   timeout when backgrounded; do not restart it.
-- **Byte-exact approval under PowerShell:** capture with
+- **The driver signs exact bytes without a shell:** it captures the approval
+  payload as a Buffer and sends it to the signer on stdin. Historical manual
+  PowerShell workaround (not the Claude harness launch): capture with
   `cmd /c "node <cli> approval-request ... > payload.json"`, sign with
   `cmd /c "node scripts/sign-approval.mjs sign --key <key> < payload.json"`.
 - **Reverse a break-it mutation by editing it back, never `git checkout --`**,
@@ -106,57 +135,80 @@ committed to the repository. Most are mirrored into auto memory.
 
 ## Session records
 
-### Paid evidence: implementation block, then clean completion (2026-09-07)
+### PowerShell paid chain exercises remediation and completes (2026-09-09)
 
 #### Decisions and assumptions
 
-- The operator separately authorized two Claude Code chains, each bounded at 16
-  dispatches. The first used 11 and cost $1.00548; after its deterministic
-  correction, the fresh chain used 13 and cost $1.39473.
-
-#### What failed
-
-- `implementation.content.invalid`: the fenced body contained `\U0001f319` at
-  positions 1911 and 9505. It was malformed inner JSON, not a fence or
-  PowerShell failure; no patch or later stage ran. The two prior runs instead
-  reached `code_review` and correctly blocked on actionable findings.
+- One paid chain was authorized before any further skill/driver changes.
+  The successful result authorizes neither another run nor a new wrapper.
 
 #### What worked
 
-- A byte-exact fixture reproduces the refusal; changing only both `\U` tokens
-  makes all five files validate. The actual launcher is native `claude.exe`;
-  captured bytes are decoded once, so neither shell manufactured the result.
-- The fresh implementation returned valid JSON, verification passed, both
-  specialized reviewers returned valid empty reports in panel 1, all four
-  artifacts delivered at `b0b1104dc0b045dbc3d8c116ba44e9ed894200e4`, and
-  the audit chain verified. The operator then manually verified the calculator
-  output. No remediation or second panel was needed.
+- One separately authorized chain used the unchanged driver, design, and
+  native Claude harness. PowerShell 7.6.5 launched Node v26.4.0; the observed
+  model process was native Claude Code 2.1.263 with no intervening cmd wrapper.
+- Both first-panel findings went to one implementer dispatch; its single-file
+  patch and version-command verification passed. Both reviewers returned a
+  clean second panel, delivery passed, and the audit chain was valid.
+- Cost: $2.40174 over 16 dispatches. Target:
+  `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\20260909-powershell-000531\target`.
+  No process remains; cleanup is not authorized.
+- Full provenance, five unchanged provider result bodies, stage and audit rows,
+  and post-patch logs are in
+  `test/fixtures/recorded/code-review-web-calculator-powershell-remediation-chain.json`.
+  The adjacent `2026-09-09-paid-powershell-chain.md` records the experiment and
+  its limits: no browser validation and no causal cmd-versus-PowerShell comparison.
 
-#### Running state
+#### What failed
 
-- Blocked target: `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1788790553825\target`.
-  Completed target: `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1788794835268\target`.
-  No process remains; do not use broad `driver.mjs clean` yet.
+- The evidence export initially rejected SQLite null-prototype rows after a
+  lossless JSON round trip. Comparing serialized values fixed only that assertion;
+  the existing capture was verified without another paid dispatch or file rewrite.
 
-#### Verification
+#### Verification and continuation
 
-- The new reviewer result bodies match the retained raw bytes exactly and all
-  five live code-review fixtures pass extraction and contract replay. Focused
-  replay is 9/9; typecheck, docs, and diff check are clean. Earlier local gates
-  remain 821/822 with one Windows symlink skip.
-- Operator manual check — the delivered calculator output was verified after
-  completion; no detailed manual test matrix was recorded.
+- The paid driver returned exit 0 and `15/15 steps as expected`; free smoke
+  returned 13/13. `node scripts/doc-check.mjs --json` and `git diff --check`
+  passed after capture; source hashes matched before and after the chain.
+- The paid shell is completed and the auxiliary skill-audit agent is idle.
+  No active paid work remains. The free-smoke target is also retained at
+  `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\20260909-powershell-000531-smoke\target`.
+- Next up: resume only a newly requested scope; do not repeat the paid run to
+  rediscover the result. Existing Copilot sessions may need `/skills reload`.
 
-#### Deferred and open
+### Copilot skill portability aligned (2026-09-08)
 
-- Open: live remediation, post-patch verification, and panel 2 remain
-  unexercised because the successful first panel reported nothing.
-- Deferred: `--json-schema` needs a separate recorded contract investigation.
+- The operator selected the existing `.claude` project skills and this learning
+  record as canonical for Copilot too. Global priority copies now share one
+  implementation through local Windows junctions; project `.agents` entries
+  forward to `.claude`. Markdown records are context, not automatic skill hooks.
+- All 17 discovered personal skills have valid name/description frontmatter.
+  Two directory-name mismatches and oversized entry files were corrected;
+  unavailable tool calls, stale harness paths, and task-document defaults were
+  removed. Detailed guidance and global rollback copies were retained.
+- The source disproved an older quick-reference claim: doc-check recursively
+  scans Markdown paths, including AGENTS and `.agents`; its explicit lists
+  classify tiers rather than restrict discovery. The quick-reference is corrected.
+- Audit, local recovery paths, and limitations are recorded in
+  `2026-09-08-copilot-skills-audit.md` beside this file. No application runtime,
+  paid-run state, retained target, or global Codex/Claude skill installation changed.
 
-#### Next up
+### Paid evidence: implementation block, then clean completion (2026-09-07)
 
-- Push/merge and cleanup are the only immediate operator decisions; do not buy
-  runs merely to force a remediation finding.
+- Two chains were separately authorized, each with a stated 16-dispatch bound:
+  11 dispatches/$1.00548 blocked, then 13/$1.39473 completed.
+- `implementation.content.invalid` came from `\U0001f319` at positions 1911
+  and 9505 in provider JSON. A byte-exact fixture reproduces it; changing only
+  those tokens makes all five files validate. Neither shell manufactured them.
+- The fresh chain's first panel was clean; four artifacts delivered at
+  `b0b1104dc0b045dbc3d8c116ba44e9ed894200e4`, audit passed, and the operator
+  manually checked the calculator. No detailed manual matrix was recorded.
+- Five reviewer fixtures passed extraction/contract replay; focused replay was
+  9/9, with typecheck/docs/diff clean. The earlier full gate was 821/822 with one
+  Windows symlink skip. This run did not need remediation.
+- Known retained targets, with no cleanup authorized:
+  `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1788790553825\target` (blocked)
+  and `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1788794835268\target` (completed).
 
 ### Bounded code-review remediation implemented and reconciled (2026-09-07)
 
@@ -168,85 +220,34 @@ committed to the repository. Most are mirrored into auto memory.
   verification labelling, and typed patch failures. Keep round count, panel
   size, and threshold independent so policy changes remain profile edits.
 
-### Regressions cleared, extractor fixed, two chains to `code_review` (2026-09-06, uncommitted)
+### Extractor fixed; two chains correctly block at code_review (2026-09-06)
 
-One session, four phases: cleared the tree's regressions and verified the
-suite; built `docs/features/unfenced-json-extraction/` (fast-path plan); ran
-two authorized paid chains that both reached `code_review` and blocked; closed
-`code-review-stage` Task 10 and `plan-coverage-single-artifact` Task 7 on
-their evidence. Detail is in each feature's `real-run-evidence.md` and
-implementation note; do not re-derive it.
+- Cleared regressions, built `docs/features/unfenced-json-extraction/`, and
+  closed code-review-stage Task 10 and plan-coverage-single-artifact Task 7 on
+  retained evidence. Each feature's implementation note and real-run-evidence
+  record hold the detail. The extractor fix and both attempts were separately authorized.
+- Run 3 exposed prose before unfenced JSON; remedies 1-3 fixed extraction.
+  Restating the prompt (remedy 4) was deliberately not taken; prose after an
+  unfenced object remained unbuilt for lack of measured need. The `a2db2a0`
+  list-marker normalization acts at a different layer and could not fix extraction.
+- Runs 4 and 5 each used 13 dispatches ($1.15759 and $1.40170) and correctly
+  blocked on high code findings. No gate policy was weakened to clear them.
+  Plan coverage redirected two live panels to task findings rather than asking
+  for a second artifact. Dispositions were checked against code, not session prose.
+- Three reviewer responses were extracted with stage context derived from run
+  records. An invented AC-016 example was caught before doc-check: read the
+  criterion before illustrating it. Trace a blamed stage's changed files against
+  the failing path, not just stage order. CRLF/shell break-test traps are above.
+- A disposable full-suite mirror kept HEAD unchanged: 784 tests, 782 passed,
+  one skip and one load flake (3/3 isolated). Parse/reconciliation tests passed
+  59/59; removing the fallback failed exactly four new assertions and restored
+  byte-identically. Code-review-stage tests passed 39/39 before the third replay;
+  the three replays passed, and threshold/location mutations broke both
+  correctness replays. Smoke was 13/13; typecheck and doc-check were clean.
+- Historical branch baseline: code-review-stage branched at `a12f3cf`, then
+  local master and origin/master. This is not a claim about their current tips.
 
-#### Decisions and assumptions
-
-- **The operator authorized three spends this session:** the extractor fix
-  ("go ahead and fix it"), then a paid run, then a fresh paid run after the
-  first blocked. Each authorization covered one run.
-- **The code-review blocks are recorded as the gate succeeding**, not as
-  defects, because each finding was read against the worktree and held. No
-  rubric, threshold, prompt, or validator was changed to clear them.
-- **The extractor fix is remedies 1–3 of the proposal**, remedy 4 (restate the
-  prompt) deliberately not taken; prose *after* an unfenced object is not
-  built because nobody has measured it.
-- **The `a2db2a0` list-marker fix could not have covered the extractor
-  defect:** `normalizeNodeText` strips a bullet from a normative node's text
-  during reconciliation comparison, a different layer from `extractJsonBody`.
-- **`code-review-stage` is current with master** — branched at `a12f3cf`,
-  which is local `master` and `origin/master`.
-
-#### What failed
-
-- **Run 3 blocked at stage 1** on prose before an unfenced object; fixed.
-- **Runs 4 and 5 blocked at `code_review`** on correct `high` findings; not a
-  defect. No chain has completed since the stage landed.
-- **A fabricated example nearly entered an evidence record:** a sentence
-  claimed AC-016 spanned two files without the criterion having been read.
-  Caught and corrected before doc-check; the rule is the repository's own —
-  expected values come from outside your head.
-- **Break-test scaffolding failed twice before it ran:** anchors on indentation
-  and trailing newlines miss in a CRLF tree, and `shell: true` swallowed the
-  test-name pattern. Both now in the quick-reference.
-
-#### What worked
-
-- **The disposable mirror** (`robocopy /MIR` including `.git`) ran the full
-  suite with `HEAD` unmoved and no leak; the one failure was a load flake that
-  passed 3/3 in isolation.
-- **Recorded evidence was copied the moment it became load-bearing** — three
-  reviewer responses extracted by script with `provenance.stageContext` read
-  from the run's own `result.json`, never retyped, and replayed to the recorded
-  verdict.
-- **The plan-coverage redirect held on two live panels:** each raised a task
-  finding at the boundary where the earlier panel demanded a second artifact.
-- **Dispositions were verified against the tree before being written** — the
-  separator heuristic's absence and the anchor rule's presence were confirmed
-  in code and tests, not taken from the session file.
-
-#### Verification
-
-- `npm run typecheck` — exit 0, repeated after every change.
-- `npm run check:docs` — clean after every documentation edit.
-- `npm test` in a disposable mirror — 784/782/1 skip/1 flake (before the
-  extractor fix).
-- `node --test test/parse-output.test.ts test/reconciliation.test.ts` — 59/59;
-  fallback removed → exactly the four new tests fail, byte-identical restore.
-- `node --test test/code-review-stage.test.ts` — 39/39 before the third replay
-  was added; the three replays 3/3; gate `>=`→`>` and location negation each
-  fail exactly the two correctness replays, byte-identical restore.
-- `node .claude/skills/run-buildworks/driver.mjs smoke` — 13/13;
-  `paid --yes` twice — 13 dispatches each, $1.15759 and $1.40170, both
-  `code_review=blocked`.
-
-#### Next time
-
-- **Verify a "was it this stage" question by tracing the commit's files
-  against the failing path**, not by stage order alone — here the answer was
-  clean on both.
-- **When a paid run is authorized, say what it can settle before spending**,
-  and record the outcome under its own name even when it is a block.
-- **Read the criterion before writing an example about it.**
-
-### Two membership fixes and an agent-portability mirror (2026-09-05/06, uncommitted)
+### Two membership fixes and an agent-portability mirror (2026-09-05/06)
 
 `spec-section-membership` (eight tasks) and `plan-coverage-single-artifact`
 (seven tasks) executed on `code-review-stage` with two independent reviews each.
@@ -264,18 +265,14 @@ the parser stricter than it is.
 
 ### The code_review stage implemented (2026-09-05, `6fb5412`, `4d71ad1`)
 
-Tasks 1-9 of `docs/features/code-review-stage/plan.md` shipped and passed one
-independent review. Placement `implementation -> verification -> code_review ->
-delivery_check`; a fixed panel of every `code-findings` reviewer; the gate blocks
-at or above the frozen `codeReviewBlockingSeverity` in the frozen order; every
-upstream finding blocks at any severity and writes a `blocking_dependency`
-proposal; a block is terminal with no waiver (ARCHITECTURE section 12). The
-step-9 stop is lifted for `code_review` only. Delivery reads the record from
-`last.output_ref` and refuses when it disagrees with verification. Nineteen
-scripted mutations proved the guards. Planning it, the self-review missed four
-contract gaps the operator's standalone review caught — each a *reuse described
-as stricter than the reused code is*; verify a reviewer's claims against source
-before dispositioning. Its first paid run blocked upstream at `spec_review`.
+Tasks 1-9 of `docs/features/code-review-stage/plan.md` shipped with an independent
+review and 19 guard mutations. Only code_review lifted the step-9 stop.
+Delivery bound the review record to verification. The initial terminal-block
+and upstream-proposal policy was later replaced by the bounded code-only loop;
+do not restore that obsolete policy from old review records. A standalone
+design review caught four reused contracts described as stricter than their
+code: verify those claims before dispositioning. The first paid attempt blocked
+at spec_review.
 
 ### Hazard 17, the list-marker remedy, and the driver design swap (2026-09-04, `a2db2a0`)
 

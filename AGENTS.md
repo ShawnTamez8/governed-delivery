@@ -138,6 +138,17 @@ disposition. Nothing enforces these values — `check:docs` does not read them.
 
 ## Session continuity
 
+Copilot uses the same project skills and learning record as Claude. The
+canonical project workflows are `.claude/skills/doc-check/SKILL.md` and
+`.claude/skills/run-buildworks/SKILL.md`; their `.agents` skill entries only
+forward to those files. Use the `.claude` driver and design when operating
+BuildWorks; do not replace the runtime's Claude harness with Copilot.
+
+The global planning, implementation, review, reconciliation, and compaction
+skills call `doc-check` for this repository's document rules. Neither
+`doc-check` nor the learning record automatically launches those skills.
+Do not create a second harness-specific project-learnings file.
+
 At session start, read `.claude/sessions/project-learnings.md` — it carries
 decisions locked, running state, and open questions saved by the
 context-compaction skill. The most recent entry is the current state; treat
