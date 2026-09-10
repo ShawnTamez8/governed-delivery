@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { openStore, type Store } from "../src/store.ts";
 import { appendAudit } from "../src/audit.ts";
 
@@ -16,6 +17,164 @@ function withStore(fn: (store: Store) => void): void {
     rmSync(root, { recursive: true, force: true });
   }
 }
+  test("read-only Store never creates missing state and names the limitation", () => {
+    const root = mkdtempSync(join(tmpdir(), "bw-reader-"));
+    try {
+      assert.throws(() => { openStore(root, { readOnly: true }).close(); }, (error: unknown) =>
+        error instanceof Error && "code" in error && error.code === "state_missing");
+      assert.deepEqual(readdirSync(root), []);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("read-only Store leaves current state unchanged and SQLite refuses actual writes", () => {
+    const root = mkdtempSync(join(tmpdir(), "bw-reader-"));
+    try {
+      const writer = openStore(root);
+      const run = writer.insertRun("p", "f", "s", "feature");
+      writer.close();
+      const path = join(root, ".governance", "state.db");
+      const before = { bytes: readFileSync(path), mtime: statSync(path).mtimeMs };
+      const reader = openStore(root, { readOnly: true });
+      try {
+        assert.equal(reader.query<{ timeout: number }>("PRAGMA busy_timeout")[0].timeout, 1000);
+        assert.deepEqual(reader.getRun(run.id), run);
+        assert.throws(() => reader.exec("UPDATE run SET status = 'blocked'"), /readonly|read-only/i);
+        assert.throws(() => reader.query("DELETE FROM run RETURNING id"), /readonly|read-only/i);
+        assert.throws(() => reader.transaction(() => reader.getRun(run.id)), /read-only/i);
+      } finally {
+        reader.close();
+      }
+      assert.deepEqual(readFileSync(path), before.bytes);
+      assert.equal(statSync(path).mtimeMs, before.mtime);
+      assert.deepEqual(readdirSync(join(root, ".governance")), ["state.db"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("read-only schema mismatches refuse without migration or downgrade", () => {
+    const root = mkdtempSync(join(tmpdir(), "bw-reader-"));
+    try {
+      const writer = openStore(root);
+      const supported = writer.query<{ user_version: number }>("PRAGMA user_version")[0].user_version;
+      writer.close();
+      const path = join(root, ".governance", "state.db");
+      for (const version of [supported - 1, supported + 1]) {
+        const raw = new DatabaseSync(path);
+        raw.exec(`PRAGMA user_version = ${version}`);
+        raw.close();
+        const before = readFileSync(path);
+        assert.throws(() => openStore(root, { readOnly: true }), (error: unknown) => {
+          assert.ok(error instanceof Error && "code" in error);
+          assert.equal(error.code, "schema_unsupported");
+          assert.match(error.message, version < supported ? /migrate --repo/ : /matching checkout/);
+          if (version > supported) assert.doesNotMatch(error.message, /migrate --repo/);
+          return true;
+        });
+        assert.deepEqual(readFileSync(path), before);
+      }
+      // A constructor refusal must close its connection, including on Windows.
+      rmSync(path);
+      assert.ok(!existsSync(path));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("unreadable database content keeps its original SQLite reason and recovery instruction", () => {
+    const root = mkdtempSync(join(tmpdir(), "bw-reader-"));
+    try {
+      mkdirSync(join(root, ".governance"));
+      const path = join(root, ".governance", "state.db");
+      writeFileSync(path, "not a sqlite database\n");
+      const before = readFileSync(path);
+      assert.throws(() => openStore(root, { readOnly: true }), (error: unknown) => {
+        assert.ok(error instanceof Error && "code" in error);
+        assert.equal(error.code, "state_unavailable");
+        assert.match(error.message, /not a database/);
+        assert.match(error.message, /migrate --repo/);
+        assert.ok(error.cause instanceof Error);
+        return true;
+      });
+      assert.deepEqual(readFileSync(path), before);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("readSnapshot holds one committed view, closes promptly, and rolls back on callback failure", () => {
+    const root = mkdtempSync(join(tmpdir(), "bw-reader-"));
+    const writer = openStore(root);
+    try {
+      writer.query("PRAGMA journal_mode = WAL");
+      const run = writer.insertRun("p", "f", "s", "feature");
+      const reader = openStore(root, { readOnly: true });
+      try {
+        reader.readSnapshot(() => {
+          assert.equal(reader.getRun(run.id)!.status, run.status);
+          writer.setRunStatus(run.id, "blocked");
+          assert.equal(reader.getRun(run.id)!.status, run.status);
+        });
+        assert.equal(reader.getRun(run.id)!.status, "blocked");
+        assert.throws(() => reader.readSnapshot(() => { throw new Error("callback failed"); }), /callback failed/);
+        assert.equal(reader.readSnapshot(() => reader.getRun(run.id)!.status), "blocked");
+        let called = false;
+        assert.throws(() => {
+          // @ts-expect-error async callbacks cannot hold a read transaction
+          reader.readSnapshot(async () => { called = true; });
+        }, /synchronous/);
+        assert.equal(called, false);
+        assert.throws(() => reader.readSnapshot(() => reader.readSnapshot(() => null)), /nested/);
+        assert.deepEqual(reader.readSnapshot(() => ({ then: "a column name" })), { then: "a column name" });
+      } finally {
+        reader.close();
+      }
+    } finally {
+      writer.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+test("an existing empty read-only Store remains empty and writer defaults remain unchanged", () => {
+  const root = mkdtempSync(join(tmpdir(), "bw-reader-"));
+  try {
+    const writer = openStore(root);
+    assert.equal(writer.query<{ timeout: number }>("PRAGMA busy_timeout")[0].timeout, 5000);
+    writer.close();
+    const reader = openStore(root, { readOnly: true });
+    try {
+      assert.deepEqual(reader.readSnapshot(() => reader.query("SELECT * FROM run")), []);
+    } finally {
+      reader.close();
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("readSnapshot on a writer connection still takes no write reservation", () => {
+  const root = mkdtempSync(join(tmpdir(), "bw-reader-"));
+  const store = openStore(root);
+  let other: DatabaseSync | undefined;
+  try {
+    store.query("PRAGMA journal_mode = WAL");
+    const run = store.insertRun("p", "f", "s", "feature");
+    other = new DatabaseSync(join(root, ".governance", "state.db"));
+    other.exec("PRAGMA busy_timeout = 20");
+    store.readSnapshot(() => {
+      assert.equal(store.getRun(run.id)!.status, run.status);
+      other!.exec("UPDATE run SET status = 'blocked'");
+      assert.equal(store.getRun(run.id)!.status, run.status);
+    });
+    assert.equal(store.getRun(run.id)!.status, "blocked");
+  } finally {
+    other?.close();
+    store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("insertRun persists defaults and returns the row", () => {
   withStore((store) => {

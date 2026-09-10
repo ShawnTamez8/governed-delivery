@@ -1,8 +1,11 @@
 import { normalizeLocation } from "./finding.ts";
 import type { ReviewerReport } from "./reconciliation.ts";
 import type { CommitVerificationRecord } from "./commit-verification.ts";
+import type { Profile } from "./profile.ts";
+import { codeReviewPanel } from "./select.ts";
 
 const LINE_SUFFIX = /^[1-9][0-9]*$/;
+const COMMIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 export interface RecordedReport {
   agent: string;
@@ -57,6 +60,184 @@ export interface CodeReviewRecord {
   blocking: CodeReviewBlock[];
   outcome: "pass" | "block";
   createdAt: string;
+}
+
+export interface PassedCodeReviewVerification {
+  expectedCommit: string;
+  outcome: "pass";
+  blockingCommand: null;
+  commands: unknown[];
+}
+
+export interface PassedCodeReviewRemediation {
+  baseCommit: string;
+  resultingCommit: string;
+  changedPaths: string[];
+  verification: PassedCodeReviewVerification;
+}
+
+export interface PassedCodeReviewRound {
+  round: number;
+  reviewedCommit: string;
+  changedPaths: string[];
+  findings: unknown[];
+  blocking: unknown[];
+  remediation: PassedCodeReviewRemediation | null;
+}
+
+export interface PassedCodeReviewRecord {
+  runId: number;
+  stageId: number;
+  worktreePath: string;
+  patchBase: string;
+  initialVerifiedCommit: string;
+  finalVerifiedCommit: string;
+  panel: string[];
+  panelSize: number;
+  maxRounds: number;
+  blockingSeverity: string;
+  severities: string[];
+  rounds: PassedCodeReviewRound[];
+  blocking: unknown[];
+  outcome: "pass";
+}
+
+/** Delivery's existing checks do not validate finding, command, or author contents. */
+export function parsePassedCodeReviewRecord(
+  value: unknown,
+  runId: number,
+  stageId: number,
+  profile: Profile
+): { ok: true; value: PassedCodeReviewRecord } | { ok: false; reason: string } {
+  const invalidRecord = "the record does not describe this run's passed code review";
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, reason: invalidRecord };
+  }
+  const parsed = value as Record<string, unknown>;
+  const expectedPanel = codeReviewPanel(
+    profile.agents,
+    profile.policy.codeReviewPanelSize,
+    profile.executor.id
+  ).map((agent) => agent.id);
+  if (
+    parsed.runId !== runId ||
+    typeof parsed.stageId !== "number" ||
+    parsed.stageId !== stageId ||
+    parsed.outcome !== "pass" ||
+    !Array.isArray(parsed.blocking) ||
+    parsed.blocking.length !== 0 ||
+    typeof parsed.worktreePath !== "string" ||
+    typeof parsed.initialVerifiedCommit !== "string" ||
+    !COMMIT.test(parsed.initialVerifiedCommit) ||
+    typeof parsed.finalVerifiedCommit !== "string" ||
+    !COMMIT.test(parsed.finalVerifiedCommit) ||
+    typeof parsed.patchBase !== "string" ||
+    !COMMIT.test(parsed.patchBase) ||
+    !Array.isArray(parsed.panel) ||
+    parsed.panel.some((agent) => typeof agent !== "string") ||
+    JSON.stringify(parsed.panel) !== JSON.stringify(expectedPanel) ||
+    parsed.panelSize !== profile.policy.codeReviewPanelSize ||
+    parsed.panel.length !== parsed.panelSize ||
+    parsed.maxRounds !== profile.policy.codeReviewMaxRounds ||
+    parsed.blockingSeverity !== profile.policy.codeReviewBlockingSeverity ||
+    !Array.isArray(parsed.severities) ||
+    JSON.stringify(parsed.severities) !== JSON.stringify(profile.policy.severities) ||
+    !Array.isArray(parsed.rounds) ||
+    parsed.rounds.length === 0 ||
+    parsed.rounds.length > parsed.maxRounds
+  ) {
+    return { ok: false, reason: invalidRecord };
+  }
+  const rounds: PassedCodeReviewRound[] = [];
+  let expectedReviewedCommit = parsed.initialVerifiedCommit;
+  for (let index = 0; index < parsed.rounds.length; index += 1) {
+    const candidate: unknown = parsed.rounds[index];
+    const invalidRound = `round ${index + 1} does not describe its reviewed commit`;
+    if (candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+      return { ok: false, reason: invalidRound };
+    }
+    const round = candidate as Record<string, unknown>;
+    if (
+      round.round !== index + 1 ||
+      round.reviewedCommit !== expectedReviewedCommit ||
+      typeof round.reviewedCommit !== "string" ||
+      !COMMIT.test(round.reviewedCommit) ||
+      !Array.isArray(round.changedPaths) ||
+      round.changedPaths.length === 0 ||
+      round.changedPaths.some((path) => typeof path !== "string") ||
+      !Array.isArray(round.findings) ||
+      !Array.isArray(round.blocking)
+    ) {
+      return { ok: false, reason: invalidRound };
+    }
+    const checkedRound: PassedCodeReviewRound = {
+      round: index + 1, reviewedCommit: round.reviewedCommit, changedPaths: round.changedPaths,
+      findings: round.findings, blocking: round.blocking, remediation: null,
+    };
+    rounds.push(checkedRound);
+    if (round.remediation === null) {
+      if (index !== parsed.rounds.length - 1) {
+        return { ok: false, reason: `round ${index + 1} has no remediation before another panel` };
+      }
+      expectedReviewedCommit = round.reviewedCommit;
+      continue;
+    }
+    if (typeof round.remediation !== "object" || Array.isArray(round.remediation)) {
+      return { ok: false, reason: `round ${index + 1} has an invalid remediation record` };
+    }
+    const remediation = round.remediation as Record<string, unknown>;
+    const verification = remediation.verification;
+    const invalidVerification = `round ${index + 1} does not carry a passed verification for its remediation`;
+    if (
+      remediation.baseCommit !== round.reviewedCommit ||
+      typeof remediation.resultingCommit !== "string" ||
+      !COMMIT.test(remediation.resultingCommit) ||
+      !Array.isArray(remediation.changedPaths) ||
+      remediation.changedPaths.length === 0 ||
+      remediation.changedPaths.some((path) => typeof path !== "string") ||
+      typeof verification !== "object" ||
+      verification === null ||
+      Array.isArray(verification)
+    ) {
+      return { ok: false, reason: invalidVerification };
+    }
+    const verified = verification as Record<string, unknown>;
+    if (
+      verified.expectedCommit !== remediation.resultingCommit ||
+      verified.outcome !== "pass" ||
+      verified.blockingCommand !== null ||
+      !Array.isArray(verified.commands)
+    ) {
+      return { ok: false, reason: invalidVerification };
+    }
+    checkedRound.remediation = {
+      baseCommit: round.reviewedCommit,
+      resultingCommit: remediation.resultingCommit,
+      changedPaths: remediation.changedPaths,
+      verification: {
+        expectedCommit: remediation.resultingCommit, outcome: "pass",
+        blockingCommand: null, commands: verified.commands,
+      },
+    };
+    expectedReviewedCommit = remediation.resultingCommit;
+  }
+  if (expectedReviewedCommit !== parsed.finalVerifiedCommit) {
+    return { ok: false, reason: "the final verified commit is not the last commit the panel reviewed" };
+  }
+  const lastRound = rounds[rounds.length - 1]!;
+  if (lastRound.remediation !== null || lastRound.blocking.length !== 0) {
+    return { ok: false, reason: "the passed final panel is not terminal and non-blocking" };
+  }
+  return {
+    ok: true,
+    value: {
+      runId, stageId, worktreePath: parsed.worktreePath, patchBase: parsed.patchBase,
+      initialVerifiedCommit: parsed.initialVerifiedCommit, finalVerifiedCommit: parsed.finalVerifiedCommit,
+      panel: parsed.panel, panelSize: parsed.panelSize, maxRounds: parsed.maxRounds,
+      blockingSeverity: parsed.blockingSeverity, severities: parsed.severities,
+      rounds, blocking: parsed.blocking, outcome: "pass",
+    },
+  };
 }
 
 export interface CodeReviewGateFinding {

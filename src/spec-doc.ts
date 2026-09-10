@@ -28,6 +28,16 @@ export type SpecDocValidationResult =
 
 const CHANGE_KINDS: readonly string[] = ["feature", "defect_fix"];
 
+/** Read scope metadata without re-running unrelated document-schema gates. */
+export function readSpecDeclaredArtifacts(content: string): string[] | null {
+  const artifactsSection = section(normalizeText(content), "Declared artifacts");
+  if (artifactsSection === null) return null;
+  return artifactsSection
+    .split("\n")
+    .map((line) => line.trim().replace(/^-\s*/, ""))
+    .filter((line) => line !== "");
+}
+
 /**
  * The minimal spec document schema: frontmatter, a declared-artifacts list,
  * and acceptance criteria. Everything else is unvalidated prose — the
@@ -52,14 +62,10 @@ export function validateSpecDoc(
       reason: `invalid spec change_kind ${changeMatch?.[1]?.trim() ?? "missing"}: allowed values are ${CHANGE_KINDS.join(", ")}`,
     };
   }
-  const artifactsSection = section(text, "Declared artifacts");
-  if (artifactsSection === null) {
+  const artifacts = readSpecDeclaredArtifacts(text);
+  if (artifacts === null) {
     return { ok: false, reason: "spec is missing the ## Declared artifacts section" };
   }
-  const artifacts = artifactsSection
-    .split("\n")
-    .map((line) => line.trim().replace(/^-\s*/, ""))
-    .filter((line) => line !== "");
   if (artifacts.length === 0) {
     return { ok: false, reason: "declared artifacts must not be empty" };
   }

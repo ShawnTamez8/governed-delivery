@@ -39,6 +39,29 @@ test("probeExecutor throws naming the executor and the cause", () => {
   assert.throws(() => probeExecutor(executor), /probe failed for executor broken-exec: .+/);
 });
 
+test("probeExecutor returns captured stdout and stderr without changing its argv", () => {
+  const probe = [process.execPath, join(FIXTURES, "exit-nonzero.mjs")];
+  const expected = spawnSync(probe[0], probe.slice(1), { encoding: "utf8", shell: false });
+  assert.throws(() => probeExecutor(testExecutor([], { probe })), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.ok(error.message.includes(expected.stderr));
+    assert.ok(error.message.includes(expected.stdout));
+    assert.ok(error.message.includes(`exited with code ${expected.status}`));
+    return true;
+  });
+  const successful = spawnSync(process.execPath, ["--version"], { encoding: "utf8", shell: false });
+  assert.deepEqual(probeExecutor(testExecutor([], { probe: [process.execPath, "--version"] })),
+    { stdout: successful.stdout, stderr: successful.stderr });
+});
+
+test("probeExecutor bounds a hanging probe without invoking a model", () => {
+  const start = Date.now();
+  assert.throws(() => probeExecutor(testExecutor([], {
+    probe: [process.execPath, "-e", "setTimeout(() => {}, 1000)"],
+  }), { timeoutMs: 50 }), /probe failed.*timed out after 50 ms.*ETIMEDOUT/);
+  assert.ok(Date.now() - start < 5000);
+});
+
 test("invokeHarness happy path delivers the prompt over stdin", async () => {
   const executor = testExecutor(["node", join(FIXTURES, "echo-json.mjs")]);
   const prompt = "the prompt travels over stdin";

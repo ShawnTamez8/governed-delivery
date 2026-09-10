@@ -1,15 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, copyFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync, copyFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { applyMigrations } from "../src/migrate.ts";
+import { applyMigrations, listMigrations } from "../src/migrate.ts";
 import { upstreamPrefixFor } from "../src/reconciliation.ts";
 
 const MIGRATIONS_DIR = join(process.cwd(), "src", "migrations");
 // Same predicate as the runner: only NNN_name.sql files apply and count.
 const MIGRATION_COUNT = readdirSync(MIGRATIONS_DIR).filter((f) => /^\d{3}_.+\.sql$/.test(f)).length;
+
+test("migration inventory preserves actual sorted filenames and numeric versions", () => {
+  const expected = readdirSync(MIGRATIONS_DIR).filter((file) => file.endsWith(".sql")).sort()
+    .map((file) => ({ file, index: Number(file.slice(0, 3)) }));
+  assert.deepEqual([...listMigrations(MIGRATIONS_DIR)], expected);
+});
 
 function tempDbPath(): { root: string; dbPath: string } {
   const root = mkdtempSync(join(tmpdir(), "bw-migrate-"));
@@ -66,6 +72,24 @@ test("a mis-named migration file is refused", () => {
       () => applyMigrations(dbPath, dir),
       /migration filename fix\.sql does not match NNN_name\.sql/
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a later invalid filename retains the existing incremental migration ordering", () => {
+  const { root, dir, dbPath } = scratchMigrationsDir();
+  try {
+    writeFileSync(join(dir, "fix.sql"), "SELECT 1;\n");
+    const first = readdirSync(dir).sort()[0];
+    const expectedVersion = Number(/PRAGMA user_version = (\d+)/.exec(readFileSync(join(dir, first), "utf8"))![1]);
+    assert.throws(() => applyMigrations(dbPath, dir), /migration filename fix\.sql/);
+    const db = new DatabaseSync(dbPath);
+    try {
+      assert.equal((db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version, expectedVersion);
+    } finally {
+      db.close();
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

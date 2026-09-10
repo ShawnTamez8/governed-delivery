@@ -436,7 +436,10 @@ test("new-run refuses a dirty working tree and creates no run", () => {
 test("new-run outside a git repository refuses and creates no run", () => {
   const cwd = mkdtempSync(join(tmpdir(), "bw-cli-norepo-"));
   try {
-    assertNoRunRow(cwd, runCli(cwd, ...NEW_RUN_ARGS), /not a git repository/);
+    const result = runCli(cwd, ...NEW_RUN_ARGS);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /not a git repository/);
+    assert.ok(!existsSync(join(cwd, ".governance")), "target refusal must not create state");
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

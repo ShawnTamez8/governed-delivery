@@ -14,6 +14,36 @@ function isAlive(pid: number): boolean {
   }
 }
 
+export interface LockObservation {
+  status: "absent" | "live" | "dead" | "unreadable";
+  path: string;
+  pid: number | null;
+  createdAt: string | null;
+  reason: string | null;
+}
+
+export function inspectLock(rootDir: string = process.cwd()): LockObservation {
+  const path = join(lockDir(rootDir), LOCK_FILE);
+  let content: string;
+  try {
+    content = readFileSync(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { status: "absent", path, pid: null, createdAt: null, reason: null };
+    }
+    return { status: "unreadable", path, pid: null, createdAt: null,
+      reason: error instanceof Error ? error.message : String(error) };
+  }
+  const pidMatch = /^pid=(\d+)/m.exec(content);
+  const createdAt = /^created_at=(.+)$/m.exec(content)?.[1] ?? null;
+  if (!pidMatch) {
+    return { status: "unreadable", path, pid: null, createdAt,
+      reason: `lock file at ${path} is unreadable; remove it manually if no invocation is running` };
+  }
+  const pid = Number(pidMatch[1]);
+  return { status: isAlive(pid) ? "live" : "dead", path, pid, createdAt, reason: null };
+}
+
 /**
  * One writer per repository (architecture section 19). Returns a release
  * function that removes the lock only if the file still carries this
@@ -37,26 +67,12 @@ export function acquireLock(rootDir: string = process.cwd()): () => void {
       break;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      // Someone else holds or held it: read and judge.
-      let content: string;
-      try {
-        content = readFileSync(lockPath, "utf8");
-      } catch (err2) {
-        if ((err2 as NodeJS.ErrnoException).code === "ENOENT") continue; // raced away; retry
-        throw err2;
-      }
-      const pidM = /^pid=(\d+)/m.exec(content);
-      if (!pidM) {
-        // Partial or foreign content: never take over what we cannot judge.
+      const observed = inspectLock(rootDir);
+      if (observed.status === "absent") continue;
+      if (observed.status === "unreadable") throw new Error(observed.reason!);
+      if (observed.status === "live") {
         throw new Error(
-          `lock file at ${lockPath} is unreadable; remove it manually if no invocation is running`
-        );
-      }
-      if (isAlive(Number(pidM[1]))) {
-        const sinceM = /^created_at=(.+)$/m.exec(content);
-        const since = sinceM ? sinceM[1] : "unknown";
-        throw new Error(
-          `another invocation (pid ${pidM[1]}, held since ${since}) holds the lock at ${lockPath}`
+          `another invocation (pid ${observed.pid}, held since ${observed.createdAt ?? "unknown"}) holds the lock at ${lockPath}`
         );
       }
       try {

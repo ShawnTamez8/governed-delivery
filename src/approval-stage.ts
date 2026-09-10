@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { appendAudit } from "./audit.ts";
 import {
   approvalPayload,
@@ -82,7 +83,7 @@ export function buildBinding(
   }
   let content: string;
   try {
-    content = readFileSync(last.output_ref, "utf8");
+    content = readFileSync(resolve(rootDir, last.output_ref), "utf8");
   } catch (err) {
     return no(`cannot read the approved spec ${last.output_ref}: ${(err as Error).message}`);
   }

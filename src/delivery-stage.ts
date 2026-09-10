@@ -1,44 +1,21 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { appendAudit } from "./audit.ts";
 import {
   parseCodeReviewGatePass,
-  type CodeReviewRecord,
-  type CodeReviewRound,
+  parsePassedCodeReviewRecord,
+  type PassedCodeReviewRecord,
 } from "./code-review.ts";
 import { deliveryCoverage } from "./delivery-coverage.ts";
+import { parseVerificationHandoff, type VerificationHandoff } from "./handoff.ts";
 import { deliveryEvidenceDir, deliveryEvidenceRef } from "./paths.ts";
 import { loadVerifiedProfile } from "./profile.ts";
-import { codeReviewPanel } from "./select.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
 
 export type DeliveryStageResult =
   | { ok: true; stageId: number; resultRef: string }
   | { ok: false; reason: string };
-
-const COMMIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
-
-/**
- * What the delivery stage reads from the record the verification stage wrote,
- * validated strictly here — a record edited after verification is refused,
- * never trusted.
- *
- * Two records are read, not one. Section 4 makes a stage's `output_ref`
- * literally the next stage's input, and the stage before delivery is now
- * `code_review`, so the code-review record is what delivery is handed. It
- * names the verification record's range, and delivery walks back to the
- * verification stage in the chain and cross-checks the two: a review that read
- * a different worktree, base, or verified commit has not reviewed what
- * delivery is about to certify.
- */
-interface VerificationHandoff {
-  runId: number;
-  stageId: number;
-  worktreePath: string;
-  verifiedCommit: string;
-  patchBase: string;
-}
 
 /**
  * The delivery check (build order step 8), the final deterministic stage:
@@ -190,11 +167,8 @@ export function runDeliveryStage(
   // (section 4) and parsed strictly. A blocked review, a deleted record, or a
   // record edited to claim a pass it never made all refuse by name — delivery
   // must never certify a change over a review that did not happen.
-  const codeReviewPath = join(rootDir, last.output_ref);
-  let codeReview: Pick<
-    CodeReviewRecord,
-    "worktreePath" | "patchBase" | "initialVerifiedCommit" | "finalVerifiedCommit" | "rounds"
-  >;
+  const codeReviewPath = resolve(rootDir, last.output_ref);
+  let codeReview: PassedCodeReviewRecord;
   if (!existsSync(codeReviewPath)) {
     return {
       ok: false,
@@ -202,103 +176,11 @@ export function runDeliveryStage(
     };
   }
   try {
-    const parsed = JSON.parse(readFileSync(codeReviewPath, "utf8")) as Record<string, unknown>;
-    const expectedPanel = codeReviewPanel(
-      profile.agents,
-      profile.policy.codeReviewPanelSize,
-      profile.executor.id
-    ).map((agent) => agent.id);
-    if (
-      parsed.runId !== runId ||
-      typeof parsed.stageId !== "number" ||
-      parsed.stageId !== codeReviewStageId ||
-      parsed.outcome !== "pass" ||
-      !Array.isArray(parsed.blocking) ||
-      parsed.blocking.length !== 0 ||
-      typeof parsed.worktreePath !== "string" ||
-      typeof parsed.initialVerifiedCommit !== "string" ||
-      !COMMIT.test(parsed.initialVerifiedCommit) ||
-      typeof parsed.finalVerifiedCommit !== "string" ||
-      !COMMIT.test(parsed.finalVerifiedCommit) ||
-      typeof parsed.patchBase !== "string" ||
-      !COMMIT.test(parsed.patchBase) ||
-      !Array.isArray(parsed.panel) ||
-      parsed.panel.some((agent) => typeof agent !== "string") ||
-      JSON.stringify(parsed.panel) !== JSON.stringify(expectedPanel) ||
-      parsed.panelSize !== profile.policy.codeReviewPanelSize ||
-      parsed.panel.length !== parsed.panelSize ||
-      parsed.maxRounds !== profile.policy.codeReviewMaxRounds ||
-      parsed.blockingSeverity !== profile.policy.codeReviewBlockingSeverity ||
-      !Array.isArray(parsed.severities) ||
-      JSON.stringify(parsed.severities) !== JSON.stringify(profile.policy.severities) ||
-      !Array.isArray(parsed.rounds) ||
-      parsed.rounds.length === 0 ||
-      parsed.rounds.length > parsed.maxRounds
-    ) {
-      throw new Error("the record does not describe this run's passed code review");
-    }
-    const rounds = parsed.rounds as Record<string, unknown>[];
-    let expectedReviewedCommit = parsed.initialVerifiedCommit;
-    for (let index = 0; index < rounds.length; index += 1) {
-      const round = rounds[index]!;
-      if (
-        round.round !== index + 1 ||
-        round.reviewedCommit !== expectedReviewedCommit ||
-        typeof round.reviewedCommit !== "string" ||
-        !COMMIT.test(round.reviewedCommit) ||
-        !Array.isArray(round.changedPaths) ||
-        round.changedPaths.length === 0 ||
-        round.changedPaths.some((path) => typeof path !== "string") ||
-        !Array.isArray(round.findings) ||
-        !Array.isArray(round.blocking)
-      ) {
-        throw new Error(`round ${index + 1} does not describe its reviewed commit`);
-      }
-      if (round.remediation === null) {
-        if (index !== rounds.length - 1) {
-          throw new Error(`round ${index + 1} has no remediation before another panel`);
-        }
-        expectedReviewedCommit = round.reviewedCommit;
-        continue;
-      }
-      if (typeof round.remediation !== "object" || Array.isArray(round.remediation)) {
-        throw new Error(`round ${index + 1} has an invalid remediation record`);
-      }
-      const remediation = round.remediation as Record<string, unknown>;
-      const verification = remediation.verification;
-      if (
-        remediation.baseCommit !== round.reviewedCommit ||
-        typeof remediation.resultingCommit !== "string" ||
-        !COMMIT.test(remediation.resultingCommit) ||
-        !Array.isArray(remediation.changedPaths) ||
-        remediation.changedPaths.length === 0 ||
-        remediation.changedPaths.some((path) => typeof path !== "string") ||
-        typeof verification !== "object" ||
-        verification === null ||
-        Array.isArray(verification) ||
-        (verification as Record<string, unknown>).expectedCommit !== remediation.resultingCommit ||
-        (verification as Record<string, unknown>).outcome !== "pass" ||
-        (verification as Record<string, unknown>).blockingCommand !== null ||
-        !Array.isArray((verification as Record<string, unknown>).commands)
-      ) {
-        throw new Error(`round ${index + 1} does not carry a passed verification for its remediation`);
-      }
-      expectedReviewedCommit = remediation.resultingCommit;
-    }
-    if (expectedReviewedCommit !== parsed.finalVerifiedCommit) {
-      throw new Error("the final verified commit is not the last commit the panel reviewed");
-    }
-    const lastRound = rounds[rounds.length - 1]!;
-    if (lastRound.remediation !== null || (lastRound.blocking as unknown[]).length !== 0) {
-      throw new Error("the passed final panel is not terminal and non-blocking");
-    }
-    codeReview = {
-      worktreePath: parsed.worktreePath,
-      patchBase: parsed.patchBase,
-      initialVerifiedCommit: parsed.initialVerifiedCommit,
-      finalVerifiedCommit: parsed.finalVerifiedCommit,
-      rounds: parsed.rounds as CodeReviewRound[],
-    };
+    const parsed = parsePassedCodeReviewRecord(
+      JSON.parse(readFileSync(codeReviewPath, "utf8")), runId, codeReviewStageId, profile
+    );
+    if (!parsed.ok) throw new Error(parsed.reason);
+    codeReview = parsed.value;
   } catch (err) {
     return {
       ok: false,
@@ -313,7 +195,7 @@ export function runDeliveryStage(
   // stage that exists, so the repair is restoring the retained evidence or a
   // fresh run — and the message says so, rather than folding the loss into
   // the tampering refusal.
-  const recordPath = join(rootDir, verificationStage.output_ref);
+  const recordPath = resolve(rootDir, verificationStage.output_ref);
   let record: VerificationHandoff;
   if (!existsSync(recordPath)) {
     return {
@@ -322,30 +204,11 @@ export function runDeliveryStage(
     };
   }
   try {
-    const parsed = JSON.parse(readFileSync(recordPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    if (
-      parsed.runId !== runId ||
-      typeof parsed.stageId !== "number" ||
-      parsed.stageId !== verificationStageId ||
-      typeof parsed.worktreePath !== "string" ||
-      typeof parsed.verifiedCommit !== "string" ||
-      !COMMIT.test(parsed.verifiedCommit) ||
-      typeof parsed.patchBase !== "string" ||
-      !COMMIT.test(parsed.patchBase) ||
-      parsed.outcome !== "pass"
-    ) {
-      throw new Error("the record does not describe this run's passed verification");
-    }
-    record = {
-      runId,
-      stageId: verificationStageId,
-      worktreePath: parsed.worktreePath,
-      verifiedCommit: parsed.verifiedCommit,
-      patchBase: parsed.patchBase,
-    };
+    const parsed = parseVerificationHandoff(
+      JSON.parse(readFileSync(recordPath, "utf8")), runId, verificationStageId
+    );
+    if (!parsed.ok) throw new Error(parsed.reason);
+    record = parsed.value;
   } catch (err) {
     return {
       ok: false,

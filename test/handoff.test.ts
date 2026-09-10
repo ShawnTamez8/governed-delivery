@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { formatImplementationGate, parseImplementationGate } from "../src/handoff.ts";
+import { readFileSync } from "node:fs";
+import { formatImplementationGate, parseImplementationGate, parseVerificationHandoff } from "../src/handoff.ts";
 
 const A = "a".repeat(40);
 const B = "b".repeat(40);
@@ -52,4 +53,57 @@ test("uppercase hex refuses: the commits are recorded in git's lowercase form", 
 
 test("the format is canonical: exactly one rendering, stable across revisions", () => {
   assert.equal(formatImplementationGate({ base: A, head: B }), formatImplementationGate({ base: A, head: B }));
+});
+
+function recordedVerification() {
+  const chain = JSON.parse(readFileSync(new URL(
+    "./fixtures/recorded/code-review-web-calculator-powershell-remediation-chain.json", import.meta.url
+  ), "utf8"));
+  const stage = chain.stages.find((entry: { kind: string }) => entry.kind === "verification");
+  return {
+    runId: chain.run.id as number,
+    stageId: stage.id as number,
+    worktreePath: chain.review.worktreePath as string,
+    verifiedCommit: chain.review.initialVerifiedCommit as string,
+    patchBase: chain.review.patchBase as string,
+    outcome: stage.gate_result as string,
+  };
+}
+
+test("verification parsing returns only the checked handoff from the recorded chain", () => {
+  const record = recordedVerification();
+  const { outcome: _outcome, ...expected } = record;
+  const result = parseVerificationHandoff(record, record.runId, record.stageId);
+  assert.deepEqual(result, { ok: true, value: expected });
+  assert.deepEqual(parseVerificationHandoff({
+    ...record, worktreePath: "", commands: [null], createdAt: null,
+  }, record.runId, record.stageId), {
+    ok: true, value: { ...expected, worktreePath: "" },
+  }, "the existing callers checked a string path, not its contents or unrelated fields");
+  const longCommit = record.verifiedCommit + record.verifiedCommit.slice(0, 24);
+  assert.deepEqual(parseVerificationHandoff({
+    ...record, verifiedCommit: longCommit, patchBase: longCommit,
+  }, record.runId, record.stageId), {
+    ok: true, value: { ...expected, verifiedCommit: longCommit, patchBase: longCommit },
+  });
+});
+
+test("verification parsing refuses malformed and mismatched records without throwing", () => {
+  const record = recordedVerification();
+  const values: unknown[] = [
+    null, undefined, false, 1, "", [], {},
+    { ...record, runId: record.runId + 1 },
+    { ...record, stageId: String(record.stageId) },
+    { ...record, stageId: record.stageId + 1 },
+    { ...record, worktreePath: null },
+    { ...record, verifiedCommit: record.verifiedCommit.toUpperCase() },
+    { ...record, verifiedCommit: record.verifiedCommit.slice(1) },
+    { ...record, patchBase: "not-a-commit" },
+    { ...record, outcome: "block" },
+  ];
+  for (const value of values) {
+    assert.deepEqual(parseVerificationHandoff(value, record.runId, record.stageId), {
+      ok: false, reason: "the record does not describe this run's passed verification",
+    });
+  }
 });

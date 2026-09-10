@@ -11,6 +11,12 @@ validation.
 
 ## Status
 
+The local operator CLI provides no-spend readiness and inspection, explicit
+run creation, consent-bounded continuation, and external approval file
+transport. See the [operator guide](#local-operator-guide). `bw` in the
+description below is shorthand for the checkout-local Node invocation, not
+an executable installed on PATH by `npm install`.
+
 Build order steps 1-8 implemented: run store, stage chain, and audit chain
 over SQLite; the concrete harness adapter (`bw dispatch` spawns the `claude`
 CLI, parses its envelope, retains raw output, and persists `agent_run` rows);
@@ -97,6 +103,349 @@ threshold does not require changing the review-loop implementation.
 - [`docs/hazards.md`](docs/hazards.md) — failure modes this kind of system
   is subject to, and what each requires.
 - [`CLAUDE.md`](CLAUDE.md) — how to work in this repository.
+
+## Local operator guide
+
+This guide lets an operator inspect and advance an existing local delivery
+chain without manually sequencing its stages. It does not publish to GitHub,
+merge branches, sign on the operator's behalf, or recover partial stages.
+
+### Prepare the checkout and target
+
+Use Node >=24, Git, and the native Claude Code executable on PATH. Install
+this checkout's development dependencies once with `npm install` from the
+BuildWorks checkout. There is no build, npm-link, or distributed-package
+installation step; SQL and other runtime assets resolve beside the checkout.
+
+Set absolute paths in PowerShell. The target is an existing, separate Git
+worktree, not the BuildWorks checkout. Replace these example directories with
+your own; spaces are supported.
+
+```powershell
+$BuildWorksCheckout = (Resolve-Path -LiteralPath 'C:\Repositories\AI.Tools\governed-delivery').Path
+$BwCli = Join-Path $BuildWorksCheckout 'src\cli.ts'
+$BwSigner = Join-Path $BuildWorksCheckout 'scripts\sign-approval.mjs'
+$Target = (Resolve-Path -LiteralPath 'C:\Work\Target Project').Path
+$OperatorDirectory = (Resolve-Path -LiteralPath 'C:\Operator Keys').Path
+$env:BW_APPROVAL_PUBLIC_KEY = Join-Path $OperatorDirectory 'approval.pub'
+$OperatorKeyFile = Join-Path $OperatorDirectory 'approval.key'
+$Project = 'local-project'
+$FeatureId = 'calculator-1'
+$Slug = 'calculator'
+$Model = Read-Host 'Authorized Claude model name to freeze for this run'
+```
+
+The operator directory and signing key must be outside every repository.
+Use an existing PEM Ed25519 key pair. If a new pair is needed, the operator
+can separately run `& node $BwSigner keygen --out $OperatorDirectory`;
+that tool writes `approval.key` and `approval.pub` and refuses to replace an
+existing private key. Never give the private key to the CLI or an agent.
+Configure the public key before intake to bind its fingerprint into the
+frozen profile; a run created without that binding has only a partial signer
+guarantee, which later setup does not retroactively strengthen.
+
+The target must have a readable HEAD, a clean working tree, a committed
+`.gitignore` rule for `.governance/`, and committed verification configuration
+named `governed.yaml` at its root. Author and commit the design at the path
+constructed by `Join-Path $Target "docs\features\$Slug\design.md"`.
+The target's design/configuration are inputs, not files this guide creates.
+
+The verification parser accepts only a `verify:` block followed by named
+commands in the shown key order, with every argv token double-quoted.
+This minimal valid example checks **only the Node version**, not the product:
+
+```yaml
+verify:
+  - name: unit
+    command: ["node", "--version"]
+```
+
+Choose real project verification commands before creating a run. Their names
+must be unique and filename-safe; command tokens cannot contain spaces,
+quotes, or shell metacharacters. A target directory can contain spaces even
+though a command token cannot. Configuration, models, agent definitions,
+review limits, and verification commands freeze at `new-run`, not at each
+continuation.
+
+### Inspect without spending
+
+```powershell
+& node $BwCli --help
+& node $BwCli help run
+& node $BwCli doctor --repo $Target --slug $Slug
+& node $BwCli runs --repo $Target --json
+```
+
+Help opens no state and resolves no target. `doctor` checks local prerequisites
+and the fixed native version probe, bounded at five seconds; it does not check
+provider authentication, model entitlement, quota, or private-key availability.
+Its `PASS`, `FAIL`, and `NOT CHECKED` entries retain evidence and repair advice.
+Without a selector it checks current repository/configuration readiness;
+`--slug` adds design checks, while `--run` adds frozen-run diagnostics. Do not
+combine the two selectors. Current defaults remain distinct from frozen facts;
+doctor never executes an arbitrary probe found in a retained profile.
+
+Before state exists, `runs` reports `state_missing` and exits 1; it does not
+initialize a database. An existing empty store returns an empty array and
+exit 0. Inventory is newest-first, defaults to 20, accepts `--limit` 1-100,
+and reports `hasMore`. It never chooses a run for execution.
+
+Every command accepts `--repo` once, before or after its name. It selects the
+canonical Git worktree root, including from a child directory or junction.
+Omitting it targets the invocation directory's worktree. User-supplied
+prompt, payload, and signature paths instead resolve from the original
+invocation directory; absolute transport paths avoid ambiguity. Stored relative
+evidence resolves against the target, while absolute evidence stays absolute.
+Moving files does not relocate a retained run.
+
+Unknown options, duplicates, extra positional arguments, empty values, invalid
+identities/models, and unsafe numeric IDs are usage errors. Values accept
+`--name value` or `--name=value`; booleans such as `--yes` and `--json` must
+be bare flags. Help still refuses unknown commands/options.
+
+### Create an explicit run and consent to execution
+
+Creation requires every identity field and the operator-selected model. It
+prints only the numeric run ID on success, not a new-command JSON envelope.
+
+```powershell
+$RunIdText = & node $BwCli new-run --repo $Target --project $Project --feature $FeatureId --slug $Slug --change-kind feature --model $Model
+if ($LASTEXITCODE -ne 0) { throw 'Run creation failed; inspect its diagnostic.' }
+$RunId = [long]$RunIdText
+& node $BwCli doctor --repo $Target --run $RunId
+& node $BwCli status --repo $Target --run $RunId
+```
+
+Use `defect_fix` instead of `feature` for a defect run. A freeze failure can
+leave a blocked run; its diagnostic names the ID. Inspect it rather than
+assuming no state was created.
+
+`run --run` displays the frozen models, remaining groups, actual verification
+argv, review budgets, and dispatch ceilings before asking a TTY for explicit
+`yes`. Redirected stdin or `--json` requires `--yes` and never waits for a
+prompt. Decline, EOF, or prompt cancellation executes nothing.
+
+**`--yes` authorizes every group in this invocation's preview**, including
+bounded internal remediation, through approval or terminalization. It is not
+single-stage consent, a hard dollar cap, signature authority, or permission
+for another invocation. There is no voluntary stop-after control. Interrupting
+execution does not promise cleanup or resumability.
+
+Only run the following block when you consent to that full range:
+
+```powershell
+& node $BwCli run --repo $Target --run $RunId --yes
+if ($LASTEXITCODE -ne 3) { throw 'Expected the approval pause; inspect the returned result.' }
+```
+
+The first invocation runs spec and spec review, then returns control at
+`awaiting_approval` with exit 3 and no held writer lock. No pending approval
+row is required for this pause. The persisted run can still be `in_progress`;
+the derived phase is not another stored lifecycle.
+
+### Review and sign outside the CLI
+
+Read the reviewed specification and the displayed scope, risk, spec hash,
+starting commit, profile hash, and signer readiness. Missing or mismatched
+public-key readiness withholds actionable signing/submission instructions.
+The CLI never opens a private key or runs the signer.
+
+Use the **same expiry** for export and submission. The pause supplies a
+prospective value in its action arguments; it is not a granted authorization.
+Choose new payload/signature filenames under an existing operator directory:
+
+```powershell
+$StatusJson = & node $BwCli status --repo $Target --run $RunId --json
+if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect the approval boundary.' }
+$Snapshot = ($StatusJson | ConvertFrom-Json).result
+$Request = $Snapshot.operatorActions | Where-Object kind -eq 'approval_request'
+$Submit = $Snapshot.operatorActions | Where-Object kind -eq 'approval_submit'
+if (-not $Request.eligible -or -not $Submit.eligible) { throw 'Approval actions are not ready.' }
+$ExpiresIndex = [array]::IndexOf($Request.args, '--expires')
+$Expires = $Request.args[$ExpiresIndex + 1]
+$PayloadFile = Join-Path $OperatorDirectory "run-$RunId-payload.txt"
+$SignatureFile = Join-Path $OperatorDirectory "run-$RunId-signature.txt"
+& node $BwCli approval-request --repo $Target --run $RunId --expires $Expires --out $PayloadFile
+if ($LASTEXITCODE -ne 0) { throw 'Payload export failed; do not sign.' }
+```
+
+Export exclusively creates the exact canonical UTF-8 payload, without BOM or
+trailing newline. It does not create parents or overwrite files. Without
+`--out`, the legacy command writes those same raw bytes to stdout; neither
+form grants approval.
+
+The next block is a **separate operator signing decision**, after reviewing
+the bound work and payload:
+
+```powershell
+if (Test-Path -LiteralPath $SignatureFile) { throw 'Choose a new signature filename.' }
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$Signature = Get-Content -LiteralPath $PayloadFile -Raw -Encoding utf8 | & node $BwSigner sign --key $OperatorKeyFile
+if ($LASTEXITCODE -ne 0) { throw 'External signing failed; do not submit.' }
+$Signature | Set-Content -LiteralPath $SignatureFile -Encoding utf8
+& node $BwCli approve --repo $Target --run $RunId --expires $Expires --signature-file $SignatureFile
+if ($LASTEXITCODE -ne 0) { throw 'Approval was not recorded; do not continue.' }
+```
+
+The existing signer handles PowerShell BOM/CRLF transport. `--signature-file`
+accepts UTF-8, an optional leading BOM, and surrounding whitespace; unreadable
+or empty input is usage exit 2. Internal whitespace, malformed signatures,
+expired submissions, changed bindings/policy/key, and duplicates remain core
+refusals with their audit behavior. `--signature` remains available but cannot
+be combined with `--signature-file`. Expiry is checked at acceptance: it does
+not revoke an already granted approval.
+
+### Continue and inspect delivery
+
+Approval does not execute later stages. A fresh invocation needs new execution
+consent; this range runs plan/review, implementation, verification, code review
+with its frozen remediation budget, and deterministic delivery:
+
+```powershell
+& node $BwCli run --repo $Target --run $RunId --yes
+if ($LASTEXITCODE -ne 0) { throw 'Delivery did not complete; inspect the result before any further action.' }
+$StatusJson = & node $BwCli status --repo $Target --run $RunId --json
+if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect the delivery record.' }
+$Snapshot = ($StatusJson | ConvertFrom-Json).result
+$Snapshot.configuration.verificationCommands | Format-Table name, argv
+$Snapshot.delivery
+$Snapshot.evidence.references | Format-Table kind, availability, ref, reason
+```
+
+The result names the recorded branch, worktree, patch base, initial verified
+commit, final reviewed commit, delivered commit, and declared/delivered/missing
+paths. Follow its evidence references for command logs, review records/reports,
+delivery records/reports, and raw-output locations. Completion means the
+declared artifacts changed and the frozen gates passed, not that the product
+is correct. A profile whose commands are only `node --version` or
+`npm --version` has no application-test evidence. Final below-threshold
+findings remain recorded, not harmless or fixed; historical findings keep
+their immutable reviewer attribution.
+
+Repeating a completed `run` buys no work. Terminal records remain inspectable
+even if a retained worktree later disappears; unavailable evidence is labelled,
+not silently reconstructed. Stored upstream proposals have their own explicit
+operator action, including on blocked/completed runs:
+
+```powershell
+# Select an actual proposal ID from $Snapshot.proposals first.
+& node $BwCli proposal-export --repo $Target --proposal $ProposalId --name $ProposalName
+```
+
+Export creates a new target backlog document without overwrite and appends
+the existing human audit event. It does not reopen execution, change signed
+scope, or publish to GitHub. Neither `run` nor `--yes` invokes it.
+
+### Output contracts and refusal handling
+
+`doctor`, `runs`, `status`, and `run` accept `--json`. They write exactly one
+JSON object and one terminating newline to stdout, including errors. Progress
+and operational diagnostics use stderr. Do not merge stderr into a JSON
+capture. Help is always plain text, and legacy numeric/path/raw-payload command
+outputs are unchanged.
+
+The envelope is `{ command, outcome, repository, runId, errorCode, reason,
+observedAt, result }`. `observedAt` is the observation timestamp, not an agent
+start. `repository` is null before target resolution, `runId` is null when no
+run is selected, and `result` is null when unavailable. Successful inspection,
+completion, and approval pauses have null `errorCode`/`reason`.
+
+| Command | `result` fields | `outcome` |
+| --- | --- | --- |
+| `doctor` | `checks`, `current`, `frozen`, `limitations` | `ready`, `not_ready`, `error` |
+| `runs` | `runs`, `limit`, `hasMore` | `ok`, `state_missing`, `error` |
+| `status` | The complete snapshot below | `ok`, `state_missing`, `run_missing`, `error` |
+| `run` | `snapshot`, `execution` | `completed`, `awaiting_approval`, `consent_required`, `refused`, `blocked`, `failed` |
+
+Doctor checks contain `name`, `status` (`pass`, `fail`, `not_checked`),
+`evidence`, and nullable `repair`. `current` contains `systemName`,
+`nodeVersion`, `minimumNodeMajor`, `gitVersion`, `startingCommit`,
+`verification`, `policy`, `policyHash`, `agentIds`, `executor`, and
+`approvalSigner`. `frozen` is the selected run's configuration below or null;
+unavailable frozen fields are never replaced with current defaults.
+
+Run inventory entries contain `id`, `project`, `featureId`, `slug`, `status`,
+`phase`, and `lastRecordedAt`. A selected snapshot has these sections; arrays
+are complete, with no silent truncation or pagination:
+
+| Snapshot section | Contents |
+| --- | --- |
+| `run` | `id`, `project`, `featureId`, `slug`, `changeKind`, persisted `status`, `createdAt`, `updatedAt`. |
+| `phase` | `ready`, `awaiting_approval`, `blocked`, `completed`, or `interrupted_or_inconsistent`. |
+| `stages` | Ordered IDs/kinds/ordinals, predecessor/output refs, status/gate result, stored start/end times, and labelled `startEvidence`. |
+| `workflowAction` | `group`, `eligible`, all `reasons` (`code`, `reason`), `command`, `args`. The existing next group only, not a recovery instruction. |
+| `operatorActions` | Separate action `kind`, command/args, eligibility/reason, proposal ID/route/title, and evidence ref. |
+| `proposals` | Stored proposal identity, source run/stage/finding IDs, title/problem/upstream rationale, route, evidence ref, and creation time. |
+| `configuration` | `systemName`, `profileHash`, `policyHash`, `startingCommit`, `modelMap`, `verificationCommands`, `documentReview`, `codeReview`, `deadline`, `approvalSigner`; unavailable values are null. |
+| `approval` | `missing`/`granted` state, ID, feature/signer, scope/risk, spec/start/profile bindings, expiry and creation time. |
+| `cost` | USD known subtotal, agent-row and reported/unreported coverage, token coverage, recorded failed attempts, `byStage`, `byAgent`. |
+| `activity` | `lastRecordedAt` and nullable `lastEvent` with ID/action/summary/time. |
+| `writer` | Observed `status` (`absent`, `live`, `dead`, `unreadable`), path, PID, creation time, reason; never an active-run identity. |
+| `delivery` | Stage/outcome, branch/worktree, patch/verified/reviewed/delivered commits, path sets, verification observations, result/report refs. |
+| `evidence` | References with availability/reason, canonical findings and immutable reports/decisions; `finalPanelBlocking` is null unless the final panel is bound. |
+| `limitations` | Explicit unavailable, partial, or unproven evidence. No raw provider bodies or prompts are embedded in the snapshot. |
+
+Exact nested field names/types are exported as `RunSnapshot` in
+[`src/operator-state.ts`](src/operator-state.ts) and as result types in
+[`src/operator-output.ts`](src/operator-output.ts). Evidence availability is
+`available`, `missing`, `unverified`, or `inconsistent`; availability alone
+is not proof that every part of a retained record was validated.
+
+`execution` contains `consent` (`not_needed`, `required`, `declined`,
+`granted`), `groupsAttempted`, `groupsCompleted`, `remainingGroups`,
+`startedAt`, `endedAt`, and `elapsedMs`. Unstarted invocation times are null.
+Group names are `spec`, `plan`, `implementation`, `verification`, `code_review`,
+and `delivery_check`. Remaining groups are invocation accounting, not permission
+to retry a failed or ineligible group.
+
+Known cost is summed from selected-run agent rows before report fan-out.
+Null telemetry is not zero: `costReportedRows`/`costUnreportedRows` and each
+token field's `known`/`reportedRows`/`unreportedRows` expose coverage. Failed
+dispatches without agent rows are counted from audit, not assigned invented
+spend or raw filenames. This is not a complete bill or live cost meter.
+The 15-second stderr heartbeat is an elapsed observation while async work
+yields; synchronous delivery emits start/end only, and other synchronous work
+can delay timers. Neither a lock PID nor heartbeat identifies an active agent.
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | Successful inspection/readiness; for `run`, completed delivery only. A readable blocked-run `status` still succeeds. |
+| `1` | Operational refusal, missing state/run, failed readiness, consent required/declined, block, or execution failure. |
+| `2` | Invalid command-line usage. |
+| `3` | `run` reached a valid human approval pause. |
+
+The closed `errorCode` set is `usage`, `target_unavailable`, `state_missing`,
+`schema_unsupported`, `state_unavailable`, `run_missing`, `setup_required`,
+`writer_contention`, `consent_required`, `observation_changed`, `run_aged`,
+`chain_incomplete`, `evidence_invalid`, `policy_block`, and `execution_failed`.
+`reason` retains the originating diagnostic. Ineligible snapshot actions carry
+their own reasons without turning a successful `status` into an error.
+
+Inspection opens only existing exact-current state read-only, with a short
+deferred snapshot and one bounded SQLite wait (1,000 ms). It never migrates,
+creates state/locks, takes over a dead lock, refreshes the Git index, or repairs
+a hot journal. SQLite may refuse a read that needs writer-side crash recovery.
+Use the matching checkout for newer schemas; apply an older schema's migrations
+only through an explicit writer action such as
+`& node $BwCli migrate --repo $Target`, following its diagnostic.
+
+Guided entry checks the exact-current schema before and after consent; consent
+cannot authorize a migration or an expanded range after observation changes.
+It accepts only intact passed stage-group boundaries. Partial/manual chains,
+tampered/missing bindings, moved/dirty worktrees, writer contention, and runs
+strictly older than the frozen deadline refuse rather than replay. The early
+age check also covers spec/plan here; their low-level policies are unchanged.
+There is no deadline watchdog or general repair/resume switch.
+
+A failed group is never retried in the same invocation. A refusal can leave
+the persisted run in progress; an unrecorded failure cannot be reconstructed
+by a later status call. A delivery transaction that rolls back may leave an
+intact boundary for a separately consented later invocation, not an automatic
+retry. Preserve evidence and follow the specific diagnostic.
+
+The local workflow needs no GitHub credentials, `gh`, repository URL, or
+remote fetch/publication. The actual model provider still needs its own access,
+and frozen verification commands are not filesystem/network-sandboxed.
 
 ## The milestone that decides everything
 

@@ -915,9 +915,25 @@ ignoring run state leaves the tree dirty after every run, so the next one fails
 its clean-tree precondition. Decide this once and make the ignore rules match.
 
 **Migrations are ordered plain SQL, committed with the system source under
-`src/migrations/`, applied at startup.** No ORM. The schema is
+`src/migrations/`, applied at writer startup.** No ORM. The schema is
 small enough to read, and you will want to read it when a cost number looks
 wrong.
+
+**Inspection is not writer startup.** CLI inventory/status and frozen-run
+diagnostics open only an existing exact-current schema read-only, using the
+checkout's migration inventory. They create no state, acquire no writer lock,
+apply no migration, and do not recover a hot journal. Short deferred SQLite
+snapshots copy rows before filesystem/Git observations; no external work,
+consent prompt, or stage execution holds that read transaction open.
+Unavailable state and schemas older/newer than this checkout have named
+refusals, not compatibility paths. SQLite can require writer-side crash
+recovery before a read-only inspection succeeds.
+
+Guided execution checks the exact-current schema before consent and again
+under the repository lock before opening the existing writer. No migration
+is pending on that writer path: execution consent is not migration authority.
+Legacy writer commands retain their startup behavior; explicit `migrate`
+remains an operator action.
 
 **Multi-project.** `run.project` is the discriminator, so one database can serve
 several repositories and answer "what is in flight across everything" without a
@@ -1042,16 +1058,43 @@ cause.
 
 ## 19. Concurrency, failure, and resume
 
-One writer per repository, via a lock file. A second invocation fails fast with
-a clear diagnostic rather than corrupting state. Optimistic concurrency on a
+One writer per repository, via a lock file. A second writer fails fast with
+a clear diagnostic rather than corrupting state. Inspection may observe
+committed state concurrently without acquiring, removing, or taking over that
+lock; SQLite contention has a bounded read-only refusal. A lock identifies a
+repository writer, never which run or agent is active. Optimistic concurrency on a
 per-row revision counter for content writes — a counter, not a schema version.
 Audit appends serialize under the database's single-writer lock, never the
 repository lock: one database serves several repositories, so a SQLite busy
 timeout with a bounded retry keeps a cross-project append waiting instead of
 failing.
 
-Run state is machine-local and resumable. Resume reads authoritative state, never
-a human-readable projection.
+Run state is machine-local. Guided continuation reads authoritative state,
+never a human-readable projection, and is permitted only at intact passed
+stage-group boundaries in the existing sequence. It validates retained
+handoffs, gate/audit bindings, approval/profile hashes and current worktree
+evidence. Partial, manual, contradictory, or tampered chains are not general
+resume points and are never repaired or replayed by inspection or continuation.
+
+One invocation's affirmative consent covers its entire displayed frozen
+range through approval or terminalization, including bounded code-review
+remediation. No writer lock is held while prompting. After consent, execution
+rechecks the selected run's fingerprint/profile/boundary under the lock and
+refuses a changed observation rather than expanding the range. Existing core
+stages remain responsible for every write and gate; durable state is re-read
+after each call, and an unsuccessful group is never retried in that invocation.
+A delivery transaction that rolls back can leave an intact boundary for a
+separately consented later call; that is not automatic recovery.
+
+Guided entry refuses a run strictly older than its frozen duration limit,
+including before spec/plan. This early precondition does not change the
+low-level spec/plan age rules, add a deadline watchdog, or revoke an approval
+whose acceptance expiry later elapses. A valid approval pause and a completed
+run need no execution consent. The external signature, future execution
+consent, and explicit proposal export remain separate operator actions.
+Completed/blocked records remain inspectable, with missing evidence labelled;
+they are not reopened. No general mid-stage recovery, signing, publication,
+new stage, or intermediate voluntary stop control is introduced.
 
 **A retry that resends an identical prompt is not a retry.** A run
 died three times in planning producing byte-identical bad output. If a retry does

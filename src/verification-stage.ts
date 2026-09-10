@@ -1,5 +1,5 @@
 import { existsSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { appendAudit } from "./audit.ts";
 import { parseImplementationGate } from "./handoff.ts";
 import { verificationEvidenceDir } from "./paths.ts";
@@ -100,7 +100,7 @@ export async function runVerificationStage(
       reason: `run ${runId}'s last stage is ${last ? `${last.kind} (${last.status})` : "none"}, not a passed implementation`,
     };
   }
-  const worktreePath = last.output_ref;
+  const worktreePath = resolve(rootDir, last.output_ref);
   if (!existsSync(worktreePath)) {
     return { ok: false, reason: `the worktree for run ${runId} is missing at ${worktreePath}` };
   }

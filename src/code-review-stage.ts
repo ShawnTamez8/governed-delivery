@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { validateAgentResult, type ProposedPatch } from "./agent-result.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
@@ -17,6 +17,7 @@ import { verifyCommit } from "./commit-verification.ts";
 import { dispatchOnce } from "./dispatch.ts";
 import type { ExecutorDefinition } from "./executor.ts";
 import { extractJsonBody } from "./parse-output.ts";
+import { parseVerificationHandoff } from "./handoff.ts";
 import { applyProposedPatches, checkWorktreeClean } from "./patch-application.ts";
 import {
   codeReviewEvidenceDir,
@@ -32,8 +33,6 @@ import { requireRunInProgress, type Store } from "./store.ts";
 export type CodeReviewStageResult =
   | { ok: true; stageId: number; resultRef: string }
   | { ok: false; reason: string };
-
-const COMMIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 function runGit(
   args: string[],
@@ -105,7 +104,7 @@ export async function runCodeReviewStage(
     };
   }
 
-  const verificationRecordPath = join(rootDir, last.output_ref);
+  const verificationRecordPath = resolve(rootDir, last.output_ref);
   let worktreePath: string;
   let initialVerifiedCommit: string;
   let patchBase: string;
@@ -116,23 +115,13 @@ export async function runCodeReviewStage(
     };
   }
   try {
-    const parsed = JSON.parse(readFileSync(verificationRecordPath, "utf8")) as Record<string, unknown>;
-    if (
-      parsed.runId !== runId ||
-      typeof parsed.stageId !== "number" ||
-      parsed.stageId !== verificationStageId ||
-      typeof parsed.worktreePath !== "string" ||
-      typeof parsed.verifiedCommit !== "string" ||
-      !COMMIT.test(parsed.verifiedCommit) ||
-      typeof parsed.patchBase !== "string" ||
-      !COMMIT.test(parsed.patchBase) ||
-      parsed.outcome !== "pass"
-    ) {
-      throw new Error("the record does not describe this run's passed verification");
-    }
-    worktreePath = parsed.worktreePath;
-    initialVerifiedCommit = parsed.verifiedCommit;
-    patchBase = parsed.patchBase;
+    const parsed = parseVerificationHandoff(
+      JSON.parse(readFileSync(verificationRecordPath, "utf8")), runId, verificationStageId
+    );
+    if (!parsed.ok) throw new Error(parsed.reason);
+    worktreePath = parsed.value.worktreePath;
+    initialVerifiedCommit = parsed.value.verifiedCommit;
+    patchBase = parsed.value.patchBase;
   } catch (err) {
     return {
       ok: false,
@@ -173,7 +162,7 @@ export async function runCodeReviewStage(
   }
   let planContent: string;
   try {
-    planContent = readFileSync(planStage.output_ref, "utf8");
+    planContent = readFileSync(resolve(rootDir, planStage.output_ref), "utf8");
   } catch (err) {
     return { ok: false, reason: `cannot read the approved plan ${planStage.output_ref}: ${(err as Error).message}` };
   }
@@ -199,7 +188,7 @@ export async function runCodeReviewStage(
   }
   let specContent: string;
   try {
-    specContent = readFileSync(approvalStage.output_ref, "utf8");
+    specContent = readFileSync(resolve(rootDir, approvalStage.output_ref), "utf8");
   } catch (err) {
     return { ok: false, reason: `cannot read the approved spec ${approvalStage.output_ref}: ${(err as Error).message}` };
   }

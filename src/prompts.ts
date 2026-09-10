@@ -1,5 +1,13 @@
 import type { AgentDefinition } from "./agents.ts";
 
+export const SPEC_AUTHOR_PROMPT_PREFIX = "you are the spec author";
+export const SPEC_REVIEW_PROMPT_PREFIX = "you are the spec reviewer";
+export const PLAN_AUTHOR_PROMPT_PREFIX = "you are the plan author";
+export const PLAN_REVIEW_PROMPT_PREFIX = "you are the plan reviewer";
+export const IMPLEMENTATION_PROMPT_PREFIX = "you are the implementer";
+export const CODE_REVIEW_PROMPT_PREFIX = "you are the code reviewer";
+export const CODE_REVIEW_REMEDIATION_PROMPT_PREFIX = "you are the code-review remediator";
+
 /**
  * The author prompt: role, the design document verbatim, the AgentResult
  * contract with every constrained field stated, and the spec document
@@ -9,7 +17,7 @@ import type { AgentDefinition } from "./agents.ts";
  * inputs.
  */
 export function buildSpecAuthorPrompt(agent: AgentDefinition, designContent: string): string {
-  return `you are the spec author
+  return `${SPEC_AUTHOR_PROMPT_PREFIX}
 
 Produce the specification document for the design below. No git operations
 are involved: you are writing a specification document, not code changes.
@@ -127,7 +135,7 @@ export function buildSpecSelfCritiquePrompt(
   panel: PanelPromptBounds
 ): string {
   const floor = effectiveFloor(panel);
-  return `you are the spec author ${agent.id}
+  return `${SPEC_AUTHOR_PROMPT_PREFIX} ${agent.id}
 
 This is your own self-critique pass on the specification you just wrote. No
 independent reviewer has seen it yet, and no git operations are involved:
@@ -209,7 +217,7 @@ export function buildSpecReviewPrompt(
   designContent: string,
   specContent: string
 ): string {
-  return `you are the spec reviewer ${agent.id} with specialty ${agent.specialty ?? "general review"}
+  return `${SPEC_REVIEW_PROMPT_PREFIX} ${agent.id} with specialty ${agent.specialty ?? "general review"}
 
 Report only findings within your specialty: ${agent.specialty ?? "general review"}. Judge the specification below against the design document it was written from. A concern outside your specialty must not be reported; other lenses will review it. An empty findings array is a valid result when you have no findings within your specialty.
 
@@ -276,7 +284,7 @@ export function buildPlanAuthorPrompt(
   specHash: string,
   scope: string[]
 ): string {
-  return `you are the plan author ${agent.id}
+  return `${PLAN_AUTHOR_PROMPT_PREFIX} ${agent.id}
 
 Produce the implementation plan for the approved specification below.
 No git operations are involved: you are writing a plan document, not code
@@ -347,7 +355,7 @@ export function buildPlanSelfCritiquePrompt(
   panel: PanelPromptBounds
 ): string {
   const floor = effectiveFloor(panel);
-  return `you are the plan author ${agent.id}
+  return `${PLAN_AUTHOR_PROMPT_PREFIX} ${agent.id}
 
 This is your own self-critique pass on the plan you just wrote. No
 independent reviewer has seen it yet, and no git operations are involved:
@@ -440,7 +448,7 @@ export function buildPlanReviewPrompt(
   planContent: string,
   specContent: string
 ): string {
-  return `you are the plan reviewer ${agent.id} with specialty ${agent.specialty ?? "general review"}
+  return `${PLAN_REVIEW_PROMPT_PREFIX} ${agent.id} with specialty ${agent.specialty ?? "general review"}
 
 Report only findings within your specialty: ${agent.specialty ?? "general review"}. Review the plan below against the specification it was written from, and judge whether the plan's tasks and coverage actually deliver the specification's acceptance criteria. A concern outside your specialty must not be reported; other lenses will review it. An empty findings array is a valid result when you have no findings within your specialty.
 
@@ -650,7 +658,7 @@ export function buildSpecReconcilePrompt(
   findings: ReconciliationFindingInput[]
 ): string {
   const exampleDecisions = exampleDecisionsFor(findings);
-  return `you are the spec author ${agent.id}
+  return `${SPEC_AUTHOR_PROMPT_PREFIX} ${agent.id}
 
 Reconcile the findings below against the specification you wrote. No git
 operations are involved: you are revising a specification document, not code
@@ -730,7 +738,7 @@ export function buildPlanReconcilePrompt(
   findings: ReconciliationFindingInput[]
 ): string {
   const exampleDecisions = exampleDecisionsFor(findings);
-  return `you are the plan author ${agent.id}
+  return `${PLAN_AUTHOR_PROMPT_PREFIX} ${agent.id}
 
 Reconcile the findings below against the plan you wrote. No git operations
 are involved: you are revising a plan document, not code changes.
@@ -833,7 +841,7 @@ export function buildImplementationAuthorPrompt(
   // invocation boundary (the read-only executor command) and the stage's
   // clean-tree assertions. It must not tell the model about the backstop —
   // that would invite "they'll discard it anyway" readings.
-  return `you are the implementer ${agent.id}
+  return `${IMPLEMENTATION_PROMPT_PREFIX} ${agent.id}
 
 Propose the code changes that implement the approved plan below. Your
 working directory is the repository checkout those changes apply to — read
@@ -919,7 +927,7 @@ export function buildCodeReviewPrompt(
   // The read-only sentence is UX, not a guard, exactly as it is in the
   // implementation prompt: enforcement is the read-only executor command and
   // the stage's clean-tree assertions before and after every dispatch.
-  return `you are the code reviewer ${agent.id} with specialty ${agent.specialty ?? "general review"}
+  return `${CODE_REVIEW_PROMPT_PREFIX} ${agent.id} with specialty ${agent.specialty ?? "general review"}
 
 Specialist instructions: ${agent.codeReviewInstructions}
 
@@ -1008,7 +1016,7 @@ export function buildCodeReviewRemediationPrompt(
       return `- finding ${finding.findingId}; location ${finding.location}; intentKey ${finding.intentKey}\n${reports}`;
     })
     .join("\n");
-  return `you are the code-review remediator ${agent.id}
+  return `${CODE_REVIEW_REMEDIATION_PROMPT_PREFIX} ${agent.id}
 
 Fix every actionable finding below in the current code. Your working directory
 is the repository checkout at commit ${baseCommit}. Read the surrounding code,

@@ -177,7 +177,9 @@ dependency a teammate cannot execute. Query a run's store before cleaning it;
 
 ## Commands
 
-Run from the repository root. These commands live here and nowhere else.
+Run development commands from the BuildWorks checkout root. For operator
+commands, use the absolute checkout script and explicitly select the separate
+target with `--repo`; see the PowerShell operator guide in `README.md`.
 
 - `npm install` — one-time: dev dependencies (`typescript`, `@types/node`);
   commits `package-lock.json`.
@@ -186,12 +188,34 @@ Run from the repository root. These commands live here and nowhere else.
   explicit `.ts` extensions).
 - `npm run check:docs` — the documentation checker (`scripts/doc-check.mjs`);
   run before claiming a documentation change is consistent.
-- `node src/cli.ts migrate|new-run|stage-add|stage-complete|dispatch|spec|plan|implement|verify|review|deliver|approval-request|approve|verify-audit`
-  — the CLI. There is no `bw` on PATH after `npm install`: npm does not link a
-  private package's own bin, and `node_modules/.bin/` holds only `tsc` and
-  `tsserver`. Invoke the file. Note that the CLI governs the repository it is
-  run *in*, so running it here creates runs against this repository — use a
-  scratch target instead.
+- `node src/cli.ts --help` and `node src/cli.ts help <command>` — free help;
+  no target, state, lock, or provider probe. Unknown options remain errors.
+- `& node $BwCli doctor --repo $Target`, `& node $BwCli runs --repo $Target`,
+  and `& node $BwCli status --repo $Target --run $RunId` — free readiness and
+  read-only inspection. Set `$BwCli` to the absolute `src\cli.ts` in this
+  checkout and `$Target` to an existing local Git worktree. Status/run require
+  an explicit `--run`; doctor accepts either `--slug` or `--run`.
+  Doctor/runs/status/run support `--json`.
+- `& node $BwCli run --repo $Target --run $RunId --yes` — consent covers every
+  previewed group through approval or terminalization, not signing, export,
+  publication, or a later invocation. Exit 3 is the external approval pause.
+  Exact-current schema, frozen age and intact boundaries are required; this
+  is not arbitrary resume, implicit migration, or a failed-stage retry.
+- Existing low-level commands remain: `migrate`, `new-run`, `stage-add`,
+  `stage-complete`, `dispatch`, `spec`, `plan`, `implement`, `verify`, `review`,
+  `deliver`, `approval-request`, `approve`, `verify-audit`, `proposal-export`.
+  Their numeric/path/raw-payload outputs remain unchanged. `new-run` requires
+  project, feature, slug, change-kind and model; it never selects these
+  implicitly. All commands accept one `--repo`, defaulting to the invocation
+  worktree, so omitting it here targets BuildWorks itself.
+- Approval transport: `approval-request --out` exclusively creates canonical
+  bytes; `approve --signature-file` accepts an external UTF-8 signature file.
+  Reuse one explicit `--expires`; the separate signer belongs to the operator.
+  Transport/prompt paths resolve from the original invocation cwd, not
+  `--repo`. The README supplies the full byte-safe PowerShell workflow.
+- There is no `bw` on PATH after `npm install`: npm does not link a private
+  package's own bin, and `node_modules/.bin/` holds only `tsc` and `tsserver`.
+  No packaging, GitHub integration, or remote publication is implied.
 - `node .claude/skills/run-buildworks/driver.mjs smoke` — builds that scratch
   target and drives the CLI against it, spending nothing. `paid --yes` drives
   the full chain against the real `claude` binary and reports what it cost:

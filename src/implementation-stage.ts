@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { ExecutorDefinition } from "./executor.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
 import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
@@ -128,7 +128,7 @@ export async function runImplementationStage(
   const planPath = last.output_ref;
   let planContent: string;
   try {
-    planContent = readFileSync(planPath, "utf8");
+    planContent = readFileSync(resolve(rootDir, planPath), "utf8");
   } catch (err) {
     return { ok: false, reason: `cannot read the approved plan ${planPath}: ${(err as Error).message}` };
   }
@@ -176,7 +176,7 @@ export async function runImplementationStage(
   const specPath = approvalStage.output_ref;
   let specContent: string;
   try {
-    specContent = readFileSync(specPath, "utf8");
+    specContent = readFileSync(resolve(rootDir, specPath), "utf8");
   } catch (err) {
     return { ok: false, reason: `cannot read the approved spec ${specPath}: ${(err as Error).message}` };
   }
