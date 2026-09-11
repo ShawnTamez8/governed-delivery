@@ -67,7 +67,7 @@ function mismatch(check, file, line, label, expected, found) {
 //                to resemble the current implementation.
 // ---------------------------------------------------------------------------
 
-const CURRENT_DOCS = ["ARCHITECTURE.md", "CLAUDE.md", "README.md", "docs/hazards.md"];
+const CURRENT_DOCS = ["ARCHITECTURE.md", "CLAUDE.md", "README.md", "docs/hazards.md", "docs/runbooks/cli-operator.md"];
 const REFERENCE_DIRS = ["docs/proposals"];
 const HISTORICAL_DIRS = ["docs/features", ".claude/sessions"];
 

@@ -84,6 +84,11 @@ added `code_review` between verification and delivery, because a run had
 delivered every declared artifact and passed every gate while nothing in the
 system had read the code. The five stages still deferred in
 [`ARCHITECTURE.md`](ARCHITECTURE.md) section 5 each need their own decision.
+An operator-authorized live run on 2026-09-11 on the `web-calculator` design
+completed all stages including the code-review remediation loop (16 dispatches,
+total cost $2.05854, 2 panel executions, 1 remediation, final commit verified,
+6 declared artifacts delivered, run completed, and audit chain valid), preserved
+in durable target storage at `C:\Users\tamezs\buildWorks_test_repos`.
 
 The code-review controls live together in [`src/policy.ts`](src/policy.ts) and
 are frozen into each new run's profile:
@@ -105,6 +110,11 @@ threshold does not require changing the review-loop implementation.
 - [`CLAUDE.md`](CLAUDE.md) — how to work in this repository.
 
 ## Local operator guide
+
+For a start-to-finish procedure, use the
+[CLI operator runbook](docs/runbooks/cli-operator.md). It covers first-time
+project setup, external approval, delivery inspection, and troubleshooting
+with user-selected paths. The reference below details the command contracts.
 
 This guide lets an operator inspect and advance an existing local delivery
 chain without manually sequencing its stages. It does not publish to GitHub,
@@ -452,3 +462,14 @@ and frozen verification commands are not filesystem/network-sandboxed.
 The build order in `ARCHITECTURE.md` stops deliberately at step 9: one feature run that
 reaches a terminal state with queryable per-stage cost. Nothing past that is
 worth building until that run exists.
+
+On 2026-09-11, an operator-authorized end-to-end paid run on the 20-requirement
+`web-calculator` design completed through code review and delivery check for a
+total cost of $2.05854 across 16 dispatches. The run exercised spec reconciliation,
+plan coverage and review, implementation worktree patches, frozen verification
+commands, two code review panel executions with an implementer remediation cycle
+(`finalCommit=8cd5a2d9`, `finalGate=pass`), delivery check of all 6 declared
+artifacts (`scopeMatch=yes declared=6 delivered=6 missing=[]`), and verified audit
+chain validity (`exit=0`). The complete run store (`state.db`), keys, and all 16 raw
+dispatch payloads are preserved in durable storage under
+`C:\Users\tamezs\buildWorks_test_repos`.
