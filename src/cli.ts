@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { acquireLock } from "./lock.ts";
-import { GOVERNANCE_PREFIX } from "./paths.ts";
-import { requireRunInProgress, CHANGE_KINDS, GATE_RESULTS, ROLES, openStore, type Store } from "./store.ts";
+import { requireRunInProgress, openStore, StoreStateError, type Store } from "./store.ts";
+import { formatHelp, parseArguments, UsageError } from "./cli-args.ts";
+import { resolveRepositoryRoot, TargetUnavailableError } from "./repo-root.ts";
 import { appendAudit, verifyAuditChain } from "./audit.ts";
 import { dispatchOnce } from "./dispatch.ts";
 import { runSpecStage } from "./spec-stage.ts";
@@ -13,234 +13,166 @@ import { runImplementationStage } from "./implementation-stage.ts";
 import { runVerificationStage } from "./verification-stage.ts";
 import { runCodeReviewStage } from "./code-review-stage.ts";
 import { runDeliveryStage } from "./delivery-stage.ts";
-import { freezeProfile, loadVerifiedProfile, requireFrozenBinding, resolveStageModel, resolveStartingCommit, validateModelName } from "./profile.ts";
+import { freezeProfile, loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
 import { approvalPayload, validateExpiry } from "./approval.ts";
 import { approveRun, buildBinding } from "./approval-stage.ts";
 import { APPROVAL_DEFAULT_LIFETIME_SECONDS, APPROVAL_MAX_LIFETIME_SECONDS } from "./policy.ts";
-import { loadGovernedConfigAtCommit } from "./governed-config.ts";
+import { checkIntakeRepository, inspectReadiness } from "./readiness.ts";
+import { ACTION_REASON_ORDER, listRuns, readRunSnapshot, RunMissingError, type ActionReason } from "./operator-state.ts";
+import { canonicalJson } from "./canonical.ts";
+import { advanceRun } from "./run-command.ts";
+import { CLAUDE_CODE } from "./executor.ts";
+import {
+  formatOperatorResult, operatorCommand, operatorEnvelope, operatorExit,
+  type OperatorCommand, type OperatorErrorCode,
+} from "./operator-output.ts";
 
-const USAGE = `usage: bw <command>
-commands:
-  migrate                                apply pending migrations
-  new-run --project <p> --feature <f> --slug <s> --change-kind <k> --model <name>
-  stage-add --run <id> --kind <k> [--input <stage-id>]
-  stage-complete --id <id> --output <ref> --gate-result pass|block
-  dispatch --stage <id> --agent <id> --role author|reviewer --prompt-file <path>
-           [--model <name>]
-  spec --run <id> [--model <name>]       run the spec and spec_review stages
-  plan --run <id> [--model <name>]       run the plan and plan_review stages
-  implement --run <id> [--model <name>]   run the implementation stage
-  verify --run <id>                      run the verification stage
-  review --run <id> [--model <name>]     run the bounded code_review loop:
-                                         the frozen specialist panel reviews,
-                                         findings are patched and re-verified
-                                         while a round remains, and the final
-                                         panel applies the frozen severity gate
-  deliver --run <id>                     run the delivery check (step 8): prove
-                                         every declared artifact was committed,
-                                         then complete or block the run
-  approval-request --run <id> [--expires <iso>]
-                                         print the payload for the operator to sign
-  approve --run <id> --expires <iso> --signature <base64>
-                                         verify and record the authorization
-  verify-audit                           recompute the whole audit chain
-                                         (unrelated to verify and deliver above)
-  proposal-export --proposal <id> [--name <slug>]
-                                         materialize a stored proposal into
-                                         docs/proposals/ as an explicit
-                                         operator action`;
-
-class UsageError extends Error {}
-
-function parse(argv: string[]): Map<string, string> {
-  const args = new Map<string, string>();
+// A malformed global option can fail before parsing selects a command. This
+// hint chooses only its error presentation; parseArguments still validates it.
+function outputCommand(argv: string[]): OperatorCommand | null {
   for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg.startsWith("--")) {
-      const eq = arg.indexOf("=");
-      if (eq >= 0) {
-        args.set(arg.slice(2, eq), arg.slice(eq + 1));
-      } else {
-        const next = argv[i + 1];
-        if (next === undefined || next.startsWith("--")) {
-          // The value is missing; record it as empty so required() reports
-          // the named option instead of silently consuming the next flag.
-          args.set(arg.slice(2), "");
-        } else {
-          args.set(arg.slice(2), next);
-          i++;
-        }
-      }
+    const token = argv[i]!;
+    if (token.startsWith("--repo=")) continue;
+    if (token === "--repo") {
+      if (argv[i + 1] !== undefined && !argv[i + 1]!.startsWith("--")) i++;
+      continue;
     }
+    if (token === "help") continue;
+    return operatorCommand(token) ? token : null;
   }
-  return args;
-}
-
-/**
- * An optional flag's value, refusing the flag supplied with no value.
- *
- * `parse()` records a valueless flag as "" precisely so it can be reported by
- * name. Reading such a flag with `args.get` alone turns `--model` at the end
- * of a command line into the empty-string model, which then fails somewhere
- * downstream as a mismatch against the frozen value rather than as the typo
- * it is.
- */
-function optional(args: Map<string, string>, name: string): string | undefined {
-  const value = args.get(name);
-  if (value === undefined) return undefined;
-  if (value === "") {
-    throw new UsageError(`option --${name} was given without a value`);
-  }
-  return value;
-}
-
-function required(args: Map<string, string>, name: string): string {
-  const value = args.get(name);
-  if (value === undefined || value === "") {
-    throw new UsageError(`missing required option --${name}`);
-  }
-  return value;
-}
-
-function numeric(args: Map<string, string>, name: string): number {
-  const value = required(args, name);
-  if (!/^\d+$/.test(value)) {
-    throw new UsageError(`--${name} must be a non-negative integer, got ${value}`);
-  }
-  return Number(value);
-}
-
-function numericOptional(args: Map<string, string>, name: string): number | null {
-  const value = args.get(name);
-  if (value === undefined) return null;
-  // The same convention `optional()` holds: a flag supplied with no value is
-  // the typo `parse()` records "" for, not a silent null — silently chaining
-  // a stage from nothing is exactly the state corruption the strict paths
-  // exist to refuse.
-  if (value === "") {
-    throw new UsageError(`option --${name} was given without a value`);
-  }
-  if (!/^\d+$/.test(value)) {
-    throw new UsageError(`--${name} must be a non-negative integer, got ${value}`);
-  }
-  return Number(value);
+  return null;
 }
 
 async function main(): Promise<void> {
+  const invocationDirectory = process.cwd();
   const argv = process.argv.slice(2);
-  const command = argv[0] ?? "";
-  const known = [
-    "migrate",
-    "new-run",
-    "stage-add",
-    "stage-complete",
-    "dispatch",
-    "spec",
-    "plan",
-    "implement",
-    "verify",
-    "review",
-    "deliver",
-    "approval-request",
-    "approve",
-    "verify-audit",
-    "proposal-export",
-  ];
-  if (!known.includes(command)) {
-    console.error(USAGE);
-    process.exitCode = 2;
-    return;
-  }
-  const args = parse(argv.slice(1));
+  let output = outputCommand(argv);
+  let json = argv.includes("--json");
+  let rootDir: string | null = null;
+  let selectedRun: number | null = null;
   let release: (() => void) | null = null;
   let store: Store | null = null;
   try {
-    release = acquireLock();
-    store = openStore();
+    const parsed = parseArguments(argv);
+    const { command, args } = parsed;
+    if (parsed.help) {
+      process.stdout.write(formatHelp(command));
+      return;
+    }
+    output = operatorCommand(command) ? command : null;
+    json = parsed.flags.has("json");
+    selectedRun = args.has("run") ? Number(args.get("run")) : null;
+    let signature = args.get("signature");
+    if (args.has("signature-file")) {
+      const signaturePath = resolve(invocationDirectory, args.get("signature-file")!);
+      try {
+        signature = readFileSync(signaturePath, "utf8").replace(/^\uFEFF/, "").trim();
+      } catch (error) {
+        throw new UsageError(`cannot read signature file ${signaturePath}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (signature === "") throw new UsageError(`signature file is empty: ${signaturePath}`);
+    }
+    rootDir = resolveRepositoryRoot(parsed.repo ?? invocationDirectory, invocationDirectory);
+    if (command === "run") {
+      const result = await advanceRun(rootDir, selectedRun!, { yes: parsed.flags.has("yes"), json });
+      if (result.reason !== null) console.error(result.reason);
+      process.stdout.write(formatOperatorResult(result, json));
+      process.exitCode = operatorExit(result);
+      return;
+    }
+    if (command === "doctor") {
+      const readiness = inspectReadiness(rootDir, { slug: args.get("slug") });
+      let frozen = null;
+      const reasons: ActionReason[] = [];
+      if (selectedRun !== null) {
+        store = openStore(rootDir, { readOnly: true });
+        const observed = readRunSnapshot(store, rootDir, selectedRun);
+        const { snapshot, profile, profileReason } = observed;
+        frozen = snapshot.configuration;
+        readiness.limitations.push(...snapshot.limitations);
+        readiness.checks.push({ name: "run_state", status: "pass",
+          evidence: `run ${selectedRun}: persisted ${snapshot.run.status}; phase ${snapshot.phase}; ${snapshot.stages.length} recorded stage(s)`,
+          repair: null });
+        readiness.checks.push({ name: "frozen_profile", status: profile === null ? "fail" : "pass",
+          evidence: profileReason ?? `Hash-verified frozen profile ${snapshot.configuration.profileHash} for run ${selectedRun}.`,
+          repair: profile === null ? "Retain this run's evidence and create a fresh run; do not rebuild or silently substitute its profile." : null });
+        for (const [name, value] of [
+          ["frozen_models", frozen.modelMap], ["frozen_verification", frozen.verificationCommands],
+          ["frozen_deadline", frozen.deadline], ["frozen_approval_signer", frozen.approvalSigner],
+        ] as const) {
+          readiness.checks.push({ name, status: profile === null ? "not_checked" : "pass",
+            evidence: profile === null ? "A readable verified frozen profile is required; current values are not substitutes."
+              : name === "frozen_approval_signer" && value === null ? "No signer was bound at intake; the existing approval gate records this partial guarantee."
+                : JSON.stringify(value), repair: null });
+        }
+        const sameExecutor = profile !== null && canonicalJson(profile.executor) === canonicalJson(CLAUDE_CODE);
+        const currentProbe = readiness.checks.find((check) => check.name === "executor_probe")!;
+        const probeReason = "The frozen executor differs from the fixed native executor doctor probed; its arbitrary retained probe was not executed.";
+        readiness.checks.push({ name: "frozen_executor_probe",
+          status: profile === null || !sameExecutor ? "not_checked" : currentProbe.status,
+          evidence: profile === null ? "No verified frozen executor is available."
+            : sameExecutor ? currentProbe.evidence : probeReason,
+          repair: profile !== null && sameExecutor ? currentProbe.repair : null });
+        if (profile !== null && !sameExecutor) readiness.limitations.push(probeReason);
+        reasons.push(...snapshot.workflowAction.reasons);
+        for (const reason of reasons) readiness.checks.push({ name: `boundary_${reason.code}`, status: "fail",
+          evidence: reason.reason, repair: `Inspect status --repo "${rootDir}" --run ${selectedRun}; do not replay or repair the recorded chain.` });
+        // Current intake/configuration remain visible, but they cannot replace
+        // frozen facts or require a continuing run's generated documents clean.
+        const requiredCurrent = new Set(["node", "git"]);
+        if (snapshot.workflowAction.group === "approval") requiredCurrent.add("approval_key");
+        if (sameExecutor && snapshot.workflowAction.group !== null && snapshot.workflowAction.group !== "approval") {
+          requiredCurrent.add("executor_probe");
+        }
+        for (const check of readiness.checks.filter((check) => requiredCurrent.has(check.name) && check.status === "fail")) {
+          reasons.push({ code: "setup_required", reason: `${check.name}: ${check.evidence}` });
+        }
+        const submit = snapshot.operatorActions.find((action) => action.kind === "approval_submit");
+        if (submit?.reason) reasons.push({ code: "setup_required", reason: submit.reason });
+      } else {
+        for (const check of readiness.checks.filter((check) => check.status === "fail")) {
+          reasons.push({ code: "setup_required", reason: `${check.name}: ${check.evidence}` });
+        }
+      }
+      reasons.sort((a, b) => ACTION_REASON_ORDER.indexOf(a.code) - ACTION_REASON_ORDER.indexOf(b.code));
+      const result = operatorEnvelope(command, rootDir, selectedRun, reasons.length === 0 ? "ready" : "not_ready",
+        { ...readiness, frozen }, reasons[0]?.code ?? null, reasons.length === 0 ? null : reasons.map((r) => r.reason).join("; "));
+      process.stdout.write(formatOperatorResult(result, json));
+      process.exitCode = operatorExit(result);
+      return;
+    }
+    if (command === "runs" || command === "status") {
+      store = openStore(rootDir, { readOnly: true });
+      const data = command === "runs" ? listRuns(store, Number(args.get("limit") ?? 20))
+        : readRunSnapshot(store, rootDir, selectedRun!).snapshot;
+      process.stdout.write(formatOperatorResult(operatorEnvelope(command, rootDir, selectedRun, "ok", data), json));
+      return;
+    }
+    release = acquireLock(rootDir);
+    store = openStore(rootDir);
     switch (command) {
       case "migrate": {
         console.log("migrations applied");
         break;
       }
       case "new-run": {
-        const changeKind = required(args, "change-kind");
-        if (!CHANGE_KINDS.includes(changeKind)) {
-          throw new UsageError(
-            `invalid change_kind ${changeKind}: allowed values are ${CHANGE_KINDS.join(", ")}`
-          );
-        }
-        // Read before the insert: a missing --model must be a usage error, not
-        // a run row created and then blocked by a freeze that cannot resolve.
-        const model = required(args, "model");
-        // A model name the spawn cannot carry must also be a usage error, for
-        // the same reason — refuse before the run row exists rather than
-        // block a created run on a typo.
-        const modelError = validateModelName(model);
-        if (modelError !== null) {
-          throw new UsageError(modelError);
-        }
+        const changeKind = args.get("change-kind")!;
+        const model = args.get("model")!;
         // Everything below runs *before* the insert, and that ordering is the
         // point: a repository that cannot verify must not get a run row that
         // is guaranteed to block after every expensive stage has already
         // spent. These are refusals about the repository, not the command
         // line, so they exit 1 rather than as usage errors.
-        const startingCommit = resolveStartingCommit(process.cwd());
-        if (startingCommit === null) {
-          console.error(
-            "not a git repository (or HEAD cannot be read): a run needs a starting commit to verify against"
-          );
-          process.exitCode = 1;
-          break;
-        }
-        // Section 7's repository contract: a clean working tree at run start.
-        // A dirty tree means the starting commit does not describe what is on
-        // disk, so the configuration frozen from that commit and the code the
-        // run will verify are two different things.
-        const status = spawnSync("git", ["status", "--porcelain"], {
-          cwd: process.cwd(),
-          encoding: "utf8",
-        });
-        if (status.status !== 0) {
-          console.error(`cannot read the working tree state: ${(status.stderr ?? "").trim()}`);
-          process.exitCode = 1;
-          break;
-        }
-        // `.governance/` is excluded, and it has to be: `openStore()` above
-        // has already created `.governance/state.db`, so a repository that has
-        // not gitignored it would be reported dirty by the very invocation
-        // doing the reporting, and no run could ever be created there
-        // (hazard 11). The system's own machine-local state is not part of
-        // what a run verifies, so it is not what this precondition is about.
-        const dirty = (status.stdout ?? "")
-          .split(/\r?\n/)
-          .map((l) => l.trim())
-          .filter((l) => l !== "")
-          // Porcelain lines are `XY <path>`; the status letters are never a
-          // path, so dropping the first token is enough to test the path.
-          .filter((l) => {
-            const entry = /^..\s+"?(.*)$/.exec(l);
-            return entry === null || !entry[1].startsWith(GOVERNANCE_PREFIX);
-          });
-        if (dirty.length > 0) {
-          console.error(
-            `the working tree is not clean: a run starts from a committed state (section 7). ${dirty.length} path(s), first: ${dirty.slice(0, 3).join(", ")}`
-          );
-          process.exitCode = 1;
-          break;
-        }
-        // Hazard 11: a fresh checkout either completes a run or refuses
-        // before spending. Read from the starting commit, never the working
-        // copy — the run branch is created from that commit.
-        const verification = loadGovernedConfigAtCommit(process.cwd(), startingCommit);
-        if (!verification.ok) {
-          console.error(verification.reason);
+        const intake = checkIntakeRepository(rootDir);
+        if (!intake.ok) {
+          console.error(intake.reason);
           process.exitCode = 1;
           break;
         }
         const run = store.insertRun(
-          required(args, "project"),
-          required(args, "feature"),
-          required(args, "slug"),
+          args.get("project")!,
+          args.get("feature")!,
+          args.get("slug")!,
           changeKind
         );
         appendAudit(store, {
@@ -255,7 +187,7 @@ async function main(): Promise<void> {
         // can never be approved, so a freeze failure blocks it here rather
         // than surfacing three stages later at the gate.
         try {
-          const frozen = freezeProfile(process.cwd(), run.id, startingCommit, model, verification.config);
+          const frozen = freezeProfile(rootDir, run.id, intake.startingCommit!, model, intake.verification!);
           store.setProfileRef(run.id, frozen.hash);
           appendAudit(store, {
             runId: run.id,
@@ -289,9 +221,9 @@ async function main(): Promise<void> {
         // Validate every argument before the store is consulted, so a bad
         // flag is a usage error regardless of run state — the dispatch case
         // holds the same ordering for the same reason.
-        const stageRunId = numeric(args, "run");
-        const stageKind = required(args, "kind");
-        const stageInput = numericOptional(args, "input");
+        const stageRunId = Number(args.get("run"));
+        const stageKind = args.get("kind")!;
+        const stageInput = args.has("input") ? Number(args.get("input")) : null;
         // The same guard `runSpecStage` and the approval gate carry: a run
         // that can never finish must not accumulate state. Refused before
         // the insert, so no stage row exists afterwards.
@@ -316,13 +248,8 @@ async function main(): Promise<void> {
         break;
       }
       case "stage-complete": {
-        const gateResult = required(args, "gate-result");
-        if (!GATE_RESULTS.includes(gateResult)) {
-          throw new UsageError(
-            `invalid gate_result ${gateResult}: allowed values are ${GATE_RESULTS.join(", ")}`
-          );
-        }
-        const stage = store.completeStage(numeric(args, "id"), required(args, "output"), gateResult);
+        const gateResult = args.get("gate-result")!;
+        const stage = store.completeStage(Number(args.get("id")), args.get("output")!, gateResult);
         appendAudit(store, {
           runId: stage.run_id,
           stageId: stage.id,
@@ -337,14 +264,11 @@ async function main(): Promise<void> {
       case "dispatch": {
         // Validate every argument before anything spawns: a bad flag must
         // never spend API cost.
-        const agent = required(args, "agent");
-        const role = required(args, "role");
-        if (!ROLES.includes(role)) {
-          throw new UsageError(`invalid role ${role}: allowed values are ${ROLES.join(", ")}`);
-        }
-        const requestedModel = optional(args, "model");
-        const promptFile = required(args, "prompt-file");
-        const stageId = numeric(args, "stage");
+        const agent = args.get("agent")!;
+        const role = args.get("role")!;
+        const requestedModel = args.get("model");
+        const promptFile = args.get("prompt-file")!;
+        const stageId = Number(args.get("stage"));
         // The stage check precedes the prompt-file read so a bad stage fails
         // before touching the filesystem or anything that could spawn.
         const stage = store.getStage(stageId);
@@ -365,7 +289,7 @@ async function main(): Promise<void> {
         // Hard rule 6 has to hold on the raw dispatch surface too, or the
         // frozen map governs `bw spec` and `bw plan` while the documented
         // escape hatch beside them spends against any model it is handed.
-        const dispatchProfile = loadVerifiedProfile(process.cwd(), dispatchRun);
+        const dispatchProfile = loadVerifiedProfile(rootDir, dispatchRun);
         if (!dispatchProfile.ok) {
           throw new Error(dispatchProfile.reason);
         }
@@ -395,7 +319,7 @@ async function main(): Promise<void> {
         }
         let prompt: string;
         try {
-          prompt = readFileSync(promptFile, "utf8");
+          prompt = readFileSync(resolve(invocationDirectory, promptFile), "utf8");
         } catch (err) {
           throw new UsageError(`cannot read prompt file ${promptFile}: ${(err as Error).message}`);
         }
@@ -403,7 +327,7 @@ async function main(): Promise<void> {
           store,
           dispatchProfile.profile.executor,
           { stageId, agent, role, requestedModel: frozenModel.model, prompt },
-          process.cwd()
+          rootDir
         );
         if (result.ok) {
           console.log(String(result.agentRunId));
@@ -417,19 +341,19 @@ async function main(): Promise<void> {
         // Hard rule 6: the stage runs against the executor the run froze.
         // The profile is loaded here so the frozen definition is handed in;
         // the stage re-verifies the same binding at its own boundary.
-        const specRunId = numeric(args, "run");
+        const specRunId = Number(args.get("run"));
         const specRun = store.getRun(specRunId);
         if (!specRun) {
           throw new Error(`run ${specRunId} does not exist`);
         }
-        const specVerified = loadVerifiedProfile(process.cwd(), specRun);
+        const specVerified = loadVerifiedProfile(rootDir, specRun);
         if (!specVerified.ok) {
           throw new Error(specVerified.reason);
         }
         const result = await runSpecStage(store, specVerified.profile.executor, {
           runId: specRun.id,
-          requestedModel: optional(args, "model"),
-          rootDir: process.cwd(),
+          requestedModel: args.get("model"),
+          rootDir,
         });
         if (result.ok) {
           console.log(result.specPath);
@@ -441,19 +365,19 @@ async function main(): Promise<void> {
       }
       case "plan": {
         // Hard rule 6: the stage runs against the executor the run froze.
-        const planRunId = numeric(args, "run");
+        const planRunId = Number(args.get("run"));
         const planRun = store.getRun(planRunId);
         if (!planRun) {
           throw new Error(`run ${planRunId} does not exist`);
         }
-        const planVerified = loadVerifiedProfile(process.cwd(), planRun);
+        const planVerified = loadVerifiedProfile(rootDir, planRun);
         if (!planVerified.ok) {
           throw new Error(planVerified.reason);
         }
         const result = await runPlanStage(store, planVerified.profile.executor, {
           runId: planRun.id,
-          requestedModel: optional(args, "model"),
-          rootDir: process.cwd(),
+          requestedModel: args.get("model"),
+          rootDir,
         });
         if (result.ok) {
           console.log(result.planPath);
@@ -465,19 +389,19 @@ async function main(): Promise<void> {
       }
       case "implement": {
         // Hard rule 6: the stage runs against the executor the run froze.
-        const implementRunId = numeric(args, "run");
+        const implementRunId = Number(args.get("run"));
         const implementRun = store.getRun(implementRunId);
         if (!implementRun) {
           throw new Error(`run ${implementRunId} does not exist`);
         }
-        const implementVerified = loadVerifiedProfile(process.cwd(), implementRun);
+        const implementVerified = loadVerifiedProfile(rootDir, implementRun);
         if (!implementVerified.ok) {
           throw new Error(implementVerified.reason);
         }
         const result = await runImplementationStage(store, implementVerified.profile.executor, {
           runId: implementRun.id,
-          requestedModel: optional(args, "model"),
-          rootDir: process.cwd(),
+          requestedModel: args.get("model"),
+          rootDir,
         });
         if (result.ok) {
           console.log(result.worktreePath);
@@ -493,8 +417,8 @@ async function main(): Promise<void> {
         // progress comes from the stage, so nothing is printed here but the
         // result path.
         const result = await runVerificationStage(store, {
-          runId: numeric(args, "run"),
-          rootDir: process.cwd(),
+          runId: Number(args.get("run")),
+          rootDir,
         });
         if (result.ok) {
           console.log(result.resultRef);
@@ -509,19 +433,19 @@ async function main(): Promise<void> {
         // Unlike verify and deliver this stage dispatches, so it accepts
         // --model; one invocation owns every frozen panel, remediation, and
         // post-patch verification in the bounded loop.
-        const reviewRunId = numeric(args, "run");
+        const reviewRunId = Number(args.get("run"));
         const reviewRun = store.getRun(reviewRunId);
         if (!reviewRun) {
           throw new Error(`run ${reviewRunId} does not exist`);
         }
-        const reviewVerified = loadVerifiedProfile(process.cwd(), reviewRun);
+        const reviewVerified = loadVerifiedProfile(rootDir, reviewRun);
         if (!reviewVerified.ok) {
           throw new Error(reviewVerified.reason);
         }
         const result = await runCodeReviewStage(store, reviewVerified.profile.executor, {
           runId: reviewRun.id,
-          requestedModel: optional(args, "model"),
-          rootDir: process.cwd(),
+          requestedModel: args.get("model"),
+          rootDir,
         });
         if (result.ok) {
           console.log(result.resultRef);
@@ -537,8 +461,8 @@ async function main(): Promise<void> {
         // reference; a refusal — including a delivery that blocks the run on
         // missing artifacts — prints the named reason and exits 1.
         const result = runDeliveryStage(store, {
-          runId: numeric(args, "run"),
-          rootDir: process.cwd(),
+          runId: Number(args.get("run")),
+          rootDir,
         });
         if (result.ok) {
           console.log(result.resultRef);
@@ -549,17 +473,14 @@ async function main(): Promise<void> {
         break;
       }
       case "approval-request": {
-        const runId = numeric(args, "run");
+        const runId = Number(args.get("run"));
         // The default window comes from policy, not a literal here, so the
         // frozen profile records the value a run actually used and one
         // constant governs it. Comfortably inside the policy ceiling, so the
         // command's own default can never trip its own check. `--expires`
         // present but empty is a usage error, not a silent default: the
-        // parser records "" precisely so it can be reported by name.
+        // parser refuses it before state is opened.
         const given = args.get("expires");
-        if (given === "") {
-          throw new UsageError("missing required option --expires");
-        }
         const expires =
           given ?? new Date(Date.now() + APPROVAL_DEFAULT_LIFETIME_SECONDS * 1000).toISOString();
         const expiry = validateExpiry(expires, Date.now(), APPROVAL_MAX_LIFETIME_SECONDS);
@@ -568,7 +489,7 @@ async function main(): Promise<void> {
           process.exitCode = 1;
           break;
         }
-        const bound = buildBinding(store, process.cwd(), runId, expires);
+        const bound = buildBinding(store, rootDir, runId, expires);
         if (!bound.ok) {
           console.error(bound.reason);
           process.exitCode = 1;
@@ -579,14 +500,29 @@ async function main(): Promise<void> {
         // verifies. Redirecting stdout must capture exactly the signed bytes.
         // The expiry goes to stderr as a reminder of what `approve` needs.
         console.error(`expires: ${expires}`);
-        process.stdout.write(approvalPayload(bound.binding));
+        const payload = approvalPayload(bound.binding);
+        const out = args.get("out");
+        if (out !== undefined) {
+          const destination = resolve(invocationDirectory, out);
+          try {
+            writeFileSync(destination, payload, { encoding: "utf8", flag: "wx" });
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+              throw new Error(`refusing to overwrite an existing approval payload file: ${destination}`, { cause: error });
+            }
+            throw new Error(`cannot create approval payload file ${destination}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+          }
+          console.error(`approval payload: ${destination}`);
+        } else {
+          process.stdout.write(payload);
+        }
         break;
       }
       case "approve": {
-        const result = approveRun(store, process.cwd(), {
-          runId: numeric(args, "run"),
-          expiresAt: required(args, "expires"),
-          signature: required(args, "signature"),
+        const result = approveRun(store, rootDir, {
+          runId: Number(args.get("run")),
+          expiresAt: args.get("expires")!,
+          signature: signature!,
         });
         if (result.ok) {
           console.log(String(result.approvalId));
@@ -609,12 +545,12 @@ async function main(): Promise<void> {
       case "proposal-export": {
         // A run never writes here (architecture section 14): this command is
         // the human's own action, materializing state the run only stored.
-        const proposalId = numeric(args, "proposal");
+        const proposalId = Number(args.get("proposal"));
         const proposal = store.getProposal(proposalId);
         if (!proposal) {
           throw new Error(`proposal ${proposalId} does not exist`);
         }
-        const explicitName = optional(args, "name");
+        const explicitName = args.get("name");
         const defaultName = proposal.title
           .trim()
           .toLowerCase()
@@ -628,7 +564,7 @@ async function main(): Promise<void> {
               : `the proposal's title does not derive a usable file name; pass --name explicitly`
           );
         }
-        const targetDir = join(process.cwd(), "docs", "proposals");
+        const targetDir = join(rootDir, "docs", "proposals");
         const targetPath = join(targetDir, `${name}.md`);
         const sources = store.getProposalSources(proposal.id);
         const body = `# ${proposal.title}
@@ -676,7 +612,23 @@ ${proposal.why_upstream}
       }
     }
   } catch (err) {
+    if (output !== null) {
+      const code: OperatorErrorCode = err instanceof UsageError ? "usage"
+        : err instanceof TargetUnavailableError ? "target_unavailable"
+        : err instanceof StoreStateError || err instanceof RunMissingError ? err.code
+        : output === "doctor" ? "setup_required" : "state_unavailable";
+      const outcome = output === "run" ? "refused"
+        : code === "state_missing" && (output === "runs" || output === "status") ? "state_missing"
+        : code === "run_missing" && output === "status" ? "run_missing" : "error";
+      const result = operatorEnvelope(output, rootDir, selectedRun, outcome, null, code,
+        err instanceof Error ? err.message : String(err));
+      console.error(result.reason);
+      process.stdout.write(formatOperatorResult(result, json));
+      process.exitCode = operatorExit(result);
+      return;
+    }
     console.error(err instanceof Error ? err.message : String(err));
+    if (err instanceof UsageError) console.error(formatHelp());
     process.exitCode = err instanceof UsageError ? 2 : 1;
   } finally {
     store?.close();

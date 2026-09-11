@@ -1,0 +1,1201 @@
+Requested outcome: Implement docs/features/cli-operator/plan.md after grounding
+in project-learnings.md and the current repository state.
+
+Baseline: code-review-stage, HEAD a8a71d1. Runtime is unchanged from the prior
+record. Existing modified project-learnings.md and untracked planning,
+analysis, and review inputs are preserved. The separate plan review is
+reconciled: 19 accepted, 2 rejected, 1 deferred, zero open.
+
+Authorization: The operator invoked implement-plan on 2026-09-10. This grants
+implementation of the nine reconciled tasks, not paid runs, real signing,
+GitHub operations, commits, pushes, or cleanup of retained operator targets.
+
+Success criteria: All nine task contracts, actual no-spend CLI journey through
+approval and delivery, conservative refusal matrix, isolated guard break
+evidence, full existing regression suite, typecheck/document checker, separate
+code review, and accurate completion records. Component, journey, and regression
+evidence are recorded separately; fixture success is not a live-provider claim.
+
+Approved approach: Execute the existing full-path plan in order. Keep execution
+state in Copilot's session task database. Reuse existing core stages, parsers,
+and frozen contracts. No database migration or new provider implementation.
+
+Material decisions: Full-preview-range consent and complete snapshot arrays
+remain locked. Guided early age refusal does not modify low-level spec/plan
+age behavior. Approval expiry is not post-grant revocation. Inspection never
+recovers hot journals; explicit migrate is exercised only in disposable tests.
+
+Current result: Grounding complete; implementation in progress.
+Files changed: This session record. Implementation files to be recorded below.
+Validation performed: No implementation validation yet.
+Remaining issues: Tasks 1-9, full regression gate, and independent code review.
+Rollback status: No rollback performed. Reverse only this implementation's
+specific changes; preserve all earlier uncommitted inputs and machine-local
+operator evidence.
+
+Task 1 component evidence (2026-09-10):
+Requested scope: Strict pre-state CLI syntax and canonical local targeting;
+no Task 2+ implementation, actual signing, paid run, or commit.
+Files changed: src/cli-args.ts, src/repo-root.ts, src/cli.ts, src/store.ts,
+test/cli-operator.test.ts, test/cli.test.ts.
+
+Tests-first baseline: node --test test\cli-operator.test.ts failed all six
+initial groups. The observed old behavior was unsupported help, generic
+unknown-command usage, child-local state creation, ignored --repo targeting,
+and missing planned-command handling. No retained operator target was used.
+The project-local fixture required GIT_CEILING_DIRECTORIES to identify an
+ancestor of the invocation cwd; an equal-cwd ceiling does not stop Git's
+ancestor search. The fixture now uses dirname(workspace).
+
+Validation: The final operator suite passed 55/55. The combined invocation
+node --test --test-skip-pattern='^request, sign, and approve walk end to end through the CLI$' test\cli-operator.test.ts test\cli.test.ts
+passed 118/118 before the final unsigned raw-payload test was added; that
+additional test passed independently and in the final 55-test operator suite.
+The combined process set TEMP/TMP and GIT_CEILING_DIRECTORIES to the
+project-local node_modules/.cli-task1-validation directory, which was cleaned.
+npm run typecheck and git diff --check passed.
+
+Delegated validation limitation, subsequently closed by coordinator: The
+foundation agent could not run the one external-signing case in its chosen
+project-local scratch arrangement. The coordinator ran the exact unfiltered
+node --test test\cli-operator.test.ts test\cli.test.ts in the normal environment:
+120 tests passed, zero failed or skipped, 177.8 seconds. This includes the
+external signer with its existing outside-repository safeguards unchanged.
+The unsigned canonical approval-byte comparison remains additional coverage.
+
+Legacy adjustment: The non-Git new-run test now asserts .governance is absent
+instead of opening a writable Store after refusal solely to count run rows.
+This follows the approved new targeting/no-state-creation contract.
+
+Isolated guard evidence: Bypassing unknown-option refusal failed six named
+cases plus their parent (7/48 failed); bypassing Git-root selection failed the
+root-state inventory assertion; removing --no-optional-locks failed index-byte
+equality; resolving the prompt against the target instead of invocation cwd
+failed with ENOENT/exit 2 instead of pre-probe size refusal/exit 1.
+The initial index mutation was masked by inherited GIT_OPTIONAL_LOCKS=0;
+the test explicitly sets it to 1 so the command flag owns the guarantee.
+Every mutation was restored before the next. Restored SHA-256 values:
+cli-args.ts F2F32D6F462D2204153B92469C8110F3C8CD2C36276A9D7E33E84EC516124CDB
+repo-root.ts 9B97F014FFE20CC8C1B0275E9FC504C84A1030A32514E672372E65AF3CEAC2FF
+cli.ts 67A2C5D69A3F61FB40C58493573A7FC5DD74AAF874FB7C43A20B0C3CA3EB159A
+The isolated mirror and its logs were removed after restoration verification.
+
+Remaining coordinator decisions: Accept the signing-test validation limitation,
+and dispose the relative stored approval-reference case. buildBinding still
+reads last.output_ref without resolving it against rootDir; ordinary core
+absolute references work, while manual relative references need a tightly
+coupled approval-stage change outside the delegated file ownership.
+Task 1 remains in progress pending those dispositions. The plan is not marked
+Implemented. Planned commands and approval file options currently refuse
+explicitly as unimplemented; their later tasks replace these guards and tests.
+
+Canonical evidence diagnosis and correction:
+Expected: --repo controls stored repository-relative evidence, while recorded
+absolute paths remain absolute, independently of the original invocation cwd.
+Observed: new test/relative-evidence.test.ts failed six of ten child cases:
+relative spec/plan/worktree reads used the CLI process cwd; join(root, absolute)
+incorrectly prefixed absolute verification/review record paths. Four control
+cases passed. The parent aggregate also failed, for seven reported failures.
+All cases stopped before dispatch and used schema-validated document fixtures.
+Cause: existing core consumers assumed invocation cwd was the target, or assumed
+all structured-record output refs were relative. Passing rootDir alone did not
+change those filesystem calls. No provider, gate, or schema problem was involved.
+Correction: resolve(rootDir, ref) at path-consumption sites in plan-stage,
+implementation-stage, verification-stage, code-review-stage, and delivery-stage;
+the foundation agent separately owns the matching approval-stage correction.
+No stored rows, original absolute references, hashes, or gate policies are
+rewritten. These narrow path corrections extend the plan's unchanged-core file
+assumption to satisfy its explicit canonical-targeting contract.
+Validation: Strict typecheck passed. The relative-path regression plus the
+five affected existing stage suites passed: 196 tests, 195 passed, zero failures,
+one existing Windows symlink skip, 281.1 seconds. All ten relative/absolute
+targeting cases pass after the correction, with no dispatches. The temporary
+command log is removed after capturing this evidence.
+Risk/rollback: This affects path resolution only; ordinary absolute document
+and relative result references are retained as controls. Reverse only these
+specific import/read edits if needed, never restore whole files over later work.
+
+Foundation handoff: Tasks 1-3 complete (2026-09-10).
+The coordinator's explicit follow-up authorized the approval reference fix,
+read-only Store/lock foundation, and data-only readiness; no Task 4+ work.
+This supersedes the earlier Task 1 pending decisions. The exact unfiltered
+120-test coordinator run above already closed the external-signing limitation.
+
+Task 1 correction: The unsigned approval regression reproduced ENOENT with a
+repository-relative stored spec reference and another invocation cwd. The only
+approval-stage change is resolve(rootDir, last.output_ref) at readFileSync plus
+its import. Both relative and absolute references now produce exactly the
+canonical approvalPayload bytes without signing. That selected test and
+typecheck passed; it also passes in the final foundation regression below.
+
+Task 2 result: Store readOnly opens only an existing supported-schema database,
+without mkdir, migrations, or repository lock acquisition. Its SQLite busy
+timeout is 1000 ms with one attempt; default writers retain 5000 ms and their
+three-attempt retry. Older/newer schemas get distinct repair instructions;
+availability errors retain their originating cause and SQLite diagnostic.
+readSnapshot uses deferred BEGIN and permits only synchronous, non-nested
+callbacks. Lock observation never removes stale files and reuses existing PID
+and EPERM liveness rules. No SQL migration or stage-replay behavior was added.
+
+Measured writer results: A real concurrent reader sees committed rows during
+a nonexclusive writer. An exclusive writer yields bounded state_unavailable
+with the original locked/busy reason. A deliberately spilled DELETE-journal
+writer held 64 updated runs and a retained stage; the test proved a journal
+larger than 512 bytes with a nonzero hot header before terminating that child.
+Inspection then returned state_unavailable with ERR_SQLITE_ERROR (776),
+"attempt to write a readonly database", and preserved every target file.
+Explicit CLI migrate against that disposable target recovered original run
+rows and the unchanged stage chain. Inspection did not perform recovery.
+
+Task 2 guard evidence: An isolated writable-Store substitution failed the
+absence guard; a destructive inspectLock substitution failed byte preservation.
+BEGIN IMMEDIATE initially survived the read-only/WAL snapshot case on this
+runtime, so that case was not claimed as proof. A second writer during a
+default-connection readSnapshot distinguishes deferred BEGIN: the mutation
+failed with database is locked. Each isolated mutation was restored and its
+source hash checked. Historical restored hashes before the inventory adjustment:
+store.ts 8EF920E24346A62443E8EBC27C85228B2390967A48566BE5409C5375D0263FA1
+lock.ts 19FF86B9F9FE14AB0746999A7E51BA0FD6402D8ED0C809DEBBCF47A9ACD00071
+
+Preservation correction: Final inspection found that the initial eager
+listMigrations extraction validated every filename before applying any file.
+HEAD validated each sorted filename immediately before its migration. A new
+regression reproduced user_version 0 rather than the version from the actual
+first migration when a later filename was invalid. listMigrations now yields
+lazily, restoring the prior incremental ordering; read-only schema checking
+materializes the inventory. Migration/Store suites then passed 56/56.
+General lesson: Preserve evaluation timing when extracting validation from a
+mutating loop; sorting alone does not preserve earlier committed operations.
+
+Task 3 result: checkIntakeRepository is the shared HEAD/clean-tree/committed
+verification-config check used by new-run and inspectReadiness. Original
+new-run refusal ordering/messages and governance exclusion remain. Readiness
+also reports current Node/Git, ignore rule, optional design, policy, reviewer
+staffing, author bindings, capabilities, and public-key fingerprint. It neither
+opens state nor scaffolds files. The native executor version probe is the same
+probeExecutor used by dispatch; readiness supplies a 5000 ms timeout. Captured
+stdout/stderr are available without a second Claude launch implementation.
+Account authentication, model entitlement, and quota remain explicitly untested.
+
+Task 3 guard evidence: In an isolated mirror, removing the probe timeout caused
+the finite slow-probe test to fail with Missing expected exception. Substituting
+a different readiness probe executable caused the real-dispatch/shared-probe
+test to fail (1 captured native probe rather than 2). Both were restored with:
+harness.ts D09DC5A3B0357F0AE3928D463FFAEB7911D4AE4E11C5D8500FDB08AEF9429BCB
+readiness.ts 6E81532B054C9D3AB4E48AC386FC942C8E434E7F448990A84A739DE784DEC98E
+The mirrors and agent-owned validation scratch/logs were removed after checks.
+
+Exported foundation contracts for downstream tasks:
+- listMigrations(dir): Generator<Migration>; Migration = { file: string,
+  index: number }. It is deliberately lazy, not an array.
+- StoreOptions = { readOnly?: boolean }; new Store(root, options?);
+  openStore(root = process.cwd(), options?).
+- StoreStateError has code: state_missing | schema_unsupported |
+  state_unavailable, message, and standard cause. No prose classification needed.
+- Store.readSnapshot<T>(fn: () => T & (T extends PromiseLike<unknown> ? never :
+  unknown)): T. Do only synchronous database reads inside the snapshot.
+- inspectLock(root?): { status: absent | live | dead | unreadable,
+  path: string, pid: number|null, createdAt: string|null, reason: string|null }.
+- probeExecutor(executor, options?: { timeoutMs?: number }):
+  { stdout: string, stderr: string }. Existing one-argument dispatch calls remain.
+- ReadinessCheck = { name: string, status: pass | fail | not_checked,
+  evidence: string, repair: string|null }.
+- checkIntakeRepository(root): { ok: boolean, reason: string|null,
+  startingCommit: string|null, verification: VerificationConfig|null,
+  checks: ReadinessCheck[] }.
+- inspectReadiness(root, options?: { slug?: string }): { checks:
+  ReadinessCheck[], current: CurrentReadiness, limitations: string[] }.
+- CurrentReadiness = { systemName: string, nodeVersion: string,
+  minimumNodeMajor: number|null, gitVersion: string|null,
+  startingCommit: string|null, verification: VerificationConfig|null,
+  policy: Policy, policyHash: string, agentIds: string[],
+  executor: { id: string, command: string[], probe: string[],
+  capabilities: string[] }, approvalSigner: string|null }.
+Frozen-run presentation/fields belong to later tasks, not these current checks.
+
+Files owned and released: src/cli-args.ts, src/repo-root.ts, src/cli.ts,
+src/store.ts, src/approval-stage.ts, src/migrate.ts, src/lock.ts, src/harness.ts,
+src/readiness.ts; test/cli-operator.test.ts, test/cli.test.ts,
+test/store.test.ts, test/migrate.test.ts, test/lock.test.ts,
+test/harness.test.ts; this append-only record. Parent-owned relative-evidence
+stage changes and preexisting learning/planning inputs were preserved.
+
+Final validation, repository-local TEMP/TMP/GIT_CEILING_DIRECTORIES fixtures:
+node --test --test-name-pattern='probeExecutor|readiness' test\harness.test.ts test\cli-operator.test.ts
+8 passed, zero failed, after the final probe/readiness adjustments.
+node --test test\migrate.test.ts test\store.test.ts
+56 passed, zero failed, after restoring incremental filename validation.
+node --test --test-skip-pattern='^request, sign, and approve walk end to end through the CLI$' test\cli-operator.test.ts test\cli.test.ts test\store.test.ts test\migrate.test.ts test\lock.test.ts test\governed-config.test.ts test\profile.test.ts test\executor.test.ts test\harness.test.ts
+267 passed, zero failed, 136.7 seconds. This is explicitly a selected run, not
+unfiltered; the coordinator's separate unfiltered 120-test result is above.
+npm run typecheck and git diff --check passed. npm run check:docs passed with
+63 historical path warnings and no errors. No new migration, paid run, actual
+operator signing, commit, retained-target cleanup, or plan lifecycle change.
+
+Remaining scope: No unmet Task 1-3 case is known. Full-plan review/journey and
+Tasks 4-9 remain with the coordinator. Replace the deliberate unimplemented
+guards for doctor/runs/status/run and out/signature-file, and their temporary
+operator assertion, when wiring those later commands. No doctor CLI or state
+projection was added solely to test these foundations.
+
+Task 4 coordinator component evidence (2026-09-10, not full-plan completion):
+Added operator-state.ts and operator-output.ts; wired doctor/current, runs and
+status through the existing CLI without a writer lock or writer Store. The
+run/doctor-run and approval-transport guards remain for Tasks 5-7. Added
+operator-state.test.ts for bounded inventory, explicit fingerprint tuples,
+recorded-envelope-derived costs/tokens, zero/null coverage, failed audit
+attempts without guessed raw paths, stage timing, profile/approval projection,
+and complete large structured arrays (1105 findings and 2210 reports).
+Task 4 eligibility is not declared complete: Task 5 augments the single fixed
+prefix interpreter with the required handoff/boundary checks.
+
+Component command: node --test test\operator-state.test.ts test\store.test.ts
+test\dispatch.test.ts passed 62/62, zero failed/skipped (15.2 seconds).
+A subsequent selected boundary-race case passed; the typechecker exposed an
+implicitly-any mock callback, corrected by typing the observer with the actual
+Store["readSnapshot"] signature. Strict typecheck then passed. The independent
+CLI presentation/terminal-export additions remain with the foundation agent
+until its Task 4 handoff; no final combined Task 4 command is claimed here.
+
+Guard experiment: Removing only the selected-run predicate from the agent-row
+query in an isolated copy failed the named recorded-telemetry arithmetic test:
+0.457545 observed versus the selected rows' 0.30502999999999997 expected.
+The copied operator-state.ts was restored byte-for-byte, SHA-256
+296ec2d9b9b9e0da8d6d6b33183c5fa4c73acf911182c0d5aeb4c581f5353786.
+The mirror was removed; production source and operator evidence were untouched.
+
+Experiment diagnosis: The first mirror was under node_modules. Node refused
+TypeScript stripping there with ERR_UNSUPPORTED_NODE_MODULES_TYPE_STRIPPING
+before executing any assertion; that attempt is not guard evidence. Moving
+only the disposable mirror to the session artifact directory reached the
+intended failing assertion. No runtime implementation change was needed.
+Rollback status: no production rollback; only isolated mutation restoration.
+
+Task 5 Step 5/6 delegated TESTS ONLY evidence (2026-09-10):
+Owned changes: test/cli-operator.test.ts, test/spec-stage.test.ts,
+test/plan-stage.test.ts. No src file, other agent's tests, plan status, or
+learning record was changed by this delegation. The pending run/out/
+signature-file guards remain. All new doctor subprocesses use --import to
+substitute only the fixed native version probe, forbid model dispatch, and
+bind a generated public key outside the disposable Git target.
+
+Exact new test names:
+- Task 5 doctor --run keeps frozen configuration separate from current defaults and signer
+- Task 5 doctor --run does not impose current intake cleanliness or config on a continuing run
+- Task 5 doctor --run preserves readable state and original invalid-profile diagnostics
+  Child cases: missing_ref, missing_file, unreadable, malformed_json,
+  malformed_shape, hash_invalid.
+- Task 5 doctor --run never executes an arbitrary retained frozen probe
+- Task 5 doctor --run reports the reader's frozen-age refusal without changing the run
+- Task 5 doctor --run preserves state, run, schema, and SQLite error envelopes
+  Child cases: missing, empty, older, newer, corrupt.
+- Task 5 doctor --run observes committed state under a writer and bounds exclusive contention
+- Task 5 low-level spec accepts an otherwise valid aged run and still refuses replay
+- Task 5 low-level plan accepts an otherwise valid aged run and still refuses replay
+
+Behavioral evidence: Frozen presentation is derived from a verified profile,
+not current policy/config/signer defaults. A passed spec/spec_review boundary
+remains ready to approve despite current invalid committed governed.yaml and
+an uncommitted working tree; those failed current checks remain visible.
+Six unavailable-profile forms retain readable run/current data, null every
+frozen configuration field, mark dependent checks not_checked, and preserve
+the loadVerifiedProfile reason as evidence_invalid/exit 1. A differing frozen
+probe never executes; it is explicitly not_checked. Error envelopes retain
+original diagnostics on both JSON stdout and stderr. Live-writer observation
+returns committed run state; exclusive contention remains bounded. The actual
+local spec/plan fixtures complete after the frozen age limit while rejecting
+model overrides and passed-group replay without new rows.
+
+Validation:
+node --test --test-name-pattern='Task 5' test\cli-operator.test.ts
+passed 18/18, no failures/skips (78.8 s).
+node --test test\spec-stage.test.ts test\plan-stage.test.ts
+passed 98/98, no failures/skips (254.4 s).
+node --test test\cli-operator.test.ts test\profile.test.ts test\approval-stage.test.ts
+passed 156/156, no failures/skips (224.0 s).
+After that full invocation loaded its test file, the current-intake regression
+was strengthened from a zero-stage existing run to a schema-validated passed
+spec/spec_review continuation. Its final exact selected command:
+node --test --test-name-pattern='^Task 5 doctor --run does not impose current intake' test\cli-operator.test.ts
+passed 1/1 (6.9 s). npm run typecheck and git diff --check passed afterward.
+The full stage/combined runs set TEMP/TMP/GIT_CEILING_DIRECTORIES to the
+repository-local node_modules/.task5-test-validation directory and set a
+nonexistent fixture BW_APPROVAL_PUBLIC_KEY, avoiding operator key access.
+
+Initial integration failure, now closed: CLI module instantiation and tsc
+reported missing parsePassedCodeReviewRecord and parseVerificationHandoff
+exports while their owner was extracting them. The new low-level cases passed
+2/2 independently. Once both shared exports landed, doctor and strict typing
+passed unchanged. No production defect or weakened assertion was needed.
+
+Remaining scope: Full guided journey, full-plan independent review, and
+isolated guard mutations remain coordinator Tasks 6-8; these passing cases
+are component/regression evidence, not a paid run or completed full plan.
+No production rollback, actual operator signing, paid Claude, commit/push,
+or retained operator target cleanup occurred. Delegation-owned local logs
+and validation scratch were removed after capturing the results above.
+
+Task 4 CLI-test handoff and Task 5 Step 1 extraction (2026-09-10):
+Task 4 scope was only test/cli-operator.test.ts. Removed doctor/runs/status
+from the temporary unimplemented assertion while retaining the pending run
+and approval-file transports. Seven subprocess groups cover current/slug
+doctor envelopes and PASS/FAIL/NOT CHECKED labels, absence/empty/bounded run
+inventory, malformed bare-json and target errors, named missing/schema/SQLite
+errors, live/exclusive writer observation, complete blocked-run arrays and
+secret/raw-body exclusion, and terminal proposal inspection/export.
+Terminal export bytes are compared with the same stored proposal's ordinary
+export, not a separately invented renderer; collisions preserve bytes/audit
+and explicit export adds exactly its existing human audit event without
+reopening either blocked or completed run state.
+
+Task 4 diagnosis: all seven new groups passed, but the full operator suite
+reported 58/70 passing because new-command refusals omitted stderr diagnostics.
+Ten existing malformed cases, their aggregate, and the pending-run assertion
+failed. The coordinator restored stderr diagnostics alongside the single
+stdout result, without changing expectations. The coordinator then ran:
+node --test --test-reporter=dot test\cli-operator.test.ts test\operator-state.test.ts test\cli.test.ts test\store.test.ts test\dispatch.test.ts
+All 199 cases passed; npm run typecheck passed. This includes unfiltered
+legacy signing. Task 4 was accepted and its files released.
+Test-only setup corrections were Windows --import file URLs and matching the
+existing key loader's "approval public key not found" diagnostic. Neither
+required a production change. The owned Task 4 logs are removed at this handoff.
+
+Task 5 Step 1 scope: src/handoff.ts, src/code-review.ts,
+src/code-review-stage.ts, src/delivery-stage.ts, test/handoff.test.ts,
+test/code-review.test.ts. Shared parsing only: no boundary interpretation,
+doctor wiring, policy change, new persisted schema, or stage mutation.
+Preserved the coordinator's resolve(rootDir, ref) reads, missing-file checks,
+JSON decoding/caller error prefixes, audit checks, and mutation ordering.
+Null/non-object records and malformed rounds now return named invalid reasons
+instead of leaking property-access exceptions.
+
+Exported APIs:
+- parseVerificationHandoff(value: unknown, runId: number, stageId: number):
+  { ok: true, value: VerificationHandoff } | { ok: false, reason: string }.
+  VerificationHandoff is exactly runId, stageId, worktreePath, verifiedCommit,
+  patchBase; the checked pass discriminator is not returned as another schema.
+- parsePassedCodeReviewRecord(value: unknown, runId: number, stageId: number,
+  profile: Profile): { ok: true, value: PassedCodeReviewRecord } |
+  { ok: false, reason: string }. Profile is a type-only import; expected panel
+  selection reuses codeReviewPanel.
+- PassedCodeReviewRecord retains checked runId, stageId, worktreePath,
+  patchBase, initialVerifiedCommit, finalVerifiedCommit, panel, panelSize,
+  maxRounds, blockingSeverity, severities, rounds, blocking, outcome: pass.
+- PassedCodeReviewRound has round, reviewedCommit, changedPaths, findings:
+  unknown[], blocking: unknown[], remediation: PassedCodeReviewRemediation|null.
+- PassedCodeReviewRemediation has baseCommit, resultingCommit, changedPaths,
+  verification: PassedCodeReviewVerification.
+- PassedCodeReviewVerification has expectedCommit, outcome: pass,
+  blockingCommand: null, commands: unknown[]. No author, createdAt, finding
+  contents, report contents, or command contents are claimed as checked.
+  Display-only parsing remains the coordinator's responsibility.
+
+Parser coverage derives the real two-panel/remediation chain from committed
+code-review-web-calculator-powershell-remediation-chain.json, freezes an actual
+profile, and uses that record's policy controls. It preserves acceptance of
+string-only paths, unchecked findings/commands/metadata, and intermediate
+blocking arrays; it rejects identity, frozen panel/policy, round sequence,
+remediation verification, final commit, and unreviewed-final-patch violations.
+Existing pure tests passed 13/13 before changes. Tests-first imports failed for
+both absent new exports. Final direct parser tests pass 19/19, each registered
+once at module scope; an early insertion had nested four new tests inside the
+five-fixture loop, and its inflated 35-case count is not completion evidence.
+
+Exact prescribed regression:
+node --test test\handoff.test.ts test\code-review.test.ts test\code-review-stage.test.ts test\delivery-stage.test.ts
+95 passed, zero failed/skipped, 247.0 seconds. Existing review/delivery gates
+and caller refusal cases remain passing. TEMP/TMP/GIT_CEILING_DIRECTORIES
+pointed only to the disposable node_modules/.cli-task5-validation fixture.
+After the final compile-time test calibration:
+node --test test\handoff.test.ts test\code-review.test.ts
+19 passed, zero failed/skipped. npm run typecheck and git diff --check passed.
+
+Isolated parser guards: removing the verification run binding failed the
+named malformed/mismatched handoff assertion; removing final remediation
+exclusion failed "unreviewed final patch". A type mutation claiming fully
+validated command fields initially survived because an unreachable block's
+@ts-expect-error suppressed an unrelated union value-access diagnostic.
+Binding the already-narrowed value before that block calibrated the check;
+the same mutation then failed with TS2578, unused @ts-expect-error.
+General lessons: use structurally unique patch anchors when placing tests;
+and verify the specific diagnostic a negative type assertion suppresses.
+Every mutation was restored, with SHA-256:
+handoff.ts 55F26BCACAAA20C69BAEB29AD88FDFBD6B98724D8F2F9AF2A1FB50343A4A80A4
+code-review.ts 1EAEDD1CDDE4630871615248A8E31BD0CACF22C334D70F7CC5E7CF1ED01B1FC1
+The isolated mirror, known logs, and delegation-owned scratch were removed.
+No unresolved Step 1 case is known. These six files are released; the parent
+owns remaining Task 5 integration and full-plan completion/review.
+
+Task 5 coordinator integration complete (2026-09-10):
+The shared reader now enforces the fixed prefix/audit/approval/hash/worktree
+boundaries, frozen model/author/staffing/age checks, two-read fingerprint,
+and observed-writer exclusion. Current doctor facts remain separate from
+frozen run facts. The matrix uses real local verification, code review and
+delivery, including successful remediation, final below-threshold findings,
+and a final blocking panel. No paid provider or new persisted schema is used.
+Task 5 does not implement the guided loop or approval file transport.
+
+Two measured failures and corrections:
+1. The initial 73-case reader run had 70 passing and three reported failures:
+   delivery-boundary index-byte equality, its parent aggregate, and a late
+   final-panel fixture. A standalone Git experiment isolated the index write:
+   symbolic-ref/rev-parse preserved bytes/mtime, but --no-optional-locks diff
+   --quiet HEAD changed both. Adding process-local -c diff.autoRefreshIndex=false
+   preserved both without changing diff's result. The inspection helper now
+   uses both flags; core execution commands and Git configuration are unchanged.
+2. The final-panel case passed alone. An earlier missing-patch-output test
+   had mutated nested AGENTS objects through freezeProfile's shallow returned
+   profile. The fixture now reads loadProfile's serialized snapshot before
+   changing its pre-dispatch frozen setup. Production freezeProfile is unchanged.
+The combined targeted correction command passed 13 cases and typecheck.
+
+Additional bounded extraction: src/spec-doc.ts exports
+readSpecDeclaredArtifacts, reused by its validator and the inspection reader.
+Acceptance/refusal ordering and schema remain unchanged. The next plan group
+still validates the spec as its real core does; later groups hash-bind it and
+read only scope metadata, avoiding stronger unrelated document-schema gates.
+Malformed unchecked command fields remain an explicit unavailable projection
+and evidence limitation, not a new core handoff refusal. Approval transport
+action eligibility is also withdrawn after writer/fingerprint refusals.
+
+Latest exact commands:
+node --test --test-name-pattern='worktree observations|frozen models|final code-review' test\operator-state.test.ts
+13 passed, zero failed/skipped (61.3 s); npm run typecheck passed.
+node --test --test-reporter=dot test\operator-state.test.ts test\spec-doc.test.ts
+91 passed (all dots), exit 0; npm run typecheck passed.
+node --test --test-name-pattern='Task 5|worktree observations|completed records|fresh spec' test\operator-state.test.ts test\cli-operator.test.ts
+26 passed, zero failed/skipped (74.0 s); npm run typecheck passed.
+The last command also covers moved/deleted worktrees, missing terminal gate,
+and a fresh run's shared old projections without pretending they are its state.
+git diff --check passed; HEAD remains a8a71d1 on code-review-stage.
+
+Completion boundary: Tasks 1-5 are complete in the uncommitted tree.
+Tasks 6-9, full actual guided CLI journey, remaining isolated guard matrix,
+final npm test/typecheck/doc gate, independent full-diff review, plan
+Implemented stamp, and final handoff remain unfinished. No real signing,
+paid run, commit/push, operator evidence rewrite, or retained-target cleanup.
+The canonical learning record is being updated to this resume point.
+
+Task 6 partial integration checkpoint (2026-09-10):
+Parent created src/run-command.ts and test/run-command.test.ts, added preview
+and invocation-result output types/formatting, and routed run before the
+legacy writer startup. advanceRun uses standard input/output streams only,
+one consent range, exact-current read-only checks before writer startup,
+fingerprint/profile/group rechecks, direct existing-stage calls, durable
+post-call completion, and no retry around a returned/thrown failure.
+TTY yes/no/EOF/SIGINT is separate from redirected/JSON --yes. Only async
+yielding stages get an elapsed timer; synchronous delivery does not.
+Task 6 remains in_progress; Tasks 7-9/review/completion have not begun.
+
+Ownership and pending work:
+- 71c86142-6afd-4cdd-971d-cf4f0ffba9b4 owns src/prompts.ts,
+  test/prompts.test.ts and emit-cli-run.mjs, with bounded emitter changes only
+  if required for composition. Handoff must give exact frozen fixture modes,
+  byte-preservation and router guard proof. No handoff received yet.
+- 4baa7824-75ce-46d6-8afe-0a8b16ccc8df is reactivated for
+  test/cli-operator.test.ts only: remove the obsolete run-unimplemented case,
+  preserve pending transport cases, add actual CLI consent/state/stream cases.
+  Source bugs are report-only. Handoff not received yet.
+- Parent retains run-command.ts, operator-output.ts, cli.ts and
+  run-command.test.ts. Do not start overlapping agent work.
+
+Observed initial failures and diagnosis:
+npm run typecheck && node --test test\run-command.test.ts
+Strict types passed; 14/16 cases passed. No runtime fix is justified by either
+failure. The unconfigured emit-spec-stage fixture produced a genuine
+spec_review block on finding1, not the assumed clean approval pause; the
+router contributor was asked for its actual passing mode. The second
+assertion incorrectly expected subprocess stderr in the public reason.
+src/dispatch.ts retains stderr separately and returns precisely the
+agent.dispatch.failed summary on exit23. The assertion now derives equality
+from that actual audit event, retaining the explicit exit-code check.
+This correction does not change core diagnostics or weaken approval/review.
+The clean document/full-chain journey remains open pending fixture handoff.
+
+Focused follow-through:
+npm run typecheck && node --test --test-name-pattern='core dispatch|unrecorded core|yielding async|consent rechecks' test\run-command.test.ts
+9 passed, zero failed/skipped, 24.2 s. Consent-time schema, audit, profile,
+age and writer races create no stage or implicit migration. A design removed
+at group-start yields the original unrecorded core refusal, failed rather
+than a fabricated persisted block. A 16.1-second fixture exit produces the
+real 15-second elapsed observation, then stops and releases resources.
+This is component evidence, not the complete Task6 or Task8 journey.
+
+Isolated consent sensitivity:
+node C:\Users\tamezs\.copilot\session-state\d2b81092-c79b-48b4-b226-4be31cf53946\files\cli-guided-consent-mutation.mjs
+The helper copied src (including migrations), this direct test, fixtures and
+package.json to a fresh named session-artifact mirror, not node_modules.
+Baseline node --test --test-name-pattern=guided preview requires
+test\run-command.test.ts exited0. Changing exactly
+"if (!options.yes) {" to "if (false) {" exited1 with the consent_required
+assertion. Exact copied bytes were restored before mirror deletion:
+da94e4cfca030d34918ed4183054014708e552472869d365ac3d1293ef94ea2b.
+Helper and baseline/broken logs remain in that session files directory for
+the remaining mutation work; no source or retained operator target was edited.
+HEAD was rechecked as a8a71d1 on code-review-stage; no commit or spend.
+
+Task 6 integration follow-through (2026-09-10):
+Read foundation final handoff; six parser files fully released, no unresolved
+Tasks1-5 issue. Read CLI contributor 4baa7824-75ce-46d6-8afe-0a8b16ccc8df:
+only test/cli-operator.test.ts changed, now released. Five Task6 groups cover
+state/schema/partial/blocked and JSON errors, bounded noninteractive consent,
+frozen preview separation, real spec execution and no-consent repeated pause.
+Exactly one newline is asserted; pending approval transports remain guarded.
+Its command passed32:
+node --test --test-name-pattern='^(Task 6 |Task [45] doctor |pending approval transports)' test\cli-operator.test.ts
+Typecheck and diff checks passed. These are delegated component results, not
+independent full-plan review.
+
+Correction to the earlier fixture diagnosis: the router contributor traced
+the default spec case to the new input "# Design". Its reconciler grounds the
+exact lowercase excerpt "design". Changing only that heading to "# design"
+restores the real pause; no alternate mode or weakened runtime gate is needed.
+node --test test\run-command.test.ts && npm run typecheck
+18 passed, zero failed/skipped, 41.1 s.
+
+Published router interface, received via the completed CLI contributor:
+command=[process.execPath, absolute emit-cli-run.mjs,
+  "--implementation-mode", "ok", "--code-review-mode", MODE]
+probe=[process.execPath, "--version"], same frozen executor id/capabilities.
+MODE ok is clean, high remains blocking, low remains below threshold after
+repair, high-then-clean repairs then passes. Keep committed base.txt and the
+lowercase design grounding. Full-chain scope is the spec's src/a1.ts through
+src/a11.ts. The existing remediation marker is not compilable TypeScript;
+these existing fixtures exercise version-only verification, not product
+correctness. Router contributor's final byte/sensitivity handoff is pending.
+
+The parent added a direct full-chain case over that published API: first
+advanceRun reaches approval; real approveRun verifies an ephemeral Ed25519
+fixture signature; a fresh advanceRun requires new consent and completes.
+Stage sequence is derived from architecture section5's actual fence; artifact
+obligations are derived from the emitted spec via validateSpecDoc. The final
+branch/head match local Git, profile bytes stay unchanged, and repeating the
+completed invocation preserves every selected row and every target file hash.
+An initial public fixture key under the ignored state directory was correctly
+refused by resolvePublicKeyPath; reading src/approval.ts confirms containment
+applies to public keys as well as private signing material. The fixture uses
+a separate disposable external directory now; production authority unchanged.
+node --test --test-name-pattern='one frozen executor advances' test\run-command.test.ts && npm run typecheck
+1 passed, zero failed/skipped, 28.5 s. This is direct guided-core integration,
+not yet the Task8 all-CLI creation/export/signature-file journey.
+
+New measured runner correction:
+node --test --test-name-pattern='a progress sink failure' test\run-command.test.ts
+failed because groupsAttempted contained spec after stderr's start write
+threw before any core call. After reading run-command.ts fully, moved only
+that increment immediately before callGroup, after fallible preparation.
+node --test --test-name-pattern='a progress sink failure|unrecorded core|a core dispatch' test\run-command.test.ts && npm run typecheck
+3 passed, zero failed/skipped, 3.3 s. No schema or stage behavior changed.
+
+Combined Task6 gate is delegated to e9e9f2e5-0de8-4b12-8717-bc44b281e41c:
+node --test test\run-command.test.ts test\prompts.test.ts test\cli-operator.test.ts test\lock.test.ts test\migrate.test.ts test\delivery-stage.test.ts
+then typecheck and diff check. Parent will not change source/tests until its
+handoff; no result yet. One portability correction remains queued for after
+that gate: withRun currently unsets BW_APPROVAL_PUBLIC_KEY, allowing a host's
+default key to be loaded at freeze. Set an explicitly absent external fixture
+path instead, never consult an operator's default key. No such host failure
+occurred here; this is a source-established fixture isolation gap.
+
+Final fixture handoff accepted (71c86142-6afd-4cdd-971d-cf4f0ffba9b4):
+Only src/prompts.ts, test/prompts.test.ts and emit-cli-run.mjs changed.
+Seven shared leading prefixes cover eleven builders; existing emitters are
+untouched. All eleven rendered prompts, 37,962 bytes, matched the pre-edit
+copy: aggregate SHA256
+6c4d6ef2bfec2fbe0c7c8e8ce153dab1c991fbba7db3e6f2436f812b019af1af.
+Prompt suite25/typecheck/diff passed. Fixture files are released and stable.
+--delay-ms N delays each dispatch; default implementation/code review mode
+is ok. Mode and grounding requirements are recorded above.
+
+All five isolated router mutations below exited1; after each exact Buffer
+restoration, the same command exited0. Every before/restored router hash:
+f3367c48e7f8c936e56acbb1e9b18b7f9d268a1e9b812a3993d9cc94cc2a082a.
+Mirror cwd was .cli-fixture-proof-d2b81092\sensitivity-mirror, outside
+node_modules. The driver required unique anchors and expected failure text.
+A: node --test --test-name-pattern "CLI fixture routes every builder" test\prompts.test.ts
+B: node --test --test-name-pattern "CLI fixture refuses embedded-only" test\prompts.test.ts
+C: node --test --test-name-pattern "CLI fixture directly forwards exact" test\prompts.test.ts
+- leading-prefix: prompt.startsWith(prefix) -> prompt.includes(prefix).
+  A failed "expected exactly one leading prompt marker".
+- ambiguous-prefix: matches.length !== 1 -> matches.length === 0.
+  B failed "Missing expected exception".
+- complete-diagnostics: ${name}=${JSON.stringify(prefix)} -> ${name}.
+  B failed an assertion naming SPEC_AUTHOR_PROMPT_PREFIX.
+- no-prompt-leak: appended "; input ${prompt}" after "searched ${searched}"
+  before the terminating template backtick. B failed
+  assert.ok(!error.message.includes(privateText)).
+- exact-stdin-bytes: four-space "input," -> four-space
+  "input: Buffer.from(input.toString(\"utf8\")),".
+  C failed "router must forward original bytes, not decoded text".
+Full test names:
+A = CLI fixture routes every builder by its shared leading role, not embedded roles or document wrapping
+B = CLI fixture refuses embedded-only and ambiguous roles with complete marker diagnostics and no prompt content
+C = CLI fixture directly forwards exact stdin bytes to every selected emitter and preserves child exit status
+Raw failure logs were not retained; the isolated driver/mirror were removed.
+The evidence above is the contributor's recorded context, not a parent rerun.
+
+Task 6 complete; Task 7 started (2026-09-10):
+Combined gate e9e9f2e5-0de8-4b12-8717-bc44b281e41c returned:
+189 passed,0 failed/cancelled/skipped,269048.37 ms; typecheck0,diffcheck0.
+The contributor's casual "branch clean" phrase is not worktree evidence:
+this tree remains intentionally uncommitted/untracked.
+
+The queued no-key fixture gap was reproduced without reading operator files:
+node --test --test-name-pattern='direct run fixtures never consult' test\run-command.test.ts
+failed through resolvePublicKeyPath -> loadPublicKey -> freezeProfile when
+the test's homedir spy threw "fixture consulted the operator's home directory".
+withRun now sets a checked-absent external fixture pathname instead of
+unsetting BW_APPROVAL_PUBLIC_KEY; the host default is never consulted.
+node --test --test-name-pattern='direct run fixtures never consult|one frozen executor advances' test\run-command.test.ts && npm run typecheck && git --no-pager diff --check
+2 passed,0 failed/skipped,29.1 s; types/diff passed. Task6 marked done.
+
+Task7 source integration:
+Parent owns src/cli.ts. Signature file transport reads original-cwd UTF8,
+removes only optional leading BOM and outer transport whitespace, rejects
+unreadable/empty files as usage before target/store/lock, and forwards other
+content unchanged to approveRun for semantic refusal/audit.
+Approval-request --out writes the exact existing payload with UTF8 flag wx,
+does not create parents or overwrite, leaves stdout empty, and reports
+expiry/path on stderr. The raw stdout and inline-signature paths remain.
+node --test --test-name-pattern='approval-request preserves raw|request, sign, and approve' test\cli-operator.test.ts test\cli.test.ts && npm run typecheck
+2 passed,0 failed/skipped,6.1 s; typecheck passed.
+
+Reactivated 4baa7824-75ce-46d6-8afe-0a8b16ccc8df now owns ONLY
+src/operator-output.ts and test/cli-operator.test.ts for Task7 pause text,
+exclusive-byte/file errors, signature transport/core refusals, and external
+Node/PowerShell signer round-trips. Parent source-ready message sent.
+No actual operator signing, paid call, commit/push, or retained-target cleanup.
+HEAD rechecked a8a71d1, branch code-review-stage. Task7 remains in_progress;
+Tasks8-9 and separate review/completion remain pending.
+
+Task 7 complete; Task 8 progressing (2026-09-10):
+Task7 contributor released src/operator-output.ts and test/cli-operator.test.ts.
+The approval pause shows the validated spec/scope/risk/hash bindings and one
+explicit prospective expiry; request and approve use that same value.
+It names absolute checkout-local CLI/signer variables, external operator key
+input, explicit file export/sign/submit steps, LASTEXITCODE checks, and new
+execution consent after approval. Missing/mismatched public-key readiness
+withholds sign/submit commands. No new JSON fields or signer behavior.
+
+Task7 exact parent gate:
+node --test test\cli-operator.test.ts test\cli.test.ts test\approval.test.ts test\approval-stage.test.ts test\sign-approval.test.ts
+236 passed,0 failed/skipped,377.695 s; npm run typecheck and git diff --check
+passed. This unfiltered normal-environment run includes actual external Node
+and Windows PowerShell round trips, closing the contributor's earlier
+filesystem/signing limitation. Real operator keys/runs were not used.
+Task7 is done in session state; the plan remains Reconciled.
+
+Task8 parent-owned additions are in test/run-command.test.ts:
+- Shared approveFixture uses actual buildBinding, validateSpecDoc, and
+  approveRun with a disposable external Ed25519 key.
+- Guided high, low, and high-then-clean review modes prove actual remediation
+  commits, frozen panel/implementer counts, final versus historical findings,
+  immutable attribution, known-cost subtotal, and no repeat work.
+- A fixture SQLite trigger rejects completed-run finalization. Existing
+  delivery transaction rollback leaves the passed code-review boundary.
+  That invocation attempts delivery once; after removing the trigger, lack
+  of renewed consent refuses, then a separately consented call only delivers.
+- A legitimately accepted near-future approval is allowed to expire before
+  continued execution; the accepted row remains unchanged.
+- Explicit consent cannot bypass the frozen age check; ordinary non-proposed
+  implementation output stops after the actual implementation refusal.
+
+Task8 test-oracle diagnosis:
+Expected: only final findings at or above the frozen severity threshold block.
+Actual: the initial selected matrix reported5 passing,2 failed (one low-case
+failure plus its aggregate). Runtime correctly passed the below-threshold
+panel; the new assertion used <= against the severity vocabulary's indices.
+Cause: the assertion assumed descending order, but src/finding.ts explicitly
+declares ascending low,medium,high,critical. Corrected only the comparison
+to >=. No gate, expected vocabulary, fixture response, or runtime changed.
+node --test --test-name-pattern='Task 8 guided review' --test-skip-pattern='high' test\run-command.test.ts
+2 passed,0 failed/skipped. Other matrix cases passed in the initial invocation.
+node --test --test-name-pattern='Task 8 an aged|Task 8 an ordinary' test\run-command.test.ts
+2 passed,0 failed/skipped; strict typecheck passed.
+Risk/rollback: this was a test assertion correction, not a production rollback.
+Global lesson now requires confirming ordering/comparison semantics even for
+derived invariant assertions.
+
+Task8 parent isolated guard evidence:
+Helper:
+C:\Users\tamezs\.copilot\session-state\d2b81092-c79b-48b4-b226-4be31cf53946\files\cli-guided-mutations.mjs
+It copies current source/tests/fixtures, scripts, package metadata and the
+architecture into a named OS-temp mirror outside node_modules, uses bounded
+native Node children, checks unique mutation anchors, restores exact bytes,
+and removes only that resolved mirror. The live tree is never mutated.
+Source before/restored SHA256 for all three run-command.ts guards:
+70f320cb5ccfdefd1c546c1d3fecc055391fbbdeeb07aa9aebc9d63b54ce08e2.
+
+1. Consent: if (!options.yes) { -> if (false) {
+   node --test --test-name-pattern='guided preview requires' test\run-command.test.ts
+   baseline0,mutant1,restored0; intended consent_required assertion failed.
+2. No outer retry: if (!passed) { -> if (!passed) { continue;
+   node --test --test-name-pattern='Task 8 failed delivery finalization' test\run-command.test.ts
+   baseline0,mutant1,restored0; expected single delivery attempt failed.
+   The progress sink independently bounds a second mutated attempt.
+3. Progress separation: group-start stderr.write -> process.stdout.write.
+   node --test --test-name-pattern='^Task 6 run executes' test\cli-operator.test.ts
+   baseline0,mutant1,restored0; operatorEnvelope failed with 2 !== 1,
+   proving extra progress violates the single newline-terminated JSON result.
+
+The first combined helper completed1-2 and reached the correct3 failure, but
+its own verifier incorrectly searched for JSON|newline in the diagnostic.
+The actual assertion reports the newline count, not that guessed label.
+The copied source was restored/hash-checked and mirror removed in finally.
+After reading the actual failure, changed only the helper matcher to require
+2 !== 1 followed by at operatorEnvelope, and added validated case selection.
+node <the helper above> stdout-progress completed baseline0,mutant1,restored0,
+with exact matching hashes. Its named bw-guided-proof-supIGi mirror was removed.
+This is an experiment-verifier correction, not a product/test weakening.
+The global encoding-evidence lesson now explicitly covers assertion diagnostics.
+Parent helper/logs remain pending bounded cleanup after their evidence is saved.
+
+Task8 active ownership and remaining work:
+4baa7824-75ce-46d6-8afe-0a8b16ccc8df owns only test/cli-operator.test.ts:
+actual all-CLI creation/approval/guided delivery, unchanged profile, no-op repeat,
+GitHub sentinel/spawn inspection, and remaining public refusal cases.
+43260e17-6586-4308-b34d-73c3d20db785 owns recorded presentation additions in
+test/operator-state.test.ts, followed by strict-parser, reader/writer, prefix,
+approval-binding, age and selected-run-cost isolated mutation proofs.
+Both handoffs are pending. Parent owns production and run-command.test.ts.
+
+e9e9f2e5-0de8-4b12-8717-bc44b281e41c has been assigned:
+node --test test\run-command.test.ts test\code-review-stage.test.ts test\delivery-stage.test.ts
+then typecheck and diff check; no result yet. Selected source/tests stay
+unchanged during its command. Task8 combined CLI/snapshot/direct gate remains
+pending, followed by Task9, full npm test, independent review, and completion.
+HEAD rechecked a8a71d1 on code-review-stage; earlier modified/untracked inputs
+are preserved. No paid call, actual operator signing, commit/push, operator
+evidence rewrite, or retained-target cleanup occurred.
+
+Task8 CLI-process handoff accepted (4baa7824-75ce-46d6-8afe-0a8b16ccc8df):
+Only test/cli-operator.test.ts changed and is released to the parent.
+New public cases cover early aged refusal with/without consent, absent or
+schema-valid-but-hash-tampered reviewed spec, and changed current policy.
+The external journey uses actual new-run identity/model flags, one executor
+snapshot set before any dispatch, actual guided run to approval, canonical
+payload export, external disposable-key signing, signature-file submission,
+continued delivery, status/runs, and byte/row-identical completed no-op.
+Expected stages come from architecture section5; delivered paths come from
+the emitted spec parsed by validateSpecDoc; branch/head/worktree come from Git.
+An actual expired submission refuses and audits. A subsequent real signature
+is accepted before its expiry; fixture process time then advances beyond it
+without modifying the approval. Direct real-time expiry coverage also remains.
+
+GitHub evidence: the test clears GH_/GITHUB_ variables, calibrates an
+instrumented failing gh sentinel, and observes native process executable/argv
+for local Git, Node, signer and fixture dispatch. No fetch/push/pull/clone/
+ls-remote/GitHub endpoint or gh invocation occurs in the journey.
+The actual verification commands are version-only; arbitrary verification and
+the real provider are not claimed network-sandboxed or product-correct.
+
+Delegated selected command:
+node --test --test-name-pattern='^(Task 8 CLI|Task 6 run executes|Task 7 approval pause)' test\cli-operator.test.ts
+4 passed,0 failed/skipped; npm run typecheck passed.
+The agent could not execute the new external-key journey in its filesystem
+restriction. Parent closed that limitation in the normal environment:
+node --test --test-name-pattern='^Task 8 external CLI journey' test\cli-operator.test.ts
+1 passed,0 failed/cancelled/skipped,48811.5889 ms.
+The new fixture's aged-case oracle was corrected to retain the unattempted
+spec in remainingGroups; it remains an informational counter, not eligibility.
+No production defect or source change was needed.
+
+Existing Task6 cases discharge state/schema/partial/blocked/consent failures;
+Task7 discharges signature transport, tampered binding/key, duplicate approval,
+and Windows transport. Parent retains direct review/failure/rollback cases;
+43260e17-6586-4308-b34d-73c3d20db785 retains the recorded-presentation and
+source-guard handoff. Task8 combined gate, Task9 and independent completion
+remain pending. The all-CLI journey is now complete, not an open experiment.
+
+Task8 recorded presentation and source-guard handoff accepted:
+43260e17-6586-4308-b34d-73c3d20db785 released test/operator-state.test.ts;
+only that test file changed. Recorded captures are parsed by actual envelope,
+AgentResult, reviewer-report, code-review, and handoff validators before
+projection. Recorded initial/final commits, immutable reviewer/history fields,
+partial-bill/null-aware coverage and version-command limits are asserted.
+Historical provenance paths remain inert; missing worktree/log evidence is
+explicit rather than opened from retained operator targets.
+
+node --test '--test-name-pattern=recorded remediation-chain presentation|run-scoped cost totals|a legitimately remediated review|final code-review findings|large selected finding' test\operator-state.test.ts
+5 passed,0 failed/skipped,49349.7455 ms. The temporary TS18046 report about
+the other contributor's query predated its fix; parent-confirmed types pass.
+
+All six isolated proofs used this exact common command prefix:
+node --test --test-concurrency=1 --test-timeout=120000 --test-reporter=tap
+followed by "--test-name-pattern=<selector>" and the files below.
+
+1. Selector: Task 4 bare json survives malformed arguments
+   File: test\cli-operator.test.ts
+   Mutation: cli-args.ts unknown-option throw replaced by continue.
+   Baseline1 pass,mutant1 fail,restored1 pass; target refusal gave1 instead
+   of the required usage2 (1 !== 2).
+2. Selector: Task 4 runs distinguishes absent and empty state
+   File: test\cli-operator.test.ts
+   Mutation: cli.ts inspection openStore(rootDir,{readOnly:true}) replaced
+   by the writer opening.
+   Baseline1 pass,mutant1 fail,restored1 pass; absent-state exit0 !== 1.
+3. Selector: partial document groups and manual
+   File: test\operator-state.test.ts
+   Mutation: operator-state.ts prefix refusal condition disabled.
+   Baseline12 pass,mutant12 fail,restored12 pass; partial group1 became
+   ready instead of interrupted_or_inconsistent.
+4. Selector: bound specification, plan, approval and retained handoffs
+   File: test\operator-state.test.ts
+   Mutation: operator-state.ts frozen approval-binding condition disabled.
+   Baseline11 pass,mutant4 fail including parent,restored11 pass;
+   feature/profile/starting-commit cases wrongly became eligible (true !== false).
+5. Selector: guided age uses strict greater-than|Task 8 an aged guided run cannot create work
+   Files: test\operator-state.test.ts test\run-command.test.ts
+   Mutation: operator-state.ts age condition disabled.
+   Baseline2 pass,mutant2 fail,restored2 pass; reader became eligible and
+   "the aged boundary cannot create work" failed with added spec rows/dispatches.
+6. Selector: run-scoped cost totals derive recorded telemetry
+   File: test\operator-state.test.ts
+   Mutation: operator-state.ts agent query run filter AND parameter removed.
+   Baseline1 pass,mutant1 fail,restored1 pass;0.457545 observed instead of
+   selected-row-derived0.30502999999999997.
+
+Every case restored the original Buffer and checked its exact SHA256.
+Before/restored hashes, subsequently confirmed against live source by parent:
+src\cli-args.ts F2F32D6F462D2204153B92469C8110F3C8CD2C36276A9D7E33E84EC516124CDB
+src\cli.ts 0929FE6A406A60DDA51A0DF6A4250E59DF01F05E6C373A1F2B3B600913D19077
+src\operator-state.ts DAEAE8267A2AD8C30DB565A7F68A74D91F20C3FACEADF63352CA7D0D78838623
+The parent's separate run-command.ts proof hash also remains unchanged:
+70F320CB5CCFDEFD1C546C1D3FECC055391FBBDEEB07AA9AEBC9D63B54CE08E2.
+Children were bounded, native Claude launches prohibited by preload, and
+the bypassed age case froze a local Node executor. The source/test mirror,
+fixtures, helpers, logs and proof files under the exact owned directory
+C:\Repositories\AI.Tools\governed-delivery\.claude\sessions\cli-operator-task8-foundation-guards
+were removed. No live source or retained operator target was mutated.
+
+No Task8 matrix or isolated-guard gap remains known. All implementation/test
+files are released; only the combined gate is outstanding for Task8.
+Agent e9e9f2e5-0de8-4b12-8717-bc44b281e41c is running the exact20-file
+combined Node command printed in the plan's Completion gate, followed by
+typecheck/diff check. Parent changes only records during that command.
+Task9 and the separate final npm test/review/completion remain pending.
+
+Task8 complete; Task9 documentation started:
+Agent e9e9f2e5-0de8-4b12-8717-bc44b281e41c returned the exact plan command:
+node --test test\cli-operator.test.ts test\operator-state.test.ts test\run-command.test.ts test\cli.test.ts test\store.test.ts test\migrate.test.ts test\lock.test.ts test\profile.test.ts test\approval.test.ts test\approval-stage.test.ts test\sign-approval.test.ts test\dispatch.test.ts test\handoff.test.ts test\code-review.test.ts test\spec-stage.test.ts test\plan-stage.test.ts test\implementation-stage.test.ts test\verification-stage.test.ts test\code-review-stage.test.ts test\delivery-stage.test.ts
+698 total,697 passed,0 failed/cancelled/todo,1 skipped,562912.07 ms.
+Typecheck and diff check both exited0; no external-key filesystem refusal.
+The agent has been asked to identify the skip from already retained output,
+not rerun. This is the final TARGETED combined gate, not final full npm test.
+Task8 is done in the session database; all six steps and earlier matrix
+obligations are discharged by the recorded actual-stage, schema and guard
+evidence. The plan remains Reconciled pending full completion.
+
+Task9 files: README.md, CLAUDE.md, AGENTS.md, ARCHITECTURE.md.
+README now documents the complete bounded local operator journey, PowerShell
+checkout/target/key variables, actual identity/model requirements, free
+inspection, both consented ranges, external byte-safe export/sign/submit,
+expiry semantics, final evidence/verification limits, terminal proposal export,
+all new command outcomes/envelope fields/snapshot sections, nullable telemetry,
+contention/schema/age/refusal handling, and absent GitHub/general recovery.
+Its version-only config is explicitly not an application-test guarantee.
+Exact nested public types link to their existing exported source contracts.
+
+Architecture edits are deliberately restricted to sections15 and19:
+writer migrations versus read-only exact-current inspection, short snapshots
+before external observations, bounded availability/hot-journal refusal,
+post-consent schema/fingerprint checks, intact durable boundaries, no outer
+retry, separately consented rolled-back delivery continuation, early age but
+no accepted-approval revocation, and separate operator authorities.
+Sequence/deferred/schema/storage fences and checker pins/allowlists unchanged.
+CLAUDE/AGENTS guidance is updated identically; legacy outputs remain explicit.
+
+npm run check:docs and npm run typecheck passed after the initial document
+edit. git --no-pager diff --check passed after prose self-review;
+CLAUDE.md and AGENTS.md were compared byte-for-byte and match.
+HEAD rechecked a8a71d1 on code-review-stage; no commit or spend.
+
+Task9 test ownership:4baa7824-75ce-46d6-8afe-0a8b16ccc8df owns only
+test/cli-operator.test.ts. It will execute the actual README
+"### Inspect without spending" fence from a separate space-containing
+PowerShell invocation directory against a space-containing target, using
+existing fixture native-probe controls, no private signing or provider.
+The new target guard must fail when only a copied README loses --repo $Target,
+then pass after exact restoration. Parent leaves README stable for that proof.
+Task9 final CLI gate, full npm test, independent review and completion remain.
+
+Task8 skipped-case follow-up from retained command output:
+test\implementation-stage.test.ts reports:
+"file symlinks are refused by this OS (Windows without Developer Mode); the junction case covers the guard".
+This is the one skip among698 cases. No new command was run to identify it.
+The OS refusal is the test's reported reason; Developer Mode itself was not
+separately inspected. Agent e9e9f2e5-0de8-4b12-8717-bc44b281e41c is idle.
+
+Task9 documented invocation handoff accepted:
+4baa7824-75ce-46d6-8afe-0a8b16ccc8df released test/cli-operator.test.ts.
+The actual first PowerShell fence under README's named inspection section
+executes from a separate space-containing invocation directory against a
+space-containing target. The test derives CLI help, run identity/counts,
+starting commit/signer, and exact schema version from source/actual fixture
+rows, and asserts canonical output plus unchanged rows/files/index and no
+wrong-target state. An allowlist permits only those free inspection commands;
+the existing preload substitutes the fixed version probe and prohibits model
+dispatch. No signing or provider invocation is used by this new case.
+
+node --test --test-name-pattern='^Task 9 README inspection fence' test\cli-operator.test.ts
+1 passed,0 failed/skipped; typecheck passed. The isolated copy then removed
+--repo $Target only from README's doctor/runs lines. The same command failed
+"README doctor must report ready for canonical target" with target_unavailable
+(test line508 at that revision), then passed after byte-exact restoration.
+Baseline0,mutant1,restored0; final live selected test1/1 and types/diff passed.
+Contributor's63-file source-manifest SHA256:
+55844588a643a1cfd82039862996e2b9f3bede5b86520b99fb252d2387a2aaed
+README before/restored, also confirmed independently by parent against live:
+74eb2ba0407d733e341dd66093ad0fe27b53ed8bd238fc083208ed9ac6cb3acf
+README mutant:
+83fa8e40395cf24564280ecd81df9f5850fffcec324a75046f519b3e46af305f
+The contributor removed its named project-local mirror; live README/source
+were never mutated. No Task9 implementation/document gap remains known.
+
+Remaining gates assigned to e9e9f2e5-0de8-4b12-8717-bc44b281e41c:
+1. node --test test\cli-operator.test.ts
+2. npm test (full, no selectors)
+3. npm run typecheck
+4. npm run check:docs
+5. git --no-pager diff --check
+Execute sequentially, stop on failure, retain each run's own counts/duration
+and actual skip reason. Parent leaves source/tests/README/architecture stable;
+only continuity/evidence records may change. Final review has not started and
+the plan remains Reconciled. No paid run, real signing, commit or cleanup of
+retained operator targets is authorized by these gates.
+
+All nine implementation tasks complete; final regression passed:
+The final sequential handoff from e9e9f2e5-0de8-4b12-8717-bc44b281e41c:
+node --test test\cli-operator.test.ts:
+108 passed,0 failed/cancelled/skipped/todo,464556.76 ms.
+npm test (package script: node --test test/*.test.ts):
+1072 total,1071 passed,0 failed/cancelled/todo,1 skipped,590698.73 ms.
+Skipped case: "a file symlink redirecting the write into the run's design document is refused".
+Reported reason: "file symlinks are refused by this OS (Windows without Developer Mode); the junction case covers the guard".
+No separate OS-setting inspection is claimed.
+npm run typecheck, npm run check:docs, git --no-pager diff --check all exit0.
+The docs checker retains63 historical path warnings; no unrelated history
+was rewritten. There were no external-key filesystem refusals.
+Tasks1-9 are done in session state. The plan remains Reconciled until review.
+
+Fresh independent full-scope review started:
+Agent f1e57d7b-e4f3-4ace-8d23-4927183be5f8, code-review specialist, high
+effort, separate context. Scope is all tracked implementation diffs from
+a8a71d1 plus all eleven new source/test/fixture files, explicitly excluding
+pre-existing planning/analysis inputs as implementation defects.
+The review applies .claude/review-code.md and current architecture/hazards/
+learnings/plan; current recorded completion/native-launch facts outrank stale
+historical checklist wording. No source edits, staging, paid provider, operator
+key access, or retained-target cleanup. Safe bounded disposable reproduction
+only; parent writes the required dated feature-folder review after handoff.
+No review finding or result has arrived yet. Source/tests/README/architecture
+remain stable; parent only updates continuity/completion evidence in parallel.
+Expected artifact: docs/features/cli-operator/2026-09-10-code-review.md.
+The dedicated checklist overrides the generic review filename convention.
+
+Remaining completion: receive review, confirm/dispose of material findings,
+record review/lifecycle outcome, mark plan Implemented only after closure,
+and delete only the twelve named parent scratch files already inventoried
+under this Copilot session's files directory. No directory root deletion,
+commit/push, paid run, actual operator signing, or retained-target cleanup.
+HEAD rechecked a8a71d1 on code-review-stage; earlier input changes preserved.
+
+Independent review initial result and scope correction:
+f1e57d7b-e4f3-4ace-8d23-4927183be5f8 reports no significant findings after
+runtime/caller tracing and state-free CLI probes. Its first report claims
+all new files read; the requested coverage clarification corrects that claim:
+the two largest new suites, cli-operator.test.ts and operator-state.test.ts,
+were sampled. Tracked test and four documentation diffs are now explicitly
+reviewed, but sampling does not meet review-code's full untracked-file rule.
+The parent returned only those unread test portions for completion; no
+runtime re-review, broad-suite rerun, source mutation or implementation fix.
+The review remains in_progress and the plan Reconciled until that scope closes.
+
+The reviewer also withdraws its unsupported universal claim that residual
+risk can only be over-refusal. Zero reported findings is finite review evidence,
+not proof that every unsafe path is absent. Hazard6 and exact CLI argv/outcomes
+are now accounted for; help skips missing-required enforcement but still
+validates provided values, so the final report must not claim otherwise.
+Its first probe loop shadowed PowerShell's automatic $args variable; corrected
+probes use $parts/direct calls. That was instrumentation error, not a CLI bug.
+Global lessons now cover automatic-variable collisions and exhaustive
+untracked-file/read-range coverage; no new product hazard or runtime change.
+
+Task8 direct regression handoff accepted:
+Agent e9e9f2e5-0de8-4b12-8717-bc44b281e41c returned the exact assigned
+node --test test\run-command.test.ts test\code-review-stage.test.ts test\delivery-stage.test.ts
+with105 passed,0 failed/cancelled/skipped/todo,270964.10 ms.
+npm run typecheck and git --no-pager diff --check both exited0.
+The named Task8 guided cases reside in run-command.test.ts; the contributor's
+prose misattributed them to the two stage suites, so only its aggregate
+command/count is retained as evidence. No individual-suite count is claimed.
+The agent is idle/released; no source/test edit or production rollback.
+Task8 still awaits the actual-CLI and recorded-presentation/source-guard
+handoffs plus its combined gate. Task9/review/completion remain pending.
+
+Final independent review closure and implementation disposition (2026-09-10):
+This final block supersedes the pending-work statements in the chronological
+handoffs above. All nine implementation tasks and their final regression
+requirements are complete; no material implementation finding remains.
+
+Reviewer f1e57d7b-e4f3-4ace-8d23-4927183be5f8 confirms complete reads of
+test/operator-state.test.ts lines1-951 and test/cli-operator.test.ts
+lines1-2823 through EOF. Together with its earlier runtime, tracked-test,
+four-document and other-new-file reads, the full assigned scope is closed.
+Outcome:0 confirmed,0 plausible findings. No runtime correction is proposed.
+The host reports a separate high-effort code-review agent, model
+claude-opus-4.8; this is not a governed configured_standalone audit record
+or proof of independence. The final artifact records that distinction,
+all18 hazard dispositions and the corrected finite-risk statement.
+
+Reviewer state-free command: node src\cli.ts <argv>, from the checkout root.
+Exit0: --help; help; help status; doctor --run 1 --help;
+doctor --run 5 --help.
+Exit2: empty argv; status; doctor --slug a --run 1; runs --limit 0;
+frobnicate; status --run abc; run; doctor --run abc --help;
+doctor --slug Bad --help.
+Help skips missing-required and exclusivity enforcement, not validation
+of provided values. The corrected table excludes the first $args-shadowed
+PowerShell probe observations. No populated-state or paid journey is rerun
+by the reviewer; it reads the already retained implementation evidence.
+
+Created docs/features/cli-operator/2026-09-10-code-review.md initially open,
+then closed it as reconciled in a separate implementation disposition.
+Counts:0 accepted defects,0 rejected defects,0 deferred defects,0 open.
+Advanced docs/features/cli-operator/plan.md to Implemented and added its
+bounded implementation/deviation/deferred-scope note without rewriting
+historical assumptions. Updated canonical project-learnings.md in place.
+No new tasks.md, governed-state edits, schema/pin changes or runtime fixes.
+
+Bounded cleanup complete after retaining evidence in this record:
+Removed only these twelve files inside
+C:\Users\tamezs\.copilot\session-state\d2b81092-c79b-48b4-b226-4be31cf53946\files:
+cli-guided-consent-baseline.log
+cli-guided-consent-broken.log
+cli-guided-consent-restored.log
+cli-guided-failed-group-retry-baseline.log
+cli-guided-failed-group-retry-broken.log
+cli-guided-failed-group-retry-restored.log
+cli-guided-stdout-progress-baseline.log
+cli-guided-stdout-progress-broken.log
+cli-guided-stdout-progress-restored.log
+cli-guided-mutations.mjs
+cli-task8-doc-check.log
+cli-task9-doc-check.log
+Each explicit path was inspected as a file before removal and confirmed
+absent afterward. No recursive removal, session-directory removal or retained
+operator-target cleanup. All contributor experiment mirrors were already
+removed by their owners. No production rollback is necessary.
+
+Before lifecycle edits, live hashes match the previously retained values for
+src/cli-args.ts, src/cli.ts, src/operator-state.ts, src/run-command.ts and
+README.md. Source/tests/README/architecture remain unchanged through review.
+Branch/HEAD rechecked code-review-stage/a8a71d1; all work remains uncommitted
+and prior input changes remain preserved. No paid provider call, real
+operator signing, commit, push or merge. Final documentation/lifecycle
+checks follow this record update; no second broad test run is necessary.
+
+Final lifecycle gate completed:
+npm run check:docs -> exit0, doc-check: clean; historical path warnings remain.
+npm run typecheck -> exit0.
+git --no-pager diff --check -> exit0.
+Canonical Current state and the new review record were read back after edits.
+The remaining change is this append-only completion evidence, not runtime,
+test or Markdown behavior. No implementation work remains; commit/push,
+another feature or paid acceptance needs separate operator authorization.
+
+Explicit follow-up review requested (2026-09-10, 10:12 operator turn):
+The operator invokes review-code after implementation completion. This is
+a new high-effort assessment, not a re-opening of implementation authority.
+Rechecked HEAD a8a71d1 on code-review-stage; the tracked/untracked file
+inventory matches the completed work plus its preserved earlier inputs.
+Review scope is git diff HEAD plus untracked contents. Historical planning,
+analysis and evidence records provide context rather than fresh defects.
+The existing reconciled code review remains intact; the new report uses
+docs/features/cli-operator/2026-09-10-code-review-2.md and remains open.
+No source/test fix, paid BuildWorks run, real signing, commit or retained-target
+cleanup. A fresh separate-context specialist owns the substantive review;
+the parent records results and performs the final document/lifecycle checks.
+
+Follow-up review result (fresh agent b1ea346f-7060-4042-aade-44bc953a1277):
+Host-reported code-review specialist, gpt-5.5, high effort, long separate
+context, synchronous invocation. It reports complete tracked-hunk and full
+untracked-file coverage against the current git diff HEAD, plan, prior
+reviews, instructions and all18 hazards. Result:0 confirmed,0 plausible
+findings; no source or test edit, fresh defect reproduction or guard mutation.
+
+Exact fresh targeted command:
+node --test --test-name-pattern='target and intake Git observations|worktree observations preserve index bytes|direct run fixtures never consult|Task 8 failed delivery finalization' test\cli-operator.test.ts test\operator-state.test.ts test\run-command.test.ts
+Exit0;9 passed,0 failed/cancelled/skipped/todo;38963.8972 ms.
+These observations reject candidate index-refresh, fixture-key-fallback
+and automatic delivery-retry defects. Remaining candidate dispositions
+derive from source trace and explicitly labelled earlier evidence.
+The process emits DEP0190; no traced origin is retained, so the parent
+does not repeat the unsupported fixture-specific attribution in the handoff.
+
+Coverage metadata correction:
+The agent reports2745/909 lines for cli-operator/operator-state test files.
+Parent Get-Content.Count reports2823/951 physical lines; Measure-Object -Line
+reports2745/909 because it skips blanks. The parent reads physical tails
+2735-2823 and901-951 through EOF, including shared direct probing/readiness
+refusals and checked-subset/fresh-boundary tests, with no finding.
+An attempted clarifying message is rejected because sync agents do not
+accept write_agent follow-ups even when listed idle; no new reviewer is
+launched merely to repeat those reads. The scope is released to the parent.
+
+Post-review hashes of src/cli-args.ts, src/cli.ts, src/operator-state.ts,
+src/run-command.ts and README.md match their retained baseline values.
+git --no-pager diff --check exits0. The shared parent
+node_modules/.cli-operator-tests exists with zero entries; it is preserved,
+not recursively removed or misreported as a running process.
+
+Created docs/features/cli-operator/2026-09-10-code-review-2.md with Status
+open, explicit full inventory, all18 hazard dispositions, candidate evidence,
+fresh-versus-prior checks, suppressions and finite-assurance limitations.
+It becomes the latest assessment without overwriting the original reconciled
+review or changing the plan's Implemented status. Canonical Current state
+now records this result. No source correction, paid BuildWorks run, real
+operator signing, GitHub call, commit, push or retained-target cleanup.
+Final documentation/type checks follow the report and continuity update.
+
+Follow-up review final gates:
+npm run check:docs exits0, doc-check: clean,63 path warnings.
+npm run typecheck exits0; git --no-pager diff --check exits0.
+The new review and canonical Current state are read back after edits.
+The existing global coverage lesson now explicitly distinguishes physical
+EOF from PowerShell's nonempty-line count; no new project hazard is invented.
+Final result remains0 confirmed,0 plausible findings. The new report stays
+open, the earlier report stays reconciled, and the plan stays Implemented.
+Only review/continuity/evidence records and that general lesson change in
+this follow-up; implementation and retained operator evidence remain intact.
+
+Explicit context compaction (2026-09-10, 10:45 operator turn):
+Read the complete canonical project-learnings.md, trimmed duplicate and
+resolved narrative to342 physical lines, and retained one Current state
+and one next action. Historical costs, provenance, retained target paths,
+decisions, failure mechanisms and links to repository evidence remain there.
+No knowledge moves solely into machine-local memory and no competing
+learning file is created. Existing CLAUDE/AGENTS session-start pointers
+remain correct and unchanged.
+
+Rechecked branch code-review-stage, HEAD a8a71d1, with the uncommitted
+implementation and earlier inputs intact. Runtime overview reports no active
+shell sessions and six idle child agents; no agent or process is terminated.
+The first review remains reconciled, the later zero-finding review remains
+open, and the plan remains Implemented. Compaction grants no disposition,
+implementation, signing, spending, commit or retained-target cleanup authority.
+
+Read back the compacted record in full. npm run check:docs exits0 with63
+path warnings; npm run typecheck and git --no-pager diff --check exit0.
+Only canonical continuity and this append-only execution record change.
+Resume point: no code correction is proposed; await the operator's next
+decision without repeating the completed review or spending.
+
+Commit authorization (2026-09-10, 10:51 operator turn):
+The operator explicitly requests committing the changes. Include the reviewed
+CLI implementation/tests, operator documentation, reconciled planning inputs,
+both code reviews and canonical session evidence together on code-review-stage.
+The inspected parent is a8a71d1; Git records the resulting commit identifier.
+Current continuity now distinguishes this authorization from the earlier
+uncommitted checkpoints. The latest review remains open with zero findings;
+no review reconciliation, push, paid acceptance, real signing, merge or
+retained-target cleanup is implied.

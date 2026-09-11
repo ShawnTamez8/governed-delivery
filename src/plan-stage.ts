@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import type { ExecutorDefinition } from "./executor.ts";
 import { requireRunInProgress, type CanonicalFindingRow, type Store } from "./store.ts";
 import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
@@ -166,7 +167,7 @@ export async function runPlanStage(
   const specPath = last.output_ref;
   let specContent: string;
   try {
-    specContent = readFileSync(specPath, "utf8");
+    specContent = readFileSync(resolve(rootDir, specPath), "utf8");
   } catch (err) {
     return { ok: false, reason: `cannot read approved spec ${specPath}: ${(err as Error).message}` };
   }

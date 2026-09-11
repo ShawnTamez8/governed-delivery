@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import * as promptBuilders from "../src/prompts.ts";
 import {
   buildCodeReviewPrompt,
   buildCodeReviewRemediationPrompt,
@@ -26,7 +29,18 @@ import { SPEC_REVIEWER_TRACEABILITY } from "../src/agents/spec-reviewer-traceabi
 import { validatePanelRequest } from "../src/select.ts";
 import { validateSpecDoc } from "../src/spec-doc.ts";
 import { validatePlanDoc } from "../src/plan-doc.ts";
-import { validateAgentResult } from "../src/agent-result.ts";
+import { validateAgentResult, type AgentResult } from "../src/agent-result.ts";
+import { CLAUDE_CODE } from "../src/executor.ts";
+import { parseEnvelope } from "../src/harness.ts";
+import { validateSelfCritique } from "../src/self-critique.ts";
+import {
+  planNormativeNodes,
+  specNormativeNodes,
+  validateReconciliation,
+  validateReviewerReports,
+} from "../src/reconciliation.ts";
+import { validateCodeReviewReports } from "../src/code-review.ts";
+import { normalizeText, sha256Hex } from "../src/canonical.ts";
 
 // Hazard 3: every constrained field the prompts request must state its
 // constraint in the prompt source. This test reads the file, never the
@@ -951,4 +965,251 @@ test("the remediation prompt carries every report and advertises a valid patch r
   assert.ok(advertised);
   const result = validateAgentResult(IMPLEMENTER.id, JSON.parse(advertised![1]!));
   assert.equal(result.ok, true, result.ok ? "" : result.reason);
+});
+
+const CLI_ROUTER = resolve("test", "fixtures", "harness", "emit-cli-run.mjs");
+const ROUTE_PREFIXES = {
+  SPEC_AUTHOR_PROMPT_PREFIX: promptBuilders.SPEC_AUTHOR_PROMPT_PREFIX,
+  SPEC_REVIEW_PROMPT_PREFIX: promptBuilders.SPEC_REVIEW_PROMPT_PREFIX,
+  PLAN_AUTHOR_PROMPT_PREFIX: promptBuilders.PLAN_AUTHOR_PROMPT_PREFIX,
+  PLAN_REVIEW_PROMPT_PREFIX: promptBuilders.PLAN_REVIEW_PROMPT_PREFIX,
+  IMPLEMENTATION_PROMPT_PREFIX: promptBuilders.IMPLEMENTATION_PROMPT_PREFIX,
+  CODE_REVIEW_PROMPT_PREFIX: promptBuilders.CODE_REVIEW_PROMPT_PREFIX,
+  CODE_REVIEW_REMEDIATION_PROMPT_PREFIX: promptBuilders.CODE_REVIEW_REMEDIATION_PROMPT_PREFIX,
+};
+interface PromptRoute {
+  name: string;
+  prefix: string;
+  emitter: string;
+}
+const router: {
+  PROMPT_ROUTES: PromptRoute[];
+  selectPromptRoute(prompt: string): PromptRoute;
+} = await import(pathToFileURL(CLI_ROUTER).href);
+
+function routingPrompts(document: string) {
+  const hash = "a".repeat(64);
+  const base = "b".repeat(40);
+  const scope = ["src/a.ts"];
+  return [
+    { builder: "buildSpecAuthorPrompt", prefix: "SPEC_AUTHOR_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecAuthorPrompt(SPEC_AUTHOR, document) },
+    { builder: "buildSpecSelfCritiquePrompt", prefix: "SPEC_AUTHOR_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecSelfCritiquePrompt(SPEC_AUTHOR, document, document, PANEL) },
+    { builder: "buildSpecReviewPrompt", prefix: "SPEC_REVIEW_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecReviewPrompt(SPEC_REVIEWER_TRACEABILITY, document, document) },
+    { builder: "buildSpecReconcilePrompt", prefix: "SPEC_AUTHOR_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecReconcilePrompt(SPEC_AUTHOR, document, document, PAIR) },
+    { builder: "buildPlanAuthorPrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanAuthorPrompt(PLAN_AUTHOR, document, hash, scope) },
+    { builder: "buildPlanSelfCritiquePrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanSelfCritiquePrompt(PLAN_AUTHOR, document, document, hash, scope, PANEL) },
+    { builder: "buildPlanReviewPrompt", prefix: "PLAN_REVIEW_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanReviewPrompt(SPEC_REVIEWER_TRACEABILITY, document, document) },
+    { builder: "buildPlanReconcilePrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanReconcilePrompt(PLAN_AUTHOR, document, document, hash, scope, PAIR) },
+    { builder: "buildImplementationAuthorPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, document, document, scope, base) },
+    { builder: "buildCodeReviewPrompt", prefix: "CODE_REVIEW_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, document, document, scope, document, base) },
+    { builder: "buildCodeReviewRemediationPrompt", prefix: "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, document, document, scope, base, scope, document, []) },
+  ];
+}
+
+test("CLI fixture routes every builder by its shared leading role, not embedded roles or document wrapping", () => {
+  assert.deepEqual(
+    routingPrompts("").map(({ builder }) => builder).sort(),
+    Object.keys(promptBuilders).filter((name) => name.startsWith("build")).sort(),
+    "every exported builder must have a routing assertion"
+  );
+  assert.deepEqual(
+    Object.fromEntries(router.PROMPT_ROUTES.map(({ name, prefix }) => [name, prefix])),
+    ROUTE_PREFIXES
+  );
+  const embedded = Object.values(ROUTE_PREFIXES).join("\n");
+  for (const document of ["# Ordinary input\nWrapped\nparagraph.", `# Quoted roles\r\n\`\`\`\r\n${embedded}\r\n\`\`\`\r\n🌙\r\n`]) {
+    for (const entry of routingPrompts(document)) {
+      const route = router.selectPromptRoute(entry.prompt);
+      assert.equal(route.name, entry.prefix, entry.builder);
+      assert.equal(route.emitter, entry.emitter, entry.builder);
+      assert.ok(entry.prompt.startsWith(ROUTE_PREFIXES[entry.prefix as keyof typeof ROUTE_PREFIXES]));
+    }
+  }
+});
+
+test("CLI fixture refuses embedded-only and ambiguous roles with complete marker diagnostics and no prompt content", () => {
+  const privateText = "PRIVATE-DOCUMENT-MUST-NOT-APPEAR";
+  function refused(prompt: string, count: number) {
+    assert.throws(() => router.selectPromptRoute(prompt), (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.ok(error.message.includes(`match count ${count}`));
+      for (const { name, prefix } of router.PROMPT_ROUTES) {
+        assert.ok(error.message.includes(`${name}=${JSON.stringify(prefix)}`), name);
+      }
+      assert.ok(!error.message.includes(privateText));
+      return true;
+    });
+  }
+  refused(`${privateText}\n${Object.values(ROUTE_PREFIXES).join("\n")}`, 0);
+  refused(` ${promptBuilders.SPEC_AUTHOR_PROMPT_PREFIX}\n${privateText}`, 0);
+  const duplicate = { ...router.PROMPT_ROUTES[0]!, name: "DUPLICATE_SPEC_PREFIX" };
+  router.PROMPT_ROUTES.push(duplicate);
+  try {
+    refused(`${promptBuilders.SPEC_AUTHOR_PROMPT_PREFIX}\n${privateText}`, 2);
+  } finally {
+    assert.equal(router.PROMPT_ROUTES.pop(), duplicate);
+  }
+  const child = spawnSync(process.execPath, [CLI_ROUTER], { input: privateText, encoding: "utf8" });
+  assert.equal(child.status, 1);
+  assert.equal(child.stdout, "");
+  assert.match(child.stderr, /match count 0/);
+  assert.ok(!child.stderr.includes(privateText));
+  for (const [name, prefix] of Object.entries(ROUTE_PREFIXES)) {
+    assert.ok(child.stderr.includes(`${name}=${JSON.stringify(prefix)}`), name);
+  }
+});
+
+test("CLI fixture directly forwards exact stdin bytes to every selected emitter and preserves child exit status", () => {
+  const mirror = mkdtempSync(join(process.cwd(), ".cli-router-bytes-"));
+  try {
+    const harness = join(mirror, "test", "fixtures", "harness");
+    mkdirSync(harness, { recursive: true });
+    mkdirSync(join(mirror, "src"));
+    copyFileSync(resolve("src", "prompts.ts"), join(mirror, "src", "prompts.ts"));
+    const fixture = join(harness, "emit-cli-run.mjs");
+    copyFileSync(CLI_ROUTER, fixture);
+    for (const emitter of new Set(router.PROMPT_ROUTES.map((route) => route.emitter))) {
+      writeFileSync(join(harness, emitter), 'import { readFileSync } from "node:fs"; process.stdout.write(readFileSync(0)); process.stderr.write("child stderr"); process.exitCode = 7;\n');
+    }
+    for (const { builder, prompt } of routingPrompts("# Wrapped\r\nUTF-8 🌙\r\n")) {
+      const input = Buffer.concat([Buffer.from(prompt), Buffer.from([0, 255, 13, 10])]);
+      const child = spawnSync(process.execPath, [fixture], { input });
+      assert.equal(child.status, 7, child.stderr.toString());
+      assert.deepEqual(child.stdout, input, `${builder}: router must forward original bytes, not decoded text`);
+      assert.equal(child.stderr.toString(), "child stderr");
+    }
+  } finally {
+    rmSync(mirror, { recursive: true, force: true });
+  }
+});
+
+function runRouter(cwd: string, prompt: string, agentId: string, args: string[] = []): AgentResult {
+  const child = spawnSync(process.execPath, [CLI_ROUTER, ...args, "--model", "fixture-model"], {
+    cwd, input: prompt, encoding: "utf8",
+  });
+  assert.equal(child.status, 0, child.stderr);
+  const envelope = parseEnvelope(CLAUDE_CODE, child.stdout);
+  const result = validateAgentResult(agentId, JSON.parse(envelope.resultText));
+  assert.ok(result.ok, result.ok ? "" : result.reason);
+  return result.value;
+}
+
+function proposedChanges(result: AgentResult): Record<string, unknown> {
+  assert.equal(result.status, "proposed");
+  assert.ok(result.proposedContentChanges && typeof result.proposedContentChanges === "object");
+  return result.proposedContentChanges as Record<string, unknown>;
+}
+
+test("CLI fixture composes existing emitters for all builder families with receiving-schema validation", () => {
+  const root = mkdtempSync(join(process.cwd(), ".cli-router-schema-"));
+  try {
+    writeFileSync(join(root, "base.txt"), "worktree marker\n");
+    const design = "# design\ndesign\n";
+    const specResult = runRouter(root, buildSpecAuthorPrompt(SPEC_AUTHOR, design), SPEC_AUTHOR.id);
+    const specText = proposedChanges(specResult).spec;
+    assert.equal(typeof specText, "string");
+    const spec = validateSpecDoc(specText as string);
+    assert.ok(spec.ok, spec.ok ? "" : spec.reason);
+    const scope = spec.value.declaredArtifacts;
+    const specHash = sha256Hex(normalizeText(specText as string));
+    const planResult = runRouter(root, buildPlanAuthorPrompt(PLAN_AUTHOR, specText as string, specHash, scope), PLAN_AUTHOR.id);
+    const planText = proposedChanges(planResult).plan;
+    assert.equal(typeof planText, "string");
+    const plan = validatePlanDoc(planText as string);
+    assert.ok(plan.ok, plan.ok ? "" : plan.reason);
+    assert.equal(plan.value.planFor, specHash);
+
+    for (const kind of ["spec", "plan"] as const) {
+      const agent = kind === "spec" ? SPEC_AUTHOR : PLAN_AUTHOR;
+      const prompt = kind === "spec"
+        ? buildSpecSelfCritiquePrompt(agent, design, specText as string, PANEL)
+        : buildPlanSelfCritiquePrompt(agent, specText as string, planText as string, specHash, scope, PANEL);
+      const critique = validateSelfCritique(proposedChanges(runRouter(root, prompt, agent.id)).selfCritique);
+      assert.ok(critique.ok, critique.ok ? "" : critique.reason);
+      const artifact = kind === "spec" ? validateSpecDoc(critique.value.artifact) : validatePlanDoc(critique.value.artifact);
+      assert.ok(artifact.ok, artifact.ok ? "" : artifact.reason);
+
+      const reviewer = SPEC_REVIEWER_TRACEABILITY;
+      const reviewPrompt = kind === "spec"
+        ? buildSpecReviewPrompt(reviewer, design, specText as string)
+        : buildPlanReviewPrompt(reviewer, planText as string, specText as string);
+      const review = validateReviewerReports(proposedChanges(runRouter(root, reviewPrompt, reviewer.id)).findings, {
+        agentId: reviewer.id, upstreamPrefix: kind === "spec" ? "upstream:design:" : "upstream:specification:",
+      });
+      assert.ok(review.ok, review.ok ? "" : review.reason);
+      const findings = review.value.map((report, index) => ({
+        findingId: index + 1, reports: [{ reviewerId: reviewer.id, ...report }],
+      }));
+      const reconciliationPrompt = kind === "spec"
+        ? buildSpecReconcilePrompt(agent, design, specText as string, findings)
+        : buildPlanReconcilePrompt(agent, specText as string, planText as string, specHash, scope, findings);
+      const reconciled = proposedChanges(runRouter(root, reconciliationPrompt, agent.id));
+      const revisedText = reconciled[kind];
+      assert.equal(typeof revisedText, "string");
+      const revisedSpec = validateSpecDoc(kind === "spec" ? revisedText as string : specText as string);
+      const revisedPlan = validatePlanDoc(kind === "plan" ? revisedText as string : planText as string);
+      assert.ok(revisedSpec.ok, revisedSpec.ok ? "" : revisedSpec.reason);
+      assert.ok(revisedPlan.ok, revisedPlan.ok ? "" : revisedPlan.reason);
+      const decisions = validateReconciliation(reconciled.decisions, {
+        canonicalFindingIds: findings.map(({ findingId }) => findingId),
+        governingSource: kind === "spec" ? "design" : "specification",
+        governingText: kind === "spec" ? design : specText as string,
+        beforeNormativeNodes: kind === "spec" ? specNormativeNodes(spec.value) : planNormativeNodes(plan.value),
+        afterNormativeNodes: kind === "spec" ? specNormativeNodes(revisedSpec.value) : planNormativeNodes(revisedPlan.value),
+      });
+      assert.ok(decisions.ok, decisions.ok ? "" : decisions.reason);
+      assert.deepEqual(decisions.value.conversions, []);
+      assert.deepEqual(decisions.value.unclaimedNodes, []);
+      assert.deepEqual(decisions.value.unclaimedRemovals, []);
+    }
+
+    const base = "b".repeat(40);
+    const implementationPrompt = buildImplementationAuthorPrompt(IMPLEMENTER, planText as string, specText as string, scope, base);
+    const implemented = runRouter(root, implementationPrompt, IMPLEMENTER.id);
+    assert.equal(implemented.status, "proposed");
+    const patches = implemented.proposedPatches!;
+    assert.deepEqual(patches.flatMap((patch) => patch.files.map((file) => file.path)), scope);
+    for (const patch of patches) {
+      assert.equal(patch.baseCommit, base);
+      for (const file of patch.files) {
+        assert.equal(file.action, "add");
+        assert.equal(typeof file.content, "string");
+        const path = join(root, file.path);
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, file.content!);
+      }
+    }
+    assert.equal(runRouter(root, implementationPrompt, IMPLEMENTER.id, ["--implementation-mode", "non-proposed"]).status, "failed");
+    assert.equal(runRouter(root, implementationPrompt, IMPLEMENTER.id, ["--implementation-mode", "base-mismatch"]).proposedPatches![0]!.baseCommit, "0".repeat(40));
+
+    for (const mode of ["ok", "high", "low", "high-then-clean"]) {
+      for (const reviewer of [CODE_REVIEWER_CORRECTNESS, CODE_REVIEWER_SECURITY]) {
+        const prompt = buildCodeReviewPrompt(reviewer, specText as string, planText as string, scope, "", base);
+        const result = runRouter(root, prompt, reviewer.id, ["--code-review-mode", mode]);
+        const reports = validateReviewerReports(proposedChanges(result).findings, { agentId: reviewer.id, upstreamPrefix: "upstream:plan:" });
+        assert.ok(reports.ok, reports.ok ? "" : reports.reason);
+        assert.equal(validateCodeReviewReports(reports.value, scope), null);
+        const reportingSeat = mode === "high" ? CODE_REVIEWER_SECURITY : CODE_REVIEWER_CORRECTNESS;
+        assert.equal(reports.value.length, mode !== "ok" && reviewer === reportingSeat ? 1 : 0);
+        if (reports.value.length) assert.equal(reports.value[0]!.severity, mode === "low" ? "low" : "high");
+      }
+    }
+    const remediationPrompt = buildCodeReviewRemediationPrompt(IMPLEMENTER, specText as string, planText as string, scope, base, scope, "", []);
+    const remediated = runRouter(root, remediationPrompt, IMPLEMENTER.id, ["--code-review-mode", "high-then-clean"]);
+    assert.equal(remediated.proposedPatches![0]!.baseCommit, base);
+    const repaired = remediated.proposedPatches![0]!.files[0]!;
+    assert.equal(repaired.path, scope[0]);
+    assert.equal(repaired.action, "modify");
+    writeFileSync(join(root, repaired.path), repaired.content!);
+    const after = runRouter(root, buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, specText as string, planText as string, scope, "", base), CODE_REVIEWER_CORRECTNESS.id, ["--code-review-mode", "high-then-clean"]);
+    assert.deepEqual(proposedChanges(after).findings, []);
+    for (const mode of ["remediation-empty", "remediation-wrong-base", "remediation-outside-scope"]) {
+      const result = runRouter(root, remediationPrompt, IMPLEMENTER.id, ["--code-review-mode", mode]);
+      if (mode === "remediation-empty") assert.deepEqual(result.proposedPatches, []);
+      if (mode === "remediation-wrong-base") assert.equal(result.proposedPatches![0]!.baseCommit, "0".repeat(40));
+      if (mode === "remediation-outside-scope") assert.ok(!scope.includes(result.proposedPatches![0]!.files[0]!.path));
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

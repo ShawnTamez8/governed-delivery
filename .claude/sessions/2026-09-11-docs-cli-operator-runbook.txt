@@ -1,0 +1,61 @@
+Requested outcome: Create a shared start-to-finish CLI runbook for all project
+users, following the conversational walkthrough.
+
+Baseline: code-review-stage, HEAD 86af2c0. Existing changes to README.md,
+.claude/sessions/project-learnings.md, docs/proposals/README.md, and untracked
+docs/proposals/cc-switch-review.md are preserved. Prior operator implementation
+evidence is in 2026-09-10-cli-operator-implementation.txt; no new paid evidence
+is required or authorized.
+
+Success criteria: A discoverable, repository-local runbook with portable
+user-selected paths, concrete setup/approval/delivery steps, correct consent
+and key boundaries, cost/evidence limitations, and actionable troubleshooting.
+Examples must match current CLI/configuration/snapshot contracts without
+executing signing, provider dispatches, or writes to operator targets.
+
+Approved approach: Add docs/runbooks/cli-operator.md, link it from the existing
+README operator guide, and register it in doc-check's CURRENT_DOCS. Retain the
+README's detailed reference rather than rewrite or move existing material.
+No runtime, schema, stage, policy, provider, or historical document changes.
+
+Material assumptions: PowerShell on Windows is the supported worked example,
+not a claim that the commands run unchanged in other shells. Operators obtain
+the checkout and provider authorization independently, choose project-specific
+verification, and retain private keys outside every repository.
+
+Files changed: docs/runbooks/cli-operator.md; README.md (runbook link only on
+top of pre-existing changes); scripts/doc-check.mjs (current-tier registration);
+this session record.
+
+Validation performed: npm run check:docs passed with zero errors and 63
+pre-existing historical path warnings; npm run typecheck and git diff --check
+passed. PowerShell's parser accepted all 18 PowerShell blocks without executing
+them; all 13 local Markdown links resolved. The actual parseGovernedConfig
+accepted the YAML example, and parseArguments accepted all 17 extracted CLI
+invocations with representative values substituted for their documented
+variables, including paths with spaces. CURRENT_DOCS registration was asserted.
+
+Guard evidence: In a disposable mirror beneath the session workspace, the
+new runbook had zero path errors, then one named error after a deliberately
+absent src path was appended, then zero after restoring the mirror's input.
+Other mirror source references were intentionally not copied; assertions
+selected only this runbook's findings. The original file was never mutated;
+its SHA-256 remained
+1630f0470e943b69cd13579ad78d5800feafcfacfa709318e79a167b69487c44.
+The mirror and temporary validation script were removed.
+
+Final scoped review: Read the complete new document and the tracked diff.
+README's earlier run-evidence edits and every unrelated input remain intact.
+Only the runbook-link paragraph was added to README for this request.
+
+Current result: Complete. Shared runbook saved, linked from README, and registered
+as current documentation. It covers new/existing targets, human decisions,
+meaningful verification, signed approval, delivery/cost/evidence inspection,
+integration boundaries, retention, repeat use, troubleshooting, and escalation.
+Remaining limits: No new end-to-end provider run, signing, target setup, or
+application execution was performed. Examples are grounded in the current
+contracts and retained prior workflow evidence, not a new paid-run claim.
+No runtime behavior, schema, stage, or policy changed.
+User decisions: Author a shared runbook; no commit or push requested.
+Rollback status: No rollback performed. Reverse only the added files, README
+link paragraph, and CURRENT_DOCS entry; preserve all pre-existing changes.

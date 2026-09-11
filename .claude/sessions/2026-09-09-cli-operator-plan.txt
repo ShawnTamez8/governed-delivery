@@ -1,0 +1,132 @@
+Requested outcome: Write a bounded local CLI implementation plan from the
+reconciled 2026-09-09-docs-cli-operator-analysis.md; do not implement it.
+
+Baseline: HEAD a8a71d1 on code-review-stage; Node v26.4.0, Windows.
+Pre-existing modified project-learnings.md and three untracked analysis/review
+files are preserved. No run, key, target, policy, or runtime is changed.
+
+Success criteria: All 18 CLI acceptance criteria mapped to executable tasks;
+exact command/output/consent and safe-boundary contracts; repository-grounded
+file map and blockers; one same-agent complete self-review with material
+findings reconciled; documentation completion gate.
+
+Approved approach: Full write-plan workflow, local inspection plus safe
+existing-stage execution. Feature slug cli-operator is derived.
+
+Material assumptions/decisions: Explicit local target and run IDs; no GitHub,
+general crash recovery, new stage, automatic signing/export, hard dollar cap,
+or distribution packaging. Checkout-local absolute Node invocation on Windows.
+Approval pause exit 3. Existing low-level output and raw signing bytes retained.
+Planning authorization does not authorize implementation or paid dispatch.
+
+Files changed: docs/features/cli-operator/plan.md (new authoritative plan);
+this task record (new). Existing analysis and learning history remain untouched.
+
+Grounding: Read the reconciled analysis, full architecture/hazards, selected
+project learnings, applicable instructions, CLI, relevant Store/migration/lock,
+profile/config, approval/signer, tests, and canonical driver's call references.
+Separate read-only exploration completed the large stage-boundary evidence
+trace; its suggested broad preflight extraction was narrowed to shared record
+parsers, and source inspection corrected its callback/evidence assumptions.
+It was not the plan's mandatory self-review.
+
+Baseline validation: check:docs returned 0 errors and 63 existing historical
+path warnings; typecheck passed. An initial shell pipeline tried to parse npm's
+banner as JSON; using npm --silent corrected the reporting command, with no
+repository edit or checker failure.
+
+Result: Plan complete, Status Proposed. Nine tasks cover all 18 criteria and
+bound CLI arguments, targeting, inspection, safe continuation, consent,
+approval transport, progress/cost/evidence presentation, and Windows use.
+
+Self-review: Exactly one same-agent end-to-end pass after reopening the saved
+complete draft and governing analysis. Six material findings reconciled once:
+task/fixture ordering, filename-only false interruption detection, historical
+versus latest worktree comparisons, read-only Git observation semantics,
+machine result/error fields, and parser blast-radius/test coverage.
+Zero unresolved blocking findings. No separate review artifact was created.
+
+Final validation: check:docs exited 0; typecheck passed; git diff --check passed.
+A targeted structure scan confirmed nine task headings, prerequisite ordering,
+all 18 criterion mappings, relocated fixture setup, and no task checkboxes or
+prohibited placeholders. Existing input changes were preserved.
+
+Remaining issues: Implementation is not authorized or started. The plan's
+runtime behavior and its proposed tests have not been executed. Paid runs,
+GitHub integration, general recovery, and distribution remain outside scope.
+Next action requires operator authorization to implement the proposed plan.
+Rollback status: No rollback required; new planning files can be removed
+without touching existing work. No runtime/data migration or paid operation.
+
+Review reconciliation (2026-09-09)
+
+Requested outcome: Ground the separate CLI operator review in project
+learnings, architecture, hazards, AGENTS, source, and existing evidence;
+validate every finding and reconcile the governing plan.
+
+Baseline: The existing plan is Proposed and the separate review is open.
+The plan/review directory and this task record are untracked. The modified
+project learning record and earlier analysis/review files remain input work.
+The original planning result above remains historical, not current status.
+
+Success criteria: Every one of 22 findings has an evidence-backed disposition;
+accepted changes reach dependent plan contracts/tasks; operator decisions
+control material scope choices; the review stamp and plan lifecycle agree.
+
+Approved approach: Document-only reconciliation through reconcile-findings
+and canonical doc-check. No implementation, paid run, signing, migration,
+retained-target cleanup, commit, or update to the historical source analysis.
+
+Grounding: The shared probe's real caller is dispatchOnce; audit appends use
+Store.transaction. SQLite lockingv3 section 4.1 documents the write requirement
+for hot-journal rollback. The supported-runtime killed-writer experiment is a
+new implementation acceptance case, not an experiment performed here.
+The review's stdout-newline claim contradicts process.stdout.write in cli.ts
+and the existing no-trailing-newline CLI assertion. AGENTS explicitly names
+current feature directories as bootstrap work, so its generated-design layout
+does not require promoting the criterion table out of the repository analysis.
+
+User decisions: Retain full-preview-range consent and defer stop-after control;
+explicitly disclose all groups and interruption limits. Return complete
+selected-run structured arrays without pagination or silent truncation.
+These document decisions do not authorize implementation or paid execution.
+
+Changed files: docs/features/cli-operator/plan.md;
+docs/features/cli-operator/2026-09-09-cli-operator-review.md; this task record.
+Project learnings, source analysis, runtime, tests, keys, state, and retained
+evidence remain unchanged by this reconciliation.
+
+Result: 19 accepted, 2 rejected, 1 deferred, 0 open. The plan is Reconciled;
+the review is reconciled. All three critical findings receive plan fixes.
+The separate stop-control deferral is not an open implementation blocker.
+
+Validation: Baseline documentation checker reports 0 errors and 64 historical
+path warnings. Final check:docs also reports 0 errors and the same 64 warnings;
+strict typecheck and git diff --check pass. Direct working-tree structure
+checks cover these untracked documents: 22 verdicts with the stated counts,
+18 unique criterion mappings, nine ordered tasks, all declared error codes
+mapped exactly once, matching lifecycle stamps, and no task checkboxes or
+trailing-whitespace defects.
+
+Validation-helper diagnosis: Expected the in-memory structural check to find
+the reconciliation header and only the error-code table. It first misses the
+header because it splits on LF while the file carries CRLF; a direct read
+shows "## Reconciliation\r\n", with one LF-only split part versus two after
+normalization. Its next whole-file table scan counts 21 rows by including
+command/snapshot tables, not fifteen error codes. These are helper defects,
+not document failures. The corrected check normalizes CRLF only in memory,
+scopes extraction to the named error table, and derives the expected code set
+from the plan's declared vocabulary. It passes without changing document
+bytes to satisfy either assumption. No runtime regression test is appropriate
+for this disposable read-only check; no persistent helper or temporary file
+is created. The general assertion lesson is merged into the existing personal
+lessons record, with no project knowledge moved out of this task record.
+
+Remaining issues: Runtime implementation and its new regression/crash cases
+remain unexecuted. Full npm test is the future implementation completion gate,
+not a claim that a documentation-only reconciliation executes the CLI journey.
+The operator owns any later stop-control, implementation, or paid-run decision.
+
+Rollback status: No rollback occurs. Reverse only this reconciliation's
+scoped document edits; do not restore whole files over the earlier uncommitted
+planning/analysis work or downgrade shipped runtime records.

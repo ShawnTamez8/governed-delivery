@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
 import { verifyAuditChain, appendAudit } from "../src/audit.ts";
-import { freezeProfile } from "../src/profile.ts";
+import { freezeProfile, loadVerifiedProfile } from "../src/profile.ts";
 import { runSpecStage } from "../src/spec-stage.ts";
 import { AGENTS } from "../src/agents.ts";
 import { buildPolicy, policyHash } from "../src/policy.ts";
@@ -174,6 +174,45 @@ function agentRunCounts(store: Store, runId: number): { author: number; reviewer
 }
 
 // --- happy path and round semantics (step 5b Task 9) ------------------------
+
+test("Task 5 low-level spec accepts an otherwise valid aged run and still refuses replay", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const loaded = loadVerifiedProfile(root, store.getRun(runId)!);
+    assert.ok(loaded.ok, loaded.ok ? "" : loaded.reason);
+    const createdAt = new Date(Date.now() - (loaded.profile.policy.runDurationLimitSeconds + 1) * 1000).toISOString();
+    store.exec("UPDATE run SET created_at = ? WHERE id = ?", [createdAt, runId]);
+    assert.ok((Date.now() - Date.parse(store.getRun(runId)!.created_at)) / 1000 > loaded.profile.policy.runDurationLimitSeconds);
+
+    const mismatch = await runSpecStage(store, fixtureExecutor(FIXTURE), {
+      runId, requestedModel: "not-the-frozen-model", rootDir: root,
+    });
+    assert.equal(mismatch.ok, false);
+    assert.ok(!mismatch.ok);
+    assert.match(mismatch.reason, /does not match the model frozen at run start/);
+    assert.deepEqual(store.getStageChain(runId), []);
+    assert.deepEqual(agentRunCounts(store, runId), { author: 0, reviewer: 0 });
+
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
+    assert.ok(result.ok, result.ok ? "" : result.reason);
+    const chain = store.getStageChain(runId);
+    assert.deepEqual(chain.map((stage) => stage.kind), ["spec", "spec_review"]);
+    assert.ok(chain.every((stage) => stage.status === "passed" && stage.gate_result === "pass"));
+    assert.ok(readFileSync(result.specPath, "utf8").includes("REVISED-spec"));
+    assert.equal(store.getRun(runId)!.created_at, createdAt);
+    assert.equal(store.getRun(runId)!.status, "in_progress");
+    assert.equal(verifyAuditChain(store), null);
+    const agents = store.query("SELECT * FROM agent_run ORDER BY id");
+    assert.ok(agents.length > 0, "the existing local fixture actually dispatched");
+    const audit = store.getAuditEvents(runId);
+    const replay = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
+    assert.equal(replay.ok, false);
+    assert.ok(!replay.ok);
+    assert.match(replay.reason, /already has stage spec with status passed/);
+    assert.deepEqual(store.getStageChain(runId), chain);
+    assert.deepEqual(store.query("SELECT * FROM agent_run ORDER BY id"), agents);
+    assert.deepEqual(store.getAuditEvents(runId), audit);
+  });
+});
 
 test("happy path: a clean-panel round gates on decision completeness, not a closure budget", async () => {
   await withRun(async ({ store, root, runId }) => {

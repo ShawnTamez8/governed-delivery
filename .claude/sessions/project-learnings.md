@@ -1,287 +1,186 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-09, PowerShell chain completed with live remediation)
+## Current state (2026-09-11, context saved; Claude run retained, Pi support not implemented)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
 system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
-**Working branch:** `code-review-stage`. The feature implementation baseline is
-`55b12b8` (`feat:bounded-code-review-remediation`). The operator authorized
-committing this session's skill-routing docs, learning updates, two dated session
-records, and paid-run fixture on this branch. No push, merge, or cleanup was
-requested. Global skill edits remain outside this repository, installed locally
-and backed up; recovery paths and the exact changed files are in
-`2026-09-08-copilot-skills-audit.md`.
+**Working state:** Rechecked `code-review-stage`, HEAD `86af2c0` over `a8a71d1`.
+Uncommitted: this file, `README.md`, `docs/proposals/README.md`, and the untracked
+`docs/proposals/cc-switch-review.md`. No runtime implementation changed this
+session; no commit, push, merge, further spend, signing or target cleanup is authorized.
 
-**Paid PowerShell result:** The operator-authorized fresh chain completed all
-stages in 16 dispatches for $2.40174. It ran from
-`2026-09-09T05:08:01.322Z` to `2026-09-09T05:28:41.759Z` under
-`C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\20260909-powershell-000531\target`.
-The first code-review panel found one high and one medium calculator defect;
-one guarded remediation and the frozen verification commands passed, then both
-reviewers returned a clean second panel. Delivery and audit validation passed.
-The observed ancestry was PowerShell -> Node driver -> Node CLI -> native Claude,
-without a command-shell wrapper around Claude. No paid process remains. Read
-`2026-09-09-paid-powershell-chain.md` beside this record for transcript, source
-hashes, durable fixture, authorization, and outcome limits. No further paid
-attempt or cleanup is authorized.
+**User direction:** Pi is an additionally supported coding agent, not an emergency
+replacement for Claude Code. The operator called Claude Code the backup and
+authorized one full paid chain retained under `C:\Users\tamezs\buildWorks_test_repos`.
+That chain used Claude Code, not Pi; Pi evaluation was conversational and incomplete.
+No Pi adapter, architecture amendment, installation or paid Pi evidence was produced.
 
-**Tooling continuity:** Copilot keeps this file as the canonical learning record.
-The canonical project skills remain under `.claude/skills/`; their `.agents`
-entries forward there. The six frequently used global workflows have one
-implementation under the user's `.copilot/skills/`, with Windows junctions from
-their shared `.agents` locations. Skills invoke doc-check for document rules;
-neither this record nor doc-check is an automatic workflow hook. The skill audit
-itself authorized no spend or cleanup. Detailed audit: `2026-09-08-copilot-skills-audit.md`
-beside this record.
+**Completed:** CLI plan `docs/features/cli-operator/plan.md` is `Implemented`;
+its plan review is `reconciled` (19 accepted, 2 rejected, 1 deferred).
+Both code reviews report zero confirmed/plausible findings; the first is reconciled,
+but `docs/features/cli-operator/2026-09-10-code-review-2.md` remains open pending
+disposition. The new Claude chain completed nine stages/15 driver checks over
+16 dispatches for **$2.05854**, with two code-review panels and one remediation.
 
-**`docs/features/code-review-remediation/plan.md` is `Implemented` and its
-2026-09-07 code review is `reconciled` on the existing `code-review-stage`
-branch.** Tasks 1-10 and all three review remediations are committed at the
-current `HEAD`. After the first paid attempt blocked at implementation, one
-separately authorized fresh chain completed all stages in 13 dispatches for
-$1.39473. The operator then manually verified the delivered calculator output;
-the run's frozen commands themselves checked only Node and npm versions.
-Push, merge, and retained-target cleanup remain unasked.
+**Evidence limits:** The final panel retained one medium correctness finding below
+the frozen `high` threshold; it was not clean. Verification checked only Node/npm
+versions, not the delivered calculator tests. No browser/manual product check was
+performed for this run. Detailed result, cost and correction evidence are below.
 
-**Locked behavior:** `code_review` alone gets a bounded loop. Its frozen
-profile selects 2–5 explicitly specialized reviewers (default 2) and permits
-1–5 total panel executions (default 2). Every non-empty intermediate panel is
-sent once to the frozen implementer, its actionable findings are patched
-together, the new commit is verified with the frozen verification commands,
-and the full panel reviews again. On the last configured panel only findings
-at or above the independently frozen blocking threshold block; lower-severity
-findings remain recorded and do not block. There is no code-review human gate,
-waiver, proposal, spike, upstream classification, or findings-reconciliation
-schema. `spec_review` and `plan_review` are unchanged.
+**Running state:** No active session shells or agents at compaction. Run 1 is
+`completed`; target `C:\Users\tamezs\buildWorks_test_repos\target` retains its store,
+16 parsed raw envelopes, and worktree
+`C:\Users\tamezs\buildWorks_test_repos\target\.governance\worktrees\1`.
+Keys remain in `C:\Users\tamezs\buildWorks_test_repos\keys`.
+This avoids the known temp sweep; independent backup/logoff survival is unverified.
 
-**Open/deferred:** The September 9 capture now covers the live remediation,
-post-patch frozen commands, and panel 2 that the clean September 7 chain did
-not exercise. The frozen commands still check only Node/npm versions; no
-manual browser check was made for the September 9 output. `--json-schema`
-remains separate. Future QA should compose the concrete patch/verification
-modules without changing this loop.
+**Locked scope:** One consent covers the preview through approval or terminalization,
+not another invocation, signing or publication. CLI arrays stay complete; guided
+age refusal does not change low-level spec/plan, and accepted approval expiry does
+not revoke a grant. Only code_review has the bounded remediation authorization.
 
-**Next up:** the PowerShell reproduction is complete; the operator can decide
-the next scoped change. Skill reload, push/merge, and retained-target cleanup
-remain separate operator actions.
+**Open/deferred:** Pi needs a revision-grounded support evaluation and a deliberate
+architecture sequencing decision; the binding build order has not been amended.
+cc-switch candidates A/B remain unscheduled (B recommended before another paid run;
+A previously deferred pending real provider/intake work). The reconciled CLI analysis
+still owns inbound object/revision/provenance, executable tasks, Spike identity and
+outbound ownership/App/visibility/publication questions. Intermediate stop control,
+packaging, general repair, hard dollar caps, new stages, `--json-schema` and stronger
+artifact verification remain excluded; QA should compose existing patch/verification
+modules. Hot-journal behavior is measured, not an open experiment.
+
+**Next up:** Resume the Pi support assessment from the existing multi-harness and
+cc-switch reviews, correcting its provisional claims before planning implementation.
+Do not mistake the completed Claude chain for Pi acceptance or renewed spending consent.
 
 ## Diagnostics quick-reference
 
 Durable project facts belong here, regardless of whether a host also caches them.
 
-- **A tolerance applied at one boundary and not its sibling is a defect** —
-  seven have occurred here, the last in `validateCodeReviewLocations`.
-- **A constrained field's constraint must be stated in the prompt, not only
-  enforced in the parser** — the *membership rule of a section* is as much a
-  constrained field as the format of a value inside it, and the section a
-  schema forces an author to write in is where that author will answer a
-  finding. Three paid runs died on this.
-- **“Fenced block is not valid JSON” names the candidate source, not the root
-  cause** — read the parser detail and retained bytes. A legal fence containing
-  Python's `\UXXXXXXXX` escape is still invalid JSON; the outer terminal cannot
-  manufacture that ASCII sequence while UTF-8 stdout is captured as bytes.
-- **Spawn the installed native `claude.exe` directly on Windows** — no shim was
-  deleted; BuildWorks removed a stale `claude.cmd` assumption. PowerShell
-  resolves the same binary. Direct spawn avoids a second argv parser and
-  `DEP0190`, preserves typed `ENOENT`, and cannot repair malformed JSON.
-- **Hazard 1's enumeration is the contract parsers are held to** — a shape
-  missing from it is a shape no reviewer asks about; a suite working all listed
-  shapes passed while the unlisted one blocked a paid run.
-- **A block at `code_review` is a result, not a driver failure** — the driver
-  reports failed downstream expectations when `review` blocks. Read the finding
-  against the worktree rather than diagnosing from a driver step-count summary.
-- **Identify a recorded artifact revision by hash, never by dispatch order.**
-- **A zero counter in an audit summary is not evidence of a guard firing.**
-- **Break-test `doc-check` against a scratchpad mirror, not the working tree**.
-  `checkPaths()` recursively scans repository Markdown, including `AGENTS.md`
-  and `.agents`; explicit tier lists classify files, not select them. The rooted
-  path regex recognizes fewer prefixes than the scanner visits. Section 5's
-  deferred list is every backticked `[a-z_]+` token.
-- **Query a run's store before `driver.mjs clean`** — clean deletes the record.
-  `agent_run.cost` keyed by `stage_id`; the audit table is `audit`; the
-  `finding` table is shared across stages, so code-review ids continue from the
-  plan review's.
-- **Backgrounding through `| tail -N` buffers until exit** — redirect a paid
-  chain to a file and poll `state.db`. The chain outlives the 600 s tool
-  timeout when backgrounded; do not restart it.
-- **The driver signs exact bytes without a shell:** it captures the approval
-  payload as a Buffer and sends it to the signer on stdin. Historical manual
-  PowerShell workaround (not the Claude harness launch): capture with
-  `cmd /c "node <cli> approval-request ... > payload.json"`, sign with
-  `cmd /c "node scripts/sign-approval.mjs sign --key <key> < payload.json"`.
-- **Reverse a break-it mutation by editing it back, never `git checkout --`**,
-  and drive mutations from a scratch `.mjs` that hashes before and after.
-  Anchor on a unique expression, never on indentation or a trailing newline —
-  the tree is CRLF. `spawnSync` with `shell: true` eats `(` and `|` in
-  `--test-name-pattern` and exits 255 silently; spawn `node` directly.
-- **The Bash tool mangles long heredocs and regex-bearing `node -e`** — use
-  Write and a scratch `.mjs`; a bare `python - <<'PY'` with no python hangs.
-- **A phrase pinned in `CONSTRAINT_STRINGS` is scanned in the *source*** — a
-  prompt that reads correctly fails when the phrase wraps across a
-  template-literal line. Three times now.
-- **A shared validator reused by a new stage checks only what it was written
-  for** — a new caller adds its own check.
-- **`Store.exec` refuses every write to the audit table.** Build a missing-gate
-  state by never appending the event.
-- **A mechanical rename across a documentation tree invents facts** — paths,
-  binaries, versions and model IDs do not survive find-and-replace; restore
-  from the original after diffing.
-- **A review record with no `**Status:**` line and no dispositions is not
-  reconciled**, even when its findings are already fixed.
-- **Read every review record beside a proposal before planning from it.**
+- Tolerance at one boundary but not its sibling caused seven defects, most recently
+  in `validateCodeReviewLocations`; inspect both paths.
+- Put field and section-membership constraints in prompts: parser-only rules killed
+  three paid runs. `CONSTRAINT_STRINGS` scans source; wrapping a phrase can fail it.
+- “Fenced block is not valid JSON” names the candidate, not the cause. Retained
+  `\UXXXXXXXX` bytes were provider output, not terminal corruption.
+- Native `claude.exe` needs no shell wrapper: the correction removed a stale shim
+  assumption, not a shim; direct spawn avoids DEP0190 and preserves typed ENOENT.
+- Hazard 1 omitted a shape that later blocked a paid run despite the suite passing
+  every enumerated shape; fixture coverage is not universal parser coverage.
+- A code_review block is a result, not a driver fault; a pass can retain findings.
+  Read the final panel and frozen verification commands before claiming correctness.
+- Identify artifact revisions by hash, not dispatch order; zero audit counters do
+  not prove guards fired.
+- Break-test doc-check in a mirror. `checkPaths()` recursively scans Markdown,
+  including AGENTS/.agents; tiers classify, not select. Rooted-path recognition is
+  narrower; section 5's deferred list is every backticked `[a-z_]+` token.
+- Windows `TEMP=...\AppData\Local\Temp\1`, `PerSessionTempDir=1` and
+  `DeleteTempDirsOnExit=1` put default driver targets on a logoff deletion timer.
+  Four September 7/9 stores were lost by September 10; use a fresh child of
+  `C:\Users\tamezs\buildWorks_test_repos` and extract load-bearing responses into
+  `test/fixtures/recorded/` immediately. A non-temp path is not an independent backup.
+- Query before driver clean: it deletes the store/raw evidence. Cost joins through
+  `stage_id`; the audit table is `audit`; finding IDs span document and code review.
+- `| tail -N` buffered paid-run output; redirect logs and inspect state instead.
+  A timed-out tool wait can leave the chain running; do not launch it again.
+- The driver signs Buffer bytes over stdin, without a shell. Historical manual
+  PowerShell transport used `cmd /c` redirection; this is not a harness-launch fix.
+- Restore only the break-test edit, hash before/after, and anchor a unique expression,
+  not CRLF indentation. Shell-true `--test-name-pattern` lost `(`/`|` and exited 255.
+- Bash-tool long heredocs/regex `node -e` were mangled; scratch `.mjs` files worked.
+  A bare Python heredoc on a host without Python hung.
+- Shared validators prove only checked subsets; callers must project findings,
+  commands and metadata. Malformed display fields get limitations, not stronger gates.
+- `Store.exec` forbids audit writes; model a missing gate by never appending its event.
+- Mechanical documentation renames invented paths, binaries and model IDs; restore
+  originals byte-exactly. A missing status/disposition is not a reconciled review.
+- Read every adjacent review before planning from a proposal.
+- Read-only Git needs `--no-optional-locks` plus process-local
+  `-c diff.autoRefreshIndex=false`; index refresh was measured without the latter.
+- A spilled hot journal made read-only SQLite return 776 without modifying files;
+  explicit fixture migrate recovered committed rows without replay. Readers never repair.
+- `envPassthrough` freezes names, not ambient values/files. `probeExecutor` inherits
+  the parent environment while invocation filters it; a doctor pass is not auth proof.
 
 ## Session records
 
 ### PowerShell paid chain exercises remediation and completes (2026-09-09)
 
-#### Decisions and assumptions
-
-- One paid chain was authorized before any further skill/driver changes.
-  The successful result authorizes neither another run nor a new wrapper.
-
-#### What worked
-
-- One separately authorized chain used the unchanged driver, design, and
-  native Claude harness. PowerShell 7.6.5 launched Node v26.4.0; the observed
-  model process was native Claude Code 2.1.263 with no intervening cmd wrapper.
-- Both first-panel findings went to one implementer dispatch; its single-file
-  patch and version-command verification passed. Both reviewers returned a
-  clean second panel, delivery passed, and the audit chain was valid.
-- Cost: $2.40174 over 16 dispatches. Target:
-  `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\20260909-powershell-000531\target`.
-  No process remains; cleanup is not authorized.
-- Full provenance, five unchanged provider result bodies, stage and audit rows,
-  and post-patch logs are in
+- Unchanged driver/design, PowerShell 7.6.5 -> Node v26.4.0 -> Claude 2.1.263,
+  no cmd wrapper: first-panel high/medium findings, one patch, version checks,
+  clean second panel and completed delivery. Cost $2.40174/16 dispatches;
+  driver 15/15, smoke 13/13, audit valid.
+- Five unchanged provider bodies, provenance, stage/audit rows and logs:
   `test/fixtures/recorded/code-review-web-calculator-powershell-remediation-chain.json`.
-  The adjacent `2026-09-09-paid-powershell-chain.md` records the experiment and
-  its limits: no browser validation and no causal cmd-versus-PowerShell comparison.
-
-#### What failed
-
-- The evidence export initially rejected SQLite null-prototype rows after a
-  lossless JSON round trip. Comparing serialized values fixed only that assertion;
-  the existing capture was verified without another paid dispatch or file rewrite.
-
-#### Verification and continuation
-
-- The paid driver returned exit 0 and `15/15 steps as expected`; free smoke
-  returned 13/13. `node scripts/doc-check.mjs --json` and `git diff --check`
-  passed after capture; source hashes matched before and after the chain.
-- The paid shell is completed and the auxiliary skill-audit agent is idle.
-  No active paid work remains. The free-smoke target is also retained at
-  `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\20260909-powershell-000531-smoke\target`.
-- Next up: resume only a newly requested scope; do not repeat the paid run to
-  rediscover the result. Existing Copilot sessions may need `/skills reload`.
+  `2026-09-09-paid-powershell-chain.md` retains source hashes, commands and the
+  null-prototype export correction; no browser check or causal shell comparison.
 
 ### Copilot skill portability aligned (2026-09-08)
 
-- The operator selected the existing `.claude` project skills and this learning
-  record as canonical for Copilot too. Global priority copies now share one
-  implementation through local Windows junctions; project `.agents` entries
-  forward to `.claude`. Markdown records are context, not automatic skill hooks.
-- All 17 discovered personal skills have valid name/description frontmatter.
-  Two directory-name mismatches and oversized entry files were corrected;
-  unavailable tool calls, stale harness paths, and task-document defaults were
-  removed. Detailed guidance and global rollback copies were retained.
-- The source disproved an older quick-reference claim: doc-check recursively
-  scans Markdown paths, including AGENTS and `.agents`; its explicit lists
-  classify tiers rather than restrict discovery. The quick-reference is corrected.
-- Audit, local recovery paths, and limitations are recorded in
-  `2026-09-08-copilot-skills-audit.md` beside this file. No application runtime,
-  paid-run state, retained target, or global Codex/Claude skill installation changed.
+- Operator selected canonical `.claude` project skills/shared learnings; six global
+  workflows use `.copilot/skills/` through `.agents` Windows junctions. Records are
+  context, not hooks; project `.agents` entries forward to `.claude`.
+- `2026-09-08-copilot-skills-audit.md` retains recovery paths and corrections to
+  two names, oversized entries, unavailable calls, paths and task defaults. All 17
+  frontmatters passed; no runtime/paid target/global Codex or Claude skill changed.
 
 ### Paid evidence: implementation block, then clean completion (2026-09-07)
 
-- Two chains were separately authorized, each with a stated 16-dispatch bound:
-  11 dispatches/$1.00548 blocked, then 13/$1.39473 completed.
-- `implementation.content.invalid` came from `\U0001f319` at positions 1911
-  and 9505 in provider JSON. A byte-exact fixture reproduces it; changing only
-  those tokens makes all five files validate. Neither shell manufactured them.
-- The fresh chain's first panel was clean; four artifacts delivered at
-  `b0b1104dc0b045dbc3d8c116ba44e9ed894200e4`, audit passed, and the operator
-  manually checked the calculator. No detailed manual matrix was recorded.
-- Five reviewer fixtures passed extraction/contract replay; focused replay was
-  9/9, with typecheck/docs/diff clean. The earlier full gate was 821/822 with one
-  Windows symlink skip. This run did not need remediation.
-- Known retained targets, with no cleanup authorized:
-  `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1788790553825\target` (blocked)
-  and `C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1788794835268\target` (completed).
+- Two separately authorized 16-dispatch-bound chains: 11/$1.00548 blocked at
+  `implementation.content.invalid` (`\U0001f319`, byte positions 1911/9505);
+  changing only those tokens validated all five files. Neither shell caused it.
+- Then 13/$1.39473 completed with a clean first panel, four artifacts at
+  `b0b1104dc0b045dbc3d8c116ba44e9ed894200e4`, valid audit and an operator manual
+  calculator check (no detailed matrix). Five reviewer fixtures, focused 9/9,
+  types/docs/diff passed; prior full suite 821/822 with Windows symlink skip.
 
 ### Bounded code-review remediation implemented and reconciled (2026-09-07)
 
-- The contract is 2–5 specialized reviewers, 1–5 panels, remediation of every
-  actionable intermediate finding, and a separately configurable final-panel
-  severity threshold. It has no human gate, spike, waiver, proposal, upstream
-  classification, or reconciliation schema.
-- Independent review closed three evidence defects in delivery binding,
-  verification labelling, and typed patch failures. Keep round count, panel
-  size, and threshold independent so policy changes remain profile edits.
+Independent review closed delivery-binding, verification-label and typed-patch
+evidence defects. Panel size, round count and severity threshold remain independent.
 
 ### Extractor fixed; two chains correctly block at code_review (2026-09-06)
 
-- Cleared regressions, built `docs/features/unfenced-json-extraction/`, and
-  closed code-review-stage Task 10 and plan-coverage-single-artifact Task 7 on
-  retained evidence. Each feature's implementation note and real-run-evidence
-  record hold the detail. The extractor fix and both attempts were separately authorized.
-- Run 3 exposed prose before unfenced JSON; remedies 1-3 fixed extraction.
-  Restating the prompt (remedy 4) was deliberately not taken; prose after an
-  unfenced object remained unbuilt for lack of measured need. The `a2db2a0`
-  list-marker normalization acts at a different layer and could not fix extraction.
-- Runs 4 and 5 each used 13 dispatches ($1.15759 and $1.40170) and correctly
-  blocked on high code findings. No gate policy was weakened to clear them.
-  Plan coverage redirected two live panels to task findings rather than asking
-  for a second artifact. Dispositions were checked against code, not session prose.
-- Three reviewer responses were extracted with stage context derived from run
-  records. An invented AC-016 example was caught before doc-check: read the
-  criterion before illustrating it. Trace a blamed stage's changed files against
-  the failing path, not just stage order. CRLF/shell break-test traps are above.
-- A disposable full-suite mirror kept HEAD unchanged: 784 tests, 782 passed,
-  one skip and one load flake (3/3 isolated). Parse/reconciliation tests passed
-  59/59; removing the fallback failed exactly four new assertions and restored
-  byte-identically. Code-review-stage tests passed 39/39 before the third replay;
-  the three replays passed, and threshold/location mutations broke both
-  correctness replays. Smoke was 13/13; typecheck and doc-check were clean.
-- Historical branch baseline: code-review-stage branched at `a12f3cf`, then
-  local master and origin/master. This is not a claim about their current tips.
+- `docs/features/unfenced-json-extraction/` fixed run 3's prose-before-JSON with
+  remedies 1–3, not prompt remedy 4; prose-after remained unbuilt absent evidence.
+  `a2db2a0` list-marker normalization is a different layer.
+- Separately authorized runs 4/5 correctly blocked on high code findings, each
+  13 dispatches ($1.15759/$1.40170); no gates weakened. Code-review Task 10 and
+  plan-coverage Task 7 closed; two live panels produced task findings, not a second artifact.
+- Three reviewer captures required real stage context; an invented AC-016 causal
+  example failed review. Trace criteria and changed paths, not just stage order.
+- Mirror 784 tests: 782 pass, one skip, one load flake (isolated 3/3); parse/reconcile
+  59/59 and review-stage 39/39 before third replay. All replays passed; fallback
+  removal broke four assertions, severity/location mutations broke both correctness
+  replays, restorations were byte-exact; smoke 13/13 and types/docs passed.
+- Historical branch point `a12f3cf` was then master/origin/master, not current-tip evidence.
 
 ### Two membership fixes and an agent-portability mirror (2026-09-05/06)
 
-`spec-section-membership` (eight tasks) and `plan-coverage-single-artifact`
-(seven tasks) executed on `code-review-stage` with two independent reviews each.
-The plan-coverage change added meaning the plan never specified — the path is
-the representative delivery anchor — and its separator heuristic was removed
-rather than refined after design review rejected inferring a list from
-punctuation. Two paid runs blocked (stage 5, $1.25141; stage 1, $0.08103); the
-membership fix was proven against a live author on the second. The governing
-proposal's design review was not read until after the run. `AGENTS.md` and
-`.agents/skills/**` were produced by find-and-replace and asserted paths, a
-binary, and model IDs that do not exist; restored byte-identical from their
-originals. The independent reviews caught two prompts withdrawing the legal
-`not_applicable` form by omission and two `ARCHITECTURE.md` sentences claiming
-the parser stricter than it is.
+`spec-section-membership` (eight tasks) and `plan-coverage-single-artifact` (seven)
+had two independent reviews each on code-review-stage. Coverage is a representative
+delivery anchor; the invented separator heuristic was removed. Paid blocks at stage
+5/$1.25141 and stage 1/$0.08103 proved membership live on the second before reading
+the proposal review. Invented AGENTS/.agents paths/binary/models were restored;
+reviews caught two missing `not_applicable` prompts and two overstated parser claims.
 
 ### The code_review stage implemented (2026-09-05, `6fb5412`, `4d71ad1`)
 
-Tasks 1-9 of `docs/features/code-review-stage/plan.md` shipped with an independent
-review and 19 guard mutations. Only code_review lifted the step-9 stop.
-Delivery bound the review record to verification. The initial terminal-block
-and upstream-proposal policy was later replaced by the bounded code-only loop;
-do not restore that obsolete policy from old review records. A standalone
-design review caught four reused contracts described as stricter than their
-code: verify those claims before dispositioning. The first paid attempt blocked
-at spec_review.
+`docs/features/code-review-stage/plan.md` Tasks 1–9 shipped with independent review
+and 19 guard mutations; only code_review lifted step 9. Delivery bound review to
+verification; the original terminal-block/upstream-proposal policy was replaced by
+the code-only bounded loop. A standalone review caught four overstated reused
+contracts; the first paid attempt blocked at spec_review.
 
 ### Hazard 17, the list-marker remedy, and the driver design swap (2026-09-04, `a2db2a0`)
 
-Both list-marker remedies chosen: `normalizeNodeText` on both sides *and* a
-`nodeForm` argument in the prompt — "the exact text of X" is not stated until
-the prompt says what X's text is. The clamp design was replaced by the web
-calculator because a design too small to attract a finding exercises nothing;
-run 3 completed a chain with a live replacement claimed (`unclaimedRemoved=0`,
-$1.34097). A rationale that cannot be broken is not a rationale.
+Both `normalizeNodeText` sides and prompt `nodeForm` were chosen: specify what
+"exact text" means. Web calculator replaced clamp to attract real findings;
+run 3 completed at $1.34097 with a grounded replacement (`unclaimedRemoved=0`).
+A rationale that cannot be broken is not a rationale.
 
 ### Earlier history (2026-08-29 to 2026-09-04)
 
@@ -300,3 +199,153 @@ $1.34097). A rationale that cannot be broken is not a rationale.
   `resolveExisting` resolved dangling links lexically — refuse what cannot be
   verified; the plan stage mirrors the spec stage without a shared abstraction
   (hard rule 4).
+
+### CLI planning groundwork and GitHub impact reconciled (2026-09-09)
+
+- Operator chose `2026-09-09-docs-cli-operator-analysis.md`, not the outbound
+  proposal, for 18 criteria/boundaries/transactional exceptions/distribution limits.
+  `docs/proposals/2026-09-09-github-project-projection-and-upstream-spikes-review.md`
+  records 5 accepted/5 deferred/0 rejected/open; proposal unchanged.
+- `2026-09-09-cli-github-impact-analysis.md` is review history, not open work;
+  corrected age trace names four downstream entries, not spec/plan. Types/docs and
+  criterion/disposition assertions passed.
+
+### CLI operator plan review reconciled (2026-09-10)
+
+The 22 dispositions preserve full consent, complete arrays, raw approval bytes and
+bootstrap criteria; three critical corrections require full-suite/bounded-probe/crash
+recovery evidence. Planning assertions cover 18 criteria, nine tasks, 15 errors and
+lifecycle with CRLF/unscoped-table corrections; reconciliation grants no spend.
+
+### CLI operator implementation evidence (2026-09-10)
+
+- `2026-09-10-cli-operator-implementation.txt` retains command/guard evidence,
+  including ten late mutations and full approval testing after a contributor's
+  external-signing filesystem limit. Deviations were target-relative evidence,
+  disabled diff refresh and shared artifact extraction, not stronger gates or schema.
+- Standard I/O is the runner seam; stages own gates, and an invocation never retries
+  failed groups, even rolled-back delivery. Disposable signing proves transport only.
+- Restored stderr alongside JSON; counted attempts after fallible progress.
+  Isolation reloads serialized profiles and sets an explicit absent external key;
+  clearing overrides reactivates host defaults. Ignored state remains inside the repo.
+- Lowercase `# design` is required grounding; capitalization blocked. Failed
+  dispatches return audited reasons, not separately retained stderr; ascending severity
+  and unattempted-group accounting needed corrections.
+- A stdout mutation failed `2 !== 1` at `operatorEnvelope`; Node refused TypeScript
+  mirrors under node_modules. Restorations were byte-exact; the reviewer ran initially
+  sampled suites before closure and withdrew the over-refusal-only guarantee.
+- One-profile CLI/approval/repeat-no-op and calibrated `gh` sentinel passed;
+  README PowerShell preserved rows/files/index, omission failed and restoration passed.
+  CLI tests 108 passed; full suite 1071 passed/one OS symlink skip; types/docs/diff passed.
+  CLAUDE/AGENTS matched, architecture edits stayed in sections 15/19; no production rollback.
+
+### Operator-requested follow-up code review (2026-09-10)
+
+- Fresh `gpt-5.5` HEAD/untracked review: nine index/key-isolation/delivery-retry
+  cases and docs/types/diff passed (63 warnings); full suite was prior evidence.
+  Physical-EOF reads resolved nonempty-line counting; source/README hashes matched.
+  DEP0190 had no retained traced origin, so no runtime/fixture attribution was made.
+
+### cc-switch reviewed and rejected as a harness abstraction (2026-09-11)
+
+- `docs/proposals/cc-switch-review.md` rejects live provider-config switching as
+  an adapter substitute: MHA-03's argv/envelope work remains. Candidates A (frozen
+  non-secret executor env) and B (doctor effective-config reporting) do not discharge
+  the MHA-01 sequencing decision.
+- Full-definition canonical comparison/hash means a new env field needs no column
+  or migration but invalidates old bindings; land it between runs. Ambient home
+  files remain a provider-input surface even when environment overrides are filtered.
+- The review recorded no `~/.cc-switch` or `ANTHROPIC_*` on that host check;
+  this was prevention, not a measured paid failure, so no hazard was added.
+  Types/docs and targeted path checks passed with 63 historical warnings.
+
+### Pi support assessment and retained Claude acceptance chain (2026-09-11)
+
+#### Decisions and assumptions
+
+- The user corrected the emergency-fix framing: Pi is intended as additional
+  supported harness capability, with Claude retained, not a temporary replacement.
+- One full paid chain through code review was authorized under
+  `C:\Users\tamezs\buildWorks_test_repos`, followed by README/learning updates.
+  The canonical driver used Claude Code 2.1.269 with `claude-sonnet-5`.
+- The Pi URL was `https://github.com/earendil-works/pi/tree/main/packages/coding-agent`;
+  fetched package metadata said 0.85.1, but main was not consistently revision-pinned.
+  No Pi runtime/provider check, implementation, scored report or scorecard was produced.
+
+#### What failed
+
+- The initial Pi comparison overstated evidence: IT approval/access, Codex containment
+  equivalence, Claude server-side invoice cost, and Pi cost-null behavior were not
+  established. Its 10–14-day estimate was not reconciled with the existing
+  multi-harness review's 18–30-day scope; neither range is an approved Pi plan.
+- Earlier paid-run prose implied both reviewers found defects and permanent storage.
+  Readback shows only correctness findings; non-temp storage is still machine-local,
+  with no demonstrated independent backup or session-logoff survival.
+
+#### What worked
+
+- Run 1 (`web-calculator`) completed all nine stages, driver 15/15, with 16 dispatches
+  and cost reported for every row: **$2.05854** rounded (stored sum $2.0585392).
+- Both panels had correctness/security reviewers; round 1's low finding 9
+  (`formatresult-infinity-leak-on-overflow`) triggered remediation despite being
+  below the final blocking threshold. Patch `383a17d9` -> `8cd5a2d9` changed calculator/tests.
+- Round 2 retained medium finding 10 (`formatresult-false-error-on-large-finite-result`,
+  calculator line 97): the reviewer reported rounding overflow incorrectly rejects
+  finite results such as 1e300. `finalGate=pass` reflects the frozen high threshold,
+  not a clean panel; no further patch was applied or authorized here.
+- Six signed paths delivered: package manifest, calculator, index, styles, theme,
+  and calculator tests. Final reviewed/delivered commit:
+  `8cd5a2d9b959f4eb215b71feae690a9b1a14b2d2`; audit validation passed.
+- Frozen initial/post-patch verification ran only `node --version` and `npm --version`.
+  Generated tests existing on disk do not establish they ran; BuildWorks' own later
+  test suite does not validate this calculator.
+
+Per-dispatch driver values, rechecked against retained rows; all used executor
+`claude-code`, effective model `claude-sonnet-5`. Individually rounded costs
+need not sum to the rounded total.
+
+| ID | Agent | USD | Duration ms |
+| --- | --- | ---: | ---: |
+| 1 | spec-author | 0.05982 | 27966 |
+| 2 | spec-author | 0.08164 | 64453 |
+| 3 | spec-reviewer-traceability | 0.04679 | 31487 |
+| 4 | spec-reviewer-consistency | 0.10720 | 56141 |
+| 5 | spec-author | 0.10489 | 50153 |
+| 6 | plan-author | 0.05059 | 27091 |
+| 7 | plan-author | 0.08010 | 62174 |
+| 8 | spec-reviewer-traceability | 0.05847 | 41406 |
+| 9 | spec-reviewer-consistency | 0.11037 | 57473 |
+| 10 | plan-author | 0.08129 | 46834 |
+| 11 | implementer | 0.33899 | 175054 |
+| 12 | code-reviewer-correctness | 0.32108 | 413120 |
+| 13 | code-reviewer-security | 0.10949 | 27716 |
+| 14 | implementer | 0.15607 | 44977 |
+| 15 | code-reviewer-correctness | 0.23766 | 121216 |
+| 16 | code-reviewer-security | 0.11409 | 26376 |
+
+#### Verification
+
+- `node .claude\skills\run-buildworks\driver.mjs smoke --dir C:\Users\tamezs\buildWorks_test_repos\smoke`
+  passed 13/13; the session removed that smoke-only directory.
+- `node .claude\skills\run-buildworks\driver.mjs paid --yes --dir C:\Users\tamezs\buildWorks_test_repos`
+  exited 0 with 15/15, including verify-audit.
+- `node .\src\cli.ts status --repo C:\Users\tamezs\buildWorks_test_repos\target --run 1 --json`
+  rechecked completion, cost coverage and command limits during compaction.
+- A read-only SQLite/JSON check resolved every `raw_output_ref` and parsed all 16
+  retained files under `target\.governance\raw\1` in the selected parent directory.
+- Before compaction, `npm test` passed 1071/1072, zero failures, one skip;
+  `npm run typecheck` and `npm run check:docs` passed, with 63 historical path warnings.
+- Compaction reran `npm run check:docs`, `npm run typecheck` and
+  `git --no-optional-locks -c diff.autoRefreshIndex=false --no-pager diff --check`:
+  passed; docs retained the same 63 historical warnings. No paid rerun or source edit.
+
+#### Next time
+
+- Keep the observed CLI capabilities separate from approved provider access and
+  measured runtime guarantees. Pi's JSONL/read-only/discovery flags are research leads,
+  not a verified adapter; cc-switch still does not replace argv/envelope integration.
+
+#### Next up
+
+- Follow the single Current state action above; this entry records evidence, not
+  authorization to implement Pi, rerun a paid chain or clean retained targets.

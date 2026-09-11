@@ -45,3 +45,7 @@ review record as a whole.
 - `omniagent-harness-review.md` — gate-level loop detection
 - `archon-harness-review.md` — greenfield decision, container containment pattern, read-back rule for step 8
 - `spec-kit-harness-review.md` — coverage-gate reverse-direction check, stable criterion IDs with a single minting authority
+- `cc-switch-review.md` — not a harness but a provider switcher; why it does not
+  reduce adapter work, the ambient-config risk of installing it, and two carried
+  candidates: a frozen executor environment and an effective-configuration check
+  in `doctor`

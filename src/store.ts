@@ -1,7 +1,9 @@
 import { DatabaseSync } from "node:sqlite";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyMigrations } from "./migrate.ts";
+import { types } from "node:util";
+import { applyMigrations, listMigrations } from "./migrate.ts";
 import { stateDbPath } from "./paths.ts";
 import type { AuditRow } from "./audit.ts";
 
@@ -248,6 +250,41 @@ function sleep(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+export function validateRunIdentity(identity: {
+  featureId?: string;
+  slug?: string;
+  changeKind?: string;
+}): string | null {
+  const { featureId, slug, changeKind } = identity;
+  if (changeKind !== undefined && !CHANGE_KINDS.includes(changeKind)) {
+    return `invalid change_kind ${changeKind}: allowed values are ${CHANGE_KINDS.join(", ")}`;
+  }
+  if (slug !== undefined && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) {
+    return `invalid slug ${slug}: must be lowercase kebab-case`;
+  }
+  // feature_id enters the signed payload; project deliberately does not.
+  if (featureId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(featureId)) {
+    return `invalid feature_id ${JSON.stringify(featureId)}: must be 1-64 characters of letters, digits, dot, underscore, or hyphen, starting with a letter or digit`;
+  }
+  return null;
+}
+
+export interface StoreOptions {
+  readOnly?: boolean;
+}
+
+export type StoreStateErrorCode = "state_missing" | "schema_unsupported" | "state_unavailable";
+
+export class StoreStateError extends Error {
+  readonly code: StoreStateErrorCode;
+
+  constructor(code: StoreStateErrorCode, reason: string, cause?: unknown) {
+    super(`${code}: ${reason}`, { cause });
+    this.name = "StoreStateError";
+    this.code = code;
+  }
+}
+
 /**
  * One repository, one writer. The repository lock serializes invocations;
  * the bounded retry below covers `SQLITE_BUSY` on top of the SQLite busy
@@ -255,9 +292,43 @@ function sleep(ms: number): void {
  */
 export class Store {
   #db: DatabaseSync;
+  #readOnly: boolean;
+  #rootDir: string;
+  #snapshotOpen = false;
 
-  constructor(rootDir: string) {
+  constructor(rootDir: string, options: StoreOptions = {}) {
+    this.#readOnly = options.readOnly === true;
+    this.#rootDir = rootDir;
     const dbPath = stateDbPath(rootDir);
+    if (this.#readOnly) {
+      let db: DatabaseSync | undefined;
+      try {
+        try {
+          statSync(dbPath);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            throw new StoreStateError("state_missing", `no state database at ${dbPath}`);
+          }
+          throw error;
+        }
+        db = new DatabaseSync(dbPath, { readOnly: true });
+        db.exec("PRAGMA busy_timeout = 1000");
+        db.exec("PRAGMA foreign_keys = ON");
+        const supported = [...listMigrations(DEFAULT_MIGRATIONS_DIR)].at(-1)?.index ?? 0;
+        const current = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
+        if (current !== supported) {
+          const repair = current < supported
+            ? `run bw migrate --repo "${rootDir}" explicitly`
+            : "use a matching checkout; do not downgrade this database";
+          throw new StoreStateError("schema_unsupported", `database schema ${current}, checkout schema ${supported}; ${repair}`);
+        }
+        this.#db = db;
+        return;
+      } catch (error) {
+        db?.close();
+        throw error instanceof StoreStateError ? error : this.#unavailable(error);
+      }
+    }
     applyMigrations(dbPath, DEFAULT_MIGRATIONS_DIR);
     this.#db = new DatabaseSync(dbPath);
     this.#db.exec("PRAGMA foreign_keys = ON");
@@ -286,6 +357,27 @@ export class Store {
     this.#withRetry(() => this.#db.prepare(sql).run(...params));
   }
 
+  readSnapshot<T>(fn: () => T & (T extends PromiseLike<unknown> ? never : unknown)): T {
+    if (types.isAsyncFunction(fn)) throw new Error("readSnapshot callback must be synchronous");
+    if (this.#snapshotOpen || this.#txDepth > 0) throw new Error("readSnapshot cannot be nested");
+    this.#withRetry(() => this.#db.exec("BEGIN"));
+    this.#snapshotOpen = true;
+    try {
+      const result = fn();
+      if (result !== null && (typeof result === "object" || typeof result === "function") &&
+          "then" in result && typeof result.then === "function") {
+        throw new Error("readSnapshot callback must be synchronous");
+      }
+      this.#withRetry(() => this.#db.exec("COMMIT"));
+      return result;
+    } catch (error) {
+      this.#db.exec("ROLLBACK");
+      throw error;
+    } finally {
+      this.#snapshotOpen = false;
+    }
+  }
+
   /**
    * Run `fn` inside BEGIN IMMEDIATE, retried on `SQLITE_BUSY`. Audit appends
    * and chain writes use this so read-then-write sequences serialize under
@@ -305,6 +397,8 @@ export class Store {
    * writes already happened.
    */
   transaction<T>(fn: () => T): T {
+    if (this.#readOnly) throw new Error("writer transaction is unavailable on a read-only Store");
+    if (this.#snapshotOpen) throw new Error("writer transaction cannot be nested in readSnapshot");
     if (this.#txDepth > 0) {
       this.#txDepth++;
       try {
@@ -346,6 +440,13 @@ export class Store {
   }
 
   #withRetry<T>(fn: () => T): T {
+    if (this.#readOnly) {
+      try {
+        return fn();
+      } catch (error) {
+        throw this.#unavailable(error);
+      }
+    }
     for (let attempt = 1; ; attempt++) {
       try {
         return fn();
@@ -359,23 +460,20 @@ export class Store {
     }
   }
 
+  #unavailable(error: unknown): StoreStateError {
+    if (error instanceof StoreStateError) return error;
+    const diagnostic = error instanceof Error ? error.message : String(error);
+    const code = (error as { code?: string; errcode?: number } | null)?.code;
+    const sqliteCode = (error as { errcode?: number } | null)?.errcode;
+    return new StoreStateError("state_unavailable",
+      `${code ?? "SQLite"}${sqliteCode === undefined ? "" : ` (${sqliteCode})`}: ${diagnostic}; ` +
+      `when no live writer owns the repository, run bw migrate --repo "${this.#rootDir}" explicitly with the matching checkout for SQLite recovery; this does not replay or repair workflow stages`,
+      error);
+  }
+
   insertRun(project: string, featureId: string, slug: string, changeKind: string): RunRow {
-    if (!CHANGE_KINDS.includes(changeKind)) {
-      throw new Error(`invalid change_kind ${changeKind}: allowed values are ${CHANGE_KINDS.join(", ")}`);
-    }
-    if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) {
-      throw new Error(`invalid slug ${slug}: must be lowercase kebab-case`);
-    }
-    // feature_id is interpolated into the signed approval payload, where a
-    // line break would forge a second field. `project` is deliberately not
-    // constrained: it never enters the payload.
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(featureId)) {
-      throw new Error(
-        // JSON.stringify, not raw: an error about a line break must not itself
-        // contain one, or the diagnostic is as unreadable as the input.
-        `invalid feature_id ${JSON.stringify(featureId)}: must be 1-64 characters of letters, digits, dot, underscore, or hyphen, starting with a letter or digit`
-      );
-    }
+    const identityError = validateRunIdentity({ featureId, slug, changeKind });
+    if (identityError !== null) throw new Error(identityError);
     const now = new Date().toISOString();
     const result = this.#withRetry(() =>
       this.#db
@@ -827,8 +925,8 @@ export class Store {
   }
 }
 
-export function openStore(rootDir: string = process.cwd()): Store {
-  return new Store(rootDir);
+export function openStore(rootDir: string = process.cwd(), options: StoreOptions = {}): Store {
+  return new Store(rootDir, options);
 }
 
 /**

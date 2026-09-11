@@ -23,6 +23,46 @@ export interface ImplementationHandoff {
 }
 
 const COMMIT = "([0-9a-f]{40}|[0-9a-f]{64})";
+const COMMIT_VALUE = new RegExp(`^${COMMIT}$`);
+
+export interface VerificationHandoff {
+  runId: number;
+  stageId: number;
+  worktreePath: string;
+  verifiedCommit: string;
+  patchBase: string;
+}
+
+/** The checked subset consumed by code review and delivery, not the full result. */
+export function parseVerificationHandoff(
+  value: unknown,
+  runId: number,
+  stageId: number
+): { ok: true; value: VerificationHandoff } | { ok: false; reason: string } {
+  const reason = "the record does not describe this run's passed verification";
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return { ok: false, reason };
+  }
+  const parsed = value as Record<string, unknown>;
+  if (
+    parsed.runId !== runId ||
+    typeof parsed.stageId !== "number" ||
+    parsed.stageId !== stageId ||
+    typeof parsed.worktreePath !== "string" ||
+    typeof parsed.verifiedCommit !== "string" ||
+    !COMMIT_VALUE.test(parsed.verifiedCommit) ||
+    typeof parsed.patchBase !== "string" ||
+    !COMMIT_VALUE.test(parsed.patchBase) ||
+    parsed.outcome !== "pass"
+  ) {
+    return { ok: false, reason };
+  }
+  return {
+    ok: true,
+    value: { runId, stageId, worktreePath: parsed.worktreePath,
+      verifiedCommit: parsed.verifiedCommit, patchBase: parsed.patchBase },
+  };
+}
 
 /** The canonical summary format: `base=<sha>; head=<sha>`. */
 export function formatImplementationGate(handoff: ImplementationHandoff): string {

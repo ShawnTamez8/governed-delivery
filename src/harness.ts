@@ -89,20 +89,34 @@ export function killTree(pid: number): void {
  * actually spawn it, and fail closed with a named cause before any real
  * invocation is attempted.
  */
-export function probeExecutor(executor: ExecutorDefinition): void {
+export interface ProbeOptions {
+  timeoutMs?: number;
+}
+
+export interface ProbeResult {
+  stdout: string;
+  stderr: string;
+}
+
+export function probeExecutor(executor: ExecutorDefinition, options: ProbeOptions = {}): ProbeResult {
   const result = spawnSync(executor.probe[0], executor.probe.slice(1), {
     shell: false,
     encoding: "utf8",
+    ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
   });
   if (result.error) {
+    if (options.timeoutMs !== undefined && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
+      throw new Error(`probe failed for executor ${executor.id}: timed out after ${options.timeoutMs} ms (${result.error.message})`);
+    }
     throw new Error(`probe failed for executor ${executor.id}: ${result.error.message}`);
   }
   if (result.status !== 0) {
-    const detail = (result.stderr ?? "").trim();
+    const detail = [result.stderr, result.stdout].map((text) => (text ?? "").trim()).filter(Boolean).join("; ");
     throw new Error(
       `probe failed for executor ${executor.id}: ${executor.probe.join(" ")} exited with code ${result.status}${detail ? `: ${detail}` : ""}`
     );
   }
+  return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
 }
 
 /**
