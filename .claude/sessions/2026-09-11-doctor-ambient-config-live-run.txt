@@ -1,0 +1,94 @@
+Requested outcome: one authorized live full run after doctor-ambient-config
+implementation. Operator authorization: 2026-09-11 17:36 Pacific.
+Baseline: cs_candidate_b, fbda8dd; current uncommitted doctor implementation.
+Approach: unchanged canonical .claude/skills/run-buildworks/driver.mjs and its
+20-requirement web-calculator design, default claude-sonnet-5, fresh non-temp
+root C:\Users\tamezs\buildWorks_test_repos\2026-09-11-doctor-ambient-config-173648.
+Free smoke uses the smoke child; exactly one paid invocation uses the paid child.
+The documented driver flow includes disposable target keys/signing/approval.
+No existing target/key cleanup, real operator key use, checkout commit, publication,
+configuration repair, second paid run, or runtime code change is authorized.
+
+Success: record actual terminal state and queryable cost of this full chain,
+including code-review panels/remediation and delivery. A block is an observable
+result, not permission for another paid run. Doctor must expose live current
+observations without claiming provider auth or freezing ambient state.
+The driver freezes only node --version and npm --version; full-chain completion
+alone does not validate the generated calculator's behavior.
+Estimated spend: $1.25-$2.50 for a clean chain; remediation may exceed that range.
+Retention: driver log, raw envelopes, state/profile, verification/review/delivery
+records remain under the new root; copy load-bearing evidence into this repository.
+Privacy: do not retain or publish raw operator config, credential values or keys.
+State: authorized invocation finished; run1 blocked at final code_review.
+16 dispatches, $2.4481306 recorded; no delivery, retry or rollback performed.
+
+Preflight completed: canonical free smoke 13/13; live doctor --run 1 returned
+ready against the new smoke target with its explicit disposable public key.
+Doctor resolved c:\Users\tamezs\.local\bin\claude.exe, Claude Code2.1.269,
+from the BuildWorks invocation cwd. Both user files were readable (593 and
+75715 bytes); all four observation-only override names were absent/excluded.
+No raw values or config contents were copied. Full local doctor report is at
+the owned root's doctor-before.json, with stderr captured separately.
+Source SHA256/byte counts are captured in source-before.json at that root.
+Runtime: PowerShell7.6.6, Node26.4.0.
+
+One paid invocation launched in attached shell doctor-live-20260911:
+node .claude\skills\run-buildworks\driver.mjs paid --yes --dir
+C:\Users\tamezs\buildWorks_test_repos\2026-09-11-doctor-ambient-config-173648\paid
+Both output streams go to the root's paid.log. Run1 created2026-09-12T00:38:45.289Z.
+Observed live ancestry: Node driver30816 -> Node CLI15508 -> native Claude31544;
+these are an in-flight observation, not persistent process IDs. Status at
+2026-09-12T00:41:05.518Z had a live writer, spec passed, spec_review active.
+Its partial-chain phase label is not a terminal failure while the writer is live.
+No second chain, runtime correction or old-target operation was started.
+
+Terminal result: run1 blocked2026-09-12T00:59:03.120Z, elapsed1217.831 seconds
+(20m17.831s). All16 agent rows report claude-sonnet-5 and cost; stored sum
+$2.4481306 ($2.44813 rounded), zero unreported-cost rows, zero recorded dispatch
+failures. These are recorded provider costs, not an independently reconciled bill.
+Spec, spec_review, awaiting_approval, plan, plan_review, implementation and
+verification passed. Code_review blocked; no delivery_check stage exists.
+Driver exited1,10/15 expectations; audit chain valid. The five driver expectation
+failures are the review block and its downstream no-delivery consequences.
+
+Both panels staffed correctness/security. Round1 correctness finding4 (high)
+reported Enter conflicting with native focused-button activation. The frozen
+implementer changed src/calculator.js and test/calculator.test.js at
+7d5273c2f325865f3c03bfd8b57cda6e60f498d8 ->
+511f64bbb34d3ed0c8066a7fd8fb4945dc6ba54e; both frozen version commands passed.
+Round2 correctness finding5 (high), enter-key-defers-to-wrong-focused-button,
+at src/calculator.js:186 reported that deferring Enter for every focused button
+lets a digit/operator activate instead of computing equals as AC-013 requires.
+Security returned no finding in either panel. The final high threshold blocked;
+no unreviewed final patch was applied. Browser behavior and the reviewers'
+functional allegations were not independently reproduced by this operator.
+
+Post-run doctor --run1 on the paid target: not_ready/exit1 due to blocked-run
+boundary and untracked generated spec/plan projections. executor_probe,
+frozen_executor_probe and ambient_provider_config all passed. Native identity
+and version matched preflight; both user files remained readable at593/75715
+bytes. The preflight doctor used the smoke run, postflight the paid run; these
+are not a same-run frozen-byte experiment.
+
+Durable capture:
+test/fixtures/recorded/doctor-ambient-config-web-calculator-live-chain.json
+304131 bytes: all16 raw envelopes unchanged, provenance/retention timestamps,
+per-envelope SHA256 matched to agent_run, run/stage/audit/agent/finding/decision/
+proposal rows,13 artifacts including frozen profile, both verification passes,
+code-review records and generated documents, pre/post doctor reports, process
+observation, source identities and both driver transcripts. No envelope fields
+were dropped. No key file or raw operator configuration was included.
+Persisted JSON roundtrip verified by serialized-data equality.
+
+Gate diagnosis: 2026-09-11-debug-doctor-live-code-review-block.md. The frozen
+last-panel policy explains this outcome; there is no evidence of a doctor
+resolution/environment failure causing it. No runtime or calculator fix was made.
+Source identities still match the pre-run snapshot. Driver30816 is gone, final
+writer state is absent, and no paid process remains under session control.
+Retain the entire new root, including smoke/paid targets and disposable keys.
+Another run, product correction, commit/publication or cleanup needs new scope.
+
+Record closeout: documentation checker, typecheck and scoped diff checks passed.
+Canonical continuity now records this blocked live result separately from the
+completed doctor implementation. Capture helper removed after persisted-evidence
+checks; retained targets, keys and run transcripts remain intact.

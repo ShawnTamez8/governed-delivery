@@ -1,146 +1,132 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-11, context saved; Claude run retained, Pi support not implemented)
+## Current state (2026-09-11, doctor implemented; live chain blocked at code review)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
 system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
-**Working state:** Rechecked `code-review-stage`, HEAD `86af2c0` over `a8a71d1`.
-Uncommitted: this file, `README.md`, `docs/proposals/README.md`, and the untracked
-`docs/proposals/cc-switch-review.md`. No runtime implementation changed this
-session; no commit, push, merge, further spend, signing or target cleanup is authorized.
+**Working state:** Rechecked branch `cs_candidate_b`, HEAD `fbda8dd` (merge of
+`code-review-stage`); doctor implementation, evidence and issue write-up remain
+uncommitted. Preserve the prior `AGENTS.md`/`CLAUDE.md` updates, effort-record
+`.txt` to `.md` conversion and original reconciled design review. Earlier
+working-state edits are in `1cc18a8`; `86af2c0` is also in this branch's history.
 
-**User direction:** Pi is an additionally supported coding agent, not an emergency
-replacement for Claude Code. The operator called Claude Code the backup and
-authorized one full paid chain retained under `C:\Users\tamezs\buildWorks_test_repos`.
-That chain used Claude Code, not Pi; Pi evaluation was conversational and incomplete.
-No Pi adapter, architecture amendment, installation or paid Pi evidence was produced.
+**Completed:** All six Candidate B tasks at
+`docs\features\doctor-ambient-config\plan.md` are `Implemented`.
+Design review: 5 accepted, 6 rejected, 2 deferred, 0 open. Code review
+`2026-09-11-code-review.md` is reconciled: one Medium Windows lookup defect
+fixed and separately re-reviewed; eight guard mutations retained. All 14 session
+tracking rows are done. The CLI plan and first review remain complete/reconciled;
+`docs\features\cli-operator\2026-09-10-code-review-2.md` remains open.
 
-**Completed:** CLI plan `docs/features/cli-operator/plan.md` is `Implemented`;
-its plan review is `reconciled` (19 accepted, 2 rejected, 1 deferred).
-Both code reviews report zero confirmed/plausible findings; the first is reconciled,
-but `docs/features/cli-operator/2026-09-10-code-review-2.md` remains open pending
-disposition. The new Claude chain completed nine stages/15 driver checks over
-16 dispatches for **$2.05854**, with two code-review panels and one remediation.
+**Decision locked:** Retain both whole-file fingerprints, including
+`.claude.json`; disclose sensitive comparison metadata when output is shared.
+No credential-value hashing or new runtime persistence/transmission.
 
-**Evidence limits:** The final panel retained one medium correctness finding below
-the frozen `high` threshold; it was not clean. Verification checked only Node/npm
-versions, not the delivered calculator tests. No browser/manual product check was
-performed for this run. Detailed result, cost and correction evidence are below.
+**Live result:** The separately authorized chain used 16 dispatches and cost
+$2.4481306 ($2.44813 rounded). After one remediation, final high finding 5 blocked
+code_review; no delivery. Native probe/ambient components passed afterwards.
+Source inspection confirms all-button Enter deferral conflicts with AC-013;
+native browser behavior and the optional generated-unit replay remain unverified.
+`docs/proposals/code-review-remediation-contract-drift.md` recommends a defect
+follow-up, not an automatic spike. This is a recommendation, not an approved
+repair plan; a different interaction policy needs an explicit upstream decision.
 
-**Running state:** No active session shells or agents at compaction. Run 1 is
-`completed`; target `C:\Users\tamezs\buildWorks_test_repos\target` retains its store,
-16 parsed raw envelopes, and worktree
-`C:\Users\tamezs\buildWorks_test_repos\target\.governance\worktrees\1`.
-Keys remain in `C:\Users\tamezs\buildWorks_test_repos\keys`.
-This avoids the known temp sweep; independent backup/logoff survival is unverified.
+**Running state:** No session-owned paid process remains. Shell
+`doctor-live-20260911` ended exit 1; final writer absent. Retain:
+`C:\Users\tamezs\buildWorks_test_repos\2026-09-11-doctor-ambient-config-173648`;
+`paid\target` owns run 1 and `.governance\worktrees\1`; `paid\keys` owns disposable
+keys, `smoke` the free target, and `paid.log` the transcript. All envelopes are in
+`test/fixtures/recorded/doctor-ambient-config-web-calculator-live-chain.json`.
+Owned diagnostic mirrors/helpers are gone. Prior targets/keys were not rechecked.
 
-**Locked scope:** One consent covers the preview through approval or terminalization,
-not another invocation, signing or publication. CLI arrays stay complete; guided
-age refusal does not change low-level spec/plan, and accepted approval expiry does
-not revoke a grant. Only code_review has the bounded remediation authorization.
+**Locked scope:** The implementation request superseded planning-only authority;
+the separately authorized 17:36 Pacific full run included disposable signing and
+is consumed. Later requests authorized issue documentation and compaction only.
+No repair, second paid run, commit/push/merge, publication or target cleanup.
+General CLI consent still ends at approval/terminalization, excludes signing and
+later invocations, and preserves full arrays. Guided age refusal does not change
+low-level spec/plan; accepted approval expiry does not revoke the grant. Only
+code_review has bounded-remediation authorization.
 
 **Open/deferred:** Pi needs a revision-grounded support evaluation and a deliberate
 architecture sequencing decision; the binding build order has not been amended.
-cc-switch candidates A/B remain unscheduled (B recommended before another paid run;
-A previously deferred pending real provider/intake work). The reconciled CLI analysis
+Pi remains additional support, not replacement or an emergency workaround.
+Candidate A awaits real provider/intake work. Candidate B's optional interface
+snippet and duplication-driven formatting helper remain deferred. Its execution
+evidence is Windows-only: POSIX, privileged file symlinks, actual ACL launch denial,
+UNC and explicit DOS-device input execution are not established. The CLI analysis
 still owns inbound object/revision/provenance, executable tasks, Spike identity and
 outbound ownership/App/visibility/publication questions. Intermediate stop control,
 packaging, general repair, hard dollar caps, new stages, `--json-schema` and stronger
 artifact verification remain excluded; QA should compose existing patch/verification
 modules. Hot-journal behavior is measured, not an open experiment.
 
-**Next up:** Resume the Pi support assessment from the existing multi-harness and
-cc-switch reviews, correcting its provisional claims before planning implementation.
-Do not mistake the completed Claude chain for Pi acceptance or renewed spending consent.
+**Next up:** Await operator selection/authorization of the proposed
+contract-preserving correction and event-level reproduction. The doctor feature
+is complete; the separate live target stays blocked. No automatic spike or retry.
 
 ## Diagnostics quick-reference
 
 Durable project facts belong here, regardless of whether a host also caches them.
 
-- Tolerance at one boundary but not its sibling caused seven defects, most recently
-  in `validateCodeReviewLocations`; inspect both paths.
-- Put field and section-membership constraints in prompts: parser-only rules killed
-  three paid runs. `CONSTRAINT_STRINGS` scans source; wrapping a phrase can fail it.
-- “Fenced block is not valid JSON” names the candidate, not the cause. Retained
-  `\UXXXXXXXX` bytes were provider output, not terminal corruption.
-- Native `claude.exe` needs no shell wrapper: the correction removed a stale shim
-  assumption, not a shim; direct spawn avoids DEP0190 and preserves typed ENOENT.
-- Hazard 1 omitted a shape that later blocked a paid run despite the suite passing
-  every enumerated shape; fixture coverage is not universal parser coverage.
-- A code_review block is a result, not a driver fault; a pass can retain findings.
-  Read the final panel and frozen verification commands before claiming correctness.
-- Identify artifact revisions by hash, not dispatch order; zero audit counters do
-  not prove guards fired.
-- Break-test doc-check in a mirror. `checkPaths()` recursively scans Markdown,
-  including AGENTS/.agents; tiers classify, not select. Rooted-path recognition is
-  narrower; section 5's deferred list is every backticked `[a-z_]+` token.
+- Boundary asymmetry caused seven defects, most recently in `validateCodeReviewLocations`; inspect both paths.
+- Put field/section constraints in prompts: parser-only rules killed three paid runs. `CONSTRAINT_STRINGS` scans source, so wrapping a phrase can fail it.
+- "Fenced block is not valid JSON" names the candidate, not the cause; retained `\UXXXXXXXX` bytes came from the provider, not terminal corruption.
+- Native `claude.exe` needs no shell wrapper: removing the shim assumption avoids DEP0190 and preserves typed ENOENT.
+- Hazard 1 omitted a shape that blocked a paid run despite all enumerated cases passing; fixtures do not prove universal parser coverage.
+- A code_review block is a result, not a driver fault; a pass can retain findings. Read the final panel and frozen verification commands.
+- Identify revisions by hash, not dispatch order; zero audit counters do not prove guards fired.
+- Break-test doc-check in a mirror. `checkPaths()` recursively includes AGENTS/.agents; tiers classify, not select. Rooted-path recognition is narrower; section 5's deferred list is every backticked `[a-z_]+` token.
 - Windows `TEMP=...\AppData\Local\Temp\1`, `PerSessionTempDir=1` and
   `DeleteTempDirsOnExit=1` put default driver targets on a logoff deletion timer.
   Four September 7/9 stores were lost by September 10; use a fresh child of
   `C:\Users\tamezs\buildWorks_test_repos` and extract load-bearing responses into
   `test/fixtures/recorded/` immediately. A non-temp path is not an independent backup.
-- Query before driver clean: it deletes the store/raw evidence. Cost joins through
-  `stage_id`; the audit table is `audit`; finding IDs span document and code review.
-- `| tail -N` buffered paid-run output; redirect logs and inspect state instead.
-  A timed-out tool wait can leave the chain running; do not launch it again.
-- The driver signs Buffer bytes over stdin, without a shell. Historical manual
-  PowerShell transport used `cmd /c` redirection; this is not a harness-launch fix.
-- Restore only the break-test edit, hash before/after, and anchor a unique expression,
-  not CRLF indentation. Shell-true `--test-name-pattern` lost `(`/`|` and exited 255.
-- Bash-tool long heredocs/regex `node -e` were mangled; scratch `.mjs` files worked.
-  A bare Python heredoc on a host without Python hung.
-- Shared validators prove only checked subsets; callers must project findings,
-  commands and metadata. Malformed display fields get limitations, not stronger gates.
-- `Store.exec` forbids audit writes; model a missing gate by never appending its event.
-- Mechanical documentation renames invented paths, binaries and model IDs; restore
-  originals byte-exactly. A missing status/disposition is not a reconciled review.
+- Query before driver clean deletes store/raw evidence. Cost joins through `stage_id`; the table is `audit`; finding IDs span document/code review.
+- `| tail -N` buffered paid output; redirect logs and inspect state. A timed-out wait can leave the chain running; never relaunch it blindly.
+- The driver signs Buffer bytes over stdin without a shell; historical PowerShell `cmd /c` redirection is approval transport, not a launch fix.
+- Restore only the break mutation, hash before/after, anchor a unique expression rather than CRLF indentation. Shell-true `--test-name-pattern` lost `(`/`|` and exited 255.
+- Bash heredocs/regex `node -e` were mangled; scratch `.mjs` worked. A bare Python heredoc hung on a host without Python.
+- Shared validators prove subsets; callers project findings/commands/metadata. Malformed display fields get limitations, not stronger gates.
+- `Store.exec` forbids audit writes; model a missing gate by not appending its event.
+- Mechanical doc renames invented paths/binaries/model IDs; restore byte-exact originals. Missing status/disposition means unreconciled.
 - Read every adjacent review before planning from a proposal.
-- Read-only Git needs `--no-optional-locks` plus process-local
-  `-c diff.autoRefreshIndex=false`; index refresh was measured without the latter.
-- A spilled hot journal made read-only SQLite return 776 without modifying files;
-  explicit fixture migrate recovered committed rows without replay. Readers never repair.
-- `envPassthrough` freezes names, not ambient values/files. `probeExecutor` inherits
-  the parent environment while invocation filters it; a doctor pass is not auth proof.
+- Read-only Git needs `--no-optional-locks` and `-c diff.autoRefreshIndex=false`; index refresh was measured without the latter.
+- A hot journal made read-only SQLite return 776 without writes; explicit fixture migrate recovered committed rows without replay. Readers never repair.
+- `envPassthrough` freezes names, not values/files. Doctor now supplies its captured filtered map; dispatch's bare probe still inherits by default. A doctor pass is not auth proof.
+- Node `statSync` adds extended Windows path semantics; native executable lookup does not. Doctor's DOS-device attribute query preserves native normalization while selected/probed spelling stays unchanged.
 
 ## Session records
 
 ### PowerShell paid chain exercises remediation and completes (2026-09-09)
 
-- Unchanged driver/design, PowerShell 7.6.5 -> Node v26.4.0 -> Claude 2.1.263,
-  no cmd wrapper: first-panel high/medium findings, one patch, version checks,
-  clean second panel and completed delivery. Cost $2.40174/16 dispatches;
-  driver 15/15, smoke 13/13, audit valid.
-- Five unchanged provider bodies, provenance, stage/audit rows and logs:
-  `test/fixtures/recorded/code-review-web-calculator-powershell-remediation-chain.json`.
-  `2026-09-09-paid-powershell-chain.md` retains source hashes, commands and the
-  null-prototype export correction; no browser check or causal shell comparison.
+Unchanged driver/design, PowerShell 7.6.5 -> Node26.4.0 -> Claude2.1.263 without
+cmd: high/medium findings, one patch, version checks, clean second panel/delivery;
+$2.40174/16 dispatches, driver15/15, smoke13/13, valid audit. Five provider bodies,
+provenance and records are in
+`test/fixtures/recorded/code-review-web-calculator-powershell-remediation-chain.json`.
+`2026-09-09-paid-powershell-chain.md` retains source hashes, commands and the
+null-prototype export correction; no browser check or causal shell comparison.
 
 ### Copilot skill portability aligned (2026-09-08)
 
-- Operator selected canonical `.claude` project skills/shared learnings; six global
-  workflows use `.copilot/skills/` through `.agents` Windows junctions. Records are
-  context, not hooks; project `.agents` entries forward to `.claude`.
-- `2026-09-08-copilot-skills-audit.md` retains recovery paths and corrections to
-  two names, oversized entries, unavailable calls, paths and task defaults. All 17
-  frontmatters passed; no runtime/paid target/global Codex or Claude skill changed.
+Canonical `.claude` project skills/shared learnings; six global workflows use
+`.copilot/skills/` through `.agents` junctions. Records are not hooks.
+`2026-09-08-copilot-skills-audit.md` preserves recovery paths and corrections to
+names, oversized entries, unavailable calls, paths and task defaults; 17
+frontmatters passed, with no runtime/paid target/global Codex or Claude edit.
 
 ### Paid evidence: implementation block, then clean completion (2026-09-07)
 
-- Two separately authorized 16-dispatch-bound chains: 11/$1.00548 blocked at
-  `implementation.content.invalid` (`\U0001f319`, byte positions 1911/9505);
-  changing only those tokens validated all five files. Neither shell caused it.
-- Then 13/$1.39473 completed with a clean first panel, four artifacts at
-  `b0b1104dc0b045dbc3d8c116ba44e9ed894200e4`, valid audit and an operator manual
-  calculator check (no detailed matrix). Five reviewer fixtures, focused 9/9,
-  types/docs/diff passed; prior full suite 821/822 with Windows symlink skip.
-
-### Bounded code-review remediation implemented and reconciled (2026-09-07)
-
-Independent review closed delivery-binding, verification-label and typed-patch
-evidence defects. Panel size, round count and severity threshold remain independent.
+Two authorized 16-dispatch-bound chains: 11/$1.00548 blocked at
+`implementation.content.invalid` (`\U0001f319`, offsets1911/9505); replacing only
+those tokens validated five files, not a shell cause. Then 13/$1.39473 completed
+with a clean first panel, four artifacts at `b0b1104dc0b045dbc3d8c116ba44e9ed894200e4`,
+valid audit and operator manual calculator check (no detailed matrix). Five reviewer
+fixtures, focused9/9 and types/docs/diff passed; prior821/822 with symlink skip.
 
 ### Extractor fixed; two chains correctly block at code_review (2026-09-06)
 
@@ -169,11 +155,12 @@ reviews caught two missing `not_applicable` prompts and two overstated parser cl
 
 ### The code_review stage implemented (2026-09-05, `6fb5412`, `4d71ad1`)
 
-`docs/features/code-review-stage/plan.md` Tasks 1–9 shipped with independent review
-and 19 guard mutations; only code_review lifted step 9. Delivery bound review to
-verification; the original terminal-block/upstream-proposal policy was replaced by
-the code-only bounded loop. A standalone review caught four overstated reused
-contracts; the first paid attempt blocked at spec_review.
+`docs/features/code-review-stage/plan.md` Tasks1-9 shipped with separate review
+and 19 mutations; only code_review lifted step9. The code-only loop replaced its
+original terminal-block/upstream-proposal policy. Reviews caught four overstated
+reused contracts, then closed delivery-binding, verification-label and typed-patch
+defects on September7. First paid attempt blocked at spec_review; panel size,
+round count and severity stay independent.
 
 ### Hazard 17, the list-marker remedy, and the driver design swap (2026-09-04, `a2db2a0`)
 
@@ -202,13 +189,12 @@ A rationale that cannot be broken is not a rationale.
 
 ### CLI planning groundwork and GitHub impact reconciled (2026-09-09)
 
-- Operator chose `2026-09-09-docs-cli-operator-analysis.md`, not the outbound
-  proposal, for 18 criteria/boundaries/transactional exceptions/distribution limits.
-  `docs/proposals/2026-09-09-github-project-projection-and-upstream-spikes-review.md`
-  records 5 accepted/5 deferred/0 rejected/open; proposal unchanged.
-- `2026-09-09-cli-github-impact-analysis.md` is review history, not open work;
-  corrected age trace names four downstream entries, not spec/plan. Types/docs and
-  criterion/disposition assertions passed.
+Operator chose `2026-09-09-docs-cli-operator-analysis.md`, not the outbound proposal,
+for 18 criteria/boundaries/transactional exceptions/distribution limits.
+`docs/proposals/2026-09-09-github-project-projection-and-upstream-spikes-review.md`:
+5 accepted/5 deferred/0 rejected/open; proposal unchanged.
+`2026-09-09-cli-github-impact-analysis.md` is closed history; corrected age trace
+names four downstream entries, not spec/plan. Types/docs/criterion assertions passed.
 
 ### CLI operator plan review reconciled (2026-09-10)
 
@@ -219,133 +205,97 @@ lifecycle with CRLF/unscoped-table corrections; reconciliation grants no spend.
 
 ### CLI operator implementation evidence (2026-09-10)
 
-- `2026-09-10-cli-operator-implementation.txt` retains command/guard evidence,
-  including ten late mutations and full approval testing after a contributor's
-  external-signing filesystem limit. Deviations were target-relative evidence,
-  disabled diff refresh and shared artifact extraction, not stronger gates or schema.
-- Standard I/O is the runner seam; stages own gates, and an invocation never retries
-  failed groups, even rolled-back delivery. Disposable signing proves transport only.
-- Restored stderr alongside JSON; counted attempts after fallible progress.
-  Isolation reloads serialized profiles and sets an explicit absent external key;
-  clearing overrides reactivates host defaults. Ignored state remains inside the repo.
-- Lowercase `# design` is required grounding; capitalization blocked. Failed
-  dispatches return audited reasons, not separately retained stderr; ascending severity
-  and unattempted-group accounting needed corrections.
-- A stdout mutation failed `2 !== 1` at `operatorEnvelope`; Node refused TypeScript
-  mirrors under node_modules. Restorations were byte-exact; the reviewer ran initially
-  sampled suites before closure and withdrew the over-refusal-only guarantee.
-- One-profile CLI/approval/repeat-no-op and calibrated `gh` sentinel passed;
-  README PowerShell preserved rows/files/index, omission failed and restoration passed.
-  CLI tests 108 passed; full suite 1071 passed/one OS symlink skip; types/docs/diff passed.
-  CLAUDE/AGENTS matched, architecture edits stayed in sections 15/19; no production rollback.
+`2026-09-10-cli-operator-implementation.txt` retains commands, ten late mutations
+and full approval testing after a contributor's external-signing filesystem limit.
+Deviations: target-relative evidence, disabled diff refresh, shared extraction;
+no stronger gate/schema. Standard I/O is the runner seam; stages own gates.
+An invocation never retries failed groups, including rolled-back delivery.
+
+Restored stderr beside JSON, counted attempts after fallible setup, reloaded
+serialized profiles and set an explicit absent external key. Lowercase `# design`
+was required grounding; ascending severity and unattempted-group accounting needed
+correction. Failed dispatches return audited reasons, not separately retained stderr.
+The stdout mutation failed `2 !== 1` at `operatorEnvelope`; TypeScript mirrors
+under node_modules failed before assertions. Restorations were byte-exact; reviewer
+ran initially sampled suites and withdrew the over-refusal-only guarantee.
+
+One-profile CLI/approval/repeat-no-op, calibrated `gh` sentinel, and README
+rows/files/index preservation passed; omission failed then restoration passed.
+CLI108/full1071 passed plus one OS symlink skip; types/docs/diff passed.
+CLAUDE/AGENTS matched, architecture stayed in sections15/19; no production rollback.
 
 ### Operator-requested follow-up code review (2026-09-10)
 
-- Fresh `gpt-5.5` HEAD/untracked review: nine index/key-isolation/delivery-retry
-  cases and docs/types/diff passed (63 warnings); full suite was prior evidence.
-  Physical-EOF reads resolved nonempty-line counting; source/README hashes matched.
-  DEP0190 had no retained traced origin, so no runtime/fixture attribution was made.
+Fresh `gpt-5.5` HEAD/untracked review: nine index/key-isolation/delivery-retry cases
+and docs/types/diff passed (63 warnings); full suite was prior evidence. Physical
+EOF resolved nonempty-line counting; source/README hashes matched. DEP0190 had no
+retained traced origin, so no runtime/fixture attribution was made.
 
 ### cc-switch reviewed and rejected as a harness abstraction (2026-09-11)
 
-- `docs/proposals/cc-switch-review.md` rejects live provider-config switching as
-  an adapter substitute: MHA-03's argv/envelope work remains. Candidates A (frozen
-  non-secret executor env) and B (doctor effective-config reporting) do not discharge
-  the MHA-01 sequencing decision.
-- Full-definition canonical comparison/hash means a new env field needs no column
-  or migration but invalidates old bindings; land it between runs. Ambient home
-  files remain a provider-input surface even when environment overrides are filtered.
-- The review recorded no `~/.cc-switch` or `ANTHROPIC_*` on that host check;
-  this was prevention, not a measured paid failure, so no hazard was added.
-  Types/docs and targeted path checks passed with 63 historical warnings.
+`docs/proposals/cc-switch-review.md`: switching is no adapter substitute;
+MHA-03 argv/envelope and MHA-01 sequencing remain. Candidates A (frozen non-secret
+env) and B (doctor reporting) do not discharge them. A new env field needs no
+migration but invalidates canonical bindings; land between runs. Filtered overrides
+do not contain ambient home files. No `~/.cc-switch` or `ANTHROPIC_*` was observed;
+this was prevention, not a measured incident. Types/docs/paths passed, 63 warnings.
 
 ### Pi support assessment and retained Claude acceptance chain (2026-09-11)
 
+Full research limits, findings, commands, retained paths and per-dispatch ledger:
+`2026-09-11-pi-assessment-and-prior-claude-chain.md`. Pi remains additional support,
+not an approved adapter. The earlier Claude2.1.269/Sonnet5 run completed with
+16 dispatches/$2.0585392 and a non-blocking medium correctness finding after
+remediation; its final panel was not clean. Six artifacts delivered at
+`8cd5a2d9b959f4eb215b71feae690a9b1a14b2d2`; only version commands ran.
+That prior run's external paths were not rechecked during this compaction.
+
+### Doctor implementation, live block and triage (2026-09-11)
+
 #### Decisions and assumptions
 
-- The user corrected the emergency-fix framing: Pi is intended as additional
-  supported harness capability, with Claude retained, not a temporary replacement.
-- One full paid chain through code review was authorized under
-  `C:\Users\tamezs\buildWorks_test_repos`, followed by README/learning updates.
-  The canonical driver used Claude Code 2.1.269 with `claude-sonnet-5`.
-- The Pi URL was `https://github.com/earendil-works/pi/tree/main/packages/coding-agent`;
-  fetched package metadata said 0.85.1, but main was not consistently revision-pinned.
-  No Pi runtime/provider check, implementation, scored report or scorecard was produced.
+- Authorization progressed through implementation, one paid chain, issue
+  write-up and compaction; no repair/publication/retry followed. The `retain`
+  choice preserves same-size detection, not field inference.
+- Planning review overstated a crash and inferred gaps from presentation;
+  all 13 dispositions preserve the original evidence. Independent bare-name
+  parity, non-gating AC-009 and narrow file errors remained the contract.
 
 #### What failed
 
-- The initial Pi comparison overstated evidence: IT approval/access, Codex containment
-  equivalence, Claude server-side invoice cost, and Pi cost-null behavior were not
-  established. Its 10–14-day estimate was not reconciled with the existing
-  multi-harness review's 18–30-day scope; neither range is an approved Pi plan.
-- Earlier paid-run prose implied both reviewers found defects and permanent storage.
-  Readback shows only correctness findings; non-temp storage is still machine-local,
-  with no demonstrated independent backup or session-logoff survival.
+- Nested test registration produced wrapper-only greens; module-scope placement
+  restored discovery. Native-valid `first.` exposed Node stat/native lookup
+  divergence; the query-only correction has its own eighth mutation record.
+- Owned-fixture teardown once returned `EPERM`; no child remained, explicit
+  cleanup and unchanged rerun passed. Its transient cause remains unknown.
+- The paid chain lasted20m17.831s,16 dispatches/$2.4481306. Correctness finding4
+  triggered one patch; final high finding5 blocked. Security returned no findings.
+  Final commit `511f64bbb34d3ed0c8066a7fd8fb4945dc6ba54e`; no delivery.
+- AC-013 maps Enter to equals; remediation added an all-button exception and
+  assertions blessing it. The first report's preferred Backspace outcome was not
+  the requirement. Source conflict is established; native browser ordering is not.
+- Optional unit replay never reached calculator assertions: bare-JSON extraction,
+  inherited `type:module`, then an invalid package-identity check obstructed the
+  diagnostic tooling. `2026-09-11-code-review-block-triage-evidence.txt` retains
+  the limits; no product-suite pass/fail is claimed.
 
-#### What worked
+#### What worked and where to resume
 
-- Run 1 (`web-calculator`) completed all nine stages, driver 15/15, with 16 dispatches
-  and cost reported for every row: **$2.05854** rounded (stored sum $2.0585392).
-- Both panels had correctness/security reviewers; round 1's low finding 9
-  (`formatresult-infinity-leak-on-overflow`) triggered remediation despite being
-  below the final blocking threshold. Patch `383a17d9` -> `8cd5a2d9` changed calculator/tests.
-- Round 2 retained medium finding 10 (`formatresult-false-error-on-large-finite-result`,
-  calculator line 97): the reviewer reported rounding overflow incorrectly rejects
-  finite results such as 1e300. `finalGate=pass` reflects the frozen high threshold,
-  not a clean panel; no further patch was applied or authorized here.
-- Six signed paths delivered: package manifest, calculator, index, styles, theme,
-  and calculator tests. Final reviewed/delivered commit:
-  `8cd5a2d9b959f4eb215b71feae690a9b1a14b2d2`; audit validation passed.
-- Frozen initial/post-patch verification ran only `node --version` and `npm --version`.
-  Generated tests existing on disk do not establish they ran; BuildWorks' own later
-  test suite does not validate this calculator.
-
-Per-dispatch driver values, rechecked against retained rows; all used executor
-`claude-code`, effective model `claude-sonnet-5`. Individually rounded costs
-need not sum to the rounded total.
-
-| ID | Agent | USD | Duration ms |
-| --- | --- | ---: | ---: |
-| 1 | spec-author | 0.05982 | 27966 |
-| 2 | spec-author | 0.08164 | 64453 |
-| 3 | spec-reviewer-traceability | 0.04679 | 31487 |
-| 4 | spec-reviewer-consistency | 0.10720 | 56141 |
-| 5 | spec-author | 0.10489 | 50153 |
-| 6 | plan-author | 0.05059 | 27091 |
-| 7 | plan-author | 0.08010 | 62174 |
-| 8 | spec-reviewer-traceability | 0.05847 | 41406 |
-| 9 | spec-reviewer-consistency | 0.11037 | 57473 |
-| 10 | plan-author | 0.08129 | 46834 |
-| 11 | implementer | 0.33899 | 175054 |
-| 12 | code-reviewer-correctness | 0.32108 | 413120 |
-| 13 | code-reviewer-security | 0.10949 | 27716 |
-| 14 | implementer | 0.15607 | 44977 |
-| 15 | code-reviewer-correctness | 0.23766 | 121216 |
-| 16 | code-reviewer-security | 0.11409 | 26376 |
-
-#### Verification
-
-- `node .claude\skills\run-buildworks\driver.mjs smoke --dir C:\Users\tamezs\buildWorks_test_repos\smoke`
-  passed 13/13; the session removed that smoke-only directory.
-- `node .claude\skills\run-buildworks\driver.mjs paid --yes --dir C:\Users\tamezs\buildWorks_test_repos`
-  exited 0 with 15/15, including verify-audit.
-- `node .\src\cli.ts status --repo C:\Users\tamezs\buildWorks_test_repos\target --run 1 --json`
-  rechecked completion, cost coverage and command limits during compaction.
-- A read-only SQLite/JSON check resolved every `raw_output_ref` and parsed all 16
-  retained files under `target\.governance\raw\1` in the selected parent directory.
-- Before compaction, `npm test` passed 1071/1072, zero failures, one skip;
-  `npm run typecheck` and `npm run check:docs` passed, with 63 historical path warnings.
-- Compaction reran `npm run check:docs`, `npm run typecheck` and
-  `git --no-optional-locks -c diff.autoRefreshIndex=false --no-pager diff --check`:
-  passed; docs retained the same 63 historical warnings. No paid rerun or source edit.
-
-#### Next time
-
-- Keep the observed CLI capabilities separate from approved provider access and
-  measured runtime guarantees. Pi's JSONL/read-only/discovery flags are research leads,
-  not a verified adapter; cc-switch still does not replace argv/envelope integration.
+- `2026-09-11-doctor-ambient-config-implementation.txt`:203 passes/four skips,
+  seven prescribed mutations; post-fix52 passes/four skips, three ambient CLI
+  passes and separate review closure. Planning/docs/types had63 historical warnings.
+- `2026-09-11-doctor-ambient-config-live-run.txt` and the recorded live-chain JSON
+  preserve all16 envelopes,13 artifacts, costs, hashes and unchanged runtime
+  identities. Driver10/15 reflects the gate/no-delivery consequences; audit valid.
+- Post-run doctor components passed; overall readiness refused the blocked boundary
+  and generated untracked spec/plan. Frozen commands checked Node/npm versions
+  only. No generated-test or browser result follows from them.
+- Canonical environment reads preserve Windows key casing; owned home/native
+  copies isolate bypass callers. Native execPath can retain dot-dot spelling;
+  NTFS numeric identity mutations must actually differ. Detailed proofs remain
+  in the implementation, discovery-debug and mutation records.
 
 #### Next up
 
-- Follow the single Current state action above; this entry records evidence, not
-  authorization to implement Pi, rerun a paid chain or clean retained targets.
+- Await operator authorization for the proposal's bounded correction/reproduction.
+  Defect triage rather than automatic spike creation is a recommendation only.

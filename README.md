@@ -195,6 +195,42 @@ Without a selector it checks current repository/configuration readiness;
 combine the two selectors. Current defaults remain distinct from frozen facts;
 doctor never executes an arbitrary probe found in a retained profile.
 
+Doctor supplies its version probe with the same named-variable environment
+filter as harness invocation. It selects and probes one absolute native
+executable, reporting its selected path, invocation cwd, and successful
+version output. `--repo` does not change executable search to the target
+directory. This is current evidence, including under `--run`, not a frozen
+binary identity or a pin for later dispatches in different worktree cwds.
+Version output proves neither executable origin nor a supported installation.
+
+The non-gating `ambient_provider_config` check reports environment presence
+and whether BuildWorks supplies each named variable to the child. Windows
+can add required system variables beyond that supplied map. The current
+filter excludes `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_BASE_URL`,
+and `CLAUDE_CONFIG_DIR`, so they can be present but not supplied. Their values
+and value hashes are never reported; an excluded config-directory override
+does not redirect this inventory.
+
+The inventory observes only `.claude/settings.json` (`user_settings`) and
+`.claude.json` (`user_state`) beneath the passed-through absolute, non-empty
+`USERPROFILE` on Windows or `HOME` on POSIX, using native path separators.
+Each regular file has a one-MiB read ceiling. Missing files are `absent`;
+unavailable home, linked/special/unreadable/oversized files, read failures, or
+detected changes yield `unavailable` with a reason and no content hash.
+Either unavailable file makes this check `NOT CHECKED`, never a readiness
+failure or repair requirement. The byte limits do not bound OS filesystem
+latency; the five-second timeout bounds the version probe, not all of doctor.
+These best-effort observations do not establish managed/project settings,
+OS home fallback, actual file use under native flags, or effective precedence.
+
+**Treat either output format as sensitive local operational data.** Absolute
+paths, sizes, and full SHA-256 comparison hashes can identify a workstation or
+confirm a candidate file; they are not anonymization. The whole-file hash
+intentionally includes `user_state` despite its possible sign-in/trust state.
+It detects byte changes, including same-size edits, without identifying the
+changed field or parsing individual credentials. Review reports before
+redirecting or sharing them. Doctor adds no diagnostic persistence or transmission.
+
 Before state exists, `runs` reports `state_missing` and exits 1; it does not
 initialize a database. An existing empty store returns an empty array and
 exit 0. Inventory is newest-first, defaults to 20, accepts `--limit` 1-100,
@@ -371,7 +407,18 @@ Doctor checks contain `name`, `status` (`pass`, `fail`, `not_checked`),
 `evidence`, and nullable `repair`. `current` contains `systemName`,
 `nodeVersion`, `minimumNodeMajor`, `gitVersion`, `startingCommit`,
 `verification`, `policy`, `policyHash`, `agentIds`, `executor`, and
-`approvalSigner`. `frozen` is the selected run's configuration below or null;
+`approvalSigner`, and `ambientProviderConfig`. `executor` retains its configured
+`id`, `command`, `probe`, and `capabilities`, and adds nullable `resolvedPath`,
+`probeCwd`, and nullable `versionOutput`. The selected path remains visible
+after launch failure; version output is null on failure or an empty response.
+`ambientProviderConfig` contains `environment`, `homeVariable`, and exactly two
+`files` records. Environment entries contain `name`, `present`, `passedToChild`,
+and nullable `valueHash`, sorted by name. Only present `PATH`, `HOME`,
+`USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `TEMP`, `TMP`, and `SystemRoot` receive
+value hashes. Each file contains `name`, nullable `path`, `state`, nullable
+`sizeBytes`, nullable `contentHash`, and nullable `reason`; only a complete,
+stable, readable observation carries an exact-byte hash.
+`frozen` is the selected run's configuration below or null;
 unavailable frozen fields are never replaced with current defaults.
 
 Run inventory entries contain `id`, `project`, `featureId`, `slug`, `status`,

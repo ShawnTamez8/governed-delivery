@@ -2,8 +2,8 @@
 
 ## Source of truth
 
-`ARCHITECTURE.md` is the design. `docs/hazards.md` records failures that have
-actually occurred in systems of this kind. Build from those two documents, and
+`ARCHITECTURE.md` is the design. `docs/hazards.md` records observed failures
+and identified failure mechanisms. Build from those two documents, and
 do not import patterns from other codebases on this machine — they were
 written against different constraints and carry assumptions this design rejects.
 
@@ -77,10 +77,10 @@ you nothing about which branch is live. Find the callers and the construction
 sites before describing behaviour. Confident inference from plausible names was
 the single largest source of wasted effort in work of this kind.
 
-**Read the whole file before editing it.** The Read tool returns a bounded
-window — repeat with `offset` until every line of the file you will change
-has been seen. A token-minimal read that unlocks an edit is not reading the
-file. Never edit on the basis of `head`/`tail`/`sed` slices, and a
+**Read the whole file before editing it.** File-reading tools return bounded
+windows; continue through physical EOF until every line of the file you will
+change has been seen. A token-minimal read that unlocks an edit is not reading
+the file. Never edit on the basis of `head`/`tail`/`sed` slices, and a
 programmatic patch (`read()` + `replace()`) is only legitimate after you
 have viewed the full contents.
 
@@ -104,6 +104,12 @@ afterwards. `npm run check:docs` refuses a document without it.
 **Say what is unverified.** Severity is a claim about reachability. Do not label
 something critical without naming the configurations that reach it.
 
+**Preserve review evidence.** Verify an alleged gap against the complete
+contract and enclosing call path before accepting it. Record corrections and
+dispositions in the review's reconciliation block, not by rewriting its
+original findings. Inventory the actual findings, including duplicate titles;
+do not carry forward a conversational count without reconciling it.
+
 **Tasks are state, not documents.** Never create a new `tasks.md`. The only
 exceptions are the exact historical bootstrap records at
 `docs/features/delivery-check/tasks.md`,
@@ -119,8 +125,9 @@ document never joins either one.
 ## Layout
 
 - `ARCHITECTURE.md` — the design. Change it deliberately, not incidentally.
-- `docs/hazards.md` — failures that have actually occurred, each costing real
-  money. Read the relevant entry before implementing that area.
+- `docs/hazards.md` — observed failures and identified failure mechanisms.
+  Entries distinguish measured incidents from code-path gaps; read the relevant
+  entry before implementing that area.
 - `docs/proposals/` — backlog. Markdown, no enforced lifecycle.
 - `docs/features/<slug>/` — active work. That is the design: `design.md` is the
   only human-authored file, everything else is produced by a stage, and
@@ -133,8 +140,10 @@ document never joins either one.
 
 Plans and review records carry a `**Status:**` line. A plan is `Implemented`
 once it has shipped and `Reconciled` when it has absorbed its reviews but
-nothing is built; a review record is `reconciled` once every finding carries a
-disposition. Nothing enforces these values — `check:docs` does not read them.
+nothing is built; a review record is `reconciled` once every finding has a
+final disposition and none remain open. Use `partially reconciled` while any
+finding remains open. Reconciliation does not authorize implementation or
+provider spend. Nothing enforces these values — `check:docs` does not read them.
 
 ## Session continuity
 
@@ -151,8 +160,11 @@ Do not create a second harness-specific project-learnings file.
 
 At session start, read `.claude/sessions/project-learnings.md` — it carries
 decisions locked, running state, and open questions saved by the
-context-compaction skill. The most recent entry is the current state; treat
-it as the resume point for any work here.
+context-compaction skill. Its single top-level `Current state` block is the
+resume point and takes precedence over historical session entries. Keep
+active-work status, settled operator decisions and the next action there,
+not in competing summaries in these instruction files. Consult the named
+plan and its reconciliation stamp before resuming work.
 
 **The committed tier is the system of record. Knowledge moves into the
 repository, never out of it.** Harness auto memory is a cache: it is

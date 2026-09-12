@@ -1,0 +1,1194 @@
+Requested outcome: prove exactly seven Task 5 doctor ambient-config guards by
+isolated mutations, not by changing live source or weakening assertions.
+Authorization: parent explicitly assigned these seven mutations on 2026-09-11.
+Plan: docs/features/doctor-ambient-config/plan.md, Task 5.
+Hazards considered: 4 (guards must fail on the actual wrong outcome), 8 and 9
+(native executable identity and filtered child environment), 12 (observational
+configuration evidence remains non-gating).
+
+Owned disposable mirror: .doctor-ambient-config-guard-mirror
+Owned scratch driver: .claude/sessions/.doctor-ambient-config-mutation-driver.mjs
+The repository-selected session workspace is used; no system temporary directory.
+Mirror copies current physical source/tests, including untracked diagnostics.
+No dependencies are copied or installed. Existing test-owned fixture directories
+may be created inside the mirror's node_modules; all TypeScript source stays outside it.
+Expected result per mutation: exactly one named test is discovered, fails with
+ERR_ASSERTION, then passes after the sole changed file is restored byte-exactly.
+Execution uses native spawnSync argv arrays with shell:false and TAP reporting.
+No approval/signing test, provider model, paid operation, commit or publication.
+Retained-probe mutation executes only the named test's owned Node file canary.
+No production rollback is needed; only disposable copies are deliberately changed.
+
+Execution evidence follows. SHA-256 values bind original, mutated and restored
+bytes. Complete assertion diagnostics and restoration test summaries are retained.
+
+Execution baseline
+{
+  "startedAt": "2026-09-12T00:16:11.428Z",
+  "node": "v26.4.0",
+  "libuv": "1.52.1",
+  "platform": "win32",
+  "mirror": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "copiedEntries": [
+    "src",
+    "test",
+    "scripts",
+    "docs",
+    "README.md",
+    "ARCHITECTURE.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    ".gitignore"
+  ],
+  "liveFileHashes": {
+    "src\\harness.ts": "3a38aee0f91a75b3ea89729b4c3d8ca11e1cd488cbf63c31e8457f5480e4bfeb",
+    "test\\harness.test.ts": "c2aa96eaa9c97d78ec803b745991337979a03a337a805466b958b9d45cf2c48b",
+    "src\\doctor-diagnostics.ts": "1b4be3a0051b1d254069f28bd8032977add2ed539e09b26cb9a2790d6e67b85e",
+    "test\\doctor-diagnostics.test.ts": "4d05bfce87d15b6b63695ad90d026e2a8f881d1d50e9a1020e97540eb33fcdb1",
+    "src\\readiness.ts": "b59bb8312d6aa9d672421542793240d33135cc4d09f7fa3ad54f06acc5aa5d47",
+    "test\\cli-operator.test.ts": "ea14ce7d434bd6f6067a001894248eea17127d7edf011d9802a38460c3a451c5",
+    "src\\cli.ts": "0929fe6a406a60dda51a0df6a4250e59df01f05e6c373a1f2b3b600913d19077"
+  }
+}
+
+1-filter-canary-leak: unique source mutation
+{
+  "file": "src\\harness.ts",
+  "testName": "the environment filter excludes anything not on the passthrough list",
+  "anchor": "    if (value !== undefined) env[name] = value;\n  }\n  return env;",
+  "replacement": "    if (value !== undefined) env[name] = value;\n  }\n  if (source.BUILDWORKS_TEST_CANARY !== undefined) env.BUILDWORKS_TEST_CANARY = source.BUILDWORKS_TEST_CANARY;\n  return env;",
+  "beforeSha256": "3a38aee0f91a75b3ea89729b4c3d8ca11e1cd488cbf63c31e8457f5480e4bfeb",
+  "mutatedSha256": "70e238c52ae79441d4f4dbe87fc7efa6d747a0748747ebcbf85e9b893efb853f"
+}
+
+1-filter-canary-leak: mutated command/result
+{
+  "executable": "C:\\Program Files\\nodejs\\node.exe",
+  "argv": [
+    "--test",
+    "--test-reporter=tap",
+    "--test-name-pattern=^the environment filter excludes anything not on the passthrough list$",
+    "test\\harness.test.ts"
+  ],
+  "cwd": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "shell": false,
+  "exitCode": 1,
+  "signal": null,
+  "error": null,
+  "counts": {
+    "tests": 1,
+    "pass": 0,
+    "fail": 1,
+    "skipped": 0,
+    "cancelled": 0
+  }
+}
+
+1-filter-canary-leak: mutated stdout
+TAP version 13
+# Subtest: the environment filter excludes anything not on the passthrough list
+not ok 1 - the environment filter excludes anything not on the passthrough list
+  ---
+  duration_ms: 118.8241
+  type: 'test'
+  location: 'C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\test\\harness.test.ts:150:1'
+  failureType: 'testCodeFailure'
+  error: 'canary leaked through the filter'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-ambient-config-guard-mirror/test/harness.test.ts:156:12)
+    process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    async Test.run (node:internal/test_runner/test:1389:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 306.1316
+
+
+1-filter-canary-leak: mutated stderr
+
+
+1-filter-canary-leak: byte-exact restoration
+{
+  "beforeSha256": "3a38aee0f91a75b3ea89729b4c3d8ca11e1cd488cbf63c31e8457f5480e4bfeb",
+  "restoredSha256": "3a38aee0f91a75b3ea89729b4c3d8ca11e1cd488cbf63c31e8457f5480e4bfeb",
+  "equal": true
+}
+
+1-filter-canary-leak: restored command/result
+{
+  "executable": "C:\\Program Files\\nodejs\\node.exe",
+  "argv": [
+    "--test",
+    "--test-reporter=tap",
+    "--test-name-pattern=^the environment filter excludes anything not on the passthrough list$",
+    "test\\harness.test.ts"
+  ],
+  "cwd": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "shell": false,
+  "exitCode": 0,
+  "signal": null,
+  "error": null,
+  "counts": {
+    "tests": 1,
+    "pass": 1,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0
+  }
+}
+
+1-filter-canary-leak: restored stdout
+TAP version 13
+# Subtest: the environment filter excludes anything not on the passthrough list
+ok 1 - the environment filter excludes anything not on the passthrough list
+  ---
+  duration_ms: 132.9915
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 314.1766
+
+
+1-filter-canary-leak: restored stderr
+
+
+2-hash-excluded-override: unique source mutation
+{
+  "file": "src\\doctor-diagnostics.ts",
+  "testName": "ambient privacy: every override is presence-only, never a value or value hash",
+  "anchor": "valueHash: value !== undefined && ENVIRONMENT_HASH_NAMES.has(name) ? sha256Hex(value) : null,",
+  "replacement": "valueHash: value !== undefined ? sha256Hex(value) : null,",
+  "beforeSha256": "1b4be3a0051b1d254069f28bd8032977add2ed539e09b26cb9a2790d6e67b85e",
+  "mutatedSha256": "19814fd86a8a220df459b858aba765ba8973a7d99645169a0dad9c65c794a06f"
+}
+
+2-hash-excluded-override: mutated command/result
+{
+  "executable": "C:\\Program Files\\nodejs\\node.exe",
+  "argv": [
+    "--test",
+    "--test-reporter=tap",
+    "--test-name-pattern=^ambient privacy: every override is presence-only, never a value or value hash$",
+    "test\\doctor-diagnostics.test.ts"
+  ],
+  "cwd": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "shell": false,
+  "exitCode": 1,
+  "signal": null,
+  "error": null,
+  "counts": {
+    "tests": 1,
+    "pass": 0,
+    "fail": 1,
+    "skipped": 0,
+    "cancelled": 0
+  }
+}
+
+2-hash-excluded-override: mutated stdout
+TAP version 13
+# Subtest: ambient privacy: every override is presence-only, never a value or value hash
+not ok 1 - ambient privacy: every override is presence-only, never a value or value hash
+  ---
+  duration_ms: 7.1235
+  type: 'test'
+  location: 'C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\test\\doctor-diagnostics.test.ts:396:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+
+      {
+        name: 'ANTHROPIC_BASE_URL',
+        passedToChild: false,
+        present: true,
+    +   valueHash: '842327685197ab62373a2e4877ff8b5ce774501e030a446d484a34be1befe737'
+    -   valueHash: null
+      }
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    name: 'ANTHROPIC_BASE_URL'
+    present: true
+    passedToChild: false
+    valueHash: ~
+  actual:
+    name: 'ANTHROPIC_BASE_URL'
+    present: true
+    passedToChild: false
+    valueHash: '842327685197ab62373a2e4877ff8b5ce774501e030a446d484a34be1befe737'
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-ambient-config-guard-mirror/test/doctor-diagnostics.test.ts:404:14)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1382:25)
+    Test.start (node:internal/test_runner/test:1242:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 213.0762
+
+
+2-hash-excluded-override: mutated stderr
+
+
+2-hash-excluded-override: byte-exact restoration
+{
+  "beforeSha256": "1b4be3a0051b1d254069f28bd8032977add2ed539e09b26cb9a2790d6e67b85e",
+  "restoredSha256": "1b4be3a0051b1d254069f28bd8032977add2ed539e09b26cb9a2790d6e67b85e",
+  "equal": true
+}
+
+2-hash-excluded-override: restored command/result
+{
+  "executable": "C:\\Program Files\\nodejs\\node.exe",
+  "argv": [
+    "--test",
+    "--test-reporter=tap",
+    "--test-name-pattern=^ambient privacy: every override is presence-only, never a value or value hash$",
+    "test\\doctor-diagnostics.test.ts"
+  ],
+  "cwd": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "shell": false,
+  "exitCode": 0,
+  "signal": null,
+  "error": null,
+  "counts": {
+    "tests": 1,
+    "pass": 1,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0
+  }
+}
+
+2-hash-excluded-override: restored stdout
+TAP version 13
+# Subtest: ambient privacy: every override is presence-only, never a value or value hash
+ok 1 - ambient privacy: every override is presence-only, never a value or value hash
+  ---
+  duration_ms: 9.3741
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 204.478
+
+
+2-hash-excluded-override: restored stderr
+
+
+3-probe-different-executable: unique source mutation
+{
+  "file": "src\\readiness.ts",
+  "testName": "readiness uses the selected absolute probe while dispatch retains bare inherited defaults",
+  "anchor": "executablePath: resolvedPath",
+  "replacement": "executablePath: process.execPath",
+  "beforeSha256": "b59bb8312d6aa9d672421542793240d33135cc4d09f7fa3ad54f06acc5aa5d47",
+  "mutatedSha256": "807be12eea454c62d560c0fafd84c85f2d1741ee8d5ca4a8b2d562e406c24513"
+}
+
+3-probe-different-executable: mutated command/result
+{
+  "executable": "C:\\Program Files\\nodejs\\node.exe",
+  "argv": [
+    "--test",
+    "--test-reporter=tap",
+    "--test-name-pattern=^readiness uses the selected absolute probe while dispatch retains bare inherited defaults$",
+    "test\\cli-operator.test.ts"
+  ],
+  "cwd": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "shell": false,
+  "exitCode": 1,
+  "signal": null,
+  "error": null,
+  "counts": {
+    "tests": 1,
+    "pass": 0,
+    "fail": 1,
+    "skipped": 0,
+    "cancelled": 0
+  }
+}
+
+3-probe-different-executable: mutated stdout
+TAP version 13
+# Subtest: readiness uses the selected absolute probe while dispatch retains bare inherited defaults
+not ok 1 - readiness uses the selected absolute probe while dispatch retains bare inherited defaults
+  ---
+  duration_ms: 2718.1841
+  type: 'test'
+  location: 'C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\test\\cli-operator.test.ts:2796:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+
+    1 !== 2
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 2
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-ambient-config-guard-mirror/test/cli-operator.test.ts:2812:14)
+    process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    async Test.run (node:internal/test_runner/test:1389:7)
+    async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2960.6572
+
+
+3-probe-different-executable: mutated stderr
+
+
+3-probe-different-executable: byte-exact restoration
+{
+  "beforeSha256": "b59bb8312d6aa9d672421542793240d33135cc4d09f7fa3ad54f06acc5aa5d47",
+  "restoredSha256": "b59bb8312d6aa9d672421542793240d33135cc4d09f7fa3ad54f06acc5aa5d47",
+  "equal": true
+}
+
+3-probe-different-executable: restored command/result
+{
+  "executable": "C:\\Program Files\\nodejs\\node.exe",
+  "argv": [
+    "--test",
+    "--test-reporter=tap",
+    "--test-name-pattern=^readiness uses the selected absolute probe while dispatch retains bare inherited defaults$",
+    "test\\cli-operator.test.ts"
+  ],
+  "cwd": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "shell": false,
+  "exitCode": 0,
+  "signal": null,
+  "error": null,
+  "counts": {
+    "tests": 1,
+    "pass": 1,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0
+  }
+}
+
+3-probe-different-executable: restored stdout
+TAP version 13
+# Subtest: readiness uses the selected absolute probe while dispatch retains bare inherited defaults
+ok 1 - readiness uses the selected absolute probe while dispatch retains bare inherited defaults
+  ---
+  duration_ms: 2615.0254
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2855.1666
+
+
+3-probe-different-executable: restored stderr
+
+
+4-reverse-native-search-precedence: unique source mutation
+{
+  "file": "src\\doctor-diagnostics.ts",
+  "testName": "native differential: PATH precedence agrees even when absolute probe follows selection",
+  "anchor": "for (const directory of directories) {",
+  "replacement": "for (const directory of [...directories].reverse()) {",
+  "beforeSha256": "1b4be3a0051b1d254069f28bd8032977add2ed539e09b26cb9a2790d6e67b85e",
+  "mutatedSha256": "237b63fc8678b65ccf956a6f4afb20cb68a7e1d72ecf93c9164dc82a84cb5f92"
+}
+
+4-reverse-native-search-precedence: mutated command/result
+{
+  "executable": "C:\\Program Files\\nodejs\\node.exe",
+  "argv": [
+    "--test",
+    "--test-reporter=tap",
+    "--test-name-pattern=^native differential: PATH precedence agrees even when absolute probe follows selection$",
+    "test\\doctor-diagnostics.test.ts"
+  ],
+  "cwd": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "shell": false,
+  "exitCode": 1,
+  "signal": null,
+  "error": null,
+  "counts": {
+    "tests": 1,
+    "pass": 0,
+    "fail": 1,
+    "skipped": 0,
+    "cancelled": 0
+  }
+}
+
+4-reverse-native-search-precedence: mutated stdout
+TAP version 13
+# Subtest: native differential: PATH precedence agrees even when absolute probe follows selection
+not ok 1 - native differential: PATH precedence agrees even when absolute probe follows selection
+  ---
+  duration_ms: 1996.8045
+  type: 'test'
+  location: 'C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\test\\doctor-diagnostics.test.ts:108:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    resolver must agree with independent bare native spawn
+    + actual - expected
+
+    + 'c:\\repositories\\ai.tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\.doctor-diagnostics-v31jeb\\second path\\bw-doctor-native-fixture.exe'
+    - 'c:\\repositories\\ai.tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\.doctor-diagnostics-v31jeb\\first path\\bw-doctor-native-fixture.exe'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'c:\\repositories\\ai.tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\.doctor-diagnostics-v31jeb\\first path\\bw-doctor-native-fixture.exe'
+  actual: 'c:\\repositories\\ai.tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\.doctor-diagnostics-v31jeb\\second path\\bw-doctor-native-fixture.exe'
+  operator: 'strictEqual'
+  stack: |-
+    nativeParity (file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-ambient-config-guard-mirror/test/doctor-diagnostics.test.ts:81:10)
+    file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-ambient-config-guard-mirror/test/doctor-diagnostics.test.ts:114:5
+    withParentLookup (file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-ambient-config-guard-mirror/test/doctor-diagnostics.test.ts:48:5)
+    TestContext.<anonymous> (file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-ambient-config-guard-mirror/test/doctor-diagnostics.test.ts:113:3)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1382:25)
+    Test.start (node:internal/test_runner/test:1242:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2179.276
+
+
+4-reverse-native-search-precedence: mutated stderr
+
+
+4-reverse-native-search-precedence: byte-exact restoration
+{
+  "beforeSha256": "1b4be3a0051b1d254069f28bd8032977add2ed539e09b26cb9a2790d6e67b85e",
+  "restoredSha256": "1b4be3a0051b1d254069f28bd8032977add2ed539e09b26cb9a2790d6e67b85e",
+  "equal": true
+}
+
+4-reverse-native-search-precedence: restored command/result
+{
+  "executable": "C:\\Program Files\\nodejs\\node.exe",
+  "argv": [
+    "--test",
+    "--test-reporter=tap",
+    "--test-name-pattern=^native differential: PATH precedence agrees even when absolute probe follows selection$",
+    "test\\doctor-diagnostics.test.ts"
+  ],
+  "cwd": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "shell": false,
+  "exitCode": 0,
+  "signal": null,
+  "error": null,
+  "counts": {
+    "tests": 1,
+    "pass": 1,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0
+  }
+}
+
+4-reverse-native-search-precedence: restored stdout
+TAP version 13
+# Subtest: native differential: PATH precedence agrees even when absolute probe follows selection
+ok 1 - native differential: PATH precedence agrees even when absolute probe follows selection
+  ---
+  duration_ms: 2829.3961
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3012.7601
+
+
+4-reverse-native-search-precedence: restored stderr
+
+
+5-accept-oversized-prefix: unique source mutation
+{
+  "file": "src\\doctor-diagnostics.ts",
+  "testName": "exact per-file ceiling is readable, one byte over never yields an oversized prefix hash",
+  "anchor": "  if (listed.size > DOCTOR_CONFIG_MAX_BYTES) {\r\n    observation.reason = `size exceeds ${DOCTOR_CONFIG_MAX_BYTES}-byte ceiling: ${path}`;\r\n    return observation;\r\n  }",
+  "replacement": "  if (listed.size > DOCTOR_CONFIG_MAX_BYTES) {\r\n    const prefixDescriptor = openSync(path, constants.O_RDONLY);\r\n    const prefix = Buffer.alloc(DOCTOR_CONFIG_MAX_BYTES);\r\n    try {\r\n      readSync(prefixDescriptor, prefix, 0, prefix.length, 0);\r\n    } finally {\r\n      closeSync(prefixDescriptor);\r\n    }\r\n    observation.state = \"readable\";\r\n    observation.sizeBytes = prefix.length;\r\n    observation.contentHash = sha256Hex(prefix);\r\n    observation.reason = null;\r\n    return observation;\r\n  }",
+  "beforeSha256": "1b4be3a0051b1d254069f28bd8032977add2ed539e09b26cb9a2790d6e67b85e",
+  "mutatedSha256": "3d6e43209d6b4a9be909b765b4cd268850e747d69401a00e8ca01910dbcffe6d"
+}
+
+5-accept-oversized-prefix: mutated command/result
+{
+  "executable": "C:\\Program Files\\nodejs\\node.exe",
+  "argv": [
+    "--test",
+    "--test-reporter=tap",
+    "--test-name-pattern=^exact per-file ceiling is readable, one byte over never yields an oversized prefix hash$",
+    "test\\doctor-diagnostics.test.ts"
+  ],
+  "cwd": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "shell": false,
+  "exitCode": 1,
+  "signal": null,
+  "error": null,
+  "counts": {
+    "tests": 1,
+    "pass": 0,
+    "fail": 1,
+    "skipped": 0,
+    "cancelled": 0
+  }
+}
+
+5-accept-oversized-prefix: mutated stdout
+TAP version 13
+# Subtest: exact per-file ceiling is readable, one byte over never yields an oversized prefix hash
+not ok 1 - exact per-file ceiling is readable, one byte over never yields an oversized prefix hash
+  ---
+  duration_ms: 23.1216
+  type: 'test'
+  location: 'C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\test\\doctor-diagnostics.test.ts:676:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+
+    + 'readable'
+    - 'unavailable'
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'unavailable'
+  actual: 'readable'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-ambient-config-guard-mirror/test/doctor-diagnostics.test.ts:692:12)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1382:25)
+    Test.start (node:internal/test_runner/test:1242:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 220.1048
+
+
+5-accept-oversized-prefix: mutated stderr
+
+
+5-accept-oversized-prefix: byte-exact restoration
+{
+  "beforeSha256": "1b4be3a0051b1d254069f28bd8032977add2ed539e09b26cb9a2790d6e67b85e",
+  "restoredSha256": "1b4be3a0051b1d254069f28bd8032977add2ed539e09b26cb9a2790d6e67b85e",
+  "equal": true
+}
+
+5-accept-oversized-prefix: restored command/result
+{
+  "executable": "C:\\Program Files\\nodejs\\node.exe",
+  "argv": [
+    "--test",
+    "--test-reporter=tap",
+    "--test-name-pattern=^exact per-file ceiling is readable, one byte over never yields an oversized prefix hash$",
+    "test\\doctor-diagnostics.test.ts"
+  ],
+  "cwd": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "shell": false,
+  "exitCode": 0,
+  "signal": null,
+  "error": null,
+  "counts": {
+    "tests": 1,
+    "pass": 1,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0
+  }
+}
+
+5-accept-oversized-prefix: restored stdout
+TAP version 13
+# Subtest: exact per-file ceiling is readable, one byte over never yields an oversized prefix hash
+ok 1 - exact per-file ceiling is readable, one byte over never yields an oversized prefix hash
+  ---
+  duration_ms: 19.7592
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 207.4224
+
+
+5-accept-oversized-prefix: restored stderr
+
+
+6-unavailable-config-failure-gate: unique source mutation
+{
+  "file": "src\\readiness.ts",
+  "testName": "ambient CLI overrides and unavailable files never gate otherwise ready no-state doctor",
+  "anchor": "status: ambientProviderConfig.files.some((file) => file.state === \"unavailable\") ? \"not_checked\" : \"pass\",",
+  "replacement": "status: ambientProviderConfig.files.some((file) => file.state === \"unavailable\") ? \"fail\" : \"pass\",",
+  "beforeSha256": "b59bb8312d6aa9d672421542793240d33135cc4d09f7fa3ad54f06acc5aa5d47",
+  "mutatedSha256": "567b0db7d8287ae24187849fd4e660a8b6f870f745bb6964263ac2d3997e8246"
+}
+
+6-unavailable-config-failure-gate: mutated command/result
+{
+  "executable": "C:\\Program Files\\nodejs\\node.exe",
+  "argv": [
+    "--test",
+    "--test-reporter=tap",
+    "--test-name-pattern=^ambient CLI overrides and unavailable files never gate otherwise ready no-state doctor$",
+    "test\\cli-operator.test.ts"
+  ],
+  "cwd": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "shell": false,
+  "exitCode": 1,
+  "signal": null,
+  "error": null,
+  "counts": {
+    "tests": 1,
+    "pass": 0,
+    "fail": 1,
+    "skipped": 0,
+    "cancelled": 0
+  }
+}
+
+6-unavailable-config-failure-gate: mutated stdout
+TAP version 13
+# Subtest: ambient CLI overrides and unavailable files never gate otherwise ready no-state doctor
+not ok 1 - ambient CLI overrides and unavailable files never gate otherwise ready no-state doctor
+  ---
+  duration_ms: 16523.3716
+  type: 'test'
+  location: 'C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\test\\cli-operator.test.ts:2975:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    doctor: not_ready
+    Repository: C:\Repositories\AI.Tools\governed-delivery\.doctor-ambient-config-guard-mirror\node_modules\.cli-operator-tests\case-aP6WaQ\target with spaces
+    setup_required: ambient_provider_config: No observed overrides are present.; user_settings: unavailable; user_state: absent
+    BuildWorks: current local readiness
+    PASS node: Node 26.4.0; checkout requires >=24.
+    PASS git: git version 2.53.0.windows.1
+    PASS head: e2437e56e80506006266e52c2bf7c1dfdaf8dc65
+    PASS working_tree: The working tree is clean, excluding machine-local governance state.
+    PASS verification_config: Loaded 1 verification command(s) from e2437e56e80506006266e52c2bf7c1dfdaf8dc65.
+    PASS governance_ignore: .governance/ is ignored by Git.
+    NOT CHECKED design_readable: No --slug was selected; feature readiness was not checked.
+    NOT CHECKED design_committed: No valid feature was selected.
+    PASS policy: Current policy 8c785f52a16ec3e311c0053c47637075ec41ce1d7c3a6ca9947d078729d1d359 validates.
+    PASS document_review_staffing: The current registered specialist reviewers can staff the configured panel.
+    PASS code_review_staffing: The current registered specialist reviewers can staff the configured panel.
+    PASS author_bindings: The named authors provide every output their existing stages require.
+    PASS executor_capabilities: Executor claude-code provides spec, plan, implementation, review.
+    PASS approval_key: Approval signer fingerprint 22c99deec9d792a5c438575315e1d7ce02c07c06e3c31897122a8ba4c1e07e65.
+    FAIL ambient_provider_config: No observed overrides are present.; user_settings: unavailable; user_state: absent
+    PASS executor_probe: C:\Repositories\AI.Tools\governed-delivery\.doctor-ambient-config-guard-mirror\node_modules\.cli-operator-tests\case-aP6WaQ\native tools\claude.exe --version: v26.4.0
+    Current configuration:
+    {
+      "systemName": "BuildWorks",
+      "nodeVersion": "26.4.0",
+      "minimumNodeMajor": 24,
+      "gitVersion": "git version 2.53.0.windows.1",
+      "startingCommit": "e2437e56e80506006266e52c2bf7c1dfdaf8dc65",
+      "verification": {
+        "commands": [
+          {
+            "name": "unit",
+            "command": [
+              "node",
+              "--version"
+            ]
+          }
+        ]
+      },
+      "policy": {
+        "specReviewRounds": 1,
+        "planReviewRounds": 1,
+        "panelSizeMin": 2,
+        "panelSizeMax": 2,
+        "codeReviewPanelSize": 2,
+        "codeReviewMaxRounds": 2,
+        "codeReviewBlockingSeverity": "high",
+        "severities": [
+          "low",
+          "medium",
+          "high",
+          "critical"
+        ],
+        "requiredSpecialties": [
+          "requirements-traceability"
+        ],
+        "protectedPathPrefixes": [
+          "src/agents/",
+          "src/executor.ts",
+          "governed.yaml",
+          ".governance/"
+        ],
+        "promptMaxBytes": 1048576,
+        "resultMaxBytes": 1048576,
+        "approvalMaxLifetimeSeconds": 86400,
+        "approvalDefaultLifetimeSeconds": 28800,
+        "runDurationLimitSeconds": 604800,
+        "verifyCommandTimeoutSeconds": 900,
+        "verifyRetentionMaxBytes": 67108864,
+        "verifyEnvPassthrough": [
+          "PATH",
+          "HOME",
+          "USERPROFILE",
+          "APPDATA",
+          "LOCALAPPDATA",
+          "TEMP",
+          "TMP",
+          "SystemRoot"
+        ]
+      },
+      "policyHash": "8c785f52a16ec3e311c0053c47637075ec41ce1d7c3a6ca9947d078729d1d359",
+      "agentIds": [
+        "spec-author",
+        "plan-author",
+        "implementer",
+        "spec-reviewer-traceability",
+        "spec-reviewer-security",
+        "spec-reviewer-consistency",
+        "code-reviewer-correctness",
+        "code-reviewer-security"
+      ],
+      "executor": {
+        "id": "claude-code",
+        "command": [
+          "claude",
+          "-p",
+          "--output-format",
+          "json",
+          "--restricted",
+          "--safe-mode",
+          "--tools",
+          "Read,Glob,Grep",
+          "--disallowedTools",
+          "Write,Edit,NotebookEdit,Bash,mcp__*",
+          "--permission-mode",
+          "dontAsk",
+          "--strict-mcp-config",
+          "--no-session-persistence"
+        ],
+        "probe": [
+          "claude",
+          "--version"
+        ],
+        "capabilities": [
+          "spec",
+          "plan",
+          "review",
+          "implementation"
+        ],
+        "resolvedPath": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\node_modules\\.cli-operator-tests\\case-aP6WaQ\\native tools\\claude.exe",
+        "probeCwd": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\node_modules\\.cli-operator-tests\\case-aP6WaQ",
+        "versionOutput": "v26.4.0"
+      },
+      "ambientProviderConfig": {
+        "environment": [
+          {
+            "name": "ANTHROPIC_AUTH_TOKEN",
+            "present": false,
+            "passedToChild": false,
+            "valueHash": null
+          },
+          {
+            "name": "ANTHROPIC_BASE_URL",
+            "present": false,
+            "passedToChild": false,
+            "valueHash": null
+          },
+          {
+            "name": "APPDATA",
+            "present": true,
+            "passedToChild": true,
+            "valueHash": "798efa4568912b7a29affe20e47e941203df92c3fdb23caa127453ddba55bf3b"
+          },
+          {
+            "name": "CLAUDE_CONFIG_DIR",
+            "present": false,
+            "passedToChild": false,
+            "valueHash": null
+          },
+          {
+            "name": "HOME",
+            "present": true,
+            "passedToChild": true,
+            "valueHash": "798efa4568912b7a29affe20e47e941203df92c3fdb23caa127453ddba55bf3b"
+          },
+          {
+            "name": "LOCALAPPDATA",
+            "present": true,
+            "passedToChild": true,
+            "valueHash": "798efa4568912b7a29affe20e47e941203df92c3fdb23caa127453ddba55bf3b"
+          },
+          {
+            "name": "OPENAI_BASE_URL",
+            "present": false,
+            "passedToChild": false,
+            "valueHash": null
+          },
+          {
+            "name": "PATH",
+            "present": true,
+            "passedToChild": true,
+            "valueHash": "9f2dc87913d1051400eb8ea115134339a03778803f52e9f0d81f889cb808149d"
+          },
+          {
+            "name": "SystemRoot",
+            "present": true,
+            "passedToChild": true,
+            "valueHash": "c2bb903d586d19ec0d6eb6a2a659a882fd51244d6a137cee3595a385fda042f1"
+          },
+          {
+            "name": "TEMP",
+            "present": true,
+            "passedToChild": true,
+            "valueHash": "a017144a26ccb45ead2f876bcaa9762f9f59cba39c3db1f8b40b0d13c8c4f85f"
+          },
+          {
+            "name": "TMP",
+            "present": true,
+            "passedToChild": true,
+            "valueHash": "a017144a26ccb45ead2f876bcaa9762f9f59cba39c3db1f8b40b0d13c8c4f85f"
+          },
+          {
+            "name": "USERPROFILE",
+            "present": true,
+            "passedToChild": true,
+            "valueHash": "798efa4568912b7a29affe20e47e941203df92c3fdb23caa127453ddba55bf3b"
+          }
+        ],
+        "homeVariable": "USERPROFILE",
+        "files": [
+          {
+            "name": "user_settings",
+            "path": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\node_modules\\.cli-operator-tests\\case-aP6WaQ\\owned home\\.claude\\settings.json",
+            "state": "unavailable",
+            "sizeBytes": null,
+            "contentHash": null,
+            "reason": "unsupported non-regular file type: C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\node_modules\\.cli-operator-tests\\case-aP6WaQ\\owned home\\.claude\\settings.json"
+          },
+          {
+            "name": "user_state",
+            "path": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\node_modules\\.cli-operator-tests\\case-aP6WaQ\\owned home\\.claude.json",
+            "state": "absent",
+            "sizeBytes": null,
+            "contentHash": null,
+            "reason": null
+          }
+        ]
+      },
+      "approvalSigner": "22c99deec9d792a5c438575315e1d7ce02c07c06e3c31897122a8ba4c1e07e65"
+    }
+    Frozen run configuration:
+    null
+    Limitation: Provider account authentication, model entitlement, and quota are not checked by the local version probe.
+    Limitation: Private-key availability is not checked.
+    Limitation: The inventory covers only two documented user locations; managed/project settings, OS home fallback, actual file use under native flags, and effective precedence are not established.
+    Limitation: passedToChild describes the BuildWorks-supplied map only; Windows may add required system environment variables.
+    Limitation: Executable identity and ambient observations are current evidence, including under --run, not frozen facts or a pin for later worktree dispatches with different cwd or environment.
+    Limitation: Version output does not establish executable origin, a supported installation, or provider readiness.
+    Limitation: Paths, environment hashes, sizes and whole-file hashes are sensitive comparison data, not anonymization. The user_state hash intentionally includes any sign-in/trust state; review both output formats before redirecting or sharing.
+    Limitation: File observations are best effort, not a filesystem snapshot. The five-second timeout bounds the version probe, not OS filesystem latency or the whole doctor command.
+
+
+    1 !== 0
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 0
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-ambient-config-guard-mirror/test/cli-operator.test.ts:3006:14)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1382:25)
+    Test.start (node:internal/test_runner/test:1242:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 16786.1175
+
+
+6-unavailable-config-failure-gate: mutated stderr
+
+
+6-unavailable-config-failure-gate: byte-exact restoration
+{
+  "beforeSha256": "b59bb8312d6aa9d672421542793240d33135cc4d09f7fa3ad54f06acc5aa5d47",
+  "restoredSha256": "b59bb8312d6aa9d672421542793240d33135cc4d09f7fa3ad54f06acc5aa5d47",
+  "equal": true
+}
+
+6-unavailable-config-failure-gate: restored command/result
+{
+  "executable": "C:\\Program Files\\nodejs\\node.exe",
+  "argv": [
+    "--test",
+    "--test-reporter=tap",
+    "--test-name-pattern=^ambient CLI overrides and unavailable files never gate otherwise ready no-state doctor$",
+    "test\\cli-operator.test.ts"
+  ],
+  "cwd": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "shell": false,
+  "exitCode": 0,
+  "signal": null,
+  "error": null,
+  "counts": {
+    "tests": 1,
+    "pass": 1,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0
+  }
+}
+
+6-unavailable-config-failure-gate: restored stdout
+TAP version 13
+# Subtest: ambient CLI overrides and unavailable files never gate otherwise ready no-state doctor
+ok 1 - ambient CLI overrides and unavailable files never gate otherwise ready no-state doctor
+  ---
+  duration_ms: 18405.2999
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 18687.7142
+
+
+6-unavailable-config-failure-gate: restored stderr
+
+
+7-execute-retained-frozen-probe: unique source mutation
+{
+  "file": "src\\cli.ts",
+  "testName": "Task 5 doctor --run never executes an arbitrary retained frozen probe",
+  "anchor": "if (profile !== null && !sameExecutor) readiness.limitations.push(probeReason);",
+  "replacement": "if (profile !== null && !sameExecutor) {\n          (await import(\"./harness.ts\")).probeExecutor(profile.executor);\n          readiness.limitations.push(probeReason);\n        }",
+  "beforeSha256": "0929fe6a406a60dda51a0df6a4250e59df01f05e6c373a1f2b3b600913d19077",
+  "mutatedSha256": "506cb3ccf10f821d8be711f7be4fd7cd37156bb222af4e30b435e6268a01a298"
+}
+
+7-execute-retained-frozen-probe: mutated command/result
+{
+  "executable": "C:\\Program Files\\nodejs\\node.exe",
+  "argv": [
+    "--test",
+    "--test-reporter=tap",
+    "--test-name-pattern=^Task 5 doctor --run never executes an arbitrary retained frozen probe$",
+    "test\\cli-operator.test.ts"
+  ],
+  "cwd": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "shell": false,
+  "exitCode": 1,
+  "signal": null,
+  "error": null,
+  "counts": {
+    "tests": 1,
+    "pass": 0,
+    "fail": 1,
+    "skipped": 0,
+    "cancelled": 0
+  }
+}
+
+7-execute-retained-frozen-probe: mutated stdout
+TAP version 13
+# Subtest: Task 5 doctor --run never executes an arbitrary retained frozen probe
+not ok 1 - Task 5 doctor --run never executes an arbitrary retained frozen probe
+  ---
+  duration_ms: 5562.8895
+  type: 'test'
+  location: 'C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror\\test\\cli-operator.test.ts:1889:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+
+      assert.ok(!existsSync(sentinel))
+
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-ambient-config-guard-mirror/test/cli-operator.test.ts:1908:12)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1382:25)
+    Test.start (node:internal/test_runner/test:1242:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 5848.4547
+
+
+7-execute-retained-frozen-probe: mutated stderr
+
+
+7-execute-retained-frozen-probe: byte-exact restoration
+{
+  "beforeSha256": "0929fe6a406a60dda51a0df6a4250e59df01f05e6c373a1f2b3b600913d19077",
+  "restoredSha256": "0929fe6a406a60dda51a0df6a4250e59df01f05e6c373a1f2b3b600913d19077",
+  "equal": true
+}
+
+7-execute-retained-frozen-probe: restored command/result
+{
+  "executable": "C:\\Program Files\\nodejs\\node.exe",
+  "argv": [
+    "--test",
+    "--test-reporter=tap",
+    "--test-name-pattern=^Task 5 doctor --run never executes an arbitrary retained frozen probe$",
+    "test\\cli-operator.test.ts"
+  ],
+  "cwd": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "shell": false,
+  "exitCode": 0,
+  "signal": null,
+  "error": null,
+  "counts": {
+    "tests": 1,
+    "pass": 1,
+    "fail": 0,
+    "skipped": 0,
+    "cancelled": 0
+  }
+}
+
+7-execute-retained-frozen-probe: restored stdout
+TAP version 13
+# Subtest: Task 5 doctor --run never executes an arbitrary retained frozen probe
+ok 1 - Task 5 doctor --run never executes an arbitrary retained frozen probe
+  ---
+  duration_ms: 5545.2534
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 5833.5655
+
+
+7-execute-retained-frozen-probe: restored stderr
+
+
+Final result
+{
+  "completedAt": "2026-09-12T00:17:13.212Z",
+  "expectedMutations": 7,
+  "completed": 7,
+  "commands": 14,
+  "expectedAssertionFailures": 7,
+  "restoredTestsPassed": 7,
+  "liveSourceAndSelectedTestsByteExact": true,
+  "providerCalls": 0,
+  "limitations": "Executed Windows only; these mutations do not certify POSIX installation behavior."
+}
+
+Owned mirror cleanup
+{
+  "mirror": "C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-ambient-config-guard-mirror",
+  "removed": true
+}

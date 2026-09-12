@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { ExecutorDefinition } from "./executor.ts";
 
 export interface InvocationInput {
@@ -91,6 +91,9 @@ export function killTree(pid: number): void {
  */
 export interface ProbeOptions {
   timeoutMs?: number;
+  env?: Record<string, string>;
+  cwd?: string;
+  executablePath?: string;
 }
 
 export interface ProbeResult {
@@ -99,10 +102,15 @@ export interface ProbeResult {
 }
 
 export function probeExecutor(executor: ExecutorDefinition, options: ProbeOptions = {}): ProbeResult {
-  const result = spawnSync(executor.probe[0], executor.probe.slice(1), {
+  if (options.executablePath !== undefined && !isAbsolute(options.executablePath)) {
+    throw new Error(`probe failed for executor ${executor.id}: executablePath must be absolute`);
+  }
+  const result = spawnSync(options.executablePath ?? executor.probe[0], executor.probe.slice(1), {
     shell: false,
     encoding: "utf8",
     ...(options.timeoutMs === undefined ? {} : { timeout: options.timeoutMs }),
+    ...(options.env === undefined ? {} : { env: options.env }),
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
   });
   if (result.error) {
     if (options.timeoutMs !== undefined && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
@@ -117,6 +125,18 @@ export function probeExecutor(executor: ExecutorDefinition, options: ProbeOption
     );
   }
   return { stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+}
+
+export function buildHarnessEnvironment(
+  executor: ExecutorDefinition,
+  source: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of executor.sandbox.envPassthrough) {
+    const value = source[name];
+    if (value !== undefined) env[name] = value;
+  }
+  return env;
 }
 
 /**
@@ -165,11 +185,7 @@ export function parseEnvelope(executor: ExecutorDefinition, raw: string): Harnes
  */
 export function invokeHarness(executor: ExecutorDefinition, input: InvocationInput): Promise<HarnessOutcome> {
   const started = Date.now();
-  const env: Record<string, string> = {};
-  for (const name of executor.sandbox.envPassthrough) {
-    const value = process.env[name];
-    if (value !== undefined) env[name] = value;
-  }
+  const env = buildHarnessEnvironment(executor);
   const argv = [...executor.command.slice(1)];
   if (input.model !== undefined) argv.push("--model", input.model);
   const child: ChildProcess = spawn(executor.command[0], argv, {

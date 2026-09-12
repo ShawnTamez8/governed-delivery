@@ -4,8 +4,12 @@ import { join } from "node:path";
 import { AGENTS } from "./agents.ts";
 import { loadPublicKey } from "./approval.ts";
 import { CLAUDE_CODE } from "./executor.ts";
+import {
+  collectAmbientProviderConfig, DOCTOR_OBSERVATION_NAMES, resolveDoctorExecutable,
+  type AmbientProviderConfig,
+} from "./doctor-diagnostics.ts";
 import { loadGovernedConfigAtCommit, type VerificationConfig } from "./governed-config.ts";
-import { probeExecutor } from "./harness.ts";
+import { buildHarnessEnvironment, probeExecutor } from "./harness.ts";
 import { GOVERNANCE_PREFIX } from "./paths.ts";
 import { buildPolicy, invalidPolicyReason, policyHash, SYSTEM_NAME, type Policy } from "./policy.ts";
 import { requiredCapability, resolveStartingCommit } from "./profile.ts";
@@ -82,7 +86,11 @@ export interface CurrentReadiness {
   policy: Policy;
   policyHash: string;
   agentIds: string[];
-  executor: { id: string; command: string[]; probe: string[]; capabilities: string[] };
+  executor: {
+    id: string; command: string[]; probe: string[]; capabilities: string[];
+    resolvedPath: string | null; probeCwd: string; versionOutput: string | null;
+  };
+  ambientProviderConfig: AmbientProviderConfig;
   approvalSigner: string | null;
 }
 
@@ -93,6 +101,14 @@ export interface ReadinessResult {
 }
 
 export function inspectReadiness(rootDir: string, options: { slug?: string } = {}): ReadinessResult {
+  const probeCwd = process.cwd();
+  const ambientSnapshot: NodeJS.ProcessEnv = {};
+  for (const name of new Set([...CLAUDE_CODE.sandbox.envPassthrough, ...DOCTOR_OBSERVATION_NAMES])) {
+    ambientSnapshot[name] = process.env[name];
+  }
+  const childEnv = buildHarnessEnvironment(CLAUDE_CODE, ambientSnapshot);
+  const lookup = { env: childEnv, cwd: probeCwd, parentPath: ambientSnapshot.PATH,
+    noDefaultCurrentDirectoryInExePath: process.env.NoDefaultCurrentDirectoryInExePath !== undefined };
   const checks: ReadinessCheck[] = [];
   let minimumNodeMajor: number | null = null;
   try {
@@ -194,13 +210,30 @@ export function inspectReadiness(rootDir: string, options: { slug?: string } = {
   checks.push({ name: "approval_key", status: key.ok ? "pass" : "fail",
     evidence: key.ok ? `Approval signer fingerprint ${key.signer}.` : key.reason,
     repair: key.ok ? null : "Configure an external PEM Ed25519 public key with BW_APPROVAL_PUBLIC_KEY using the separate operator setup workflow." });
+  const ambientProviderConfig = collectAmbientProviderConfig(CLAUDE_CODE, ambientSnapshot, childEnv);
+  const overrides = ambientProviderConfig.environment.filter((entry) =>
+    DOCTOR_OBSERVATION_NAMES.some((name) => name === entry.name) && entry.present);
+  checks.push({ name: "ambient_provider_config",
+    status: ambientProviderConfig.files.some((file) => file.state === "unavailable") ? "not_checked" : "pass",
+    evidence: [
+      overrides.length === 0 ? "No observed overrides are present."
+        : overrides.map((entry) => `${entry.name}: present, ${entry.passedToChild ? "supplied to child" : "excluded from child"}`).join("; "),
+      ...ambientProviderConfig.files.map((file) => `${file.name}: ${file.state}`),
+    ].join("; "), repair: null });
+  let resolvedPath: string | null = null;
+  let versionOutput: string | null = null;
   try {
-    const probe = probeExecutor(CLAUDE_CODE, { timeoutMs: 5000 });
+    resolvedPath = resolveDoctorExecutable(CLAUDE_CODE.probe[0], lookup);
+    const probe = probeExecutor(CLAUDE_CODE, { timeoutMs: 5000, env: childEnv, cwd: probeCwd, executablePath: resolvedPath });
+    versionOutput = [probe.stdout.trim(), probe.stderr.trim()].filter(Boolean).join("; ") || null;
     checks.push({ name: "executor_probe", status: "pass",
-      evidence: `${CLAUDE_CODE.probe.join(" ")}: ${[probe.stdout.trim(), probe.stderr.trim()].filter(Boolean).join("; ")}`,
+      evidence: `${resolvedPath} ${CLAUDE_CODE.probe.slice(1).join(" ")}: ${versionOutput ?? ""}`,
       repair: null });
   } catch (error) {
-    checks.push({ name: "executor_probe", status: "fail", evidence: (error as Error).message,
+    const message = error instanceof Error ? error.message : String(error);
+    const prefix = `probe failed for executor ${CLAUDE_CODE.id}:`;
+    checks.push({ name: "executor_probe", status: "fail",
+      evidence: `${message.startsWith(prefix) ? message : `${prefix} ${message}`}${resolvedPath === null ? "" : `; selected probe path: ${resolvedPath}`}`,
       repair: "Install the native Claude Code executable and make its version probe available on PATH." });
   }
   return {
@@ -209,9 +242,20 @@ export function inspectReadiness(rootDir: string, options: { slug?: string } = {
       systemName: SYSTEM_NAME, nodeVersion: process.versions.node, minimumNodeMajor, gitVersion,
       startingCommit: intake.startingCommit, verification: intake.verification,
       policy, policyHash: policyHash(policy), agentIds: AGENTS.map((agent) => agent.id),
-      executor: { id: CLAUDE_CODE.id, command: [...CLAUDE_CODE.command], probe: [...CLAUDE_CODE.probe], capabilities: [...CLAUDE_CODE.capabilities] },
+      executor: { id: CLAUDE_CODE.id, command: [...CLAUDE_CODE.command], probe: [...CLAUDE_CODE.probe],
+        capabilities: [...CLAUDE_CODE.capabilities], resolvedPath, probeCwd, versionOutput },
+      ambientProviderConfig,
       approvalSigner: key.ok ? key.signer : null,
     },
-    limitations: ["Provider account authentication, model entitlement, and quota are not checked by the local version probe."],
+    limitations: [
+      "Provider account authentication, model entitlement, and quota are not checked by the local version probe.",
+      "Private-key availability is not checked.",
+      "The inventory covers only two documented user locations; managed/project settings, OS home fallback, actual file use under native flags, and effective precedence are not established.",
+      "passedToChild describes the BuildWorks-supplied map only; Windows may add required system environment variables.",
+      "Executable identity and ambient observations are current evidence, including under --run, not frozen facts or a pin for later worktree dispatches with different cwd or environment.",
+      "Version output does not establish executable origin, a supported installation, or provider readiness.",
+      "Paths, environment hashes, sizes and whole-file hashes are sensitive comparison data, not anonymization. The user_state hash intentionally includes any sign-in/trust state; review both output formats before redirecting or sharing.",
+      "File observations are best effort, not a filesystem snapshot. The five-second timeout bounds the version probe, not OS filesystem latency or the whole doctor command.",
+    ],
   };
 }

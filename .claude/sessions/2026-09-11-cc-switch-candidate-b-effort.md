@@ -1,26 +1,39 @@
-Requested outcome: Estimate the effort to implement Candidate B from
+# cc-switch Candidate B effort assessment
+
+**Date:** 2026-09-11
+
+## Requested outcome
+
+Estimate the effort to implement Candidate B from
 docs/proposals/cc-switch-review.md before a separately planned progress/token
 dashboard. Assess the bounded readiness improvement, not adoption of the
 cc-switch application or a new vendor/platform scoring exercise.
 
-Baseline: code-review-stage, HEAD 86af2c0. Existing modifications to README.md,
+## Baseline
+
+code-review-stage, HEAD 86af2c0. Existing modifications to README.md,
 project-learnings.md, docs/proposals/README.md, and scripts/doc-check.mjs,
 plus the untracked cc-switch review and CLI runbook/session record, are
 preserved. No implementation, provider spend, signing, installation, commit,
 push, or target cleanup is authorized by this estimation request.
 
-Prior evidence: Read the complete cc-switch review, relevant MHA-07/MHA-11
+## Prior evidence
+
+Read the complete cc-switch review, relevant MHA-07/MHA-11
 context in the multi-harness blast-radius review, and existing project
 learnings. Local history confirms Candidate B was discussed as the next step.
 The prior Pi estimate is provisional history, not evidence for this estimate.
 No new examination of cc-switch upstream is needed: B adopts a diagnostic
 idea inside BuildWorks and does not depend on cc-switch APIs or packages.
 
-Success criterion for this assessment: Identify actual implementation surfaces,
+## Success criterion for this assessment
+
+Identify actual implementation surfaces,
 scope boundaries, uncertainty, and a resource estimate grounded in current
 code, without implementing the candidate or changing its historical review.
 
-Verified source observations:
+## Verified source observations
+
 - src/harness.ts: ProbeOptions currently contains only timeoutMs;
   probeExecutor at line 101 spawns without env. invokeHarness at line 166
   builds a named-variable environment at lines 168-172 and passes it to spawn.
@@ -51,7 +64,8 @@ Verified source observations:
   failures. Other doctor --run cases cover current versus frozen evidence.
   Existing seams and echo-env.mjs avoid a paid-provider dependency.
 
-Recommended bounded scope:
+## Recommended bounded scope
+
 1. Extract the existing child-environment construction into one small helper
    used by invokeHarness and doctor's probe. Add an explicit probe option
    rather than change every low-level dispatch probe by accident. A separate
@@ -72,7 +86,8 @@ Recommended bounded scope:
 5. Extend focused regression/negative cases and update the README and the
    CLI operator runbook. No dependency or database migration is expected.
 
-Material scope clarifications before implementation:
+## Material scope clarifications before implementation
+
 - Matching env does not prove authentication, model entitlement, quota, or
   provider reachability. The review's suggestion to stop conceding those
   limitations is too strong for a version-only probe. Keep the limitations.
@@ -94,14 +109,20 @@ Material scope clarifications before implementation:
   telemetry. Candidate B does not provide progress events, token counters,
   cost recalculation, or dashboard transport/history.
 
-Engineering estimate (inference, not elapsed-time measurement):
-  Diagnostic/privacy contract and bounded file inventory: 1-2 hours
-  Shared environment construction and doctor probe parity: 2-3 hours
-  Ambient config observations and structured output: 3-5 hours
-  Reliable executable resolution and identity reporting: 3-5 hours
-  Focused negative/regression coverage, review, and documentation: 5-7 hours
-  Total: 14-22 focused engineering hours; schedule roughly 2-3 working days
-  for one developer familiar with this repository.
+## Engineering estimate
+
+Inference, not elapsed-time measurement:
+
+| Work | Estimate |
+| --- | --- |
+| Diagnostic/privacy contract and bounded file inventory | 1-2 hours |
+| Shared environment construction and doctor probe parity | 2-3 hours |
+| Ambient config observations and structured output | 3-5 hours |
+| Reliable executable resolution and identity reporting | 3-5 hours |
+| Focused negative/regression coverage, review, and documentation | 5-7 hours |
+| **Total** | **14-22 focused engineering hours** |
+
+Schedule roughly 2-3 working days for one developer familiar with this repository.
 
 The estimate includes a complete bounded implementation and normal review,
 not an experimental two-edit sketch. Confidence is medium: executable lookup
@@ -110,7 +131,9 @@ uncertainties. A broader cross-platform installation certification, universal
 config precedence, frozen observations, automatic drift gates, or a second
 harness would require a new estimate.
 
-Expected surfaces: src/harness.ts and src/readiness.ts are required;
+## Expected surfaces
+
+src/harness.ts and src/readiness.ts are required;
 src/cli.ts and src/operator-output.ts require contract review and only changes
 if their current handling cannot project the selected observation shape;
 one small diagnostics/resolution module may keep readiness focused. Extend
@@ -119,7 +142,10 @@ diagnostics test file. Update README.md and docs/runbooks/cli-operator.md.
 No edits required to store/migrations, agent_run telemetry, stage sequence,
 approval payload, executor definition, or frozen profile shape.
 
-Proposed implementation evidence (not executed in this assessment):
+## Proposed implementation evidence
+
+Not executed in this assessment:
+
 Use controlled environment values and temporary home/config files, not actual
 operator secrets. Verify filtered probe/child parity; toggle a provider
 override and distinguish exclusion from inheritance; edit a supported config
@@ -129,7 +155,9 @@ refusal. Assert unchanged target/config bytes, no state creation, and no
 provider dispatch. Run the existing focused harness/CLI suites, typecheck,
 doc-check, and isolated guard mutations.
 
-Recommendation: Do B before the UI as a small independent readiness feature.
+## Recommendation
+
+Do B before the UI as a small independent readiness feature.
 Expose typed observations through doctor --json so a future dashboard can
 consume them without parsing prose. Reuse the existing run-store token/cost
 accounting for that future dashboard. Do not add cc-switch, a proxy, Candidate A,
@@ -137,13 +165,17 @@ an adapter registry, another harness, or a second execution surface here.
 Dashboard architecture/sequencing remains a separate task; this estimate does
 not authorize or design it.
 
-Result: Effort assessment complete. Only this session record was added.
-Validation performed: Source/caller and existing-test inspection; no commands
+## Result
+
+Effort assessment complete. Only this session record was added.
+
+**Validation performed:** Source/caller and existing-test inspection; no commands
 that execute a provider, read operator configuration contents, or change
 application behavior. No fresh behavioral-test or live-provider claim.
-Remaining issues: Select the bounded diagnostic/redaction/file-discovery
+**Remaining issues:** Select the bounded diagnostic/redaction/file-discovery
 contract in implementation planning; executable-resolution and location
 semantics need focused evidence during that work.
-User decisions: Candidate B effort only; implementation not requested.
-Rollback status: No application changes or rollback. Remove only this record
+**User decisions:** Candidate B effort only; implementation not requested.
+
+**Rollback status:** No application changes or rollback. Remove only this record
 if the assessment is not retained; all pre-existing work remains untouched.

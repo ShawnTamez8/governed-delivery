@@ -1,0 +1,72 @@
+Mirror: C:\Repositories\AI.Tools\governed-delivery\.doctor-native-guard-LvEerq
+Original SHA256: e50c31454d1356153d54c2524cf82864629ad7002ec56b4668a3cad05f5ca38e
+Mutation: const stats = statSync(attributePath); -> const stats = statSync(candidate);
+Mutation exit: 1
+TAP version 13
+# Subtest: native differential Windows: dot-suffixed PATH uses native normalization without rewriting selection
+not ok 1 - native differential Windows: dot-suffixed PATH uses native normalization without rewriting selection
+  ---
+  duration_ms: 1600.7984
+  type: 'test'
+  location: 'C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-native-guard-LvEerq\\test\\doctor-diagnostics.test.ts:120:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Got unwanted exception: native-valid first candidate must resolve
+    Actual message: "executable resolution ENOENT for bw-doctor-native-fixture: not found from cwd C:\Repositories\AI.Tools\governed-delivery\.doctor-native-guard-LvEerq\.doctor-diagnostics-Znwn9g\invocation"
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  actual:
+  error: 'executable resolution ENOENT for bw-doctor-native-fixture: not found from cwd C:\\Repositories\\AI.Tools\\governed-delivery\\.doctor-native-guard-LvEerq\\.doctor-diagnostics-Znwn9g\\invocation'
+  stack: |-
+    resolutionError (file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-native-guard-LvEerq/src/doctor-diagnostics.ts:27:5)
+    resolveDoctorExecutable (file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-native-guard-LvEerq/src/doctor-diagnostics.ts:115:9)
+    file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-native-guard-LvEerq/test/doctor-diagnostics.test.ts:136:46
+    getActual (node:assert:580:5)
+    strict.doesNotThrow (node:assert:748:32)
+    file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-native-guard-LvEerq/test/doctor-diagnostics.test.ts:136:14
+    withParentLookup (file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-native-guard-LvEerq/test/doctor-diagnostics.test.ts:48:5)
+    TestContext.<anonymous> (file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-native-guard-LvEerq/test/doctor-diagnostics.test.ts:124:3)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1382:25)
+  operator: 'doesNotThrow'
+  stack: |-
+    file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-native-guard-LvEerq/test/doctor-diagnostics.test.ts:136:14
+    withParentLookup (file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-native-guard-LvEerq/test/doctor-diagnostics.test.ts:48:5)
+    TestContext.<anonymous> (file:///C:/Repositories/AI.Tools/governed-delivery/.doctor-native-guard-LvEerq/test/doctor-diagnostics.test.ts:124:3)
+    Test.runInAsyncScope (node:async_hooks:226:14)
+    Test.run (node:internal/test_runner/test:1382:25)
+    Test.start (node:internal/test_runner/test:1242:17)
+    startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 0
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1792.8613
+
+
+Restoration exit: 0
+TAP version 13
+# Subtest: native differential Windows: dot-suffixed PATH uses native normalization without rewriting selection
+ok 1 - native differential Windows: dot-suffixed PATH uses native normalization without rewriting selection
+  ---
+  duration_ms: 1978.4484
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2165.3704
+
+
+Restored SHA256: e50c31454d1356153d54c2524cf82864629ad7002ec56b4668a3cad05f5ca38e
+Live source bytes unchanged; owned mirror removed.

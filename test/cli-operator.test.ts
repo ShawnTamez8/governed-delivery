@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import {
-  existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
+  copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
   realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync,
 } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import childProcess from "node:child_process";
@@ -15,7 +15,8 @@ import { createPublicKey, generateKeyPairSync } from "node:crypto";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { formatHelp } from "../src/cli-args.ts";
 import { acquireLock, inspectLock } from "../src/lock.ts";
-import { parseEnvelope, PROMPT_MAX_BYTES } from "../src/harness.ts";
+import { buildHarnessEnvironment, parseEnvelope, PROMPT_MAX_BYTES } from "../src/harness.ts";
+import { DOCTOR_OBSERVATION_NAMES } from "../src/doctor-diagnostics.ts";
 import { openStore, type AgentRunRow, type Store } from "../src/store.ts";
 import { appendAudit } from "../src/audit.ts";
 import { approvalPayload, verifyApproval } from "../src/approval.ts";
@@ -372,25 +373,48 @@ function operatorEnvelope(result: ReturnType<typeof cli>, command: string): Oper
   return body;
 }
 
+function doctorEnvironment(parent: string) {
+  const binaryDirectory = join(parent, "native tools");
+  const home = join(parent, "owned home");
+  mkdirSync(binaryDirectory);
+  mkdirSync(home);
+  const executablePath = join(binaryDirectory, process.platform === "win32" ? "claude.exe" : "claude");
+  copyFileSync(process.execPath, executablePath);
+  const environment: NodeJS.ProcessEnv = { ...process.env };
+  const ownedNames = [...CLAUDE_CODE.sandbox.envPassthrough, ...DOCTOR_OBSERVATION_NAMES, "BW_APPROVAL_PUBLIC_KEY"];
+  for (const name of Object.keys(environment)) {
+    if (ownedNames.some((owned) => owned.toLowerCase() === name.toLowerCase())) delete environment[name];
+  }
+  for (const name of CLAUDE_CODE.sandbox.envPassthrough) environment[name] = process.env[name];
+  Object.assign(environment, {
+    PATH: `${binaryDirectory}${delimiter}${process.env.PATH ?? ""}`,
+    HOME: home, USERPROFILE: home, APPDATA: home, LOCALAPPDATA: home,
+    BW_APPROVAL_PUBLIC_KEY: join(parent, "absent-public.pem"),
+  });
+  return { environment, executablePath, home };
+}
+
 function doctorFixture(parent: string, externalPublicKey?: string) {
+  const owned = doctorEnvironment(parent);
   const preload = join(parent, "version-probe.mjs");
   writeFileSync(preload, `
     import childProcess from "node:child_process";
+    import { basename } from "node:path";
     import { syncBuiltinESMExports } from "node:module";
     import { CLAUDE_CODE } from ${JSON.stringify(pathToFileURL(resolve("src", "executor.ts")).href)};
     const nativeSync = childProcess.spawnSync;
     const nativeSpawn = childProcess.spawn;
+    const isClaude = (command) => /^claude(?:\\.(?:exe|com|cmd|bat))?$/i.test(basename(command));
     childProcess.spawnSync = (command, args, options) => {
-      if (command === CLAUDE_CODE.probe[0]) {
+      if (isClaude(command)) {
         if (JSON.stringify(args) !== JSON.stringify(CLAUDE_CODE.probe.slice(1))) {
           throw new Error("Only the configured no-spend version probe is permitted in this fixture");
         }
-        return nativeSync(process.execPath, ["--version"], options);
       }
       return nativeSync(command, args, options);
     };
     childProcess.spawn = (command, ...args) => {
-      if (command === CLAUDE_CODE.command[0]) throw new Error("Model dispatch is forbidden in this fixture");
+      if (isClaude(command)) throw new Error("Model dispatch is forbidden in this fixture");
       return nativeSpawn(command, ...args);
     };
     syncBuiltinESMExports();
@@ -400,15 +424,19 @@ function doctorFixture(parent: string, externalPublicKey?: string) {
     const { publicKey } = generateKeyPairSync("ed25519");
     writeFileSync(keyPath, publicKey.export({ type: "spki", format: "pem" }));
   }
+  const environment: NodeJS.ProcessEnv = { ...owned.environment, GIT_CEILING_DIRECTORIES: dirname(parent), GIT_OPTIONAL_LOCKS: "1",
+    BW_APPROVAL_PUBLIC_KEY: keyPath };
   const invoke = (root: string, args: string[], options: { input?: string; timeout?: number } = {}) => spawnSync(process.execPath,
     ["--import", pathToFileURL(preload).href, CLI, "--repo", root, ...args], {
       cwd: parent, encoding: "utf8", ...options,
-      env: { ...process.env, GIT_CEILING_DIRECTORIES: dirname(parent), GIT_OPTIONAL_LOCKS: "1",
-        BW_APPROVAL_PUBLIC_KEY: keyPath },
+      env: environment,
     });
   return {
     keyPath,
     preload,
+    environment,
+    executablePath: owned.executablePath,
+    home: owned.home,
     command: invoke,
     invoke: (root: string, ...args: string[]) => invoke(root, ["doctor", ...args]),
     createRun: (root: string) => invoke(root, NEW_RUN),
@@ -496,7 +524,7 @@ test("Task 9 README inspection fence executes through Windows PowerShell from a 
       const called = spawnSync(shell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
         "-File", script, "-BuildWorksCheckout", checkout, "-Target", root, "-Slug", run.slug], {
         cwd: invocation, encoding: "utf8", timeout: 30_000,
-        env: { ...process.env, NODE_OPTIONS: `--import=${pathToFileURL(doctor.preload).href}`,
+        env: { ...doctor.environment, NODE_OPTIONS: `--import=${pathToFileURL(doctor.preload).href}`,
           BW_APPROVAL_PUBLIC_KEY: doctor.keyPath,
           GIT_CEILING_DIRECTORIES: dirname(parent), GIT_OPTIONAL_LOCKS: "1" },
       });
@@ -886,7 +914,7 @@ function journeyFixture(parent: string, externalPublicKey?: string) {
     syncBuiltinESMExports();
     await import(${JSON.stringify(pathToFileURL(doctor.preload).href)});
   `);
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  const env: NodeJS.ProcessEnv = { ...doctor.environment };
   for (const name of Object.keys(env)) if (/^(GH_|GITHUB_)/i.test(name)) delete env[name];
   Object.assign(env, { NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
     BW_APPROVAL_PUBLIC_KEY: doctor.keyPath, GIT_CEILING_DIRECTORIES: dirname(parent),
@@ -2604,20 +2632,35 @@ test("a killed spilled writer leaves hot-journal recovery to explicit migrate, n
   }
 });
 
-function fixtureProbe(t: TestContext) {
+function fixtureProbe(t: TestContext, parent: string) {
+  const owned = doctorEnvironment(parent);
+  const names = [...CLAUDE_CODE.sandbox.envPassthrough, ...DOCTOR_OBSERVATION_NAMES, "BW_APPROVAL_PUBLIC_KEY"];
+  const saved = names.map((name) => process.env[name]);
+  for (const name of names) {
+    if (owned.environment[name] === undefined) delete process.env[name];
+    else process.env[name] = owned.environment[name];
+  }
   const original = childProcess.spawnSync;
   const calls: unknown[][] = [];
   const mocked = t.mock.method(childProcess, "spawnSync", (...args: unknown[]) => {
     calls.push(args);
-    if (args[0] === CLAUDE_CODE.probe[0]) {
-      return original(process.execPath, ["--version"], { encoding: "utf8", shell: false });
+    if (typeof args[0] === "string" && /^claude(?:\.(?:exe|com|cmd|bat))?$/i.test(basename(args[0]))) {
+      assert.deepEqual(args[1], CLAUDE_CODE.probe.slice(1), "only the no-spend version probe is permitted");
     }
     return Reflect.apply(original, childProcess, args);
   });
   syncBuiltinESMExports();
   return {
     calls,
-    restore: () => { mocked.mock.restore(); syncBuiltinESMExports(); },
+    ...owned,
+    restore: () => {
+      mocked.mock.restore();
+      syncBuiltinESMExports();
+      names.forEach((name, index) => {
+        if (saved[index] === undefined) delete process.env[name];
+        else process.env[name] = saved[index];
+      });
+    },
   };
 }
 
@@ -2659,8 +2702,8 @@ test("shared intake diagnostics and new-run preserve the same repository refusal
 
 test("readiness returns independent current setup and feature checks without writing or spending", (t) => {
   const parent = workspace();
-  const mocked = fixtureProbe(t);
   const keyBefore = process.env.BW_APPROVAL_PUBLIC_KEY;
+  const mocked = fixtureProbe(t, parent);
   try {
     const root = repository(parent);
     const keyPath = join(parent, "test-public.pem");
@@ -2720,7 +2763,7 @@ test("readiness returns independent current setup and feature checks without wri
 
 test("readiness names actual current staffing and capability failures using receiving rules", (t) => {
   const parent = workspace();
-  const mocked = fixtureProbe(t);
+  const mocked = fixtureProbe(t, parent);
   const registry = AGENTS as AgentDefinition[];
   const saved = [...registry];
   const capabilities = [...CLAUDE_CODE.capabilities];
@@ -2750,12 +2793,12 @@ test("readiness names actual current staffing and capability failures using rece
   }
 });
 
-test("readiness and real dispatch share direct probe executable and argv", async (t) => {
+test("readiness uses the selected absolute probe while dispatch retains bare inherited defaults", async (t) => {
   const parent = workspace();
-  const mocked = fixtureProbe(t);
+  const mocked = fixtureProbe(t, parent);
   try {
     const root = repository(parent);
-    inspectReadiness(root);
+    const readiness = inspectReadiness(root);
     const store = openStore(root);
     try {
       const run = store.insertRun("p", "f", "s", "feature");
@@ -2765,15 +2808,19 @@ test("readiness and real dispatch share direct probe executable and argv", async
         stageId: stage.id, agent: "spec-author", role: "author", requestedModel: "test-model", prompt: "transport only",
       }, root);
       assert.ok(result.ok, result.ok ? "" : result.reason);
-      const probes = mocked.calls.filter((args) => args[0] === CLAUDE_CODE.probe[0]);
+      const probes = mocked.calls.filter((args) => args[0] === CLAUDE_CODE.probe[0] || args[0] === mocked.executablePath);
       assert.equal(probes.length, 2);
-      for (const [command, args, options] of probes) {
-        assert.equal(command, CLAUDE_CODE.probe[0]);
+      for (const [, args, options] of probes) {
         assert.deepEqual(args, CLAUDE_CODE.probe.slice(1));
         assert.equal((options as { shell: boolean }).shell, false);
       }
-      assert.equal((probes[0][2] as { timeout: number }).timeout, 5000);
-      assert.equal((probes[1][2] as { timeout?: number }).timeout, undefined);
+      assert.equal(probes[0][0], mocked.executablePath);
+      assert.equal(readiness.current.executor.resolvedPath, probes[0][0]);
+      assert.equal(readiness.current.executor.probeCwd, process.cwd());
+      assert.deepEqual(probes[0][2], { shell: false, encoding: "utf8", timeout: 5000,
+        env: buildHarnessEnvironment(CLAUDE_CODE), cwd: process.cwd() });
+      assert.equal(probes[1][0], CLAUDE_CODE.probe[0]);
+      assert.deepEqual(probes[1][2], { shell: false, encoding: "utf8" });
     } finally {
       store.close();
     }
@@ -2789,12 +2836,22 @@ test("readiness distinguishes unavailable tools, skipped dependent checks, and a
   const original = childProcess.spawnSync;
   const descriptor = Object.getOwnPropertyDescriptor(process.versions, "node")!;
   const minimum = Number(JSON.parse(readFileSync(resolve("package.json"), "utf8")).engines.node.slice(2));
+  const owned = doctorEnvironment(parent);
+  const savedCwd = process.cwd();
+  const names = ["PATH", "HOME", "USERPROFILE", "BW_APPROVAL_PUBLIC_KEY"];
+  const saved = names.map((name) => process.env[name]);
+  process.env.PATH = owned.home;
+  process.env.HOME = owned.home;
+  process.env.USERPROFILE = owned.home;
+  process.env.BW_APPROVAL_PUBLIC_KEY = owned.environment.BW_APPROVAL_PUBLIC_KEY;
+  process.chdir(owned.home);
   const mocked = t.mock.method(childProcess, "spawnSync", (...args: unknown[]) => {
     if (args[0] === "git" || args[0] === CLAUDE_CODE.probe[0]) {
       return original("buildworks-test-unresolvable-executable", [], { encoding: "utf8", shell: false });
     }
     return Reflect.apply(original, childProcess, args);
   });
+
   syncBuiltinESMExports();
   Object.defineProperty(process.versions, "node", { ...descriptor, value: `${minimum - 1}.0.0` });
   try {
@@ -2816,8 +2873,207 @@ test("readiness distinguishes unavailable tools, skipped dependent checks, and a
     assert.deepEqual(inventory(root), before);
   } finally {
     Object.defineProperty(process.versions, "node", descriptor);
+    process.chdir(savedCwd);
+    names.forEach((name, index) => {
+      if (saved[index] === undefined) delete process.env[name];
+      else process.env[name] = saved[index];
+    });
     mocked.mock.restore();
     syncBuiltinESMExports();
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+function currentFromDoctorText(stdout: string): DoctorResult["current"] {
+  const current = /Current configuration:\r?\n([\s\S]*?)\r?\nFrozen run configuration:/.exec(stdout);
+  assert.ok(current, "text must expose the complete current object");
+  return JSON.parse(current[1]);
+}
+
+test("ambient CLI selectors preserve full text JSON observations and frozen bytes without writes", () => {
+  const parent = workspace();
+  try {
+    const { root, doctor, run, profilePath } = doctorRun(parent);
+    const profileBytes = readFileSync(profilePath);
+    const rows = durableCliRun(root, run.id);
+    const settings = join(doctor.home, ".claude", "settings.json");
+    const state = join(doctor.home, ".claude.json");
+    mkdirSync(dirname(settings));
+    const contents = Buffer.from("\uFEFF{\"synthetic-private-content\":\"A\"}\r\n");
+    for (const path of [settings, state]) writeFileSync(path, contents);
+    doctor.environment.BUILDWORKS_TEST_CANARY = "unrelated-secret-must-not-escape";
+    const expectedNames = [...new Set([...CLAUDE_CODE.sandbox.envPassthrough,
+      "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "OPENAI_BASE_URL", "CLAUDE_CONFIG_DIR"])].sort();
+    let frozen: DoctorResult["frozen"] = null;
+    let previous: DoctorResult["current"] | undefined;
+    for (const selector of [[], ["--slug", run.slug], ["--run", String(run.id)]]) {
+      const before = inventory(parent);
+      const json = doctor.invoke(root, ...selector, "--json");
+      const envelope = operatorEnvelope(json, "doctor");
+      assert.equal(json.status, 0, json.stderr || json.stdout);
+      assert.equal(envelope.outcome, "ready");
+      const report = envelope.result as DoctorResult;
+      const text = doctor.invoke(root, ...selector);
+      assert.equal(text.status, 0, text.stderr || text.stdout);
+      assert.deepEqual(currentFromDoctorText(text.stdout), report.current);
+      const ambient = report.current.ambientProviderConfig;
+      assert.deepEqual(ambient.environment.map((entry) => entry.name), expectedNames);
+      for (const entry of ambient.environment) {
+        const value = doctor.environment[entry.name];
+        assert.equal(entry.present, value !== undefined);
+        assert.equal(entry.passedToChild, value !== undefined && CLAUDE_CODE.sandbox.envPassthrough.includes(entry.name));
+        assert.equal(entry.valueHash, value !== undefined && CLAUDE_CODE.sandbox.envPassthrough.includes(entry.name)
+          ? sha256Hex(value) : null);
+      }
+      assert.equal(ambient.homeVariable, process.platform === "win32" ? "USERPROFILE" : "HOME");
+      assert.deepEqual(ambient.files, [settings, state].map((path, index) => ({
+        name: index === 0 ? "user_settings" : "user_state", path, state: "readable",
+        sizeBytes: contents.length, contentHash: sha256Hex(readFileSync(path)), reason: null,
+      })));
+      assert.deepEqual(report.current.executor, {
+        id: CLAUDE_CODE.id, command: CLAUDE_CODE.command, probe: CLAUDE_CODE.probe,
+        capabilities: CLAUDE_CODE.capabilities, resolvedPath: doctor.executablePath, probeCwd: parent,
+        versionOutput: spawnSync(process.execPath, ["--version"], { encoding: "utf8", shell: false }).stdout.trim(),
+      });
+      const check = report.checks.find((entry) => entry.name === "ambient_provider_config")!;
+      assert.equal(check.status, "pass");
+      assert.equal(check.repair, null);
+      assert.match(text.stdout, /^PASS ambient_provider_config:/m);
+      for (const output of [json.stdout, json.stderr, text.stdout, text.stderr]) {
+        assert.ok(!output.includes(doctor.environment.BUILDWORKS_TEST_CANARY!));
+        assert.ok(!output.includes("synthetic-private-content"));
+      }
+      assert.deepEqual(inventory(parent), before, "doctor must preserve target, index, keys, owned home and state");
+      assert.deepEqual(durableCliRun(root, run.id), rows);
+      assert.deepEqual(readFileSync(profilePath), profileBytes);
+      assert.equal(rows.run!.profile_ref, sha256Hex(profileBytes));
+      if (selector.includes("--run")) frozen = report.frozen;
+      else assert.equal(report.frozen, null);
+      previous = report.current;
+    }
+    assert.ok(frozen);
+    for (const path of [settings, state]) writeFileSync(path, Buffer.from(contents.toString().replace('"A"', '"B"')));
+    doctor.environment.ANTHROPIC_AUTH_TOKEN = "new-synthetic-ambient-token";
+    const changedBefore = inventory(parent);
+    const changed = doctor.invoke(root, "--run", String(run.id), "--json");
+    const report = operatorEnvelope(changed, "doctor").result as DoctorResult;
+    assert.equal(changed.status, 0, changed.stderr || changed.stdout);
+    assert.deepEqual(report.frozen, frozen);
+    assert.notDeepEqual(report.current.ambientProviderConfig, previous!.ambientProviderConfig);
+    for (const [index, file] of report.current.ambientProviderConfig.files.entries()) {
+      assert.equal(file.sizeBytes, previous!.ambientProviderConfig.files[index].sizeBytes);
+      assert.notEqual(file.contentHash, previous!.ambientProviderConfig.files[index].contentHash);
+    }
+    assert.deepEqual(inventory(parent), changedBefore);
+    assert.deepEqual(durableCliRun(root, run.id), rows);
+    assert.deepEqual(readFileSync(profilePath), profileBytes);
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("ambient CLI overrides and unavailable files never gate otherwise ready no-state doctor", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const doctor = doctorFixture(parent);
+    for (const name of ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "OPENAI_BASE_URL", "CLAUDE_CONFIG_DIR"]) {
+      doctor.environment[name] = `synthetic-private-${name}`;
+      const before = inventory(parent);
+      const json = doctor.invoke(root, "--json");
+      const envelope = operatorEnvelope(json, "doctor");
+      const text = doctor.invoke(root);
+      assert.equal(json.status, 0, json.stderr || json.stdout);
+      assert.equal(text.status, 0, text.stderr || text.stdout);
+      assert.equal(envelope.outcome, "ready");
+      const report = envelope.result as DoctorResult;
+      assert.deepEqual(currentFromDoctorText(text.stdout), report.current);
+      assert.deepEqual(report.current.ambientProviderConfig.environment.find((entry) => entry.name === name),
+        { name, present: true, passedToChild: false, valueHash: null });
+      assert.match(report.checks.find((entry) => entry.name === "ambient_provider_config")!.evidence,
+        new RegExp(`${name}: present, excluded from child`));
+      for (const output of [json.stdout, json.stderr, text.stdout, text.stderr]) {
+        assert.ok(!output.includes(doctor.environment[name]!));
+        assert.ok(!output.includes(sha256Hex(doctor.environment[name]!)));
+      }
+      assert.deepEqual(inventory(parent), before);
+      delete doctor.environment[name];
+    }
+    mkdirSync(join(doctor.home, ".claude", "settings.json"), { recursive: true });
+    const before = inventory(parent);
+    for (const args of [[], ["--json"]]) {
+      const called = doctor.invoke(root, ...args);
+      assert.equal(called.status, 0, called.stderr || called.stdout);
+      const current = args.length ? (operatorEnvelope(called, "doctor").result as DoctorResult).current
+        : currentFromDoctorText(called.stdout);
+      assert.equal(current.ambientProviderConfig.files[0].state, "unavailable");
+      assert.match(current.ambientProviderConfig.files[0].reason!, /non-regular/);
+      if (args.length) {
+        const report = (JSON.parse(called.stdout) as OperatorResult).result as DoctorResult;
+        assert.equal(report.checks.find((check) => check.name === "ambient_provider_config")!.status, "not_checked");
+        assert.equal(report.checks.find((check) => check.name === "ambient_provider_config")!.repair, null);
+      } else assert.match(called.stdout, /^NOT CHECKED ambient_provider_config:/m);
+      assert.deepEqual(inventory(parent), before);
+    }
+    assert.ok(!existsSync(join(root, ".governance")));
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("ambient readiness captures canonical parent names once and keeps probe failure observations", (t) => {
+  const parent = workspace();
+  const fixture = fixtureProbe(t, parent);
+  const original = childProcess.spawnSync;
+  const captured = buildHarnessEnvironment(CLAUDE_CODE);
+  let mode = "success";
+  let changed = false;
+  const mocked = t.mock.method(childProcess, "spawnSync", (...args: unknown[]) => {
+    if (!changed && args[0] === "git") {
+      changed = true;
+      process.env.HOME = join(parent, "later-home");
+      process.env.ANTHROPIC_AUTH_TOKEN = "later-token";
+    }
+    if (args[0] === fixture.executablePath) {
+      assert.deepEqual((args[2] as { env: NodeJS.ProcessEnv }).env, captured);
+      const code = mode === "success" ? "console.log('out'); console.error('err')"
+        : mode === "failure" ? "console.log('out'); console.error('err'); process.exit(7)" : "";
+      return Reflect.apply(original, childProcess, [process.execPath, ["-e", code], args[2]]);
+    }
+    return Reflect.apply(original, childProcess, args);
+  });
+  syncBuiltinESMExports();
+  try {
+    const root = repository(parent);
+    // Repository setup also uses Git, so reset the injected values at the observation boundary.
+    process.env.HOME = captured.HOME;
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+    changed = false;
+    for (mode of ["success", "failure", "empty"]) {
+      process.env.HOME = captured.HOME;
+      delete process.env.ANTHROPIC_AUTH_TOKEN;
+      changed = false;
+      const report = inspectReadiness(root);
+      const executor = report.current.executor;
+      assert.equal(executor.resolvedPath, fixture.executablePath);
+      assert.equal(executor.versionOutput, mode === "success" ? "out; err" : null);
+      const probe = report.checks.find((check) => check.name === "executor_probe")!;
+      assert.equal(probe.status, mode === "failure" ? "fail" : "pass");
+      assert.ok(probe.evidence.includes(fixture.executablePath));
+      if (mode !== "empty") {
+        assert.ok(probe.evidence.includes("out"));
+        assert.ok(probe.evidence.includes("err"));
+      }
+      if (mode === "failure") assert.match(probe.evidence, /probe failed.*exited with code 7/);
+      const ambient = report.current.ambientProviderConfig;
+      assert.equal(ambient.environment.find((entry) => entry.name === "HOME")!.valueHash, sha256Hex(captured.HOME));
+      assert.equal(ambient.environment.find((entry) => entry.name === "ANTHROPIC_AUTH_TOKEN")!.present, false);
+      assert.deepEqual(ambient.files.map((file) => file.state), ["absent", "absent"]);
+    }
+  } finally {
+    mocked.mock.restore();
+    syncBuiltinESMExports();
+    fixture.restore();
     rmSync(parent, { recursive: true, force: true });
   }
 });

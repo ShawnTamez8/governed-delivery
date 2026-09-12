@@ -1,0 +1,37 @@
+Requested outcome: write up the final code-review block and recommend handling,
+including whether it should create a spike. Scope is analysis/documentation only.
+Baseline: retained run1, initial7d5273c2, final511f64bb, current approved AC-013.
+
+Source evidence:
+- Full retained spec/plan inspected: Enter maps to equals; the operator-key
+  ambiguity is about multiply/divide equivalents, not Enter/focus precedence.
+- Full final calculator and test file inspected, plus exact initial-to-final
+  Git delta. Final guard defers Enter for every BUTTON; window keydown returns
+  before handleKey. New tests assert that deferral and the Backspace result2.
+- The first report's preferred Backspace outcome is not supplied by AC-013.
+  Final report's Enter-equals concern is grounded in the approved requirement.
+- Source/wiring conflict is established. Native browser event ordering,
+  accessibility behavior and a corrected implementation are not established.
+- The remediation prompt already includes the approved specification, plan,
+  scope, complete diff and every first-panel report.
+
+Optional replay was not completed; no passing/failing calculator suite is claimed.
+1. A bare JSON.parse probe rejected the initial implementer's accepted prose.
+   The production extractJsonBody accepts that recorded shape. Both implementer
+   raw hashes matched agent_run, and their source/test bodies were extracted.
+2. An in-checkout disposable mirror inherited BuildWorks' type:module and
+   failed at require('node:test'), before any calculator assertions.
+3. A sibling mirror avoided that parent, but an added package-identity guard
+   compared findPackageJSON outputs that were the two module file paths rather
+   than the expected package metadata identity. It stopped before the runner.
+No additional replay was attempted: the documentation classification is already
+supported by retained code, contract and test definitions. These are diagnostic
+setup failures, not evidence that the generated unit tests pass or fail.
+All owned mirrors were removed by finally; target files and run state unchanged.
+
+Disposition: recommend defect follow-up under existing AC-013, not an automatic
+spike. A different focus policy needs an explicit upstream product decision;
+research becomes a time-boxed spike only if evidence is needed for that decision.
+The run stays blocked. No new code-review schema, human waiver, resume path,
+automatic GitHub publication, target fix or provider invocation was introduced.
+Write-up: docs/proposals/code-review-remediation-contract-drift.md.

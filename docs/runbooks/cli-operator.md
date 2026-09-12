@@ -236,6 +236,31 @@ agent. It does not check provider authentication, model entitlement, quota, or
 private-key availability. Review `NOT CHECKED` and limitation entries as well
 as failures.
 
+The probe uses the harness's named environment filter and reports the selected
+absolute executable path, invocation cwd, and successful version output.
+`--repo` selects the inspected project, not a new target-local executable search.
+The version does not establish executable origin or a supported installation.
+Later worktree dispatches can use a different cwd or environment; this observation
+does not pin their binary.
+
+Doctor also reports two user files beneath the passed-through absolute,
+non-empty `USERPROFILE` (Windows) or `HOME` (POSIX): `.claude/settings.json`
+as `user_settings`, and `.claude.json` as `user_state`, using native separators.
+Reads are read-only and bounded to one MiB per file. Missing files are `absent`;
+invalid/missing home, linked or non-regular files, read failures, oversize, or
+detected changes yield `unavailable` with a reason and no hash. An unavailable
+observation makes `ambient_provider_config` `NOT CHECKED`, not a readiness
+failure or a mandatory repair. The five-second timeout covers the version
+probe, not OS filesystem latency or the entire command.
+
+Environment metadata distinguishes parent presence from delivery in BuildWorks'
+supplied map. The current filter excludes `ANTHROPIC_BASE_URL`,
+`ANTHROPIC_AUTH_TOKEN`, `OPENAI_BASE_URL`, and `CLAUDE_CONFIG_DIR`; doctor never
+reports their values or value hashes, and the excluded config-directory setting
+does not relocate its inventory. Windows can add required system variables.
+Doctor does not establish managed/project settings, OS home fallback, actual
+file use under native flags, or effective configuration precedence.
+
 Select the model authorized for this work, then create the run:
 
 ```powershell
@@ -490,6 +515,24 @@ capture. For `status`, `.result` is the snapshot; for `run`, it contains
 `.snapshot` and `.execution`. Legacy commands retain their numeric/path/raw
 outputs. See the [README output contracts](../../README.md#output-contracts-and-refusal-handling)
 for field definitions and the complete error-code list.
+
+For doctor, `.result.current.executor` includes `resolvedPath`, `probeCwd`,
+and `versionOutput`. A selected path remains visible after launch failure,
+while version output is null on failure or an empty response.
+`.result.current.ambientProviderConfig` contains the complete environment
+presence/delivery/hash metadata, the selected home variable, and both file
+observations with state, path, known byte size, hash, and refusal reason.
+Text output includes the same complete current object. Even with `--run`,
+these are current observations, never substitutes for `.result.frozen`.
+
+Review doctor output before redirecting or sharing it: absolute paths, sizes,
+environment comparison hashes, and whole-file hashes are sensitive local
+operational data, not anonymization. Only the documented non-secret environment
+allowlist receives value hashes. Whole-file hashing intentionally includes
+`user_state` despite its possible sign-in/trust state; it detects exact byte
+changes, including same-size edits, and can confirm a candidate file, but does
+not explain which field changed or hash individual credentials. Doctor adds
+no persistence, transmission, config parsing, or repair.
 
 | Exit code | Meaning |
 | --- | --- |

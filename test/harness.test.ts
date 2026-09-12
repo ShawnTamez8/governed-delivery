@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
-import { invokeHarness, parseEnvelope, probeExecutor } from "../src/harness.ts";
+import childProcess, { spawnSync } from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+import { buildHarnessEnvironment, invokeHarness, parseEnvelope, probeExecutor } from "../src/harness.ts";
 import { CLAUDE_CODE, type ExecutorDefinition } from "../src/executor.ts";
 
 const FIXTURES = join(process.cwd(), "test", "fixtures", "harness");
@@ -60,6 +61,78 @@ test("probeExecutor bounds a hanging probe without invoking a model", () => {
     probe: [process.execPath, "-e", "setTimeout(() => {}, 1000)"],
   }), { timeoutMs: 50 }), /probe failed.*timed out after 50 ms.*ETIMEDOUT/);
   assert.ok(Date.now() - start < 5000);
+});
+
+test("named environment construction preserves empty values and immutable inputs", () => {
+  const executor = structuredClone(CLAUDE_CODE);
+  const source = Object.freeze({ PATH: "", HOME: "owned-home", BUILDWORKS_TEST_CANARY: "excluded" });
+  const before = structuredClone(executor);
+  const env = buildHarnessEnvironment(executor, source);
+  assert.deepEqual(env, { PATH: "", HOME: "owned-home" });
+  assert.notEqual(env, source);
+  assert.deepEqual(executor, before);
+  env.HOME = "changed-copy";
+  assert.equal(source.HOME, "owned-home");
+});
+
+test("probe defaults omit env cwd and timeout; explicit relative executable refuses before spawn", (t) => {
+  const original = childProcess.spawnSync;
+  const calls: unknown[][] = [];
+  const mocked = t.mock.method(childProcess, "spawnSync", (...args: Parameters<typeof spawnSync>) => {
+    calls.push(args);
+    return original(...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    const executor = testExecutor([]);
+    probeExecutor(executor);
+    assert.deepEqual(calls, [[executor.probe[0], executor.probe.slice(1), { shell: false, encoding: "utf8" }]]);
+    assert.throws(() => probeExecutor(executor, { executablePath: "relative-node" }),
+      /probe failed.*executablePath must be absolute/);
+    assert.equal(calls.length, 1);
+  } finally {
+    mocked.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
+
+test("explicit probe and invocation share the named filter in real children", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bw-probe-env-"));
+  const names = ["BUILDWORKS_TEST_CANARY", "BUILDWORKS_TEST_NAMED", "BUILDWORKS_TEST_EMPTY"];
+  const saved = names.map((name) => process.env[name]);
+  try {
+    process.env.BUILDWORKS_TEST_CANARY = "excluded-canary";
+    process.env.BUILDWORKS_TEST_NAMED = "named-value";
+    process.env.BUILDWORKS_TEST_EMPTY = "";
+    const command = [process.execPath, join(FIXTURES, "echo-env.mjs")];
+    const executor = testExecutor(command, { probe: ["unused-bare-command", ...command.slice(1)] });
+    executor.sandbox.envPassthrough.push("BUILDWORKS_TEST_NAMED", "BUILDWORKS_TEST_EMPTY");
+    const env = buildHarnessEnvironment(executor);
+    const probe = probeExecutor(executor, { executablePath: process.execPath, env, cwd: root, timeoutMs: 5000 });
+    const invocation = await invokeHarness(executor, { prompt: "", cwd: root });
+    assert.equal(invocation.exitCode, 0);
+    for (const output of [probe.stdout, invocation.raw]) {
+      const actual = JSON.parse(output) as Record<string, string>;
+      assert.equal(actual.BUILDWORKS_TEST_NAMED, process.env.BUILDWORKS_TEST_NAMED);
+      assert.equal(actual.BUILDWORKS_TEST_EMPTY, "");
+      assert.ok(!Object.hasOwn(actual, "BUILDWORKS_TEST_CANARY"), "canary leaked through the filter");
+    }
+    const code = "console.log(process.cwd()); console.error(process.argv[1])";
+    const argv = ["-e", code, "preserved-argument"];
+    const expected = spawnSync(process.execPath, argv, { env, cwd: root, shell: false, encoding: "utf8" });
+    assert.equal(expected.status, 0);
+    assert.equal(expected.stdout.trim(), root);
+    assert.equal(expected.stderr.trim(), "preserved-argument");
+    assert.deepEqual(probeExecutor(testExecutor([], { probe: ["unused", ...argv] }),
+      { executablePath: process.execPath, env, cwd: root, timeoutMs: 5000 }),
+    { stdout: expected.stdout, stderr: expected.stderr });
+  } finally {
+    names.forEach((name, i) => {
+      if (saved[i] === undefined) delete process.env[name];
+      else process.env[name] = saved[i];
+    });
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("invokeHarness happy path delivers the prompt over stdin", async () => {

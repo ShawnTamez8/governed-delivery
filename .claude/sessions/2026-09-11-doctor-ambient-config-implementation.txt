@@ -1,0 +1,162 @@
+Requested outcome: implement docs/features/doctor-ambient-config/plan.md, six tasks
+and thirteen acceptance criteria, including independent review. User explicitly
+invoked implement-plan on 2026-09-11; this supersedes the earlier planning-only
+authorization for this feature. No paid run, commit, publication or signing.
+
+Baseline: cs_candidate_b, fbda8dd3870a04e50cc95893e059fc3b0adc7560.
+Existing work preserved: AGENTS.md, CLAUDE.md, project-learnings.md, the requested
+effort-record .txt-to-.md conversion, and the untracked reconciled feature plan
+and its reconciled design review (5 accepted, 6 rejected, 2 deferred, 0 open).
+
+Success: satisfy the settled plan contract at component and actual CLI boundaries,
+keep dispatch defaults/frozen definitions/readiness policy unchanged, no diagnostic
+persistence or provider spend. All tests use owned configuration and native child
+fixtures. Windows execution evidence does not certify POSIX installation behavior.
+Approved approach: the plan's six ordered tasks, focused Node tests/typecheck/docs,
+seven disposable guard mutations, then a separate code reviewer and lifecycle update.
+Material decision retained: hash both complete bounded user files, including
+user_state, and disclose sensitive comparison metadata. No credential-value hash.
+
+Task state is held in this Copilot session's SQL todos, not a governed target store.
+Result: all six tasks implemented and independently reviewed; one confirmed
+Medium finding fixed and reconciled. No production or target rollback performed.
+
+Task 1 completed: src/harness.ts and test/harness.test.ts.
+node --test test\harness.test.ts test\dispatch.test.ts: 27 passed, no skips.
+npm run typecheck: passed. Captured default spawn options contain only shell:false
+and encoding:utf8; relative overrides refuse before spawning. Real children prove
+named/empty values, excluded canary, explicit cwd/argv, independent stdout/stderr.
+The existing native Claude test runs --version only, not a provider invocation.
+
+Task 4 preparation inventory (entire original 2824-line test file read):
+doctorFixture owns preload/key/invoke and is consumed by doctorRun (current/frozen,
+approval, preapproval), journeyFixture (three journey tests), and direct run/error
+and doctor-current cases. doctor.command wraps generic legacy/approval commands;
+doctor.invoke wraps doctor selectors. Direct environment bypasses are the Task 9
+README PowerShell spawn and journeyFixture's execute; both must derive from the
+owned doctor.environment before their NODE_OPTIONS/key/Git overrides. The separate
+approval-transport PowerShell spawn runs no doctor; its key override is unchanged.
+fixtureProbe feeds the three direct readiness/staffing/dispatch comparisons; it
+currently drops caller options. The unavailable-tools case has its own bare-name
+mock and needs an owned empty search cwd/PATH and home. All other bare CLAUDE probe
+references are these preload/direct mock/assertion sites; no production executor
+mutation is needed. Frozen canary test already detects arbitrary retained probes.
+
+Tasks 2 and 3 completed by separate implementation agent
+58346c48-f545-48d5-a96b-0c0d9ac7ce04, only src/doctor-diagnostics.ts and
+test/doctor-diagnostics.test.ts. Task 2 verified before Task 3:
+node --test test\doctor-diagnostics.test.ts test\harness.test.ts:
+32 passed, 3 POSIX skips; typecheck passed.
+Task 3: node --test test\doctor-diagnostics.test.ts test\canonical.test.ts:
+41 passed, 4 skips; typecheck passed. External evidence: libuv 1.52.1
+src/win/process.c and Node 24 child-process documentation, paired with real
+unmocked bare-name native child identity vs selected absolute probe.
+Windows coverage includes cwd control presence, PATH/extension precedence,
+quoted and relative paths, absent/empty PATH, missing binaries/directories,
+shim refusal and selected nonlaunchable-file failure. POSIX cases are authored
+but unexecuted. Actual Windows ACL launch denial was not reproduced; invalid PE
+selection proved no fallback. File-symlink creation was privilege-skipped;
+real directory junction and dangling-link refusal executed.
+Agent corrected test-oracle assumptions, not product contract: native Windows
+execPath can retain dot-dot spelling (compare filesystem identity), and large
+NTFS inode numbers can make increment-by-one an unchanged Number (prove that
+an injected mutation differs before using it). Initial TS error-property access
+was narrowed. All owned diagnostic scratch directories removed.
+
+Task 4 implementation: shared doctorFixture/fixtureProbe now use owned native
+copies and owned homes, preserving keys/options and direct no-model sentinels.
+README/journey bypasses use the owned map. Readiness captures canonical names
+at entry and supplies the same filtered map/cwd/absolute path to the version
+probe; new metadata remains current, observational, and non-gating. Existing
+CLI and output renderer source remains unchanged.
+
+Task 4 completed: required harness/diagnostics/dispatch/full CLI runner reports
+170 tests, 166 passed, 4 expected platform skips, zero failures (437.2 seconds).
+Typecheck passed. All shared approval/guided-run/README fixture consumers execute.
+
+Task 5 completed: required runner adds profile.test.ts and reports 207 tests,
+203 passed, 4 expected platform skips, zero failures (506.8 seconds); typecheck
+passed. The three new ambient CLI tests also passed in a focused invocation:
+full text/JSON parity for every selector; current-file changes vs immutable
+frozen profile/rows; overrides/unavailable observations remain ready without state
+creation; captured canonical environment and successful/failing/empty stream
+projections. Full target/key/home/index/state inventory is byte/mtime-preserved.
+The initial zero-discovery test-registration defect is resolved and documented
+in 2026-09-11-debug-doctor-test-discovery.md; wrapper-only passes are not evidence.
+
+All seven guard mutations: one intended ERR_ASSERTION each, then a green
+byte-exact restoration (14 runs, one named test per run, no skipped cases).
+Retained evidence: 2026-09-11-doctor-ambient-config-mutations.txt. The wrong
+absolute executable mutation fails the actual identity spy; reversed search
+fails independent native parity even with its own absolute probe consistent.
+Oversized prefix acceptance changes the outcome class and fails unavailable.
+Other mutations prove canary exclusion, override hash prohibition, non-gating
+unavailable observations, and arbitrary retained-probe refusal. All disposable
+mirror/driver files removed; live source/test hashes match before/after.
+
+Task 6 documents: README Inspect without spending and doctor output fields;
+runbook section 4 and Inspection and support reference. No approval/inspection
+command fence changed. Docs state filtered map vs OS additions, current/frozen
+and later-cwd distinction, two locations, one-MiB ceiling, explicit refusals,
+non-gating behavior, and both whole-file hashes' sensitive comparison tradeoff.
+npm run check:docs: clean (existing historical path warnings only).
+npm run typecheck: passed.
+Windows Task 9 README inspection selector: one named test passed, no skips.
+Independent implementation review is the remaining completion gate.
+
+Completion evidence (supersedes the preceding in-progress gate):
+docs/features/doctor-ambient-config/2026-09-11-code-review.md: one confirmed
+Medium finding, accepted and fixed, no remaining open findings. A separate
+read-only follow-up review confirmed the correction and no significant introduced
+issue. Plan advanced to Implemented; README/runbook contract and scope unchanged.
+
+Finding 1 mechanism: native Windows GetFileAttributesW accepts an existing
+directory first spelled first.; Node statSync applies ToNamespacedPath, which
+turns the same spelling into extended-path semantics and returns ENOENT. Old
+selection therefore failed outright or chose a later executable. Evidence:
+libuv v1.52.1 src/win/process.c search_path_join_test; Node v26.4.0
+src/node_file.cc Stat; Microsoft path-normalization documentation:
+https://learn.microsoft.com/en-us/dotnet/standard/io/file-path-formats#path-normalization
+The earlier assumption that filesystem stat and native executable lookup were
+interchangeable was wrong. An independent dot-suffix native comparison exposed
+it before the correction, unlike the earlier ordinary-path differential cases.
+
+Owned native matrix: ordinary first succeeds everywhere; first. succeeds with
+native spawn and DOS-device stat but ordinary Node stat returns ENOENT; first..,
+first-space and first-dot-space remain refused by native and DOS-device lookup.
+Correct only the Windows attribute-query namespace, preserving explicit prefixes,
+original selected/probed spelling, ordering, and no-fallback behavior. No manual
+dot/space trimming, broad catch, shell wrapper or retry was introduced.
+
+The new dot-suffix regression failed against the old source with resolution
+ENOENT. First full post-fix attempt had one EPERM fixture teardown failure in
+the .com/.exe case, not a behavioral assertion failure. No child using the owned
+directory remained; explicit cleanup followed by an unchanged-code rerun passed.
+Cause beyond the transient filesystem refusal is unknown; no retry was added.
+node --test test\doctor-diagnostics.test.ts test\harness.test.ts:
+56 total, 52 passed, 4 expected skips; npm run typecheck passed.
+node --test --test-name-pattern=ambient test\cli-operator.test.ts:
+3 named tests passed, no skips; npm run typecheck passed again.
+
+Eighth isolated guard: replace statSync(attributePath) with statSync(candidate).
+One named test failed ERR_ASSERTION (native-valid first candidate must resolve);
+byte-exact restoration passed that test. Evidence:
+2026-09-11-doctor-native-path-mutation.txt. Source SHA256 after correction:
+e50c31454d1356153d54c2524cf82864629ad7002ec56b4668a3cad05f5ca38e.
+The original seven-mutation record's hashes predate this correction and remain
+unchanged historical evidence. The owned correction mirror was removed.
+
+Follow-up reviewer reconstructed exact original source/test hashes in memory,
+inspected the correction, reran native-focused cases/typecheck, and confirmed
+Finding 1 resolved. Runtime remains Windows Node26.4.0/libuv1.52.1; UNC and
+explicit DOS-device input execution were not exercised. Earlier POSIX,
+file-symlink privilege and actual ACL-denial limitations remain.
+No provider spend, checkout commit, signing, publication, target cleanup, or
+real operator configuration change. Unrelated baseline changes remain preserved.
+
+Final lifecycle/continuity check: npm run check:docs and npm run typecheck passed;
+scoped diff --check passed and protected production boundaries have no diff.
+AGENTS.md, CLAUDE.md, converted effort record and original design review match
+the captured pre-implementation bytes. The canonical project-learnings.md now
+records completion and no open doctor task; its existing instruction pointer
+remains intact. No owned doctor scratch directory remains in the checkout.
