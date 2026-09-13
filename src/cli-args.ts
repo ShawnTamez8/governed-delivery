@@ -13,6 +13,7 @@ interface CommandDefinition {
   options: readonly OptionDefinition[];
   exclusive?: readonly string[];
   requireExclusive?: boolean;
+  acceptsRepo?: boolean;
 }
 
 const run: OptionDefinition = { name: "run", value: "id", required: true, validate: validateNumber };
@@ -106,6 +107,11 @@ export const COMMANDS: Readonly<Record<string, CommandDefinition>> = {
     description: "advance an existing run; consent covers every previewed group",
     options: [run, { name: "yes" }, json],
   },
+  dashboard: {
+    description: "serve a loopback-only read dashboard for selected repositories",
+    options: [{ name: "repositories-file", value: "path", required: true }],
+    acceptsRepo: false,
+  },
 };
 
 export class UsageError extends Error {}
@@ -179,6 +185,9 @@ export function parseArguments(argv: readonly string[]): CliArguments {
     throw new UsageError(`unknown command ${command}`);
   }
   const definition = command === null ? null : COMMANDS[command];
+  if (repo !== undefined && definition?.acceptsRepo === false) {
+    throw new UsageError(`${command} does not accept --repo; use --repositories-file`);
+  }
   const options = [...(definition?.options ?? []), help];
   const args = new Map<string, string>();
   const flags = new Set<string>();
@@ -232,13 +241,14 @@ function synopsis(command: string): string {
 }
 
 export function formatHelp(command: string | null = null): string {
-  const global = "  --repo <path>  existing local Git worktree; defaults to the invocation directory\n  --help         show help without opening state";
+  const target = "  --repo <path>  existing local Git worktree; defaults to the invocation directory\n";
+  const help = "  --help         show help without opening state";
   if (command !== null) {
     const definition = COMMANDS[command];
     return `usage: bw ${synopsis(command)}\n${definition.description}\n${definition.exclusive
-      ? `Options ${definition.exclusive.map((name) => `--${name}`).join(" and ")} are mutually exclusive.\n` : ""}\nGlobal options:\n${global}\n`;
+      ? `Options ${definition.exclusive.map((name) => `--${name}`).join(" and ")} are mutually exclusive.\n` : ""}\nGlobal options:\n${definition.acceptsRepo === false ? help : target + help}\n`;
   }
   return `usage: bw <command> [options]\ncommands:\n${Object.entries(COMMANDS)
     .map(([name, definition]) => `  ${synopsis(name).padEnd(78)} ${definition.description}`)
-    .join("\n")}\n  help [command]  show general or command-specific help\n\nGlobal options:\n${global}\n`;
+    .join("\n")}\n  help [command]  show general or command-specific help\n\nGlobal options:\n${target}${help}\n`;
 }

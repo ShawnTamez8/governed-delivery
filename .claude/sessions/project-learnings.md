@@ -1,72 +1,89 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-11, doctor implemented; live chain blocked at code review)
+## Current state (2026-09-12, density and triage implemented, unreviewed by a human)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
 system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
-**Working state:** Rechecked branch `cs_candidate_b`, HEAD `fbda8dd` (merge of
-`code-review-stage`); doctor implementation, evidence and issue write-up remain
-uncommitted. Preserve the prior `AGENTS.md`/`CLAUDE.md` updates, effort-record
-`.txt` to `.md` conversion and original reconciled design review. Earlier
-working-state edits are in `1cc18a8`; `86af2c0` is also in this branch's history.
+**Working state:** Branch `cs_candidate_b` remains based on `4356151`. Every
+dashboard artifact — `src/dashboard/`, `src/dashboard-server.ts`,
+`src/dashboard-config.ts`, `src/operator-read.ts`, both dashboard test files,
+`tsconfig.dashboard.json` and the three feature directories — is still
+uncommitted, alongside the separate uncommitted
+`docs/features/code-review-contract-drift-issue/` plan. No commit has been
+requested. `package.json` carries one uncommitted change from the redesign: the
+`typecheck` script now chains `typecheck:dashboard`.
 
-**Completed:** All six Candidate B tasks at
-`docs\features\doctor-ambient-config\plan.md` are `Implemented`.
-Design review: 5 accepted, 6 rejected, 2 deferred, 0 open. Code review
-`2026-09-11-code-review.md` is reconciled: one Medium Windows lookup defect
-fixed and separately re-reviewed; eight guard mutations retained. All 14 session
-tracking rows are done. The CLI plan and first review remain complete/reconciled;
-`docs\features\cli-operator\2026-09-10-code-review-2.md` remains open.
+**Completed:** `docs/features/dashboard-density-triage/plan.md` is
+`Implemented` — all nine tasks shipped, and
+`docs/features/dashboard-density-triage/2026-09-12-implementation-code-review.md`
+is `reconciled` with five findings, none critical or high, all fixed and
+guarded. The run view now opens on an executive summary, keeps findings expanded,
+and collapses eight native `<details>` sections that each state their own count
+and stale note. `dashboard-enterprise-redesign` remains `Implemented` and
+`reconciled` beneath it. Verification at completion: `npm test` 1145 tests
+with 0 failures, `npm run typecheck` exit 0 for both programs,
+`npm run check:docs` clean. Fifteen guards are proved by deliberate mutation;
+because these files are untracked, every restoration is asserted against a text
+snapshot rather than a Git operation.
 
-**Decision locked:** Retain both whole-file fingerprints, including
-`.claude.json`; disclose sensitive comparison metadata when output is shared.
-No credential-value hashing or new runtime persistence/transmission.
+**In flight:** Nothing. No plan is mid-execution.
 
-**Live result:** The separately authorized chain used 16 dispatches and cost
-$2.4481306 ($2.44813 rounded). After one remediation, final high finding 5 blocked
-code_review; no delivery. Native probe/ambient components passed afterwards.
-Source inspection confirms all-button Enter deferral conflicts with AC-013;
-native browser behavior and the optional generated-unit replay remain unverified.
-`docs/proposals/code-review-remediation-contract-drift.md` recommends a defect
-follow-up, not an automatic spike. This is a recommendation, not an approved
-repair plan; a different interaction policy needs an explicit upstream decision.
+**Decisions locked:** The `RunSnapshot` extension that would project the agent
+fields already stored in `agent_runs` is **deferred** by operator decision, so
+agent-level model, harness identity and execution duration stay unavailable. The
+structural fix is **hero plus aggressive collapse**; tabs and sticky section
+navigation were both considered and rejected. The four density questions are
+closed: findings stay **expanded**, hash fragments are **12 characters**, governed
+actions sit **in document flow**, and the portfolio view was **in scope**.
+Portfolio KPIs still cover the loaded 1-100 run window across all configured
+repositories independent of display filters, and success remains completed
+divided by completed plus blocked.
 
-**Running state:** No session-owned paid process remains. Shell
-`doctor-live-20260911` ended exit 1; final writer absent. Retain:
+**Implementation boundary:** Presentation may narrow, never alter — no recorded
+value may leave the page, and exact forms stay available to assistive technology.
+Interactive mutation, remote access, WebSockets, new telemetry persistence, a
+second harness and fabricated telemetry remain unauthorized. Any change to
+`RunSnapshot`, `operator-state.ts` or `operator-read.ts` needs explicit
+authorization.
+
+**Non-obvious facts worth keeping:** A matched final code-review panel that
+blocks nothing writes `finalPanelBlocking: false` on every finding of that stage
+and round — only an unmatched panel leaves `null`. Deriving "the panel projected
+a result" from the blocking count therefore reports a recorded false as an absent
+projection; that was a real defect, found in review and fixed.
+`snapshotProjection` files the workflow action's own command under the kind
+`"workflow"`, which shares no member with the `ExecutionGroup` vocabulary that
+`workflowAction.group` uses, so matching those two can never resolve.
+`readRunsResult` refuses with `state_missing` for a repository that never had
+`.governance` created, so a loaded-but-empty run list needs `migrate` first.
+
+**Running state:** No dashboard server, browser, background agent or paid process
+is running. The retained paid target still exists at
+`C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1789245101665\target` and is
+the only chart-rich acceptance source — a temp directory under a logoff deletion
+timer, so that evidence is machine-local and perishable. Its durable final-review
+copy is
+`test/fixtures/recorded/code-review-web-calculator-final-mobile-overflow.json`.
+The prior doctor live target remains at
 `C:\Users\tamezs\buildWorks_test_repos\2026-09-11-doctor-ambient-config-173648`;
-`paid\target` owns run 1 and `.governance\worktrees\1`; `paid\keys` owns disposable
-keys, `smoke` the free target, and `paid.log` the transcript. All envelopes are in
-`test/fixtures/recorded/doctor-ambient-config-web-calculator-live-chain.json`.
-Owned diagnostic mirrors/helpers are gone. Prior targets/keys were not rechecked.
+not rechecked this session.
 
-**Locked scope:** The implementation request superseded planning-only authority;
-the separately authorized 17:36 Pacific full run included disposable signing and
-is consumed. Later requests authorized issue documentation and compaction only.
-No repair, second paid run, commit/push/merge, publication or target cleanup.
-General CLI consent still ends at approval/terminalization, excludes signing and
-later invocations, and preserves full arrays. Guided age refusal does not change
-low-level spec/plan; accepted approval expiry does not revoke the grant. Only
-code_review has bounded-remediation authorization.
+**Open/deferred:** The manual browser observation of the new visual system is
+outstanding — focus rings on every disclosure summary and copy button,
+reduced-motion and forced-colors rendering, 200% zoom, and a 320 CSS-pixel
+viewport. The target still exists, so the operator can perform it; a CLI agent
+cannot, and its absence would authorize no paid run. The mechanically checkable
+part is already asserted in the boundary test. The paid target remains blocked on
+high AC-018 mobile overflow with no delivery, and no second paid run is
+authorized. The contract-drift plan remains blocked before Task 1 on publication
+target and implementation authorization.
 
-**Open/deferred:** Pi needs a revision-grounded support evaluation and a deliberate
-architecture sequencing decision; the binding build order has not been amended.
-Pi remains additional support, not replacement or an emergency workaround.
-Candidate A awaits real provider/intake work. Candidate B's optional interface
-snippet and duplication-driven formatting helper remain deferred. Its execution
-evidence is Windows-only: POSIX, privileged file symlinks, actual ACL launch denial,
-UNC and explicit DOS-device input execution are not established. The CLI analysis
-still owns inbound object/revision/provenance, executable tasks, Spike identity and
-outbound ownership/App/visibility/publication questions. Intermediate stop control,
-packaging, general repair, hard dollar caps, new stages, `--json-schema` and stronger
-artifact verification remain excluded; QA should compose existing patch/verification
-modules. Hot-journal behavior is measured, not an open experiment.
-
-**Next up:** Await operator selection/authorization of the proposed
-contract-preserving correction and event-level reproduction. The doctor feature
-is complete; the separate live target stays blocked. No automatic spike or retry.
+**Next up:** Operator observation of the rebuilt run view against the retained
+target, then a commit decision for the whole uncommitted dashboard working set.
+Do not run a paid chain.
 
 ## Diagnostics quick-reference
 
@@ -98,6 +115,29 @@ Durable project facts belong here, regardless of whether a host also caches them
 - A hot journal made read-only SQLite return 776 without writes; explicit fixture migrate recovered committed rows without replay. Readers never repair.
 - `envPassthrough` freezes names, not values/files. Doctor now supplies its captured filtered map; dispatch's bare probe still inherits by default. A doctor pass is not auth proof.
 - Node `statSync` adds extended Windows path semantics; native executable lookup does not. Doctor's DOS-device attribute query preserves native normalization while selected/probed spelling stays unchanged.
+- A child `tsconfig` inherits the base `include` even when it supplies `files`; override `include` explicitly when isolating checked browser JavaScript from harness fixtures.
+- TypeScript child configurations also inherit `exclude`, and a default `lib`
+  includes DOM types. Inspect resolved files and libraries when separating Node
+  and browser programs.
+- Dashboard snapshot caches must key by repository and run, and every overlapping
+  refresh path needs its own generation guard; a run ID alone is not an identity.
+- Windows `child.kill("SIGTERM")` can terminate without delivering Node's
+  handler. Promise graceful cleanup only for signals the platform delivers.
+- A full paid chain can exhaust its configured final code-review panel after a
+  successful remediation; the final threshold blocks without another patch or
+  delivery, and a completed spend never authorizes a retry.
+- `agent_runs` persists `executor`, `requested_model`, `effective_model`,
+  `fallback`, `duration_ms`, `role` and `independence`, but
+  `RunSnapshot.cost.byAgent` keeps only `agent` plus cost totals. The dashboard's
+  model, harness and duration "unavailable" labels are a projection gap, not a
+  data gap — check the row before calling a value unrecorded.
+- `insertFindingDecision` requires grounding exactly when the disposition is
+  `rejected_with_rationale` and normative changes exactly when it is
+  `addressed`. Rendering either as "Not recorded" in the other state reports a
+  structurally forbidden field as missing evidence.
+- Apply a formatting-honesty pattern to every value class at once. `countNode`
+  paired abbreviated text with an exact accessible value while `usd()` shipped
+  the raw float `$0.5452318`; the rule existed and was applied to one type.
 
 ## Session records
 
@@ -113,11 +153,10 @@ null-prototype export correction; no browser check or causal shell comparison.
 
 ### Copilot skill portability aligned (2026-09-08)
 
-Canonical `.claude` project skills/shared learnings; six global workflows use
+Canonical `.claude` project skills and shared learnings; six global workflows use
 `.copilot/skills/` through `.agents` junctions. Records are not hooks.
 `2026-09-08-copilot-skills-audit.md` preserves recovery paths and corrections to
-names, oversized entries, unavailable calls, paths and task defaults; 17
-frontmatters passed, with no runtime/paid target/global Codex or Claude edit.
+names, oversized entries, unavailable calls, paths and task defaults.
 
 ### Paid evidence: implementation block, then clean completion (2026-09-07)
 
@@ -130,19 +169,15 @@ fixtures, focused9/9 and types/docs/diff passed; prior821/822 with symlink skip.
 
 ### Extractor fixed; two chains correctly block at code_review (2026-09-06)
 
-- `docs/features/unfenced-json-extraction/` fixed run 3's prose-before-JSON with
-  remedies 1–3, not prompt remedy 4; prose-after remained unbuilt absent evidence.
-  `a2db2a0` list-marker normalization is a different layer.
-- Separately authorized runs 4/5 correctly blocked on high code findings, each
-  13 dispatches ($1.15759/$1.40170); no gates weakened. Code-review Task 10 and
-  plan-coverage Task 7 closed; two live panels produced task findings, not a second artifact.
-- Three reviewer captures required real stage context; an invented AC-016 causal
-  example failed review. Trace criteria and changed paths, not just stage order.
-- Mirror 784 tests: 782 pass, one skip, one load flake (isolated 3/3); parse/reconcile
-  59/59 and review-stage 39/39 before third replay. All replays passed; fallback
-  removal broke four assertions, severity/location mutations broke both correctness
-  replays, restorations were byte-exact; smoke 13/13 and types/docs passed.
-- Historical branch point `a12f3cf` was then master/origin/master, not current-tip evidence.
+`docs/features/unfenced-json-extraction/` fixed run 3's prose-before-JSON with
+remedies 1–3, not prompt remedy 4; prose-after remained unbuilt absent evidence.
+Separately authorized runs 4/5 correctly blocked on high code findings, each 13
+dispatches ($1.15759/$1.40170), with no gates weakened; code-review Task 10 and
+plan-coverage Task 7 closed. Three reviewer captures required real stage context
+and an invented AC-016 causal example failed review — trace criteria and changed
+paths, not just stage order. Mirror replays all passed; fallback removal broke
+four assertions and severity/location mutations broke both correctness replays,
+with byte-exact restorations.
 
 ### Two membership fixes and an agent-portability mirror (2026-09-05/06)
 
@@ -187,49 +222,26 @@ A rationale that cannot be broken is not a rationale.
   verified; the plan stage mirrors the spec stage without a shared abstraction
   (hard rule 4).
 
-### CLI planning groundwork and GitHub impact reconciled (2026-09-09)
+### CLI operator work: planning, review, implementation (2026-09-09/10)
 
-Operator chose `2026-09-09-docs-cli-operator-analysis.md`, not the outbound proposal,
-for 18 criteria/boundaries/transactional exceptions/distribution limits.
-`docs/proposals/2026-09-09-github-project-projection-and-upstream-spikes-review.md`:
-5 accepted/5 deferred/0 rejected/open; proposal unchanged.
-`2026-09-09-cli-github-impact-analysis.md` is closed history; corrected age trace
-names four downstream entries, not spec/plan. Types/docs/criterion assertions passed.
+Operator chose `2026-09-09-docs-cli-operator-analysis.md`, not the outbound
+proposal, for 18 criteria/boundaries/transactional exceptions/distribution
+limits; `2026-09-09-cli-github-impact-analysis.md` is closed history. The plan
+review's 22 dispositions preserved full consent, complete arrays, raw approval
+bytes and bootstrap criteria; reconciliation granted no spend.
 
-### CLI operator plan review reconciled (2026-09-10)
+`2026-09-10-cli-operator-implementation.txt` retains commands, ten late
+mutations and full approval testing after a contributor's external-signing
+filesystem limit. Deviations: target-relative evidence, disabled diff refresh,
+shared extraction; no stronger gate/schema. Standard I/O is the runner seam,
+stages own gates, and an invocation never retries failed groups including
+rolled-back delivery. Lowercase `# design` was required grounding; ascending
+severity and unattempted-group accounting needed correction. CLI 108 and full
+1071 passed with one OS symlink skip.
 
-The 22 dispositions preserve full consent, complete arrays, raw approval bytes and
-bootstrap criteria; three critical corrections require full-suite/bounded-probe/crash
-recovery evidence. Planning assertions cover 18 criteria, nine tasks, 15 errors and
-lifecycle with CRLF/unscoped-table corrections; reconciliation grants no spend.
-
-### CLI operator implementation evidence (2026-09-10)
-
-`2026-09-10-cli-operator-implementation.txt` retains commands, ten late mutations
-and full approval testing after a contributor's external-signing filesystem limit.
-Deviations: target-relative evidence, disabled diff refresh, shared extraction;
-no stronger gate/schema. Standard I/O is the runner seam; stages own gates.
-An invocation never retries failed groups, including rolled-back delivery.
-
-Restored stderr beside JSON, counted attempts after fallible setup, reloaded
-serialized profiles and set an explicit absent external key. Lowercase `# design`
-was required grounding; ascending severity and unattempted-group accounting needed
-correction. Failed dispatches return audited reasons, not separately retained stderr.
-The stdout mutation failed `2 !== 1` at `operatorEnvelope`; TypeScript mirrors
-under node_modules failed before assertions. Restorations were byte-exact; reviewer
-ran initially sampled suites and withdrew the over-refusal-only guarantee.
-
-One-profile CLI/approval/repeat-no-op, calibrated `gh` sentinel, and README
-rows/files/index preservation passed; omission failed then restoration passed.
-CLI108/full1071 passed plus one OS symlink skip; types/docs/diff passed.
-CLAUDE/AGENTS matched, architecture stayed in sections15/19; no production rollback.
-
-### Operator-requested follow-up code review (2026-09-10)
-
-Fresh `gpt-5.5` HEAD/untracked review: nine index/key-isolation/delivery-retry cases
-and docs/types/diff passed (63 warnings); full suite was prior evidence. Physical
-EOF resolved nonempty-line counting; source/README hashes matched. DEP0190 had no
-retained traced origin, so no runtime/fixture attribution was made.
+A follow-up `gpt-5.5` review of HEAD plus untracked files passed nine
+index/key-isolation/delivery-retry cases; physical EOF resolved nonempty-line
+counting. DEP0190 had no retained traced origin, so no attribution was made.
 
 ### cc-switch reviewed and rejected as a harness abstraction (2026-09-11)
 
@@ -243,59 +255,134 @@ this was prevention, not a measured incident. Types/docs/paths passed, 63 warnin
 ### Pi support assessment and retained Claude acceptance chain (2026-09-11)
 
 Full research limits, findings, commands, retained paths and per-dispatch ledger:
-`2026-09-11-pi-assessment-and-prior-claude-chain.md`. Pi remains additional support,
-not an approved adapter. The earlier Claude2.1.269/Sonnet5 run completed with
-16 dispatches/$2.0585392 and a non-blocking medium correctness finding after
-remediation; its final panel was not clean. Six artifacts delivered at
-`8cd5a2d9b959f4eb215b71feae690a9b1a14b2d2`; only version commands ran.
-That prior run's external paths were not rechecked during this compaction.
+`2026-09-11-pi-assessment-and-prior-claude-chain.md`. Pi remains additional
+support, not an approved adapter. The earlier Claude 2.1.269/Sonnet 5 run
+completed with 16 dispatches/$2.0585392 and a non-blocking medium correctness
+finding after remediation; its final panel was not clean. Six artifacts delivered
+at `8cd5a2d9b959f4eb215b71feae690a9b1a14b2d2`; only version commands ran.
 
 ### Doctor implementation, live block and triage (2026-09-11)
 
+Candidate B shipped at `4356151` with seven mutations; a later Windows
+executable-lookup fix closed separately with an eighth. Canonical environment
+reads preserve Windows key casing, and native lookup requires native path
+semantics rather than Node `statSync` equivalence.
+
+The authorized live chain used 16 dispatches/$2.4481306. One remediation landed,
+then final high finding 5 blocked code review at
+`511f64bbb34d3ed0c8066a7fd8fb4945dc6ba54e`; no delivery occurred. AC-013 maps
+Enter to equals, while the remediation's all-button exception conflicts with that
+requirement. Native browser ordering and generated-unit behavior remain
+unverified; the retained triage, live-run and recorded JSON files preserve the
+limits, envelopes, artifacts, costs and hashes.
+
+### Dashboard read-only increment implemented (2026-09-12)
+
+The CLI-launched `127.0.0.1` dashboard uses bearer-protected GET routes and
+shared exact-current read services without opening a writer or executing a
+command. Seven review defects were resolved — repository/run request identity,
+Windows path identity, checked browser source, inherited TypeScript
+configuration, narrow-layout overflow, and a wall-clock-dependent approval test;
+`docs/features/dashboard/2026-09-12-code-review.md` is the reconciled record.
+Four security/read-only mutations failed as intended with exact restoration, and
+a Chrome session covered token, refusal, stale, theme, keyboard, 250-finding,
+command-copy and 480-pixel behavior.
+
+### Paid web-calculator chain blocks after remediation (2026-09-12)
+
+One explicitly authorized paid run used 16 dispatches and $1.8073754. Round 1
+remediated floating-point display at commit
+`270dc90fe939d3f1c60836a46151e361d37d6d47`; the final panel then blocked on
+high AC-018 mobile overflow at `src/styles.css:60`, so delivery did not run.
+Both security panels were clean and the audit chain was valid.
+
+The retained target and durable evidence paths are in Current state and
+`.claude/sessions/2026-09-12-paid-web-calculator-code-review-block.md`. The
+blocked run cannot receive another unreviewed remediation, and any replacement
+paid run needs new authorization.
+
+### Dashboard enterprise redesign requirements and plan (2026-09-12)
+
+Requirements at
+`.claude/sessions/2026-09-12-requirements-dashboard-enterprise-redesign.md`; the
+full-path plan kept the HTTP and `RunSnapshot` contracts unchanged, added one
+pure checked browser projection module, and defined eight tasks with
+source-derived tests. One self-review reconciled five findings first: an
+invented out-of-window count, a command-formatting module cycle, exposed
+serialized decision lists, omitted operator-action metadata, and weakly verified
+contrast.
+
+Requested average execution time and trends had no `RunSnapshot` source, so both
+render as unavailable rather than substituting wall-clock or verification
+duration. Aggregate only current run-list IDs, key snapshots by repository plus
+run, and parse stored decision list fields into structured values — never
+restore raw JSON as a fallback.
+
+### Redesign implemented, then operator review reopens density (2026-09-12)
+
 #### Decisions and assumptions
 
-- Authorization progressed through implementation, one paid chain, issue
-  write-up and compaction; no repair/publication/retry followed. The `retain`
-  choice preserves same-size detection, not field inference.
-- Planning review overstated a crash and inferred gaps from presentation;
-  all 13 dispositions preserve the original evidence. Independent bare-name
-  parity, non-gating AC-009 and narrow file errors remained the contract.
+- Operator deferred the `RunSnapshot` extension that would project the agent
+  fields `agent_runs` already stores, so agent model, harness and duration stay
+  unavailable — the gap is now known to be projection, not data.
+- Operator chose hero plus aggressive collapse over tabs and sticky section
+  navigation; a sticky region costs the vertical space the objective needs.
+- Presentation may narrow, never alter: a value may be collapsed, shortened or
+  aggregated only while staying reachable and exact for assistive technology.
 
 #### What failed
 
-- Nested test registration produced wrapper-only greens; module-scope placement
-  restored discovery. Native-valid `first.` exposed Node stat/native lookup
-  divergence; the query-only correction has its own eighth mutation record.
-- Owned-fixture teardown once returned `EPERM`; no child remained, explicit
-  cleanup and unchanged rerun passed. Its transient cause remains unknown.
-- The paid chain lasted20m17.831s,16 dispatches/$2.4481306. Correctness finding4
-  triggered one patch; final high finding5 blocked. Security returned no findings.
-  Final commit `511f64bbb34d3ed0c8066a7fd8fb4945dc6ba54e`; no delivery.
-- AC-013 maps Enter to equals; remediation added an all-button exception and
-  assertions blessing it. The first report's preferred Backspace outcome was not
-  the requirement. Source conflict is established; native browser ordering is not.
-- Optional unit replay never reached calculator assertions: bare-JSON extraction,
-  inherited `type:module`, then an invalid package-identity check obstructed the
-  diagnostic tooling. `2026-09-11-code-review-block-triage-evidence.txt` retains
-  the limits; no product-suite pass/fail is claimed.
+- `renderTokenChart` was edited to call a `tokenTable(groups)` helper that did
+  not exist; the trailing disclosure had to be extracted first. Applying a
+  review fix before extracting the code it depends on breaks the build.
+- `usd()` shipped raw floats (`$0.5452318`) while `countNode()` right above it
+  already paired abbreviated text with an exact accessible value. The honesty
+  pattern existed and was applied to one value class only.
+- Six section-level `.source-note` paragraphs, constant-valued table columns,
+  per-cell coverage parentheticals, raw hashes and input-only token cells made
+  the run view read as a report; the full defect catalogue with evidence is in
+  `.claude/sessions/2026-09-12-requirements-dashboard-density-triage.md`.
 
-#### What worked and where to resume
+#### What worked
 
-- `2026-09-11-doctor-ambient-config-implementation.txt`:203 passes/four skips,
-  seven prescribed mutations; post-fix52 passes/four skips, three ambient CLI
-  passes and separate review closure. Planning/docs/types had63 historical warnings.
-- `2026-09-11-doctor-ambient-config-live-run.txt` and the recorded live-chain JSON
-  preserve all16 envelopes,13 artifacts, costs, hashes and unchanged runtime
-  identities. Driver10/15 reflects the gate/no-delivery consequences; audit valid.
-- Post-run doctor components passed; overall readiness refused the blocked boundary
-  and generated untracked spec/plan. Frozen commands checked Node/npm versions
-  only. No generated-test or browser result follows from them.
-- Canonical environment reads preserve Windows key casing; owned home/native
-  copies isolate bypass callers. Native execPath can retain dot-dot spelling;
-  NTFS numeric identity mutations must actually differ. Detailed proofs remain
-  in the implementation, discovery-debug and mutation records.
+- A separate `code-review` agent independently re-ran the suite and recomputed
+  contrast, returning two findings: `aria-busy` never cleared on the four
+  session-unavailable early returns, and a token chart conflating reported zero
+  with nothing reported. Both fixed with mutation-proved regressions.
+- Reading `insertFindingDecision` before trusting a label showed that grounding
+  is forbidden unless the disposition is `rejected_with_rationale` and normative
+  changes are forbidden unless it is `addressed` — so several "Not recorded"
+  rows were misreporting structurally impossible fields as missing evidence.
+- Eight mutations in a robocopy mirror, each proved and restored byte-exactly.
+  CRLF-aware anchor translation was required; two anchors missed on the first
+  pass because the files use CRLF and the anchors used `\n`.
+
+#### Running state
+
+- None. No server, browser, agent or paid process is running; the mutation
+  mirror and the `app.js` byte snapshot under `%TEMP%` were both deleted.
+
+#### Verification
+
+- `npm run typecheck` - clean across both programs.
+- `node --test test/dashboard-ui.test.ts test/dashboard-server.test.ts` - 22/22.
+- `npm test` - 1129 pass, 5 skip, 1 unrelated failure.
+- `npm run check:docs` and `git --no-pager diff --check` - clean.
+
+#### Deferred and open
+
+- Deferred: the agent-field projection, historical trends, cross-run comparison,
+  and effort levels, which are stored nowhere.
+- Open: four questions in the density requirements — findings expanded or
+  collapsed beside the hero, hash fragment length, sticky governed actions, and
+  whether the portfolio view is in scope.
+
+#### Next time
+
+- Extract the shared helper before applying the review fix that calls it; the
+  two durable projection lessons are in the quick-reference above.
 
 #### Next up
 
-- Await operator authorization for the proposal's bounded correction/reproduction.
-  Defect triage rather than automatic spike creation is a recommendation only.
+- Answer the four open questions, then `/write-plan` against
+  `.claude/sessions/2026-09-12-requirements-dashboard-density-triage.md`.

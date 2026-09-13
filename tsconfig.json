@@ -5,11 +5,13 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "target": "esnext",
+    "lib": ["esnext"],
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "erasableSyntaxOnly": true,
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["src", "test"]
+  "include": ["src", "test"],
+  "exclude": ["test/dashboard-ui.test.ts"]
 }

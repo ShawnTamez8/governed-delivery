@@ -13,7 +13,9 @@ validation.
 
 The local operator CLI provides no-spend readiness and inspection, explicit
 run creation, consent-bounded continuation, and external approval file
-transport. See the [operator guide](#local-operator-guide). `bw` in the
+transport. It also launches an authorized loopback-only, read-only dashboard
+over explicitly selected local repositories. See the
+[operator guide](#local-operator-guide). `bw` in the
 description below is shorthand for the checkout-local Node invocation, not
 an executable installed on PATH by `npm install`.
 
@@ -236,7 +238,8 @@ initialize a database. An existing empty store returns an empty array and
 exit 0. Inventory is newest-first, defaults to 20, accepts `--limit` 1-100,
 and reports `hasMore`. It never chooses a run for execution.
 
-Every command accepts `--repo` once, before or after its name. It selects the
+Every command except `dashboard` accepts `--repo` once, before or after its
+name. It selects the
 canonical Git worktree root, including from a child directory or junction.
 Omitting it targets the invocation directory's worktree. User-supplied
 prompt, payload, and signature paths instead resolve from the original
@@ -248,6 +251,104 @@ Unknown options, duplicates, extra positional arguments, empty values, invalid
 identities/models, and unsafe numeric IDs are usage errors. Values accept
 `--name value` or `--name=value`; booleans such as `--yes` and `--json` must
 be bare flags. Help still refuses unknown commands/options.
+
+### Launch the read-only dashboard
+
+The dashboard takes one repositories file instead of `--repo`. The file is
+resolved from the original invocation directory and must be UTF-8 JSON with
+exactly this shape:
+
+```json
+{
+  "repositories": [
+    "C:\\Work\\Target Project",
+    "C:\\Work\\Second Project"
+  ]
+}
+```
+
+The list must be non-empty and contain unique absolute paths. One leading UTF-8
+BOM is accepted for compatibility with Windows PowerShell output; empty,
+BOM-only, malformed, relative, duplicate, or extra-member input is refused as
+usage. The list stays in process memory and is never copied into a repository.
+Each target retains its own `.governance/state.db`.
+
+```powershell
+$RepositoriesFile = Join-Path $OperatorDirectory 'dashboard-repositories.json'
+@{ repositories = @($Target, 'C:\Work\Second Project') } |
+  ConvertTo-Json |
+  Set-Content -LiteralPath $RepositoriesFile -Encoding utf8
+& node $BwCli dashboard --repositories-file $RepositoriesFile
+```
+
+The command binds an ephemeral listener only to `127.0.0.1`, prints exactly one
+bootstrap URL, and waits. Open that URL manually in a current local browser.
+Its fragment contains a random process-lifetime bearer token. The browser moves
+the token into tab-scoped session storage and removes it from the visible URL;
+reload works in that tab, but a token-free URL opened in another tab does not.
+Return to the terminal's original URL if the session is unavailable. The token
+does not rotate, survive process exit, or authorize any CLI operation.
+
+Refresh is explicit: there is no polling, push, or WebSocket connection. Choose
+a run-list limit from 1 through 100. Each repository is read independently
+through the same exact-current `runs` and `status` services as the CLI. A
+successful prior value remains visibly stale, with its original envelope
+`observedAt`, when a later read refuses or transport fails; the new code and
+reason are shown beside it. One repository's refusal does not suppress another
+repository's successful result. The first release performs synchronous,
+serialized Git, SQLite, and evidence reads, so one slow local or network-backed
+repository can delay other requests.
+
+The dashboard returns complete snapshots and arrays without a response-size
+ceiling or hidden pagination. It displays projected evidence references and
+availability reasons, but serves no evidence file contents or unrestricted
+filesystem path. Displayed CLI handoffs are copy-only text. The dashboard never
+executes them, opens a writer, migrates or repairs state, collects consent,
+approval, or signatures, listens remotely, or persists dashboard state.
+
+#### What the dashboard presents
+
+The page opens on eight portfolio measures: runs, blocked runs, active runs,
+findings, known cost, total tokens, success rate, and average execution time.
+Their scope is every run in the loaded window across every configured
+repository. The repository run limit narrows that window and the page says so
+whenever any repository reports more runs beyond the limit; the read route
+reports no total, so the page never states how many runs lie outside it. The
+status and phase filters and the run search change only which runs are listed.
+They never change a portfolio measure.
+
+Unavailable is never rendered as zero. A token class no agent row reported,
+spend no row reported, and findings no loaded snapshot supplied each read
+`Unavailable` with the coverage that produced it. Average execution time is
+permanently unavailable because the projection records no agent execution
+duration, and trend is unavailable everywhere because no historical series
+exists. Agent rows carry no model: the projection binds none.
+
+Below the portfolio, one repository panel per configured repository lists its
+loaded runs; selecting a run loads that run alone through the same `status`
+route and gives it its own cache slot, so one run's refusal never shows another
+run's evidence. The selected run renders its recorded limitations first, then a
+stage timeline in recorded order, a bounded recorded-activity list, cost and
+token coverage with SVG charts, per-agent analytics, one card per canonical
+finding with every immutable report kept separate, the copy-only governance
+commands, the frozen configuration, approval, and proposals, delivery and
+verification observations, and evidence availability.
+
+Every chart is decoration over a table: each carries an accessible title and
+description, a text legend, and a disclosure holding the exact values. A
+proportional chart is refused rather than drawn when no group reported a cost.
+Colour never carries meaning alone — every state also has a text label and a
+non-colour icon — and the palette drops out entirely under forced colours.
+Light and dark themes both meet the 4.5:1 text contrast requirement, which
+`npm test` checks by computing WCAG relative luminance from the declared
+tokens.
+
+Use Ctrl+C to close the listener. A handled `SIGINT`, and `SIGTERM` on platforms
+that deliver it to Node, closes the listener once and exits 0. Windows process
+termination APIs can terminate the process without delivering `SIGTERM`;
+startup or handled close failure exits 1 and does not print a successful URL.
+`dashboard --help` reads no repositories file or target. `dashboard` rejects
+both `--repo` and `--json`.
 
 ### Create an explicit run and consent to execution
 
@@ -389,6 +490,19 @@ JSON object and one terminating newline to stdout, including errors. Progress
 and operational diagnostics use stderr. Do not merge stderr into a JSON
 capture. Help is always plain text, and legacy numeric/path/raw-payload command
 outputs are unchanged.
+
+Dashboard inventory is a separate HTTP response containing one server
+observation time, the absolute current CLI path, and each submitted repository
+path with its opaque stable identifier. That inventory time is not repository
+or run evidence. Authenticated run-list and selected-run routes return the
+complete existing operator envelope unchanged. A core read refusal such as
+`state_missing`, `schema_unsupported`, `state_unavailable`,
+`target_unavailable`, or `run_missing` therefore uses HTTP 200 and retains its
+named envelope outcome, code, reason, repository, run ID, and `observedAt`.
+HTTP 400 is limited to invalid request values, 401 to an absent or rejected
+bearer token, 404 to an unknown route/repository identifier or malformed run
+identifier, and 405 to every non-`GET` request. Only 401 expires the browser
+session.
 
 The envelope is `{ command, outcome, repository, runId, errorCode, reason,
 observedAt, result }`. `observedAt` is the observation timestamp, not an agent

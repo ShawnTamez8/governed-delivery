@@ -1,0 +1,50 @@
+{
+  "provenance": {
+    "run": "Run 1 of C:\\Users\\tamezs\\AppData\\Local\\Temp\\1\\bw-run-skill\\1789245101665\\target",
+    "agentRunId": 15,
+    "dispatchAt": "2026-09-12T20:46:46.802Z",
+    "captured": "2026-09-12",
+    "design": ".claude/skills/run-buildworks/web-calculator-design.md",
+    "launch": "PowerShell -> Node v26.4.0 driver -> Node CLI -> native Claude Code 2.1.269",
+    "rawOutputRef": ".governance\\raw\\1\\2026-09-12T20-46-46-802Z-09366bba7417.json",
+    "rawOutputSha256": "3554724a673f8cfb3a93a3889ee0c2bf19250be5852566d151e2b1597e150ec0",
+    "whatThisRecords": "The final correctness-review response and the final gate fields from one authorized live chain that blocked after its second configured panel on a high-severity mobile-width finding.",
+    "limits": "Frozen verification checked only Node and npm versions. The run performed no browser validation, delivery did not run, and the separately clean security-review response does not resolve this correctness finding.",
+    "droppedFromEnvelope": "Duration, usage, model-usage, session, service-tier, tool-use, and transport metadata were dropped. The provider result string is retained byte-for-byte, and the gate fields are copied from .governance/code-review/1/result.json."
+  },
+  "agentRun": {
+    "id": 15,
+    "stageId": 8,
+    "agent": "code-reviewer-correctness",
+    "role": "reviewer",
+    "requestedModel": "claude-sonnet-5",
+    "effectiveModel": "claude-sonnet-5",
+    "cost": 0.2535542,
+    "durationMs": 134252
+  },
+  "result": "```json\n{\"status\": \"proposed\", \"agent\": \"code-reviewer-correctness\", \"role\": \"reviewer\", \"executor\": \"claude-code\", \"summary\": \"Traced calculator.js state machine (digit/decimal entry, chained operators, backspace, clear, equals, keyboard mapping) against AC-003 through AC-015 and found correct behavior throughout, including boundary cases. theme.js correctly toggles, persists, and applies themes without flash. One concrete defect found in src/styles.css: the calculator's width formula overflows the viewport across the entire mobile/small-tablet range that AC-018 requires to be fully usable.\", \"proposedContentChanges\": {\"findings\": [{\"severity\": \"high\", \"classification\": \"current_artifact\", \"location\": \"src/styles.css:60\", \"intentKey\": \"calculator-width-overflows-viewport-below-533px\", \"subject\": \"The `.calculator { width: min(94vw, 360px); }` rule combined with the body's 16px side padding (styles.css:56) causes the calculator to require more width than the viewport provides for any viewport from 320px up to ~533px (e.g. at 320px it needs 332.8px, a 12.8px overflow), producing horizontal scrolling/clipping across the exact mobile and small-tablet range AC-018 requires to remain fully usable.\"}]}}\n```",
+  "gate": {
+    "runId": 1,
+    "stageId": 8,
+    "patchBase": "4e65945f5e9bcf515601e90e3bb0228fb9e7c82b",
+    "initialVerifiedCommit": "bbc3df61b4d0e8acf845efb145b46733d596d7a3",
+    "finalVerifiedCommit": "270dc90fe939d3f1c60836a46151e361d37d6d47",
+    "panel": [
+      "code-reviewer-correctness",
+      "code-reviewer-security"
+    ],
+    "panelSize": 2,
+    "maxRounds": 2,
+    "blockingSeverity": "high",
+    "finalRound": 2,
+    "blocking": [
+      {
+        "findingId": 4,
+        "severity": "high",
+        "location": "src/styles.css:60"
+      }
+    ],
+    "outcome": "block",
+    "createdAt": "2026-09-12T20:47:31.129Z"
+  }
+}

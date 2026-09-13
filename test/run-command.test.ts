@@ -7,7 +7,6 @@ import os, { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { test } from "node:test";
-import { setTimeout as delay } from "node:timers/promises";
 import { appendAudit } from "../src/audit.ts";
 import { approvalPayload } from "../src/approval.ts";
 import { approveRun, buildBinding } from "../src/approval-stage.ts";
@@ -504,13 +503,15 @@ test("Task 8 failed delivery finalization stops once and requires a separate inv
   assert.deepEqual(data(continued).execution.groupsCompleted, ["delivery_check"]);
 }, [process.execPath, JOURNEY_FIXTURE, "--implementation-mode", "ok", "--code-review-mode", "ok"]));
 
-test("Task 8 a legitimately granted approval is not revoked when its acceptance expiry elapses", () => withRun(async ({ root, store, runId }) => {
+test("Task 8 a legitimately granted approval is not revoked when its acceptance expiry elapses", (t) => withRun(async ({ root, store, runId }) => {
+  const now = { value: Date.now() };
+  t.mock.method(Date, "now", () => now.value);
   const first = await advanceRun(root, runId, { yes: true, stderr: capture().stderr });
   assert.equal(first.outcome, "awaiting_approval", first.reason ?? "");
-  const expiresAt = new Date(Date.now() + 5000).toISOString();
+  const expiresAt = new Date(now.value + 5000).toISOString();
   approveFixture(store, root, runId, expiresAt);
   const approval = store.getApproval(runId);
-  await delay(Math.max(0, Date.parse(expiresAt) - Date.now()) + 25);
+  now.value = Date.parse(expiresAt) + 25;
   assert.ok(Date.now() > Date.parse(expiresAt));
   const result = await advanceRun(root, runId, { yes: true, stderr: capture().stderr });
   assert.equal(result.outcome, "completed", result.reason ?? "");

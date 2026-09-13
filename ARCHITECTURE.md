@@ -44,8 +44,8 @@ about subtraction.
   target stack adapters, all built before a single run completes end to end.
   Each becomes a seam, and seams are where the failures land.
 
-A second delivery surface will silently diverge from the first unless something
-exercises both. Build one.
+A second authoritative delivery surface will silently diverge from the first
+unless both execute the same core contract. Keep one mutation authority.
 
 ## 3. Hard rules
 
@@ -55,8 +55,15 @@ read.
 1. **One harness until one run completes end to end.** No second harness, no
    adapter interface, no plugin system until a run reaches the terminal stage
    and its evidence is queryable.
-2. **One surface.** A CLI that calls the core directly. No RPC layer, no editor
-   extension, no second entry point that can drift.
+2. **One mutation authority, staged operator surfaces.** The CLI calls the core
+   directly and remains the only mutating surface until an explicit replacement
+   decision. A local dashboard may project the same core state only under the
+   bounded authorization in section 23: its host is launched by the CLI, binds
+   only to loopback, and calls the existing read projection without a second
+   state model. No RPC service, remote dashboard, or duplicated policy logic.
+   Interactive dashboard mutation requires a later decision that defines
+   command parity and retires or narrows the CLI mutation path rather than
+   allowing two authorities to drift.
 3. **One schema per thing.** No unions, no version discriminators, no
    compatibility handling, and no version identifiers embedded in component
    names or contracts. A stable name plus a content hash is identity; nothing
@@ -1206,6 +1213,23 @@ apart, and the one that drifts is the one people stop trusting.
 10. Only then: the deferred stages (`code_review` was the first, by operator
     decision on 2026-09-04), then a dashboard, then notifications, then —
     if ever — a second harness.
+
+**Dashboard authorization — 2026-09-12.** The operator authorized the first
+dashboard increment because the completed-run milestone and the existing
+`RunSnapshot` projection provide a queryable, refusal-aware read boundary. The
+authorized increment is local, single-operator, multi-repository, and read-only.
+The CLI launches one ephemeral HTTP host bound to loopback; the host calls the
+existing core read projection independently for each explicitly selected
+repository and creates no database, telemetry schema, cache of authority, or
+mutation path. The browser may filter and drill into projected data and may
+display or copy eligible CLI command handoffs, but it never executes them,
+collects consent, accepts signatures, opens a writer, or infers unavailable
+telemetry. This decision lifts the step 9 stop only for that bounded dashboard
+increment. It does not authorize notifications, remote or multi-user access,
+WebSockets, new telemetry persistence, a second harness, deferred stages, or
+interactive mutation. The reason for the narrow boundary is to build reusable
+operator presentation over the current source of truth without pre-authorizing
+the command, security, and concurrency contracts required to replace the CLI.
 
 ## 24. Non-goals
 

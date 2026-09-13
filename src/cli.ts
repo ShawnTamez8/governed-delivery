@@ -18,10 +18,13 @@ import { approvalPayload, validateExpiry } from "./approval.ts";
 import { approveRun, buildBinding } from "./approval-stage.ts";
 import { APPROVAL_DEFAULT_LIFETIME_SECONDS, APPROVAL_MAX_LIFETIME_SECONDS } from "./policy.ts";
 import { checkIntakeRepository, inspectReadiness } from "./readiness.ts";
-import { ACTION_REASON_ORDER, listRuns, readRunSnapshot, RunMissingError, type ActionReason } from "./operator-state.ts";
+import { ACTION_REASON_ORDER, readRunSnapshot, RunMissingError, type ActionReason } from "./operator-state.ts";
 import { canonicalJson } from "./canonical.ts";
 import { advanceRun } from "./run-command.ts";
 import { CLAUDE_CODE } from "./executor.ts";
+import { readRunsResult, readStatusResult } from "./operator-read.ts";
+import { loadDashboardRepositories } from "./dashboard-config.ts";
+import { startDashboardServer, waitForDashboardShutdown } from "./dashboard-server.ts";
 import {
   formatOperatorResult, operatorCommand, operatorEnvelope, operatorExit,
   type OperatorCommand, type OperatorErrorCode,
@@ -71,6 +74,24 @@ async function main(): Promise<void> {
         throw new UsageError(`cannot read signature file ${signaturePath}: ${error instanceof Error ? error.message : String(error)}`);
       }
       if (signature === "") throw new UsageError(`signature file is empty: ${signaturePath}`);
+    }
+    if (command === "dashboard") {
+      const repositories = loadDashboardRepositories(args.get("repositories-file")!, invocationDirectory);
+      const dashboard = await startDashboardServer(repositories, invocationDirectory);
+      const shutdown = waitForDashboardShutdown(dashboard);
+      process.stdout.write(`${dashboard.bootstrapUrl}\n`);
+      await shutdown;
+      return;
+    }
+    if (command === "runs" || command === "status") {
+      const target = parsed.repo ?? invocationDirectory;
+      const result = command === "runs"
+        ? readRunsResult(target, invocationDirectory, Number(args.get("limit") ?? 20))
+        : readStatusResult(target, invocationDirectory, selectedRun!);
+      if (result.reason !== null) console.error(result.reason);
+      process.stdout.write(formatOperatorResult(result, json));
+      process.exitCode = operatorExit(result);
+      return;
     }
     rootDir = resolveRepositoryRoot(parsed.repo ?? invocationDirectory, invocationDirectory);
     if (command === "run") {
@@ -139,13 +160,6 @@ async function main(): Promise<void> {
         { ...readiness, frozen }, reasons[0]?.code ?? null, reasons.length === 0 ? null : reasons.map((r) => r.reason).join("; "));
       process.stdout.write(formatOperatorResult(result, json));
       process.exitCode = operatorExit(result);
-      return;
-    }
-    if (command === "runs" || command === "status") {
-      store = openStore(rootDir, { readOnly: true });
-      const data = command === "runs" ? listRuns(store, Number(args.get("limit") ?? 20))
-        : readRunSnapshot(store, rootDir, selectedRun!).snapshot;
-      process.stdout.write(formatOperatorResult(operatorEnvelope(command, rootDir, selectedRun, "ok", data), json));
       return;
     }
     release = acquireLock(rootDir);

@@ -35,7 +35,7 @@ import { loadVerifiedProfile, type Profile } from "../src/profile.ts";
 import { staffingShortfall, codeReviewStaffingShortfall } from "../src/select.ts";
 import { listMigrations } from "../src/migrate.ts";
 import { proposalIdentity } from "../src/proposal.ts";
-import type { RunSnapshot } from "../src/operator-state.ts";
+import { listRuns, readRunSnapshot, type RunSnapshot } from "../src/operator-state.ts";
 import type { DoctorResult, OperatorResult, RunCommandResult } from "../src/operator-output.ts";
 import { formatOperatorResult, snapshotText } from "../src/operator-output.ts";
 
@@ -98,15 +98,14 @@ test("every help form succeeds without target resolution or state creation", () 
     const commands = [
       "migrate", "new-run", "stage-add", "stage-complete", "dispatch", "spec", "plan",
       "implement", "verify", "review", "deliver", "approval-request", "approve",
-      "verify-audit", "proposal-export", "doctor", "runs", "status", "run",
+      "verify-audit", "proposal-export", "doctor", "runs", "status", "run", "dashboard",
     ];
     const helpForms = [
       ["--help"], ["help"], ["--repo", missing, "--help"],
       ["help", "--repo", missing],
-      ...commands.flatMap((command) => [
-        ["help", command, "--repo", missing],
-        ["--repo", missing, command, "--help"],
-      ]),
+      ...commands.flatMap((command) => command === "dashboard"
+        ? [["help", command], [command, "--help"]]
+        : [["help", command, "--repo", missing], ["--repo", missing, command, "--help"]]),
       ["status", "--help", "--json"],
     ];
     for (const args of helpForms) {
@@ -1604,6 +1603,9 @@ test("Task 6 run requires explicit consent for JSON and redirected input and pri
         assert.deepEqual(inventory(parent), before, "consent refusal must not acquire a lock, write rows, or dispatch");
       }
     }
+    const dashboardHelp = cli(parent, parent, "dashboard", "--help");
+    assert.match(dashboardHelp.stdout, /--repositories-file <path>/);
+    assert.doesNotMatch(dashboardHelp.stdout, /--repo <path>/);
   } finally {
     rmSync(parent, { recursive: true, force: true });
   }
@@ -2129,11 +2131,19 @@ test("Task 4 runs distinguishes absent and empty state from its bounded newest-f
     store.close();
     before = inventory(parent);
     for (const limit of [undefined, 1, 3, 100]) {
+      const expectedStore = openStore(root, { readOnly: true });
+      const expectedResult = listRuns(expectedStore, limit ?? 20);
+      expectedStore.close();
       const listed = cli(parent, parent, "runs", "--json", "--repo", root,
         ...(limit === undefined ? [] : [`--limit=${limit}`]));
       body = operatorEnvelope(listed, "runs");
       assert.equal(listed.status, 0, listed.stderr);
       assert.equal(body.outcome, "ok");
+      assert.equal(body.repository, realpathSync(root));
+      assert.equal(body.runId, null);
+      assert.equal(body.errorCode, null);
+      assert.equal(body.reason, null);
+      assert.deepEqual(body.result, expectedResult);
       const result = body.result as { runs: { id: number; project: string; featureId: string; slug: string;
         status: string; phase: string; lastRecordedAt: string }[]; limit: number; hasMore: boolean };
       assert.deepEqual(Object.keys(result).sort(), ["runs", "limit", "hasMore"].sort());
@@ -2331,6 +2341,9 @@ test("Task 4 blocked status preserves complete structured arrays and excludes ra
     const expectedFindings = expectedStages.flatMap((stage) => store.getCanonicalFindings(stage.id));
     const expectedReports = expectedFindings.flatMap((finding) => store.getFindingReports(finding.id));
     store.close();
+    const expectedStore = openStore(root, { readOnly: true });
+    const expectedSnapshot = readRunSnapshot(expectedStore, realpathSync(root), selected.id).snapshot;
+    expectedStore.close();
     const before = inventory(parent);
     const result = cli(parent, parent, "status", "--run", String(selected.id), "--repo", root, "--json");
     const body = operatorEnvelope(result, "status");
@@ -2340,6 +2353,7 @@ test("Task 4 blocked status preserves complete structured arrays and excludes ra
     assert.equal(body.reason, null);
     assert.equal(body.runId, selected.id);
     const snapshot = body.result as RunSnapshot;
+    assert.deepEqual(snapshot, expectedSnapshot);
     assert.deepEqual(Object.keys(snapshot).sort(), ["run", "phase", "stages", "workflowAction",
       "operatorActions", "proposals", "configuration", "approval", "cost", "activity",
       "writer", "delivery", "evidence", "limitations"].sort());

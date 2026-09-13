@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Governed Delivery Dashboard</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#dashboard">Skip to dashboard</a>
+  <header class="app-header">
+    <div class="identity">
+      <p class="eyebrow">Governed delivery control plane</p>
+      <h1>Governed Delivery Dashboard</h1>
+      <p class="environment">Local loopback projection &mdash; read-only. Every governed action stays a terminal command.</p>
+    </div>
+    <div class="header-controls">
+      <label for="theme">Theme</label>
+      <select id="theme">
+        <option value="system">System</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+      <button id="refresh" type="button">Refresh</button>
+    </div>
+  </header>
+  <nav aria-label="Run filters" class="filter-bar">
+    <p class="filter-note">Filters change what is listed below. They never change the portfolio metrics, which always cover the whole loaded window.</p>
+    <div class="filter-grid">
+      <div class="field">
+        <label for="repository-filter">Repository</label>
+        <select id="repository-filter">
+          <option value="">All configured repositories</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="run-limit">Run limit</label>
+        <input id="run-limit" type="number" min="1" max="100" value="20">
+      </div>
+      <div class="field">
+        <label for="status-filter">Persisted status</label>
+        <select id="status-filter">
+          <option value="">All</option>
+          <option value="in_progress">In progress</option>
+          <option value="blocked">Blocked</option>
+          <option value="completed">Completed</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="phase-filter">Derived phase</label>
+        <select id="phase-filter">
+          <option value="">All</option>
+          <option value="ready">Ready</option>
+          <option value="awaiting_approval">Awaiting approval</option>
+          <option value="blocked">Blocked</option>
+          <option value="completed">Completed</option>
+          <option value="interrupted_or_inconsistent">Interrupted or inconsistent</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="run-search">Search runs</label>
+        <input id="run-search" type="search" placeholder="Run, project, feature, or slug">
+      </div>
+    </div>
+  </nav>
+  <aside class="shortcut-reference" aria-labelledby="shortcut-heading">
+    <h2 id="shortcut-heading">Keyboard shortcuts</h2>
+    <p><kbd>/</kbd> Search, <kbd>g r</kbd> Runs, <kbd>g f</kbd> Findings, <kbd>g a</kbd> Governance.</p>
+    <label><input id="shortcuts-enabled" type="checkbox" checked> Enable shortcuts for this tab</label>
+  </aside>
+  <p id="live-status" class="visually-hidden" role="status" aria-live="polite"></p>
+  <main id="dashboard" tabindex="-1" aria-busy="true">
+    <p>Loading dashboard...</p>
+  </main>
+  <footer>Read-only local projection. Nothing here executes, approves, signs, publishes, or writes. Governed actions remain terminal commands.</footer>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

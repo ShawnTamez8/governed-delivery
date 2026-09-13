@@ -9,7 +9,8 @@
     "bw": "src/cli.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && npm run typecheck:dashboard",
+    "typecheck:dashboard": "tsc --noEmit -p tsconfig.dashboard.json",
     "test": "node --test test/*.test.ts",
     "check:docs": "node scripts/doc-check.mjs"
   },

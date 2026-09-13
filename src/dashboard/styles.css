@@ -1,0 +1,899 @@
+/*
+ * Enterprise control-plane theme.
+ *
+ * Colour is decoration: every state also carries a text label and a non-colour
+ * icon, and `forced-colors` drops the palette entirely without losing meaning.
+ *
+ * One tone scale carries state everywhere it appears: badges, callouts, finding
+ * cards, the executive summary head, and timeline markers all read their colour
+ * from the same `tone-*` classes through `currentcolor`. The cost and token
+ * charts are the deliberate exception -- their eight `series-*` colours encode
+ * which agent or which stage a mark belongs to, not what state it is in, so
+ * they keep a separate categorical scale and must never be read as state.
+ * The content security policy is `style-src 'self'` with no inline allowance,
+ * so nothing here may be applied from script — data-driven geometry uses SVG
+ * presentation attributes and these classes supply every colour.
+ */
+
+:root {
+  color-scheme: light;
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  --background: #f8fafc;
+  --panel: #ffffff;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --muted: #5a6778;
+  --primary: #0e7490;
+  --accent: #0891b2;
+  --surface-raised: #ffffff;
+  --surface-sunken: #eef2f7;
+  --accent-wash: rgb(8 145 178 / 7%);
+  --success: #166534;
+  --warning: #92400e;
+  --error: #b91c1c;
+  --critical: #991b1b;
+  --active: #1d4ed8;
+  --neutral: #475569;
+  --focus: #0e7490;
+  --panel-wash: rgb(8 145 178 / 4%);
+  --radius: 16px;
+  --radius-small: 10px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #0f172a;
+  --panel: #1e293b;
+  --border: #334155;
+  --text: #f8fafc;
+  --muted: #9fb0c4;
+  --primary: #67e8f9;
+  --accent: #22d3ee;
+  --surface-raised: #273449;
+  --surface-sunken: #16203a;
+  --accent-wash: rgb(34 211 238 / 12%);
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --error: #f87171;
+  --critical: #fca5a5;
+  --active: #93c5fd;
+  --neutral: #cbd5e1;
+  --focus: #67e8f9;
+  --panel-wash: rgb(34 211 238 / 8%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --background: #0f172a;
+    --panel: #1e293b;
+    --border: #334155;
+    --text: #f8fafc;
+    --muted: #9fb0c4;
+    --primary: #67e8f9;
+    --accent: #22d3ee;
+    --surface-raised: #273449;
+    --surface-sunken: #16203a;
+    --accent-wash: rgb(34 211 238 / 12%);
+    --success: #4ade80;
+    --warning: #fbbf24;
+    --error: #f87171;
+    --critical: #fca5a5;
+    --active: #93c5fd;
+    --neutral: #cbd5e1;
+    --focus: #67e8f9;
+    --panel-wash: rgb(34 211 238 / 8%);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--background);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+h1 {
+  font-size: 1.4rem;
+}
+
+h2 {
+  font-size: 1.15rem;
+}
+
+h3 {
+  font-size: 1rem;
+}
+
+h4,
+h5 {
+  font-size: 0.92rem;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+p {
+  margin-block: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.skip-link {
+  position: absolute;
+  left: 0.5rem;
+  top: -4rem;
+  background: var(--panel);
+  color: var(--primary);
+  padding: 0.5rem;
+  border-radius: var(--radius-small);
+  z-index: 2;
+}
+
+.skip-link:focus {
+  top: 0.5rem;
+}
+
+/* Header and filters */
+
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: linear-gradient(180deg, var(--panel), var(--background));
+  border-bottom: 1px solid var(--border);
+}
+
+.header-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.eyebrow {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.environment {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.filter-bar {
+  padding: 0.75rem 1rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.filter-note {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.filter-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-block-start: 0.5rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.field label {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+#repository-filter {
+  width: min(32rem, 100%);
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  padding: 0.4rem 0.6rem;
+  max-width: 100%;
+}
+
+button {
+  color: var(--primary);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.shortcut-reference {
+  padding: 0.5rem 1rem;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.shortcut-reference h2 {
+  display: inline;
+  font-size: 0.9rem;
+}
+
+kbd,
+code {
+  font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+}
+
+/* Layout */
+
+main {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+main > * {
+  min-width: 0;
+}
+
+.panel {
+  min-width: 0;
+  padding: 1rem;
+  background: var(--panel);
+  background-image: linear-gradient(180deg, var(--panel-wash), transparent 6rem);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.subsection {
+  margin-block-start: 0.75rem;
+  padding-block-start: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.source-note,
+.kpi-scope,
+.kpi-detail {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.empty-state {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.unavailable {
+  color: var(--error);
+}
+
+/* KPI cards */
+
+.kpi-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(15rem, 100%), 1fr));
+  margin-block-start: 0.75rem;
+}
+
+.kpi-card {
+  min-width: 0;
+  padding: 0.85rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.kpi-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted);
+}
+
+.kpi-value {
+  font-size: 1.9rem;
+  font-weight: 700;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+
+.icon {
+  flex: none;
+  stroke: currentcolor;
+  fill: none;
+}
+
+/* State badges and callouts */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.tone-success { color: var(--success); }
+.tone-danger { color: var(--error); }
+.tone-critical { color: var(--critical); }
+.tone-warning { color: var(--warning); }
+.tone-active { color: var(--active); }
+.tone-neutral { color: var(--neutral); }
+
+.callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  margin-block: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid currentcolor;
+  border-radius: var(--radius-small);
+  font-size: 0.9rem;
+}
+
+/* Executive summary: the accent-bounded triage region the run view opens on */
+
+.executive-summary {
+  background-image: linear-gradient(180deg, var(--accent-wash), transparent 9rem);
+  border-left: 4px solid var(--accent);
+}
+
+.summary-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+  margin-block-start: 0.5rem;
+}
+
+.summary-head .summary-identity {
+  color: var(--text);
+  font-weight: 600;
+  margin: 0;
+}
+
+.summary-head .source-note {
+  flex-basis: 100%;
+  margin: 0;
+}
+
+.summary-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
+  margin-block-start: 0.75rem;
+}
+
+.summary-tile {
+  min-width: 0;
+  padding: 0.75rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+}
+
+.summary-tile h4 {
+  margin: 0;
+  color: var(--muted);
+}
+
+.summary-value {
+  margin-block: 0.25rem;
+  font-size: 1.2rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.summary-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.next-action {
+  border-left: 4px solid var(--accent);
+}
+
+/* Finding cards read their edge colour from the shared state tone scale, the
+ * same one badges, callouts and timeline markers use. Card text returns to the
+ * body colour; the nested severity badge keeps the tone it was given. */
+
+.finding-card {
+  background: var(--surface-sunken);
+  border-left: 4px solid currentcolor;
+}
+
+.finding-card > * {
+  color: var(--text);
+}
+
+.finding-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.finding-head h3 {
+  margin: 0;
+}
+
+.report-subject {
+  font-weight: 600;
+}
+/* Definition lists and tables */
+
+.definitions {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) 1fr;
+  gap: 0.2rem 0.75rem;
+  margin-block: 0.5rem;
+}
+
+.definitions dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.definitions dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.definitions.compact {
+  font-size: 0.9rem;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-block: 0.5rem;
+}
+
+caption {
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.85rem;
+  padding-block: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+th,
+td {
+  border: 1px solid var(--border);
+  padding: 0.4rem;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+th {
+  background: var(--panel-wash);
+  font-size: 0.85rem;
+}
+
+.run-table td {
+  white-space: nowrap;
+}
+
+.run-select {
+  white-space: nowrap;
+}
+
+tr[aria-current="true"] {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.snapshot-stale { color: var(--warning); }
+.snapshot-unavailable { color: var(--error); }
+.snapshot-pending { color: var(--muted); }
+
+/* Timeline and activity */
+
+.timeline-scroll {
+  overflow-x: auto;
+}
+
+.timeline,
+.activity-feed,
+.finding-list,
+.report-list,
+.proposal-list,
+.value-list,
+.limitation-list,
+.reason-list,
+.legend,
+.command-tiles {
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.2rem 0.6rem;
+  padding: 0.5rem 0 0.5rem 0.25rem;
+  border-left: 3px solid currentcolor;
+  margin-left: 0.6rem;
+  padding-left: 0.75rem;
+}
+
+.timeline-marker {
+  grid-row: 1 / span 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+}
+
+.timeline-title,
+.activity-event {
+  color: var(--text);
+}
+
+.activity-item,
+.finding-card,
+.report,
+.proposal,
+.verification {
+  margin-block: 0.5rem;
+  padding: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+}
+
+.limitation {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  color: var(--error);
+  margin-block: 0.25rem;
+}
+
+.value-list li,
+.reason-list li {
+  margin-block: 0.15rem;
+  overflow-wrap: anywhere;
+}
+
+.value-list li,
+.reason-list li,
+.limitation-list li {
+  padding-left: 0.25rem;
+}
+
+details {
+  margin-block: 0.4rem;
+}
+
+summary {
+  cursor: pointer;
+  color: var(--primary);
+  font-size: 0.9rem;
+}
+
+/* Collapsible panels. The section heading moves into the disclosure summary, so
+ * the sunken summary line is the panel's own header rather than a control
+ * inside it, and reads as a different surface from the body it opens. */
+
+.collapsible {
+  padding: 0;
+}
+
+.collapsible > details {
+  margin: 0;
+}
+
+.collapsible > details > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.8rem 1rem;
+  background: var(--surface-sunken);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.collapsible > details[open] > summary {
+  border-bottom: 1px solid var(--border);
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.collapsible > details > summary h2 {
+  margin: 0;
+}
+
+.section-count {
+  padding: 0.1rem 0.5rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.section-stale {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--warning);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.section-body {
+  padding: 0 1rem 1rem;
+}
+
+/* Recorded values shown short. The shortened form is presentation; the full
+ * value stays in the accessibility tree and on the clipboard. */
+
+.identity,
+.money,
+.timestamp {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.identity-display {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.identity-display,
+.money-display {
+  font-variant-numeric: tabular-nums;
+}
+
+.copy-control {
+  padding: 0.05rem 0.45rem;
+  font-size: 0.75rem;
+}
+/* Charts */
+
+.chart {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin-block: 0.5rem;
+}
+
+.bar-chart {
+  height: 10rem;
+}
+
+.line-chart {
+  height: 12rem;
+}
+
+.donut-chart {
+  width: 11rem;
+  height: 11rem;
+  margin-inline: auto;
+}
+
+.donut-track {
+  stroke: var(--border);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  font-size: 0.88rem;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  overflow-wrap: anywhere;
+}
+
+.legend-swatch {
+  flex: none;
+}
+
+.series-1 { color: #0e7490; }
+.series-2 { color: #7c3aed; }
+.series-3 { color: #b45309; }
+.series-4 { color: #15803d; }
+.series-5 { color: #be123c; }
+.series-6 { color: #1d4ed8; }
+.series-7 { color: #a16207; }
+.series-8 { color: #475569; }
+
+:root[data-theme="dark"] .series-1 { color: #67e8f9; }
+:root[data-theme="dark"] .series-2 { color: #c4b5fd; }
+:root[data-theme="dark"] .series-3 { color: #fbbf24; }
+:root[data-theme="dark"] .series-4 { color: #4ade80; }
+:root[data-theme="dark"] .series-5 { color: #fda4af; }
+:root[data-theme="dark"] .series-6 { color: #93c5fd; }
+:root[data-theme="dark"] .series-7 { color: #fcd34d; }
+:root[data-theme="dark"] .series-8 { color: #cbd5e1; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .series-1 { color: #67e8f9; }
+  :root:not([data-theme="light"]) .series-2 { color: #c4b5fd; }
+  :root:not([data-theme="light"]) .series-3 { color: #fbbf24; }
+  :root:not([data-theme="light"]) .series-4 { color: #4ade80; }
+  :root:not([data-theme="light"]) .series-5 { color: #fda4af; }
+  :root:not([data-theme="light"]) .series-6 { color: #93c5fd; }
+  :root:not([data-theme="light"]) .series-7 { color: #fcd34d; }
+  :root:not([data-theme="light"]) .series-8 { color: #cbd5e1; }
+}
+
+.bar,
+.legend-swatch rect,
+.token-point {
+  fill: currentcolor;
+}
+
+.donut-segment,
+.token-line {
+  stroke: currentcolor;
+}
+
+/* Governance command tiles */
+
+.command-tiles {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+}
+
+.command-tile {
+  min-width: 0;
+  padding: 0.75rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--primary);
+  border-radius: var(--radius-small);
+}
+
+.command-tile.ineligible {
+  border-left-color: var(--muted);
+}
+
+.command-text {
+  display: block;
+  margin-block: 0.5rem;
+  padding: 0.5rem;
+  background: var(--panel-wash);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-small);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+footer {
+  padding: 1rem;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 700px) {
+  .app-header,
+  .header-controls {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .definitions {
+    grid-template-columns: 1fr;
+  }
+
+  .run-table td {
+    white-space: normal;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (forced-colors: active) {
+  button,
+  input,
+  select,
+  .panel,
+  .kpi-card,
+  .command-tile,
+  .summary-tile,
+  .finding-card,
+  .section-count,
+  .collapsible > details > summary,
+  .badge,
+  .callout,
+  th,
+  td {
+    border: 1px solid CanvasText;
+  }
+
+  .panel,
+  .executive-summary,
+  .app-header {
+    background-image: none;
+  }
+
+  .bar,
+  .legend-swatch rect,
+  .token-point {
+    fill: CanvasText;
+  }
+
+  .donut-segment,
+  .donut-track,
+  .token-line {
+    stroke: CanvasText;
+  }
+
+  :focus-visible {
+    outline-color: Highlight;
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "lib": ["esnext", "dom", "dom.iterable"]
+  },
+  "include": ["src/dashboard/*.js", "test/dashboard-ui.test.ts"],
+  "exclude": []
+}
