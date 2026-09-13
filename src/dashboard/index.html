@@ -10,11 +10,15 @@
   <a class="skip-link" href="#dashboard">Skip to dashboard</a>
   <header class="app-header">
     <div class="identity">
-      <p class="eyebrow">Governed delivery control plane</p>
+      <div class="brand-row">
+        <span class="brand-badge">BUILDWORKS</span>
+        <span class="environment-badge">LOOPBACK ONLY</span>
+      </div>
       <h1>Governed Delivery Dashboard</h1>
       <p class="environment">Local loopback projection &mdash; read-only. Every governed action stays a terminal command.</p>
     </div>
     <div class="header-controls">
+      <button id="shortcuts-trigger" type="button" class="btn-secondary" aria-haspopup="dialog" aria-expanded="false" aria-controls="shortcuts-dialog">Shortcuts</button>
       <label for="theme">Theme</label>
       <select id="theme">
         <option value="system">System</option>
@@ -24,6 +28,16 @@
       <button id="refresh" type="button">Refresh</button>
     </div>
   </header>
+  <nav class="primary-nav" aria-label="Primary Navigation">
+    <div class="tab-list" role="tablist">
+      <button role="tab" id="tab-overview" class="nav-tab active" aria-controls="dashboard" aria-selected="true" data-tab="overview">Overview</button>
+      <button role="tab" id="tab-runs" class="nav-tab" aria-controls="dashboard" aria-selected="false" data-tab="runs">Runs</button>
+      <button role="tab" id="tab-findings" class="nav-tab" aria-controls="dashboard" aria-selected="false" data-tab="findings">Findings</button>
+      <button role="tab" id="tab-governance" class="nav-tab" aria-controls="dashboard" aria-selected="false" data-tab="governance">Governance</button>
+      <button role="tab" id="tab-models" class="nav-tab" aria-controls="dashboard" aria-selected="false" data-tab="models">Models &amp; Agents</button>
+      <button role="tab" id="tab-audit" class="nav-tab" aria-controls="dashboard" aria-selected="false" data-tab="audit">Audit</button>
+    </div>
+  </nav>
   <nav aria-label="Run filters" class="filter-bar">
     <p class="filter-note">Filters change what is listed below. They never change the portfolio metrics, which always cover the whole loaded window.</p>
     <div class="filter-grid">
@@ -63,10 +77,26 @@
       </div>
     </div>
   </nav>
-  <aside class="shortcut-reference" aria-labelledby="shortcut-heading">
-    <h2 id="shortcut-heading">Keyboard shortcuts</h2>
-    <p><kbd>/</kbd> Search, <kbd>g r</kbd> Runs, <kbd>g f</kbd> Findings, <kbd>g a</kbd> Governance.</p>
-    <label><input id="shortcuts-enabled" type="checkbox" checked> Enable shortcuts for this tab</label>
+  <dialog id="shortcuts-dialog" class="shortcuts-dialog" aria-labelledby="shortcut-heading">
+    <div class="shortcuts-dialog-content">
+      <h2 id="shortcut-heading">Keyboard shortcuts</h2>
+      <p><kbd>/</kbd> Search, <kbd>g r</kbd> Runs, <kbd>g f</kbd> Findings, <kbd>g a</kbd> Governance, <kbd>g o</kbd> Overview.</p>
+      <label><input id="shortcuts-enabled" type="checkbox" checked> Enable shortcuts for this tab</label>
+      <button id="shortcuts-close" type="button" class="btn-secondary">Close</button>
+    </div>
+  </dialog>
+  <aside id="drawer" class="drawer-container" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Details Drawer">
+    <div class="drawer-backdrop" id="drawer-backdrop"></div>
+    <div class="drawer-panel" id="drawer-panel" tabindex="-1">
+      <div class="drawer-header" id="drawer-header">
+        <div class="drawer-title-group">
+          <span class="drawer-category" id="drawer-category"></span>
+          <h2 class="drawer-title" id="drawer-title">Details</h2>
+        </div>
+        <button type="button" class="drawer-close" id="drawer-close" aria-label="Close details drawer">&times;</button>
+      </div>
+      <div class="drawer-body" id="drawer-body"></div>
+    </div>
   </aside>
   <p id="live-status" class="visually-hidden" role="status" aria-live="polite"></p>
   <main id="dashboard" tabindex="-1" aria-busy="true">

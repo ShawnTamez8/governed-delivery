@@ -12,7 +12,10 @@ written against different constraints and carry assumptions this design rejects.
 The hard rules are constraints, not aspirations:
 
 1. One harness until one run completes end to end.
-2. One surface — a CLI calling the core directly. No second entry point.
+2. One mutation authority — the CLI remains the only mutating surface. The
+   2026-09-12 dashboard authorization permits one CLI-launched, loopback-only,
+   read-only projection over the same core; interactive UI mutation requires a
+   later replacement decision and cannot create a second authority.
 3. One schema per thing. No unions, no version discriminators, no compatibility
    handling. Nothing has shipped.
 4. No abstraction without two real implementations.

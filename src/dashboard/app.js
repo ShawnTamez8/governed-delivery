@@ -2,11 +2,14 @@
 /** @typedef {import("../operator-state.ts").RunSnapshot} RunSnapshot */
 
 import {
-  AGENT_MODEL_UNAVAILABLE, AGENT_TOKEN_CLASS_NOTE, FINDING_ORDER_STATEMENT, MALFORMED_LIST_REASON,
+  AGENT_MODEL_UNAVAILABLE, AGENT_TOKEN_CLASS_NOTE, AVERAGE_EXECUTION_UNAVAILABLE_REASON,
+  FINDING_ORDER_STATEMENT, MALFORMED_LIST_REASON,
   MALFORMED_NORMATIVE_REASON, TREND_UNAVAILABLE_LABEL,
-  cardSeverity, collapsedColumnStatement, constantColumn, coverageQualifier,
-  finalPanelBlockingSummary, forbiddenFieldStatement, fullCoverageStatement, identityPresentation,
-  latestTimestamp, orderFindings, portfolioProjection, repositoryIdentity, runExecutiveSummary,
+  cardSeverity, collapsedColumnStatement, commandCenterKpis, constantColumn, coverageQualifier,
+  dataQualitySummary, deliveryPipelineStages, finalPanelBlockingSummary, findingCard,
+  forbiddenFieldStatement, fullCoverageStatement, governanceHealthSummary, governedDeliveriesRows,
+  identityPresentation, latestTimestamp, modelAssignmentsSummary, needsAttentionQueue, orderFindings,
+  portfolioProjection, portfolioStatusBanner, repositoryIdentity, runExecutiveSummary,
   severityOrder, snapshotProjection, snapshotState, statusPresentation, timestampPresentation,
   usdPresentation,
 } from "./dashboard-model.js";
@@ -38,6 +41,8 @@ export function routeWithoutToken(hash) {
   return route === "" ? "" : `#${route}`;
 }
 
+export const ALLOWED_TABS = ["overview", "runs", "findings", "governance", "models", "audit"];
+
 /** @param {string} hash */
 export function parseRoute(hash) {
   const parameters = new URLSearchParams(hash.startsWith("#") ? hash.slice(1) : hash);
@@ -45,15 +50,20 @@ export function parseRoute(hash) {
   const runText = parameters.get("run");
   const runId = runText !== null && /^\d+$/.test(runText) && Number.isSafeInteger(Number(runText))
     ? Number(runText) : null;
+  const tabParam = parameters.get("tab");
+  const tab = tabParam !== null && ALLOWED_TABS.includes(tabParam) ? tabParam : "overview";
   return {
     repositoryId: repositoryId !== null && /^[A-Za-z0-9_-]+$/.test(repositoryId) ? repositoryId : null,
     runId,
+    tab,
   };
 }
 
-/** @param {string} repositoryId @param {number | null} [runId] */
-export function routeHash(repositoryId, runId = null) {
-  const parameters = new URLSearchParams({ repository: repositoryId });
+/** @param {string | null} repositoryId @param {number | null} [runId] @param {string} [tab] */
+export function routeHash(repositoryId, runId = null, tab = "overview") {
+  const parameters = new URLSearchParams();
+  if (tab !== "overview" && ALLOWED_TABS.includes(tab)) parameters.set("tab", tab);
+  if (repositoryId !== null) parameters.set("repository", repositoryId);
   if (runId !== null) parameters.set("run", String(runId));
   return `#${parameters}`;
 }
@@ -196,10 +206,21 @@ export function ensureSlot(repositoryState, runId) {
  * Build the pure portfolio input. Aggregates cover only run IDs inside each
  * repository's current loaded window, so a retained out-of-window slot cannot
  * contribute, and identical run IDs in different repositories stay separate.
- * @param {{ repositories: Map<string, RepositoryState> }} application
+ * When a repository is selected (via selectedRepositoryId or repositoryFilter),
+ * only that repository is included in the portfolio view.
+ * @param {{
+ *   repositories: Map<string, RepositoryState>,
+ *   selectedRepositoryId?: string | null,
+ *   repositoryFilter?: string,
+ * }} application
  */
 export function repositoryViews(application) {
-  return [...application.repositories.values()].map((repositoryState) => {
+  const filterRepoId = application.selectedRepositoryId || application.repositoryFilter || "";
+  const states = filterRepoId !== ""
+    ? [...application.repositories.values()].filter((r) => r.repository.id === filterRepoId)
+    : [...application.repositories.values()];
+
+  return states.map((repositoryState) => {
     const list = runListResult(repositoryState.runs);
     const runs = list?.runs ?? [];
     return {
@@ -514,6 +535,879 @@ function showSessionExpired(target, message) {
     element("p", message),
     element("p", "Return to the terminal and reopen the original bootstrap URL. Reloading this tab works only when it retained the session token."),
   );
+}
+
+/* ------------------------------------------------------------------ *
+ * Slide-over Drawer & Popover System
+ * ------------------------------------------------------------------ */
+
+/** @type {(() => void) | null} */
+let currentDrawerCloser = null;
+
+/**
+ * Open the slide-over details drawer with focus trapping and accessibility.
+ * @param {string} title
+ * @param {string} category
+ * @param {() => HTMLElement} contentBuilder
+ * @param {DashboardApplication} application
+ * @param {HTMLElement | null} [triggerElement]
+ */
+export function openDrawer(title, category, contentBuilder, application, triggerElement = null) {
+  if (currentDrawerCloser !== null) currentDrawerCloser();
+
+  const container = document.querySelector("#drawer");
+  const panelEl = document.querySelector("#drawer-panel");
+  const categoryEl = document.querySelector("#drawer-category");
+  const titleEl = document.querySelector("#drawer-title");
+  const bodyEl = document.querySelector("#drawer-body");
+  const closeBtn = document.querySelector("#drawer-close");
+  const backdrop = document.querySelector("#drawer-backdrop");
+
+  if (!(container instanceof HTMLElement) || !(panelEl instanceof HTMLElement) ||
+      !(bodyEl instanceof HTMLElement)) return;
+
+  if (categoryEl instanceof HTMLElement) categoryEl.textContent = category;
+  if (titleEl instanceof HTMLElement) titleEl.textContent = title;
+  bodyEl.replaceChildren(contentBuilder());
+
+  container.setAttribute("aria-hidden", "false");
+  container.classList.add("open");
+  document.body.classList.add("modal-open");
+
+  const lastFocused = triggerElement ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  const activePanel = panelEl;
+
+  /** @param {KeyboardEvent} event */
+  function onKeydown(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeDrawer();
+      return;
+    }
+    if (event.key === "Tab") {
+      const focusables = Array.from(activePanel.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        if (last instanceof HTMLElement) last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        if (first instanceof HTMLElement) first.focus();
+      }
+    }
+  }
+
+  function closeDrawer() {
+    container?.setAttribute("aria-hidden", "true");
+    container?.classList.remove("open");
+    document.body.classList.remove("modal-open");
+    bodyEl?.replaceChildren();
+    document.removeEventListener("keydown", onKeydown);
+    backdrop?.removeEventListener("click", closeDrawer);
+    closeBtn?.removeEventListener("click", closeDrawer);
+    currentDrawerCloser = null;
+    if (lastFocused !== null) lastFocused.focus();
+  }
+
+  currentDrawerCloser = closeDrawer;
+  document.addEventListener("keydown", onKeydown);
+  backdrop?.addEventListener("click", closeDrawer, { once: true });
+  closeBtn?.addEventListener("click", closeDrawer, { once: true });
+
+  panelEl.focus();
+}
+
+export function closeDrawer() {
+  if (currentDrawerCloser !== null) currentDrawerCloser();
+}
+
+/**
+ * Renders an accessible definition popover trigger for KPI and metric cards.
+ * @param {string} title
+ * @param {string} formula
+ * @param {string} explanation
+ */
+export function metricInfoButton(title, formula, explanation) {
+  const wrapper = element("span", null, "info-trigger-wrapper");
+  const button = /** @type {HTMLButtonElement} */ (element("button", "\u24d8", "info-trigger"));
+  button.type = "button";
+  button.setAttribute("aria-label", `Information about ${title}`);
+  button.setAttribute("aria-expanded", "false");
+
+  const popover = element("div", null, "metric-popover");
+  popover.setAttribute("role", "tooltip");
+  popover.setAttribute("aria-hidden", "true");
+  popover.append(
+    element("h4", title),
+    element("p", formula, "popover-formula"),
+    element("p", explanation, "popover-explanation"),
+  );
+
+  function closePopover() {
+    button.setAttribute("aria-expanded", "false");
+    popover.setAttribute("aria-hidden", "true");
+    popover.classList.remove("open");
+    document.removeEventListener("click", onDocumentClick);
+  }
+
+  /** @param {Event} event */
+  function onDocumentClick(event) {
+    if (!wrapper.contains(/** @type {Node} */ (event.target))) {
+      closePopover();
+    }
+  }
+
+  /** @param {Event} event */
+  function togglePopover(event) {
+    event.stopPropagation();
+    const isOpen = button.getAttribute("aria-expanded") === "true";
+    if (isOpen) {
+      closePopover();
+    } else {
+      button.setAttribute("aria-expanded", "true");
+      popover.setAttribute("aria-hidden", "false");
+      popover.classList.add("open");
+      document.addEventListener("click", onDocumentClick);
+    }
+  }
+
+  button.addEventListener("click", togglePopover);
+
+  wrapper.append(button, popover);
+  return wrapper;
+}
+
+/**
+ * Build run detail drawer content.
+ * @param {RunSnapshot} snapshot
+ * @param {ReturnType<typeof runExecutiveSummary>} summary
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function buildRunDetailDrawer(snapshot, summary, application) {
+  const container = element("div", null, "drawer-content");
+  const projection = snapshotProjection(snapshot, application.inventory?.cliPath ?? "", application.platform);
+  const summaryPanel = renderExecutiveSummary(summary, projection, application);
+  container.append(summaryPanel, limitationsBlock(snapshot.limitations));
+  return container;
+}
+
+/**
+ * Build finding detail drawer content.
+ * @param {ReturnType<typeof findingCard>} card
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function buildFindingDetailDrawer(card, application) {
+  const container = element("div", null, "drawer-content");
+  const head = element("div", null, "finding-head");
+  head.append(element("h3", `Finding ${card.id}: ${card.title}`));
+  container.append(head);
+  container.append(definitionList([
+    ["Recorded intent key", card.intentKey],
+    ["Location", card.location],
+    ["Stage and round", `${card.stageId}, round ${card.round}`],
+    ["Disposition", card.decision === null ? "Open: no decision is recorded." : card.decision.disposition],
+    ["Final-panel blocking", card.finalPanelBlocking === true ? "Yes" : card.finalPanelBlocking === false ? "No" : "Not projected"],
+  ], "definitions compact"));
+
+  if (card.reports.length > 0) {
+    const reportsList = element("ul", null, "report-list");
+    for (const report of card.reports) {
+      const item = element("li", null, "report");
+      item.append(badge(report.severity, severityTone(report.severity)));
+      item.append(element("p", report.subject, "report-subject"));
+      item.append(element("p", `${text(report.reviewerId, "Reviewer not recorded")} · agent run ${report.agentRunId}`, "source-note"));
+      reportsList.append(item);
+    }
+    container.append(reportsList);
+  }
+
+  container.append(decisionEvidence(card, application));
+  return container;
+}
+
+/**
+ * Build pipeline stage detail drawer content.
+ * @param {import("./dashboard-model.js").DeliveryPipelineStage} stage
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function buildPipelineStageDrawer(stage, application) {
+  const container = element("div", null, "drawer-content");
+  container.append(element("h3", `${stage.order}. ${stage.name}`));
+  container.append(badge(stage.status.toUpperCase(), stage.tone));
+
+  /** @type {[string, Node | string][]} */
+  const facts = [
+    ["Stage ID", stage.stageId === null ? "None" : String(stage.stageId)],
+    ["Status", stage.status],
+    ["Findings recorded", String(stage.findingsCount)],
+  ];
+  if (stage.failureReason !== null) {
+    facts.push(["Failure reason", stage.failureReason]);
+  }
+  if (stage.durationMs !== null) {
+    facts.push(["Duration", `${stage.durationMs}ms`]);
+  }
+  container.append(definitionList(facts, "definitions compact"));
+
+  if (stage.failureReason !== null) {
+    container.append(callout(`Stage execution blocked: ${stage.failureReason}`, "danger"));
+  }
+  return container;
+}
+
+/**
+ * Build data quality detail drawer content.
+ * @param {import("./dashboard-model.js").DataQualitySummary} dataQuality
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function buildDataQualityDrawer(dataQuality, application) {
+  const container = element("div", null, "drawer-content");
+  container.append(element("h3", "Data Quality & Telemetry Observability"));
+  container.append(definitionList([
+    ["Snapshot coverage", dataQuality.coveragePercentage === null ? "Unavailable" : `${dataQuality.coveragePercentage}%`],
+    ["Fresh snapshots", String(dataQuality.freshCount)],
+    ["Stale snapshots", String(dataQuality.staleCount)],
+    ["Pending / Loading", String(dataQuality.pendingCount)],
+    ["Unavailable snapshots", String(dataQuality.unavailableCount)],
+    ["Missing execution duration", `${dataQuality.missingExecutionDuration} runs`],
+    ["Cost reported rows", dataQuality.costReportedPercentage === null ? "Unavailable" : `${dataQuality.costReportedPercentage}%`],
+    ["Historical trend status", dataQuality.historicalTrend],
+  ], "definitions compact"));
+  container.append(element("p", AVERAGE_EXECUTION_UNAVAILABLE_REASON, "source-note"));
+  return container;
+}
+
+/**
+ * Build model assignments detail drawer content.
+ * @param {import("./dashboard-model.js").ModelAssignmentsSummary} assignments
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function buildModelAssignmentsDrawer(assignments, application) {
+  const container = element("div", null, "drawer-content");
+  container.append(element("h3", "Model & Agent Assignments"));
+  container.append(definitionList([
+    ["Planning model", text(assignments.planningModel, "Not configured")],
+    ["Implementation model", text(assignments.implementationModel, "Not configured")],
+    ["Test model", text(assignments.testModel, "Not configured")],
+    ["Reasoning effort level", assignments.effortLevel],
+  ], "definitions compact"));
+
+  if (assignments.reviewModels.length > 0) {
+    container.append(element("h4", "Code Review Panel Specialists"));
+    container.append(dataTable("Reviewer specialties and assigned model identifiers",
+      ["Specialty", "Model identifier"],
+      assignments.reviewModels.map((r) => [r.specialty, r.model])));
+  }
+  return container;
+}
+
+/* ------------------------------------------------------------------ *
+ * Command Center Overview Canvas
+ * ------------------------------------------------------------------ */
+
+/**
+ * Render the Portfolio Status Banner.
+ * @param {ReturnType<typeof portfolioStatusBanner>} banner
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function renderPortfolioBanner(banner, application) {
+  const section = element("section", null, `portfolio-banner tone-${banner.tone}`);
+  section.setAttribute("role", "region");
+  section.setAttribute("aria-label", "Portfolio Status Overview");
+
+  const left = element("div", null, "banner-status-group");
+  const badgeIcon = banner.status === "healthy" ? "✓" : banner.status === "blocked" ? "✕" : "⚠";
+  const badgeLabel = banner.status === "healthy" ? "Healthy" : banner.status === "blocked" ? "Blocked" : banner.status === "at_risk" ? "At Risk" : "Unknown";
+  const statusBadge = element("span", `${badgeIcon} ${badgeLabel}`, `status-badge tone-${banner.tone}`);
+  const summaryText = element("p", banner.summary, "banner-summary");
+  left.append(statusBadge, summaryText);
+
+  const right = element("div", null, "banner-actions-group");
+  for (const action of banner.actions) {
+    const btn = /** @type {HTMLButtonElement} */ (element("button", action.label, "btn-action"));
+    btn.type = "button";
+    btn.addEventListener("click", () => {
+      if (action.targetTab) {
+        if (action.runId !== undefined) {
+          application.selectedRunId = action.runId;
+        }
+        switchTab(application, action.targetTab);
+      }
+    });
+    right.append(btn);
+  }
+  const freshness = element("span", banner.relativeFreshness, "banner-freshness");
+  right.append(freshness);
+
+  section.append(left, right);
+  return section;
+}
+
+/**
+ * Render the 6-card outcome-focused Horizontal KPI Strip.
+ * @param {ReturnType<typeof commandCenterKpis>} kpis
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function renderCommandCenterKpis(kpis, application) {
+  const strip = element("div", null, "kpi-strip");
+  strip.setAttribute("role", "region");
+  strip.setAttribute("aria-label", "Portfolio Key Performance Indicators");
+
+  for (const kpi of kpis) {
+    const card = element("div", null, `kpi-card tone-${kpi.tone}`);
+    card.setAttribute("tabindex", "0");
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", `${kpi.label}: ${kpi.value}, ${kpi.qualifier}`);
+
+    const header = element("div", null, "kpi-card-header");
+    const label = element("span", kpi.label, "kpi-label");
+    const infoBtn = metricInfoButton(kpi.label, kpi.formula, kpi.explanation);
+    header.append(label, infoBtn);
+
+    const body = element("div", null, "kpi-card-body");
+    const val = element("span", String(kpi.value), "kpi-value");
+    const qual = element("span", kpi.qualifier, "kpi-qualifier");
+    body.append(val, qual);
+
+    card.append(header, body);
+
+    card.addEventListener("click", (e) => {
+      if (e.target instanceof HTMLElement && e.target.closest(".info-trigger-wrapper")) return;
+      if (kpi.id === "portfolio-health" || kpi.id === "blocked-deliveries") {
+        switchTab(application, "runs");
+      } else if (kpi.id === "open-findings") {
+        switchTab(application, "findings");
+      } else if (kpi.id === "governance-coverage") {
+        switchTab(application, "governance");
+      } else if (kpi.id === "release-ready" || kpi.id === "delivery-success") {
+        switchTab(application, "runs");
+      }
+    });
+    card.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        card.click();
+      }
+    });
+
+    strip.append(card);
+  }
+  return strip;
+}
+
+/**
+ * Render the Needs Attention exception queue.
+ * @param {ReturnType<typeof needsAttentionQueue>} queue
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function renderNeedsAttention(queue, application) {
+  const panelEl = panel(`Needs Attention (${queue.length})`, "needs-attention", "needs-attention-panel");
+
+  if (queue.length === 0) {
+    panelEl.append(element("p", "No items require attention. All delivery gates and governance checks have passed.", "empty-state"));
+    return panelEl;
+  }
+
+  const list = element("div", null, "attention-list");
+  for (const item of queue) {
+    const card = element("article", null, `attention-card severity-${item.severity}`);
+    card.setAttribute("role", "listitem");
+
+    const header = element("div", null, "attention-card-header");
+    const typeChip = element("span", item.type.toUpperCase(), `category-chip category-${item.type}`);
+    const severityBadge = element("span", item.severity.toUpperCase(), `badge tone-${severityTone(item.severity)}`);
+    const titleText = element("h3", item.title, "attention-title");
+    header.append(typeChip, severityBadge, titleText);
+
+    const body = element("div", null, "attention-card-body");
+    const explanation = element("p", item.explanation, "attention-explanation");
+    const meta = element("div", null, "attention-meta");
+    const scopeTag = element("span", `${item.repositoryId} · Run #${item.runId}`, "attention-scope");
+    const timeTag = element("span", null, "attention-time");
+    timeTag.append(recordedTime(item.lastActivity));
+    meta.append(scopeTag, timeTag);
+    body.append(explanation, meta);
+
+    const actions = element("div", null, "attention-actions");
+    for (const action of item.actions) {
+      const btn = /** @type {HTMLButtonElement} */ (element("button", action.label, "btn-action-sm"));
+      btn.type = "button";
+      btn.addEventListener("click", () => {
+        if (action.drawer === "data_quality") {
+          const repo = application.repositories.get(item.repositoryId);
+          const slot = item.runId !== null ? repo?.snapshots.get(item.runId) : undefined;
+          const snap = slot ? slotSnapshot(slot) : null;
+          const dq = dataQualitySummary(portfolioProjection(repositoryViews(application)), snap ? [snap] : []);
+          openDrawer("Data Quality & Telemetry", "Quality Details", () => buildDataQualityDrawer(dq, application), application, btn);
+        } else if (action.drawer === "finding") {
+          const repo = application.repositories.get(item.repositoryId);
+          const slot = item.runId !== null ? repo?.snapshots.get(item.runId) : undefined;
+          const snap = slot ? slotSnapshot(slot) : null;
+          const finding = snap?.evidence.findings.find((f) => `finding-${item.repositoryId}-${item.runId}-${f.id}` === item.id);
+          if (finding) {
+            const cardData = findingCard(finding);
+            openDrawer(`Finding ${cardData.id}`, "Finding Details", () => buildFindingDetailDrawer(cardData, application), application, btn);
+          } else {
+            switchTab(application, "findings");
+          }
+        } else if (action.targetTab) {
+          if (action.runId !== undefined) {
+            application.selectedRunId = action.runId;
+            application.selectedRepositoryId = action.repositoryId ?? application.selectedRepositoryId;
+          }
+          switchTab(application, action.targetTab);
+        }
+      });
+      actions.append(btn);
+    }
+
+    card.append(header, body, actions);
+    list.append(card);
+  }
+
+  panelEl.append(list);
+  return panelEl;
+}
+
+/**
+ * Render the 8-stage interactive Delivery Pipeline stepper.
+ * @param {RunSnapshot | null} targetSnapshot
+ * @param {string | null} targetRepoId
+ * @param {number | null} targetRunId
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function renderDeliveryPipeline(targetSnapshot, targetRepoId, targetRunId, application) {
+  const panelEl = panel("Delivery Pipeline", "pipeline", "delivery-pipeline-panel");
+
+  if (!targetSnapshot || targetRepoId === null || targetRunId === null) {
+    panelEl.append(element("p", "No run selected or available for pipeline inspection.", "empty-state"));
+    return panelEl;
+  }
+
+  const headerMeta = element("div", null, "pipeline-header-meta");
+  const targetTag = element("span", `Inspecting: ${targetRepoId} / Run #${targetRunId}`, "pipeline-target-badge");
+  headerMeta.append(targetTag);
+  panelEl.append(headerMeta);
+
+  const stages = deliveryPipelineStages(targetSnapshot);
+  const stepper = element("ol", null, "pipeline-stepper");
+
+  for (let i = 0; i < stages.length; i++) {
+    const stage = stages[i];
+    const item = element("li", null, `stepper-step step-${stage.status}`);
+    item.setAttribute("role", "button");
+    item.setAttribute("tabindex", "0");
+    item.setAttribute("aria-label", `${stage.name}: ${stage.status}`);
+
+    const iconNode = element("div", null, `step-icon step-icon-${stage.symbol}`);
+    const symbolText = stage.symbol === "check" ? "✓" : stage.symbol === "x" ? "✕" : stage.symbol === "clock" ? "⏳" : "•";
+    iconNode.textContent = symbolText;
+
+    const content = element("div", null, "step-content");
+    const name = element("span", stage.name, "step-name");
+    const badgeEl = element("span", stage.status.replace("_", " ").toUpperCase(), `badge tone-${stage.tone}`);
+    content.append(name, badgeEl);
+
+    if (stage.durationMs !== null) {
+      content.append(element("span", `${stage.durationMs}ms`, "step-duration"));
+    }
+
+    item.append(iconNode, content);
+
+    item.addEventListener("click", () => {
+      openDrawer(stage.name, "Pipeline Stage", () => buildPipelineStageDrawer(stage, application), application, item);
+    });
+    item.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        item.click();
+      }
+    });
+
+    stepper.append(item);
+  }
+
+  panelEl.append(stepper);
+  return panelEl;
+}
+
+/**
+ * Render the Governance Health panel.
+ * @param {ReturnType<typeof governanceHealthSummary> | null} summary
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function renderGovernanceHealth(summary, application) {
+  const panelEl = panel("Governance Health", "governance-health", "governance-health-panel");
+
+  if (!summary) {
+    panelEl.append(element("p", "No run governance evidence observed yet.", "empty-state"));
+    return panelEl;
+  }
+
+  const content = element("div", null, "governance-health-content");
+
+  const controlsRow = element("div", null, "health-row");
+  const controlsLabel = element("span", "Enforced Controls", "health-label");
+  const controlsVal = element("span", `${summary.controlsPassed} of ${summary.controlsTotal} passed`, "health-val");
+  controlsRow.append(controlsLabel, controlsVal);
+  content.append(controlsRow);
+
+  const findingsBlock = element("div", null, "health-findings-block");
+  const findingsTitle = element("span", "Findings by Severity", "health-label");
+  const sevGroup = element("div", null, "severity-counts-group");
+  const sevs = summary.findingsBySeverity;
+  sevGroup.append(
+    element("span", `Critical: ${sevs.critical}`, `badge tone-${sevs.critical > 0 ? "critical" : "neutral"}`),
+    element("span", `High: ${sevs.high}`, `badge tone-${sevs.high > 0 ? "danger" : "neutral"}`),
+    element("span", `Medium: ${sevs.medium}`, `badge tone-${sevs.medium > 0 ? "warning" : "neutral"}`),
+    element("span", `Low: ${sevs.low}`, `badge tone-${sevs.low > 0 ? "active" : "neutral"}`),
+  );
+  findingsBlock.append(findingsTitle, sevGroup);
+  content.append(findingsBlock);
+
+  const approvalRow = element("div", null, "health-row");
+  const approvalLabel = element("span", "Approval Gate", "health-label");
+  const approvalState = summary.approval.state === "granted"
+    ? (summary.approval.isClosed ? "Expired" : "Granted")
+    : summary.approval.state === "requested" ? "Awaiting approval" : "Not requested";
+  const approvalTone = summary.approval.state === "granted" && !summary.approval.isClosed ? "success" : "warning";
+  const approvalBadge = element("span", approvalState, `badge tone-${approvalTone}`);
+  approvalRow.append(approvalLabel, approvalBadge);
+  content.append(approvalRow);
+
+  const auditRow = element("div", null, "health-row");
+  const auditLabel = element("span", "Audit Integrity", "health-label");
+  const auditBadge = element("span", "Verified Hash Chain", "badge tone-success");
+  auditRow.append(auditLabel, auditBadge);
+  content.append(auditRow);
+
+  const actionRow = element("div", null, "panel-action-row");
+  const actionBtn = /** @type {HTMLButtonElement} */ (element("button", "Open governance view →", "action-link"));
+  actionBtn.type = "button";
+  actionBtn.setAttribute("data-tab", "governance");
+  actionBtn.addEventListener("click", () => {
+    switchTab(application, "governance");
+  });
+  actionRow.append(actionBtn);
+  content.append(actionRow);
+
+  panelEl.append(content);
+  return panelEl;
+}
+
+/**
+ * Render the Model & Agent Assignments panel.
+ * @param {ReturnType<typeof modelAssignmentsSummary> | null} assignments
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function renderModelAssignments(assignments, application) {
+  const panelEl = panel("Model & Agent Assignments", "model-assignments", "model-assignments-panel");
+
+  if (!assignments) {
+    panelEl.append(element("p", "No model configuration recorded for current run.", "empty-state"));
+    return panelEl;
+  }
+
+  const content = element("div", null, "model-assignments-content");
+
+  const defs = definitionList([
+    ["Planning model", text(assignments.planningModel, "Not configured")],
+    ["Implementation model", text(assignments.implementationModel, "Not configured")],
+    ["Test model", text(assignments.testModel, "Not configured")],
+    ["Reasoning effort", assignments.effortLevel],
+    ["Reviewer specialists", assignments.reviewModels.length > 0 ? `${assignments.reviewModels.length} assigned` : "None configured"],
+  ], "definitions compact");
+  content.append(defs);
+
+  const actionRow = element("div", null, "panel-action-row");
+  const actionBtn = /** @type {HTMLButtonElement} */ (element("button", "View assignment details →", "action-link"));
+  actionBtn.type = "button";
+  actionBtn.setAttribute("data-action", "model-drawer");
+  actionBtn.addEventListener("click", () => {
+    openDrawer("Model & Agent Assignments", "Configuration", () => buildModelAssignmentsDrawer(assignments, application), application, actionBtn);
+  });
+  actionRow.append(actionBtn);
+  content.append(actionRow);
+
+  panelEl.append(content);
+  return panelEl;
+}
+
+/**
+ * Render the Lower Analytical Row (AI Governance & Utilization + Data Quality).
+ * @param {ReturnType<typeof portfolioProjection>} portfolio
+ * @param {readonly RunSnapshot[]} snapshots
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function renderLowerAnalytics(portfolio, snapshots, application) {
+  const row = element("div", null, "analytical-row lower-row grid-12");
+
+  const aiPanel = panel("AI Governance & Utilization", "ai-governance", "ai-governance-panel col-6");
+  const aiContent = element("div", null, "ai-governance-content");
+
+  const costDisplay = usdPresentation(portfolio.cost.knownUsd).display;
+  const tokenDisplay = portfolio.tokens.known !== null ? exactCount(portfolio.tokens.known) : "Unavailable";
+  const costReported = portfolio.cost.reportedRows;
+  const costTotal = portfolio.cost.reportedRows + portfolio.cost.unreportedRows;
+  const coverageText = costTotal > 0 ? `${costReported} of ${costTotal} agent rows reported` : "No agent rows observed";
+
+  const aiDefs = definitionList([
+    ["Total Known Cost", costDisplay],
+    ["Reported Tokens", tokenDisplay],
+    ["Reporting Coverage", coverageText],
+  ], "definitions compact");
+  aiContent.append(aiDefs);
+
+  const aiActionRow = element("div", null, "panel-action-row");
+  const aiActionBtn = /** @type {HTMLButtonElement} */ (element("button", "View Cost & Token Analytics →", "action-link"));
+  aiActionBtn.type = "button";
+  aiActionBtn.addEventListener("click", () => {
+    switchTab(application, "runs");
+  });
+  aiActionRow.append(aiActionBtn);
+  aiContent.append(aiActionRow);
+  aiPanel.append(aiContent);
+
+  const dqSummary = dataQualitySummary(portfolio, snapshots);
+  const dqPanel = panel("Data Quality & Telemetry", "data-quality", "data-quality-panel col-6");
+  const dqContent = element("div", null, "data-quality-content");
+
+  const covPct = dqSummary.coveragePercentage !== null ? `${dqSummary.coveragePercentage}%` : "Unavailable";
+  const dqDefs = definitionList([
+    ["Snapshot Coverage", covPct],
+    ["Fresh Snapshots", `${dqSummary.freshCount} fresh · ${dqSummary.staleCount} stale`],
+    ["Missing Duration", `${dqSummary.missingExecutionDuration} runs`],
+    ["Historical Trend", dqSummary.historicalTrend],
+  ], "definitions compact");
+  dqContent.append(dqDefs);
+
+  const dqActionRow = element("div", null, "panel-action-row");
+  const dqActionBtn = /** @type {HTMLButtonElement} */ (element("button", "View Data Quality Details →", "action-link"));
+  dqActionBtn.type = "button";
+  dqActionBtn.addEventListener("click", () => {
+    openDrawer("Data Quality & Telemetry", "Quality Details", () => buildDataQualityDrawer(dqSummary, application), application, dqActionBtn);
+  });
+  dqActionRow.append(dqActionBtn);
+  dqContent.append(dqActionRow);
+  dqPanel.append(dqContent);
+
+  row.append(aiPanel, dqPanel);
+  return row;
+}
+
+/**
+ * Render the Governed Deliveries enterprise table.
+ * @param {ReturnType<typeof repositoryViews>} views
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function renderGovernedDeliveriesTable(views, application) {
+  const panelEl = panel("Governed Deliveries", "deliveries", "governed-deliveries-panel");
+  const rows = governedDeliveriesRows(views);
+
+  const metaRow = element("div", null, "deliveries-meta-row");
+  metaRow.append(element("span", `${rows.length} total deliveries`, "deliveries-count-badge"));
+  panelEl.append(metaRow);
+
+  if (rows.length === 0) {
+    panelEl.append(element("p", "No deliveries have been recorded yet.", "empty-state"));
+    return panelEl;
+  }
+
+  const scrollWrapper = element("div", null, "table-scroll");
+  const table = element("table", null, "deliveries-table");
+
+  const thead = element("thead");
+  const headerTr = element("tr");
+  for (const h of ["Repository / Run", "Status", "Stage / Phase", "Findings", "Governance Decision", "Last Activity", "Action"]) {
+    const th = element("th", h);
+    if (h === "Findings" || h === "Action") th.classList.add("text-right");
+    headerTr.append(th);
+  }
+  thead.append(headerTr);
+  table.append(thead);
+
+  const tbody = element("tbody");
+  for (const row of rows) {
+    const tr = element("tr");
+
+    const repoCell = element("td");
+    const repoName = element("span", `${row.repositoryId} #${row.runId}`, "delivery-repo-name");
+    const slugLabel = element("span", row.slug, "delivery-slug-label");
+    repoCell.append(repoName, slugLabel);
+
+    const statusCell = element("td");
+    statusCell.append(badge(row.status.label, row.status.tone));
+
+    const stageCell = element("td");
+    const stageText = element("span", row.currentStage, "delivery-stage-text");
+    const phaseText = element("span", row.phase.replace("_", " "), "delivery-phase-text");
+    stageCell.append(stageText, phaseText);
+
+    const findingsCell = element("td", null, "text-right");
+    if (row.findingsCount === null) {
+      findingsCell.append(element("span", "Unavailable", "unavailable"));
+    } else {
+      const fVal = element("span", String(row.findingsCount), row.findingsCount > 0 ? "findings-badge-highlight" : "findings-badge-zero");
+      findingsCell.append(fVal);
+    }
+
+    const govCell = element("td");
+    const govTone = row.governanceStatus === "granted" ? "success" : row.governanceStatus === "requested" ? "warning" : "neutral";
+    const govBadge = element("span", row.governanceStatus, `badge tone-${govTone}`);
+    govCell.append(govBadge);
+
+    const activityCell = element("td");
+    activityCell.append(recordedTime(row.lastActivity));
+
+    const actionCell = element("td", null, "text-right");
+    const openBtn = /** @type {HTMLButtonElement} */ (element("button", "Open", "btn-action-sm"));
+    openBtn.type = "button";
+    openBtn.addEventListener("click", () => {
+      application.selectedRepositoryId = row.repositoryId;
+      application.selectedRunId = row.runId;
+      const repo = application.repositories.get(row.repositoryId);
+      const slot = repo?.snapshots.get(row.runId);
+      const snap = slot ? slotSnapshot(slot) : null;
+      if (snap) {
+        const sum = runExecutiveSummary(snap, {
+          repositoryPath: repo?.repository.path ?? "",
+          runs: runSummaries(repo?.runs ?? emptyResourceState()),
+          observedAt: slot?.resource.envelope?.observedAt ?? null,
+        });
+        openDrawer(`Run #${row.runId}: ${row.slug}`, "Run Details", () => buildRunDetailDrawer(snap, sum, application), application, openBtn);
+      } else {
+        switchTab(application, "runs");
+      }
+    });
+    actionCell.append(openBtn);
+
+    tr.append(repoCell, statusCell, stageCell, findingsCell, govCell, activityCell, actionCell);
+    tbody.append(tr);
+  }
+
+  table.append(tbody);
+  scrollWrapper.append(table);
+  panelEl.append(scrollWrapper);
+  return panelEl;
+}
+
+/**
+ * Render the Command Center Overview canvas.
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function renderOverviewTab(application) {
+  const container = element("div", null, "overview-canvas");
+
+  const views = repositoryViews(application);
+  const portfolio = portfolioProjection(views);
+  const runs = views.flatMap((v) => v.runs);
+  /** @type {RunSnapshot[]} */
+  const snapshots = [];
+  for (const v of views) {
+    for (const s of v.snapshots) {
+      if (s.snapshot !== null) snapshots.push(s.snapshot);
+    }
+  }
+
+  // 1. Portfolio Status Banner
+  const banner = portfolioStatusBanner(portfolio, runs, snapshots);
+  container.append(renderPortfolioBanner(banner, application));
+
+  // 2. 6-card Horizontal KPI Strip
+  const kpis = commandCenterKpis(portfolio, runs, snapshots);
+  container.append(renderCommandCenterKpis(kpis, application));
+
+  // Determine active target snapshot for Overview panels
+  /** @type {RunSnapshot | null} */
+  let targetSnapshot = null;
+  let targetRepoId = application.selectedRepositoryId || application.repositoryFilter || null;
+  let targetRunId = application.selectedRunId;
+
+  if (targetRepoId && targetRunId) {
+    const repo = application.repositories.get(targetRepoId);
+    const slot = repo?.snapshots.get(targetRunId);
+    targetSnapshot = slot ? slotSnapshot(slot) : null;
+  }
+
+  const queue = needsAttentionQueue(views);
+  if (!targetSnapshot && queue.length > 0) {
+    for (const item of queue) {
+      if (item.runId === null) continue;
+      if (targetRepoId !== null && item.repositoryId !== targetRepoId) continue;
+      const repo = application.repositories.get(item.repositoryId);
+      const slot = repo?.snapshots.get(item.runId);
+      const snap = slot ? slotSnapshot(slot) : null;
+      if (snap) {
+        targetSnapshot = snap;
+        targetRepoId = item.repositoryId;
+        targetRunId = item.runId;
+        break;
+      }
+    }
+  }
+
+  if (!targetSnapshot && snapshots.length > 0) {
+    targetSnapshot = snapshots[0] ?? null;
+    for (const v of views) {
+      if (targetRepoId !== null && v.repositoryId !== targetRepoId) continue;
+      const found = v.snapshots.find((s) => s.snapshot === targetSnapshot);
+      if (found) {
+        targetRepoId = v.repositoryId;
+        targetRunId = found.runId;
+        break;
+      }
+    }
+  }
+
+  // 3. Primary Analytical Row (Needs Attention + Delivery Pipeline)
+  const primaryRow = element("div", null, "analytical-row primary-row grid-12");
+  const needsAttentionEl = renderNeedsAttention(queue, application);
+  needsAttentionEl.classList.add("col-7");
+
+  const pipelineEl = renderDeliveryPipeline(targetSnapshot, targetRepoId, targetRunId, application);
+  pipelineEl.classList.add("col-5");
+
+  primaryRow.append(needsAttentionEl, pipelineEl);
+  container.append(primaryRow);
+
+  // 4. Secondary Analytical Row (Governance Health + Model Assignments)
+  const secondaryRow = element("div", null, "analytical-row secondary-row grid-12");
+  const govSummary = targetSnapshot ? governanceHealthSummary(targetSnapshot) : null;
+  const govHealthEl = renderGovernanceHealth(govSummary, application);
+  govHealthEl.classList.add("col-6");
+
+  const modelSummary = targetSnapshot ? modelAssignmentsSummary(targetSnapshot) : null;
+  const modelEl = renderModelAssignments(modelSummary, application);
+  modelEl.classList.add("col-6");
+
+  secondaryRow.append(govHealthEl, modelEl);
+  container.append(secondaryRow);
+
+  // 5. Lower Analytical Row (AI Governance & Utilization + Data Quality)
+  const lowerRow = renderLowerAnalytics(portfolio, snapshots, application);
+  container.append(lowerRow);
+
+  // 6. Governed Deliveries Enterprise Table
+  const deliveriesTableEl = renderGovernedDeliveriesTable(views, application);
+  container.append(deliveriesTableEl);
+
+  return container;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1685,6 +2579,7 @@ function renderEvidence(projection) {
  * repositories: Map<string, RepositoryState>,
  * selectedRepositoryId: string | null,
  * selectedRunId: number | null,
+ * currentTab: string,
  * limit: number,
  * repositoryFilter: string,
  * statusFilter: string,
@@ -1708,13 +2603,39 @@ function render(application) {
     return;
   }
   application.main.replaceChildren();
+
+  if (application.currentTab === "overview") {
+    application.main.append(renderOverviewTab(application));
+  } else if (application.currentTab === "runs") {
+    renderRunsTab(application);
+  } else if (application.currentTab === "findings") {
+    application.main.append(renderFindingsTab(application));
+  } else if (application.currentTab === "governance") {
+    application.main.append(renderGovernanceTab(application));
+  } else if (application.currentTab === "models") {
+    application.main.append(renderModelsTab(application));
+  } else if (application.currentTab === "audit") {
+    application.main.append(renderAuditTab(application));
+  } else {
+    application.main.append(renderOverviewTab(application));
+  }
+
+  application.main.setAttribute("aria-busy", "false");
+}
+
+/**
+ * Render the dedicated Runs tab view (repository list and selected run inspection).
+ * @param {DashboardApplication} application
+ */
+export function renderRunsTab(application) {
   renderKpiBar(application.main, portfolioProjection(repositoryViews(application)));
 
   const portfolio = panel("Repository portfolio", "runs");
   portfolio.append(element("p", "Every configured repository stays visible. One repository's refusal never suppresses another.", "source-note"));
+  const filterRepoId = application.selectedRepositoryId || application.repositoryFilter || "";
   for (const repositoryState of application.repositories.values()) {
-    if (application.repositoryFilter !== "" &&
-        repositoryState.repository.id !== application.repositoryFilter) continue;
+    if (filterRepoId !== "" &&
+        repositoryState.repository.id !== filterRepoId) continue;
     renderRepository(portfolio, repositoryState, application);
   }
   application.main.append(portfolio);
@@ -1745,6 +2666,7 @@ function render(application) {
   }
   const projection = snapshotProjection(snapshot, application.inventory?.cliPath ?? "", application.platform,
     slot?.resource.envelope?.observedAt ?? null);
+  const title = document.querySelector("h1");
   if (title !== null) title.textContent = projection.systemName;
   const summary = runExecutiveSummary(snapshot, {
     repositoryPath: selected.repository.path,
@@ -1776,6 +2698,262 @@ function render(application) {
     collapsibleSection(projection.evidence.length, staleNote, () => renderEvidence(projection)),
   );
   application.main.setAttribute("aria-busy", "false");
+}
+
+/** @param {DashboardApplication} application */
+function resolveTargetSnapshot(application) {
+  let targetRepoId = application.selectedRepositoryId || application.repositoryFilter || null;
+  let targetRunId = application.selectedRunId;
+  /** @type {RunSnapshot | null} */
+  let targetSnapshot = null;
+  /** @type {RepositoryState | null} */
+  let targetRepoState = null;
+
+  if (targetRepoId && targetRunId) {
+    const repo = application.repositories.get(targetRepoId);
+    if (repo) {
+      targetRepoState = repo;
+      const slot = repo.snapshots.get(targetRunId);
+      targetSnapshot = slot ? slotSnapshot(slot) : null;
+    }
+  }
+
+  if (!targetSnapshot) {
+    for (const repoState of application.repositories.values()) {
+      if (targetRepoId !== null && repoState.repository.id !== targetRepoId) continue;
+      for (const [runId, slot] of repoState.snapshots.entries()) {
+        const snap = slotSnapshot(slot);
+        if (snap) {
+          targetSnapshot = snap;
+          targetRepoId = repoState.repository.id;
+          targetRunId = runId;
+          targetRepoState = repoState;
+          break;
+        }
+      }
+      if (targetSnapshot) break;
+    }
+  }
+
+  return { targetSnapshot, targetRepoId, targetRunId, targetRepoState };
+}
+
+/**
+ * Render the dedicated Findings tab view.
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function renderFindingsTab(application) {
+  const container = element("div", null, "findings-tab-view");
+  const panelEl = panel("Findings Triage", "findings-triage", "findings-triage-panel");
+
+  const views = repositoryViews(application);
+  /** @type {{ repositoryId: string, runId: number, card: ReturnType<typeof findingCard> }[]} */
+  const allCards = [];
+
+  for (const v of views) {
+    for (const slot of v.snapshots) {
+      if (slot.snapshot !== null) {
+        for (const finding of slot.snapshot.evidence.findings) {
+          const card = findingCard(finding);
+          allCards.push({ repositoryId: v.repositoryId, runId: slot.runId, card });
+        }
+      }
+    }
+  }
+
+  const filterRepoId = application.selectedRepositoryId || application.repositoryFilter || "";
+  const meta = element("div", null, "findings-tab-meta");
+  const scopeMsg = filterRepoId !== ""
+    ? `${allCards.length} total findings recorded for repository ${filterRepoId}.`
+    : `${allCards.length} total findings recorded across loaded repositories.`;
+  meta.append(element("p", `${scopeMsg} Every finding retains its recorded location, reviewer reports, and disposition.`, "source-note"));
+  panelEl.append(meta);
+
+  if (allCards.length === 0) {
+    const emptyMsg = filterRepoId !== ""
+      ? `No findings have been recorded for repository ${filterRepoId}.`
+      : "No findings have been recorded across the loaded repositories.";
+    panelEl.append(element("p", emptyMsg, "empty-state"));
+    container.append(panelEl);
+    return container;
+  }
+
+  const filterBar = element("div", null, "findings-filter-bar");
+  const sevFilter = /** @type {HTMLSelectElement} */ (element("select", null, "findings-severity-select"));
+  sevFilter.append(
+    element("option", "All severities"),
+    element("option", "Critical"),
+    element("option", "High"),
+    element("option", "Medium"),
+    element("option", "Low"),
+  );
+  filterBar.append(element("label", "Filter severity: "), sevFilter);
+  panelEl.append(filterBar);
+
+  const list = element("div", null, "findings-tab-list");
+
+  /** @param {string} filterVal */
+  function updateList(filterVal) {
+    list.replaceChildren();
+    const filtered = allCards.filter(({ card }) => {
+      if (filterVal === "All severities" || filterVal === "") return true;
+      const primarySev = card.reports[0]?.severity.toLowerCase() ?? "";
+      return primarySev === filterVal.toLowerCase();
+    });
+
+    if (filtered.length === 0) {
+      list.append(element("p", "No findings match the selected severity filter.", "empty-state"));
+      return;
+    }
+
+    for (const { repositoryId, runId, card } of filtered) {
+      const article = element("article", null, "finding-card");
+      article.setAttribute("tabindex", "0");
+      article.setAttribute("role", "button");
+      article.setAttribute("aria-label", `Finding ${card.id}: ${card.title}`);
+
+      const header = element("div", null, "finding-card-header");
+      const sev = card.reports[0]?.severity ?? "neutral";
+      const sevBadge = element("span", sev.toUpperCase(), `badge tone-${severityTone(sev)}`);
+      const title = element("h3", card.title, "finding-title");
+      header.append(sevBadge, title);
+
+      const body = element("div", null, "finding-card-body");
+      const location = element("p", `Location: ${card.location}`, "finding-location");
+      const scope = element("span", `${repositoryId} · Run #${runId} · Stage ${card.stageId}`, "finding-scope-tag");
+      const disp = element("p", card.decision === null ? "Open: no decision recorded" : `Disposition: ${card.decision.disposition}`, "finding-disp");
+      body.append(location, scope, disp);
+
+      const actionRow = element("div", null, "finding-card-actions");
+      const inspectBtn = /** @type {HTMLButtonElement} */ (element("button", "Inspect details →", "btn-action-sm"));
+      inspectBtn.type = "button";
+      inspectBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openDrawer(`Finding ${card.id}`, "Finding Details", () => buildFindingDetailDrawer(card, application), application, inspectBtn);
+      });
+      actionRow.append(inspectBtn);
+
+      article.append(header, body, actionRow);
+      article.addEventListener("click", () => {
+        openDrawer(`Finding ${card.id}`, "Finding Details", () => buildFindingDetailDrawer(card, application), application, article);
+      });
+      article.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          article.click();
+        }
+      });
+
+      list.append(article);
+    }
+  }
+
+  sevFilter.addEventListener("change", () => {
+    updateList(sevFilter.value);
+  });
+
+  updateList("All severities");
+  panelEl.append(list);
+  container.append(panelEl);
+  return container;
+}
+
+/**
+ * Render the dedicated Governance tab view.
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function renderGovernanceTab(application) {
+  const container = element("div", null, "governance-tab-view");
+  const { targetSnapshot, targetRepoId, targetRunId, targetRepoState } = resolveTargetSnapshot(application);
+  if (!targetSnapshot || targetRepoId === null || targetRunId === null || !targetRepoState) {
+    const emptyPanel = panel("Governance & Control Center", "governance", "governance-empty-panel");
+    const repoMsg = targetRepoId ? `for repository ${targetRepoId}` : "across loaded repositories";
+    emptyPanel.append(element("p", `No run selected ${repoMsg}. Select a run from the Runs tab to view its governed actions, approval records, proposals, and policies.`, "empty-state"));
+    container.append(emptyPanel);
+    return container;
+  }
+  const slot = targetRepoState.snapshots.get(targetRunId);
+  const projection = snapshotProjection(targetSnapshot, application.inventory?.cliPath ?? "", application.platform,
+    slot?.resource.envelope?.observedAt ?? null);
+  const summary = runExecutiveSummary(targetSnapshot, {
+    repositoryPath: targetRepoState.repository.path,
+    runs: runSummaries(targetRepoState.runs),
+    observedAt: slot?.resource.envelope?.observedAt ?? null,
+  });
+
+  const header = element("div", null, "tab-scope-header");
+  header.append(element("span", `Inspecting Governance: ${targetRepoId} / Run #${targetRunId}`, "pipeline-target-badge"));
+  container.append(header);
+
+  container.append(
+    renderGovernance(projection, application, summary.repository, targetRunId),
+    renderConfiguration(projection, application),
+  );
+  return container;
+}
+
+/**
+ * Render the dedicated Models & Agents tab view.
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function renderModelsTab(application) {
+  const container = element("div", null, "models-tab-view");
+  const { targetSnapshot, targetRepoId, targetRunId, targetRepoState } = resolveTargetSnapshot(application);
+  if (!targetSnapshot || targetRepoId === null || targetRunId === null || !targetRepoState) {
+    const emptyPanel = panel("Models & Agent Utilization", "models", "models-empty-panel");
+    const repoMsg = targetRepoId ? `for repository ${targetRepoId}` : "across loaded repositories";
+    emptyPanel.append(element("p", `No run selected ${repoMsg}. Select a run from the Runs tab to inspect its model telemetry and token utilization.`, "empty-state"));
+    container.append(emptyPanel);
+    return container;
+  }
+  const slot = targetRepoState.snapshots.get(targetRunId);
+  const projection = snapshotProjection(targetSnapshot, application.inventory?.cliPath ?? "", application.platform,
+    slot?.resource.envelope?.observedAt ?? null);
+
+  const header = element("div", null, "tab-scope-header");
+  header.append(element("span", `Inspecting Models & Telemetry: ${targetRepoId} / Run #${targetRunId}`, "pipeline-target-badge"));
+  container.append(header);
+
+  container.append(
+    renderCostAndTokens(projection),
+    renderAgentTable(projection),
+  );
+  return container;
+}
+
+/**
+ * Render the dedicated Audit tab view.
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
+export function renderAuditTab(application) {
+  const container = element("div", null, "audit-tab-view");
+  const { targetSnapshot, targetRepoId, targetRunId, targetRepoState } = resolveTargetSnapshot(application);
+  if (!targetSnapshot || targetRepoId === null || targetRunId === null || !targetRepoState) {
+    const emptyPanel = panel("Audit Trail & Evidence", "audit", "audit-empty-panel");
+    const repoMsg = targetRepoId ? `for repository ${targetRepoId}` : "across loaded repositories";
+    emptyPanel.append(element("p", `No run selected ${repoMsg}. Select a run from the Runs tab to inspect its audit trail and evidence records.`, "empty-state"));
+    container.append(emptyPanel);
+    return container;
+  }
+  const slot = targetRepoState.snapshots.get(targetRunId);
+  const projection = snapshotProjection(targetSnapshot, application.inventory?.cliPath ?? "", application.platform,
+    slot?.resource.envelope?.observedAt ?? null);
+
+  const header = element("div", null, "tab-scope-header");
+  header.append(element("span", `Inspecting Audit: ${targetRepoId} / Run #${targetRunId}`, "pipeline-target-badge"));
+  container.append(header);
+
+  container.append(
+    renderTimeline(projection),
+    renderActivity(projection),
+    renderDelivery(projection, application),
+    renderEvidence(projection),
+  );
+  return container;
 }
 
 /**
@@ -1892,10 +3070,32 @@ async function refreshAll(application) {
 /** @param {DashboardApplication} application @param {string} repositoryId @param {number} runId */
 function selectRun(application, repositoryId, runId) {
   application.selectedRepositoryId = repositoryId;
+  application.repositoryFilter = repositoryId;
+  const filterEl = document.querySelector("#repository-filter");
+  if (filterEl instanceof HTMLSelectElement) filterEl.value = repositoryId;
   application.selectedRunId = runId;
-  history.replaceState(null, "", routeHash(repositoryId, runId));
+  history.replaceState(null, "", routeHash(repositoryId, runId, application.currentTab));
   render(application);
   void refreshSelected(application);
+}
+
+/** @param {string} tab */
+export function updateTabUI(tab) {
+  const tabButtons = document.querySelectorAll('.primary-nav button[role="tab"]');
+  for (const btn of tabButtons) {
+    const isSelected = btn.getAttribute("data-tab") === tab;
+    btn.setAttribute("aria-selected", isSelected ? "true" : "false");
+    btn.classList.toggle("active", isSelected);
+  }
+}
+
+/** @param {DashboardApplication} application @param {string} tab */
+export function switchTab(application, tab) {
+  if (!ALLOWED_TABS.includes(tab)) return;
+  application.currentTab = tab;
+  history.replaceState(null, "", routeHash(application.selectedRepositoryId, application.selectedRunId, tab));
+  updateTabUI(tab);
+  render(application);
 }
 
 async function startBrowserApplication() {
@@ -1946,8 +3146,9 @@ async function startBrowserApplication() {
     }])),
     selectedRepositoryId: route.repositoryId,
     selectedRunId: route.runId,
+    currentTab: route.tab,
     limit: 20,
-    repositoryFilter: "",
+    repositoryFilter: route.repositoryId ?? "",
     statusFilter: "",
     phaseFilter: "",
     search: "",
@@ -1958,6 +3159,46 @@ async function startBrowserApplication() {
     main,
     live,
   };
+  updateTabUI(application.currentTab);
+
+  const tabButtons = Array.from(document.querySelectorAll('.primary-nav button[role="tab"]'));
+  tabButtons.forEach((btn, index) => {
+    btn.addEventListener("click", () => {
+      const tab = btn.getAttribute("data-tab");
+      if (tab) switchTab(application, tab);
+    });
+    btn.addEventListener("keydown", (e) => {
+      if (e instanceof KeyboardEvent) {
+        let targetIndex = -1;
+        if (e.key === "ArrowRight") targetIndex = (index + 1) % tabButtons.length;
+        else if (e.key === "ArrowLeft") targetIndex = (index - 1 + tabButtons.length) % tabButtons.length;
+        else if (e.key === "Home") targetIndex = 0;
+        else if (e.key === "End") targetIndex = tabButtons.length - 1;
+        if (targetIndex >= 0) {
+          e.preventDefault();
+          const targetBtn = /** @type {HTMLButtonElement} */ (tabButtons[targetIndex]);
+          targetBtn.focus();
+          const targetTab = targetBtn.getAttribute("data-tab");
+          if (targetTab) switchTab(application, targetTab);
+        }
+      }
+    });
+  });
+
+  const shortcutsTrigger = document.querySelector("#shortcuts-trigger");
+  const shortcutsDialog = document.querySelector("#shortcuts-dialog");
+  const shortcutsClose = document.querySelector("#shortcuts-close");
+  if (shortcutsTrigger instanceof HTMLButtonElement && shortcutsDialog instanceof HTMLDialogElement) {
+    shortcutsTrigger.addEventListener("click", () => {
+      shortcutsDialog.showModal();
+    });
+  }
+  if (shortcutsClose instanceof HTMLButtonElement && shortcutsDialog instanceof HTMLDialogElement) {
+    shortcutsClose.addEventListener("click", () => {
+      shortcutsDialog.close();
+    });
+  }
+
   const repositoryFilter = document.querySelector("#repository-filter");
   const limit = document.querySelector("#run-limit");
   const status = document.querySelector("#status-filter");
@@ -1973,8 +3214,19 @@ async function startBrowserApplication() {
       option.textContent = repository.path;
       repositoryFilter.append(option);
     }
+    if (application.selectedRepositoryId) {
+      repositoryFilter.value = application.selectedRepositoryId;
+    }
     repositoryFilter.addEventListener("change", () => {
       application.repositoryFilter = repositoryFilter.value;
+      application.selectedRepositoryId = repositoryFilter.value || null;
+      if (application.selectedRepositoryId !== null) {
+        const repo = application.repositories.get(application.selectedRepositoryId);
+        if (!repo || (application.selectedRunId !== null && !repo.snapshots.has(application.selectedRunId))) {
+          application.selectedRunId = null;
+        }
+      }
+      history.replaceState(null, "", routeHash(application.selectedRepositoryId, application.selectedRunId, application.currentTab));
       render(application);
     });
   }
@@ -2030,7 +3282,13 @@ async function startBrowserApplication() {
   window.addEventListener("hashchange", () => {
     const next = parseRoute(window.location.hash);
     application.selectedRepositoryId = next.repositoryId;
+    application.repositoryFilter = next.repositoryId ?? "";
+    if (repositoryFilter instanceof HTMLSelectElement) {
+      repositoryFilter.value = application.repositoryFilter;
+    }
     application.selectedRunId = next.runId;
+    application.currentTab = next.tab;
+    updateTabUI(next.tab);
     render(application);
     if (next.repositoryId !== null && next.runId !== null && application.repositories.has(next.repositoryId)) {
       void refreshSelected(application);

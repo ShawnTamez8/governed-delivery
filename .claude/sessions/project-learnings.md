@@ -1,89 +1,55 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-12, density and triage implemented, unreviewed by a human)
+## Current state (2026-09-13, dashboard command center redesign-3 implemented and repository-scoped)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
 system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
-**Working state:** Branch `cs_candidate_b` remains based on `4356151`. Every
-dashboard artifact — `src/dashboard/`, `src/dashboard-server.ts`,
-`src/dashboard-config.ts`, `src/operator-read.ts`, both dashboard test files,
-`tsconfig.dashboard.json` and the three feature directories — is still
-uncommitted, alongside the separate uncommitted
-`docs/features/code-review-contract-drift-issue/` plan. No commit has been
-requested. `package.json` carries one uncommitted change from the redesign: the
-`typecheck` script now chains `typecheck:dashboard`.
+**Working state:** Branch `cs_candidate_b` remains based on `4356151`. The
+working set across `src/dashboard/`, `src/dashboard-server.ts`,
+`src/dashboard-config.ts`, `src/operator-read.ts`, `test/dashboard-ui.test.ts`,
+`test/dashboard-server.test.ts`, `README.md`, and
+`docs/features/dashboard-redesign-3/` is uncommitted. No commit has been
+requested yet. `package.json` chains `typecheck:dashboard`.
 
-**Completed:** `docs/features/dashboard-density-triage/plan.md` is
-`Implemented` — all nine tasks shipped, and
-`docs/features/dashboard-density-triage/2026-09-12-implementation-code-review.md`
-is `reconciled` with five findings, none critical or high, all fixed and
-guarded. The run view now opens on an executive summary, keeps findings expanded,
-and collapses eight native `<details>` sections that each state their own count
-and stale note. `dashboard-enterprise-redesign` remains `Implemented` and
-`reconciled` beneath it. Verification at completion: `npm test` 1145 tests
-with 0 failures, `npm run typecheck` exit 0 for both programs,
-`npm run check:docs` clean. Fifteen guards are proved by deliberate mutation;
-because these files are untracked, every restoration is asserted against a text
-snapshot rather than a Git operation.
+**Completed:** `docs/features/dashboard-redesign-3/plan.md` is `Implemented` —
+all nine tasks shipped, and
+`docs/features/dashboard-redesign-3/2026-09-13-code-review.md` is `reconciled`.
+The dashboard is now a multi-tab enterprise command center (Overview, Runs,
+Findings, Governance, Models & Agents, Audit) featuring a 6-card KPI strip,
+Needs Attention queue, interactive 8-stage Delivery Pipeline, analytical panels,
+Governed Deliveries table, slide-over detail drawers, keyboard shortcuts (1-6,
+?, Esc), and repository-scoped filtering across all tabs. Verification:
+`npm test` 1177 tests passing, `npm run typecheck` exit 0, `npm run check:docs`
+clean.
 
 **In flight:** Nothing. No plan is mid-execution.
 
-**Decisions locked:** The `RunSnapshot` extension that would project the agent
-fields already stored in `agent_runs` is **deferred** by operator decision, so
-agent-level model, harness identity and execution duration stay unavailable. The
-structural fix is **hero plus aggressive collapse**; tabs and sticky section
-navigation were both considered and rejected. The four density questions are
-closed: findings stay **expanded**, hash fragments are **12 characters**, governed
-actions sit **in document flow**, and the portfolio view was **in scope**.
-Portfolio KPIs still cover the loaded 1-100 run window across all configured
-repositories independent of display filters, and success remains completed
-divided by completed plus blocked.
+**Decisions locked:** Invariant Hard Rule 2 holds: the dashboard is strictly
+read-only and loopback-only; targets are loaded via `--repositories-file <path>`.
+The Delivery Pipeline's "Governance" step represents cross-stage gate evaluation
+(`gate_result`) rather than a single database stage row (displaying `stageId: null`).
+Repository selection scopes the portfolio banner, 6-card KPI strip, exception
+queue, pipeline stepper, and all tab detail views to the active repository.
 
-**Implementation boundary:** Presentation may narrow, never alter — no recorded
-value may leave the page, and exact forms stay available to assistive technology.
-Interactive mutation, remote access, WebSockets, new telemetry persistence, a
-second harness and fabricated telemetry remain unauthorized. Any change to
-`RunSnapshot`, `operator-state.ts` or `operator-read.ts` needs explicit
-authorization.
+**Implementation boundary:** Presentation narrows, never alters. Interactive
+mutation, remote access, WebSockets, new telemetry persistence, a second harness,
+and fabricated telemetry remain unauthorized.
 
-**Non-obvious facts worth keeping:** A matched final code-review panel that
-blocks nothing writes `finalPanelBlocking: false` on every finding of that stage
-and round — only an unmatched panel leaves `null`. Deriving "the panel projected
-a result" from the blocking count therefore reports a recorded false as an absent
-projection; that was a real defect, found in review and fixed.
-`snapshotProjection` files the workflow action's own command under the kind
-`"workflow"`, which shares no member with the `ExecutionGroup` vocabulary that
-`workflowAction.group` uses, so matching those two can never resolve.
-`readRunsResult` refuses with `state_missing` for a repository that never had
-`.governance` created, so a loaded-but-empty run list needs `migrate` first.
+**Running state:** No dashboard server, browser, background agent, or paid process
+is running. The completed paid target remains at
+`C:\Users\tamezs\buildWorks_test_repos\target` ($2.06, 16/16 dispatches) and the
+blocked paid target remains at
+`C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1789245101665\target` ($1.81).
 
-**Running state:** No dashboard server, browser, background agent or paid process
-is running. The retained paid target still exists at
-`C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1789245101665\target` and is
-the only chart-rich acceptance source — a temp directory under a logoff deletion
-timer, so that evidence is machine-local and perishable. Its durable final-review
-copy is
-`test/fixtures/recorded/code-review-web-calculator-final-mobile-overflow.json`.
-The prior doctor live target remains at
-`C:\Users\tamezs\buildWorks_test_repos\2026-09-11-doctor-ambient-config-173648`;
-not rechecked this session.
+**Open/deferred:** Manual browser evaluation of the command center layout and
+themes across dark/light modes and viewport sizes. Operator commit decision for
+the uncommitted dashboard working tree.
 
-**Open/deferred:** The manual browser observation of the new visual system is
-outstanding — focus rings on every disclosure summary and copy button,
-reduced-motion and forced-colors rendering, 200% zoom, and a 320 CSS-pixel
-viewport. The target still exists, so the operator can perform it; a CLI agent
-cannot, and its absence would authorize no paid run. The mechanically checkable
-part is already asserted in the boundary test. The paid target remains blocked on
-high AC-018 mobile overflow with no delivery, and no second paid run is
-authorized. The contract-drift plan remains blocked before Task 1 on publication
-target and implementation authorization.
-
-**Next up:** Operator observation of the rebuilt run view against the retained
-target, then a commit decision for the whole uncommitted dashboard working set.
-Do not run a paid chain.
+**Next up:** Operator browser review of the redesigned command center, then a
+commit decision for the dashboard working tree. Do not run a paid chain.
 
 ## Diagnostics quick-reference
 
@@ -138,6 +104,14 @@ Durable project facts belong here, regardless of whether a host also caches them
 - Apply a formatting-honesty pattern to every value class at once. `countNode`
   paired abbreviated text with an exact accessible value while `usd()` shipped
   the raw float `$0.5452318`; the rule existed and was applied to one type.
+- Popover click triggers attaching document-level listeners must use `{ once: true }`
+  or explicit cleanup; otherwise re-renders accumulate handlers and leak memory/events.
+- Dashboard repository IDs in URL routes and APIs are deterministic base64url SHA-256
+  hashes of the normalized worktree path; the pipeline Governance stage is a synthesized
+  multi-stage gate projection with `stageId: null`.
+- Scoping repository views in the dashboard requires filtering the views array fed to
+  `portfolioProjection`, `commandCenterKpis`, `needsAttentionQueue`, and `governedDeliveriesRows`
+  by `selectedRepositoryId || repositoryFilter`.
 
 ## Session records
 
@@ -382,7 +356,31 @@ restore raw JSON as a fallback.
 - Extract the shared helper before applying the review fix that calls it; the
   two durable projection lessons are in the quick-reference above.
 
-#### Next up
+### Dashboard enterprise command center & repository scoping (2026-09-13)
 
-- Answer the four open questions, then `/write-plan` against
-  `.claude/sessions/2026-09-12-requirements-dashboard-density-triage.md`.
+#### Decisions and assumptions
+- Redesigned the dashboard from a report into an enterprise command center with 6 primary navigation tabs, a 6-card KPI strip, an interactive 8-stage Delivery Pipeline, Needs Attention queue, analytical panels, and slide-over drawers while keeping Hard Rule 2 intact (strictly read-only loopback projection).
+- Repository selection scopes all views (Overview, Runs, Findings, Governance, Models & Agents, Audit) dynamically to the chosen repository when active; "All repositories" restores cross-repository portfolio aggregation.
+- Governance in the 8-stage pipeline represents a synthesized cross-stage gate check rather than an individual database stage row, retaining `stageId: null`.
+
+#### What failed
+- A popover info button listener attached document-level `click` listeners without `{ once: true }`, accumulating listeners across repeated renders. Caught in code review and fixed.
+- Running full `node --test` suites without targeted test filters ran unnecessary long-duration suites (e.g. 101s on zero-token assertions). Used targeted patterns during iteration.
+
+#### What worked
+- Pure presentation model projections in `src/dashboard/dashboard-model.js` kept UI transformations testable in Node without DOM emulation or browser dependencies.
+- Filtering `application.repositories` inside `repositoryViews` cleanly updated all derived KPI, exception, pipeline, and table projections simultaneously without duplicating logic across tabs.
+- Mutation testing proved drawer trap accessibility, static asset constraints, and projection stability across five deliberate faults with exact text restoration.
+
+#### Running state
+- None. All test shells and background processes exited cleanly.
+
+#### Verification
+- `npm run typecheck` - clean across both base and dashboard tsconfig programs.
+- `node --test test/dashboard-ui.test.ts` - 32/32 tests pass.
+- `npm test` - 48 suites, 1177 tests passing.
+- `npm run check:docs` - clean, all documentation hazard rules satisfied.
+
+#### Next up
+- Operator browser verification of the command center across dark/light themes, followed by a commit decision for the working tree.
+

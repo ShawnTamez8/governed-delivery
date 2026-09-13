@@ -308,40 +308,77 @@ approval, or signatures, listens remotely, or persists dashboard state.
 
 #### What the dashboard presents
 
-The page opens on eight portfolio measures: runs, blocked runs, active runs,
-findings, known cost, total tokens, success rate, and average execution time.
-Their scope is every run in the loaded window across every configured
-repository. The repository run limit narrows that window and the page says so
-whenever any repository reports more runs beyond the limit; the read route
-reports no total, so the page never states how many runs lie outside it. The
-status and phase filters and the run search change only which runs are listed.
-They never change a portfolio measure.
+The dashboard operates as a dense, modern Governed Delivery Command Center
+organized around six primary navigation tabs: **Overview**, **Runs**, **Findings**,
+**Governance**, **Models & Agents**, and **Audit**. Navigation is synchronized
+with URL hash routing (`#tab=overview`, `#tab=runs`, etc.) while preserving
+repository and run selections.
 
-Unavailable is never rendered as zero. A token class no agent row reported,
-spend no row reported, and findings no loaded snapshot supplied each read
-`Unavailable` with the coverage that produced it. Average execution time is
-permanently unavailable because the projection records no agent execution
-duration, and trend is unavailable everywhere because no historical series
-exists. Agent rows carry no model: the projection binds none.
+##### Overview command center canvas
 
-Below the portfolio, one repository panel per configured repository lists its
-loaded runs; selecting a run loads that run alone through the same `status`
-route and gives it its own cache slot, so one run's refusal never shows another
-run's evidence. The selected run renders its recorded limitations first, then a
-stage timeline in recorded order, a bounded recorded-activity list, cost and
-token coverage with SVG charts, per-agent analytics, one card per canonical
-finding with every immutable report kept separate, the copy-only governance
-commands, the frozen configuration, approval, and proposals, delivery and
-verification observations, and evidence availability.
+Desktop viewports display a single-view operational command center canvas:
+- **Portfolio Status Banner:** Displays immediate portfolio health (`Healthy`,
+  `At Risk`, `Blocked`, `Unknown`), a plain-language summary of outstanding
+  conditions, quick action buttons (`[View blocked run]`, `[Review findings]`),
+  and observation freshness.
+- **6-card outcome-focused Horizontal KPI Strip:** Tracks six core delivery
+  metrics across the loaded window: *Portfolio Health*, *Release Ready* runs,
+  *Blocked Deliveries*, *Open Findings*, *Governance Coverage*, and *Delivery
+  Success*. Each card includes an info trigger (`ⓘ`) displaying definition,
+  formula, and caveats in an accessible popover.
+- **Needs Attention exception queue:** A prioritized operational triage list
+  grouping delivery blockers, governance failures, and data quality issues,
+  ordered by severity (`critical`, `high`, `medium`, `low`) with direct action
+  triggers.
+- **8-stage interactive Delivery Pipeline:** Maps the lifecycle across standard
+  stages: *Specification*, *Planning*, *Implementation*, *Testing*, *Review*,
+  *Governance*, *Approval*, and *Release*. Clicking any stage opens root-cause gate
+  diagnostics and recommended CLI actions. When no run is explicitly selected, the
+  stepper automatically inspects the primary exception run.
+- **Governance Health & Model Assignments:** Displays control pass/fail counts,
+  findings distribution by severity, approval status, tamper-evident audit chain
+  integrity, and active model/agent configurations (with unavailable fields
+  explicitly stated per Hazard 10).
+- **AI Governance & Data Quality:** Summarizes token consumption, known costs,
+  reporting coverage across agent rows, snapshot freshness, and telemetric gaps.
+- **Governed Deliveries portfolio table:** An enterprise table aggregating
+  runs across configured repositories with sticky headers, status badges,
+  findings counts, and quick-open drawer triggers.
 
-Every chart is decoration over a table: each carries an accessible title and
-description, a text legend, and a disclosure holding the exact values. A
-proportional chart is refused rather than drawn when no group reported a cost.
-Colour never carries meaning alone — every state also has a text label and a
-non-colour icon — and the palette drops out entirely under forced colours.
-Light and dark themes both meet the 4.5:1 text contrast requirement, which
-`npm test` checks by computing WCAG relative luminance from the declared
-tokens.
+##### Progressive disclosure slide-over drawers
+
+Detailed diagnostics open in a slide-over drawer anchored to the right side of the
+screen, preserving table and canvas context:
+- Run Detail, Finding Detail (with grounding excerpts and decision rationale),
+  Pipeline Stage Root-Cause, Data Quality Telemetry, and Model Assignments.
+- Drawers trap focus (`Tab` / `Shift+Tab`), restore focus to the opening trigger on
+  close, and close immediately on `Escape` or backdrop click.
+
+##### Dedicated tab views
+
+- **Runs:** Complete repository inventory, run search, phase filters, and
+  full run inspection.
+- **Findings:** Cross-run findings triage queue with severity filters (`High`,
+  `Medium`, `Low`) and resolution status (`Addressed`, `Rejected with rationale`,
+  `Unaddressed`).
+- **Governance:** Approvals, policy hashes, upstream proposals, and copy-only
+  CLI command execution cards.
+- **Models & Agents:** AI governance analytics, including Cost by Stage, Cost by
+  Agent SVG donut chart, stage-ordered Token Consumption polyline, and Agent
+  Analytics table.
+- **Audit:** Activity stream timeline, verification command exit codes, delivery
+  result records, and evidence references.
+
+##### Accessibility and security invariants
+
+Keyboard navigation supports `ArrowLeft` / `ArrowRight` between primary tabs, `?`
+to open the keyboard shortcuts dialog, and `Escape` to dismiss overlays. Colour
+never carries meaning alone — every state also has a text label and a non-colour
+icon — and the palette drops out entirely under forced colours. Light and dark
+themes both meet the 4.5:1 text and 3:1 non-text contrast requirements. Content
+Security Policy is `style-src 'self'` with zero inline styles. The dashboard is
+strictly read-only and loopback-only: it executes no commands, creates no mutations,
+and opens no background timers or WebSockets.
 
 Use Ctrl+C to close the listener. A handled `SIGINT`, and `SIGTERM` on platforms
 that deliver it to Node, closes the listener once and exits 0. Windows process

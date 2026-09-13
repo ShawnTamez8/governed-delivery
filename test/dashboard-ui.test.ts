@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  ALLOWED_TABS,
   applyRefresh, bootstrapToken, emptyResourceState, ensureSlot, isEditableTarget,
   isCurrentRefresh, parseRoute, repositoryViews, routeHash, routeWithoutToken,
   shortcutDestination, validatedLimit,
@@ -13,12 +14,13 @@ import {
   AGENT_MODEL_UNAVAILABLE, AGENT_TOKEN_CLASS_NOTE, AVERAGE_EXECUTION_UNAVAILABLE_REASON,
   FINDING_ORDER_STATEMENT, IDENTITY_FRAGMENT_LENGTH,
   MALFORMED_LIST_REASON,
-  MALFORMED_NORMATIVE_REASON, TOKEN_CLASSES, TREND_UNAVAILABLE, activityItems, agentAnalytics,
+  MALFORMED_NORMATIVE_REASON, TOKEN_CLASSES, TREND_UNAVAILABLE, TREND_UNAVAILABLE_LABEL, activityItems, agentAnalytics,
   artifactChange, approvalWindow, cardSeverity,
-  collapsedColumnStatement, commandText, constantColumn, costChartSeries, coverageQualifier,
-  finalPanelBlockingSummary, findingCard, forbiddenFieldStatement, fullCoverageStatement,
-  identityPresentation, latestTimestamp, orderFindings,
-  portfolioProjection, repositoryIdentity, runExecutiveSummary, severityOrder, snapshotProjection,
+  collapsedColumnStatement, commandCenterKpis, commandText, constantColumn, costChartSeries, coverageQualifier,
+  dataQualitySummary, deliveryPipelineStages, finalPanelBlockingSummary, findingCard,
+  forbiddenFieldStatement, fullCoverageStatement, governanceHealthSummary, governedDeliveriesRows,
+  identityPresentation, latestTimestamp, modelAssignmentsSummary, needsAttentionQueue, orderFindings,
+  portfolioProjection, portfolioStatusBanner, repositoryIdentity, runExecutiveSummary, severityOrder, snapshotProjection,
   snapshotState, stagePresentation, statusPresentation, timestampPresentation, tokenTotal,
   usdPresentation,
 } from "../src/dashboard/dashboard-model.js";
@@ -134,11 +136,14 @@ test("client token, token-free routes, limits, and stable deep links are determi
   assert.equal(bootstrapToken("#repository=repo&run=4"), null);
   assert.equal(routeWithoutToken("#token=abc_123"), "");
   assert.equal(routeWithoutToken("#token=abc_123&repository=repo_A&run=4"), "#repository=repo_A&run=4");
-  assert.deepEqual(parseRoute("#repository=repo_A&run=4"), { repositoryId: "repo_A", runId: 4 });
-  assert.deepEqual(parseRoute("#run=bad&repository=../escape"), { repositoryId: null, runId: null });
+  assert.deepEqual(parseRoute("#repository=repo_A&run=4"), { repositoryId: "repo_A", runId: 4, tab: "overview" });
+  assert.deepEqual(parseRoute("#run=bad&repository=../escape"), { repositoryId: null, runId: null, tab: "overview" });
   const route = routeHash("stable-id", 7);
   assert.equal(route, "#repository=stable-id&run=7");
-  assert.deepEqual(parseRoute(route), { repositoryId: "stable-id", runId: 7 });
+  assert.deepEqual(parseRoute(route), { repositoryId: "stable-id", runId: 7, tab: "overview" });
+  assert.deepEqual(parseRoute("#tab=findings&repository=repo_A&run=4"), { repositoryId: "repo_A", runId: 4, tab: "findings" });
+  assert.deepEqual(parseRoute("#tab=unknown_tab&repository=repo_A"), { repositoryId: "repo_A", runId: null, tab: "overview" });
+  assert.equal(routeHash("repo_A", 4, "findings"), "#tab=findings&repository=repo_A&run=4");
   for (const value of [1, 20, 100, "50"]) assert.equal(validatedLimit(value), Number(value));
   for (const value of [0, 101, "1.5", "x"]) assert.throws(() => validatedLimit(value), RangeError);
 });
@@ -259,6 +264,17 @@ test("portfolio views cover the loaded window and exclude a retained out-of-wind
   assert.deepEqual(views[0]?.snapshots.map((entry) => entry.runId), [1, 2]);
   assert.equal(views[1]?.available, false);
 
+  const scopedViews = repositoryViews({ repositories, selectedRepositoryId: "repo-a" });
+  assert.equal(scopedViews.length, 1);
+  assert.equal(scopedViews[0]?.repositoryId, "repo-a");
+
+  const filterViews = repositoryViews({ repositories, repositoryFilter: "repo-b" });
+  assert.equal(filterViews.length, 1);
+  assert.equal(filterViews[0]?.repositoryId, "repo-b");
+
+  const allViews = repositoryViews({ repositories, selectedRepositoryId: null, repositoryFilter: "" });
+  assert.equal(allViews.length, 2);
+
   const projection = portfolioProjection(views);
   assert.equal(projection.runs, 2);
   assert.equal(projection.blockedRuns, 1);
@@ -282,6 +298,129 @@ test("portfolio views cover the loaded window and exclude a retained out-of-wind
   assert.equal(empty.runs, 0, "an empty portfolio has zero loaded runs, which is a count and not an unavailable value");
   assert.equal(empty.successRate.value, null);
   assert.equal(empty.findings.value, null);
+});
+
+test("command center projections derive portfolio banner, 6-card KPIs, exception queue, 8-stage pipeline, and enterprise rows", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const snapshot = seedPartialRun(root, parent, "kpi-test");
+    const summary = {
+      id: snapshot.run.id, project: snapshot.run.project, featureId: snapshot.run.featureId,
+      slug: snapshot.run.slug, status: snapshot.run.status, phase: snapshot.phase,
+      lastRecordedAt: snapshot.activity.lastRecordedAt,
+    };
+    const repoView = {
+      repositoryId: "repo-1",
+      path: root,
+      available: true,
+      runs: [summary],
+      limit: 20,
+      hasMore: false,
+      snapshots: [{ runId: snapshot.run.id, snapshot, stale: false, loading: false }],
+    };
+
+    const portfolio = portfolioProjection([repoView]);
+    assert.equal(portfolio.runs, 1);
+    assert.equal(portfolio.findings.value, 1);
+
+    // 1. Portfolio Status Banner
+    const banner = portfolioStatusBanner(portfolio, [summary], [snapshot]);
+    assert.equal(banner.status, "at_risk", "1 open finding makes portfolio at risk");
+    assert.equal(banner.tone, "warning");
+    assert.match(banner.summary, /1 open finding requires review/);
+    assert.ok(banner.actions.some((a) => a.targetTab === "findings"));
+
+    // 2. 6-card Horizontal KPI Strip
+    const kpis = commandCenterKpis(portfolio, [summary], [snapshot]);
+    assert.equal(kpis.length, 6, "commandCenterKpis derives exactly 6 cards");
+    const [pHealth, rReady, bDeliveries, oFindings, gCoverage, dSuccess] = kpis;
+    assert.equal(pHealth?.id, "portfolio-health");
+    assert.equal(pHealth?.value, "At Risk");
+    assert.equal(rReady?.id, "release-ready");
+    assert.equal(rReady?.value, 0);
+    assert.equal(bDeliveries?.id, "blocked-deliveries");
+    assert.equal(bDeliveries?.value, 0);
+    assert.equal(oFindings?.id, "open-findings");
+    assert.equal(oFindings?.value, 1);
+    assert.equal(gCoverage?.id, "governance-coverage");
+    assert.equal(gCoverage?.value, "100%");
+    assert.equal(dSuccess?.id, "delivery-success");
+    assert.equal(dSuccess?.value, "Unavailable");
+
+    // 3. Needs Attention Queue
+    const queue = needsAttentionQueue([repoView]);
+    assert.ok(queue.length >= 1);
+    const findingItem = queue.find((item) => item.type === "governance");
+    assert.ok(findingItem !== undefined);
+    assert.equal(findingItem?.severity, "high");
+    assert.equal(findingItem?.runId, snapshot.run.id);
+
+    const repoViewWithStale = {
+      ...repoView,
+      snapshots: [
+        ...repoView.snapshots,
+        { runId: 999, snapshot: null, stale: true, loading: false },
+      ],
+      runs: [
+        ...repoView.runs,
+        { ...summary, id: 999, status: "in_progress" },
+      ],
+    };
+    const multiQueue = needsAttentionQueue([repoViewWithStale]);
+    assert.equal(multiQueue.length, 2);
+    assert.equal(multiQueue[0]?.severity, "high", "high severity outranks low severity stale item");
+    assert.equal(multiQueue[1]?.severity, "low");
+
+    // 4. Delivery Pipeline Stages
+    const stages = deliveryPipelineStages(snapshot);
+    assert.equal(stages.length, 8, "deliveryPipelineStages maps to 8 standard stages");
+    const specStage = stages.find((s) => s.id === "specification");
+    assert.equal(specStage?.status, "complete");
+    assert.equal(specStage?.symbol, "check");
+    const planStage = stages.find((s) => s.id === "planning");
+    assert.equal(planStage?.status, "waiting");
+    const implStage = stages.find((s) => s.id === "implementation");
+    assert.equal(implStage?.status, "not_started");
+
+    const blockedSnapshot = {
+      ...snapshot,
+      stages: [
+        ...snapshot.stages,
+        { id: 4, runId: snapshot.run.id, kind: "verification", status: "passed", gateResult: "block", startedAt: "", completedAt: "" },
+      ],
+    };
+    const blockedStages = deliveryPipelineStages(blockedSnapshot as unknown as RunSnapshot);
+    const testStage = blockedStages.find((s) => s.id === "testing");
+    assert.equal(testStage?.status, "failed", "blocked gate results in failed stage status");
+    assert.equal(testStage?.tone, "danger");
+
+    // 5. Governance Health Summary
+    const govHealth = governanceHealthSummary(snapshot);
+    assert.equal(govHealth.controlsTotal, 1);
+    assert.equal(govHealth.controlsPassed, 1);
+    assert.equal(govHealth.findingsBySeverity.high, 1);
+    assert.equal(govHealth.auditIntegrity, "verified");
+
+    // 6. Model Assignments Summary
+    const modelMap = modelAssignmentsSummary(snapshot);
+    assert.equal(modelMap.effortLevel, "Not reported in configuration");
+
+    // 7. Data Quality Summary
+    const dataQual = dataQualitySummary(portfolio, [snapshot]);
+    assert.equal(dataQual.freshCount, 1);
+    assert.equal(dataQual.missingExecutionDuration, 1);
+    assert.equal(dataQual.historicalTrend, TREND_UNAVAILABLE_LABEL);
+
+    // 8. Governed Deliveries Rows
+    const rows = governedDeliveriesRows([repoView]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.runId, snapshot.run.id);
+    assert.equal(rows[0]?.findingsCount, 1);
+    assert.equal(rows[0]?.currentStage, "Plan");
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
 });
 
 test("snapshot slot classification separates stale, pending, and unavailable evidence", () => {
@@ -1247,10 +1386,10 @@ test("non-text state indicators meet the 3:1 contrast requirement in both themes
 });
 
 test("static assets keep the approved accessible boundary and omit unauthorized transports", () => {
-  const html = readFileSync(resolve("src", "dashboard", "index.html"), "utf8");
-  const css = readFileSync(resolve("src", "dashboard", "styles.css"), "utf8");
-  const script = readFileSync(resolve("src", "dashboard", "app.js"), "utf8");
-  const model = readFileSync(resolve("src", "dashboard", "dashboard-model.js"), "utf8");
+  const html = readFileSync(resolve("src", "dashboard", "index.html"), "utf8").replace(/\r\n/g, "\n");
+  const css = readFileSync(resolve("src", "dashboard", "styles.css"), "utf8").replace(/\r\n/g, "\n");
+  const script = readFileSync(resolve("src", "dashboard", "app.js"), "utf8").replace(/\r\n/g, "\n");
+  const model = readFileSync(resolve("src", "dashboard", "dashboard-model.js"), "utf8").replace(/\r\n/g, "\n");
   for (const landmark of ["<header", "<nav", "<main", "<footer", "aria-live", "shortcut"]) {
     assert.ok(html.includes(landmark), landmark);
   }
@@ -1404,3 +1543,133 @@ test("static assets keep the approved accessible boundary and omit unauthorized 
   assert.ok(!appendBody.includes("collapsibleSection(null,"),
     `every collapsed section states its count: ${appendBody}`);
 });
+
+test("tab routing and primary navigation accessibility conform to design", () => {
+  assert.deepEqual(ALLOWED_TABS, ["overview", "runs", "findings", "governance", "models", "audit"]);
+
+  // Route parsing
+  assert.equal(parseRoute("#tab=overview").tab, "overview");
+  assert.equal(parseRoute("#tab=runs").tab, "runs");
+  assert.equal(parseRoute("#tab=findings").tab, "findings");
+  assert.equal(parseRoute("#tab=governance").tab, "governance");
+  assert.equal(parseRoute("#tab=models").tab, "models");
+  assert.equal(parseRoute("#tab=audit").tab, "audit");
+  assert.equal(parseRoute("#tab=nonexistent").tab, "overview");
+  assert.equal(parseRoute("").tab, "overview");
+
+  // Route hashing
+  assert.equal(routeHash("repo-a", 1, "overview"), "#repository=repo-a&run=1");
+  assert.equal(routeHash("repo-a", 1, "runs"), "#tab=runs&repository=repo-a&run=1");
+  assert.equal(routeHash("repo-a", 1, "findings"), "#tab=findings&repository=repo-a&run=1");
+
+  // Static HTML shell checks
+  const html = readFileSync(resolve("src", "dashboard", "index.html"), "utf8");
+  for (const tab of ALLOWED_TABS) {
+    assert.match(html, new RegExp(`<button role="tab"[^>]*id="tab-${tab}"[^>]*aria-controls="dashboard"`),
+      `HTML contains accessible tab button for ${tab}`);
+  }
+  assert.match(html, /<aside id="drawer" class="drawer-container"/);
+  assert.match(html, /<dialog id="shortcuts-dialog"/);
+});
+
+test("slide-over drawer and popover controllers maintain accessibility and static boundaries", () => {
+  const html = readFileSync(resolve("src", "dashboard", "index.html"), "utf8");
+  assert.match(html, /<aside id="drawer" class="drawer-container"[^>]*aria-hidden="true"[^>]*role="dialog"[^>]*aria-modal="true"/);
+  assert.match(html, /aria-label="Close details drawer"/);
+
+  const script = readFileSync(resolve("src", "dashboard", "app.js"), "utf8").replace(/\r\n/g, "\n");
+  assert.match(script, /event\.key === "Escape"/);
+  assert.match(script, /lastFocused\.focus\(\)/);
+  assert.match(script, /event\.key === "Tab"/);
+  assert.match(script, /aria-label", `Information about \$\{title\}`/);
+  assert.match(script, /aria-expanded", "false"/);
+  assert.ok(!script.includes('.setAttribute("style"'), "no setAttribute style calls");
+  assert.ok(!script.includes(".style."), "no element.style mutations");
+});
+
+test("overview canvas renders portfolio banner, horizontal kpi strip, needs attention, and delivery pipeline", () => {
+  const script = readFileSync(resolve("src", "dashboard", "app.js"), "utf8").replace(/\r\n/g, "\n");
+  assert.match(script, /export function renderPortfolioBanner\(/);
+  assert.match(script, /export function renderCommandCenterKpis\(/);
+  assert.match(script, /export function renderNeedsAttention\(/);
+  assert.match(script, /export function renderDeliveryPipeline\(/);
+  assert.match(script, /export function renderOverviewTab\(/);
+
+  // Check 12-column grid and analytical row assembly
+  assert.match(script, /analytical-row primary-row grid-12/);
+  assert.match(script, /needsAttentionEl\.classList\.add\("col-7"\)/);
+  assert.match(script, /pipelineEl\.classList\.add\("col-5"\)/);
+
+  // Check CSS styles for overview components
+  const css = readFileSync(resolve("src", "dashboard", "styles.css"), "utf8");
+  assert.match(css, /\.portfolio-banner/);
+  assert.match(css, /\.kpi-strip/);
+  assert.match(css, /\.kpi-card/);
+  assert.match(css, /\.needs-attention-panel/);
+  assert.match(css, /\.delivery-pipeline-panel/);
+  assert.match(css, /\.pipeline-stepper/);
+  assert.match(css, /\.stepper-step/);
+  assert.match(css, /\.grid-12/);
+});
+
+test("overview canvas secondary row, lower analytics, and governed deliveries table assemble correctly", () => {
+  const script = readFileSync(resolve("src", "dashboard", "app.js"), "utf8").replace(/\r\n/g, "\n");
+  assert.match(script, /export function renderGovernanceHealth\(/);
+  assert.match(script, /export function renderModelAssignments\(/);
+  assert.match(script, /export function renderLowerAnalytics\(/);
+  assert.match(script, /export function renderGovernedDeliveriesTable\(/);
+
+  // Secondary row and lower row assembly
+  assert.match(script, /analytical-row secondary-row grid-12/);
+  assert.match(script, /govHealthEl\.classList\.add\("col-6"\)/);
+  assert.match(script, /modelEl\.classList\.add\("col-6"\)/);
+  assert.match(script, /renderLowerAnalytics\(portfolio, snapshots, application\)/);
+  assert.match(script, /renderGovernedDeliveriesTable\(views, application\)/);
+
+  // Check CSS styles for Task 5 components
+  const css = readFileSync(resolve("src", "dashboard", "styles.css"), "utf8");
+  assert.match(css, /\.health-row/);
+  assert.match(css, /\.health-findings-block/);
+  assert.match(css, /\.severity-counts-group/);
+  assert.match(css, /\.deliveries-table/);
+  assert.match(css, /\.deliveries-count-badge/);
+  assert.match(css, /\.delivery-repo-name/);
+  assert.match(css, /\.findings-badge-highlight/);
+});
+
+test("dedicated tab views dispatch correctly and render domain models", () => {
+  const script = readFileSync(resolve("src", "dashboard", "app.js"), "utf8").replace(/\r\n/g, "\n");
+  assert.match(script, /export function renderRunsTab\(/);
+  assert.match(script, /export function renderFindingsTab\(/);
+  assert.match(script, /export function renderGovernanceTab\(/);
+  assert.match(script, /export function renderModelsTab\(/);
+  assert.match(script, /export function renderAuditTab\(/);
+
+  // Tab branching in render(application)
+  assert.match(script, /if \(application\.currentTab === "overview"\)/);
+  assert.match(script, /else if \(application\.currentTab === "runs"\)/);
+  assert.match(script, /else if \(application\.currentTab === "findings"\)/);
+  assert.match(script, /else if \(application\.currentTab === "governance"\)/);
+  assert.match(script, /else if \(application\.currentTab === "models"\)/);
+  assert.match(script, /else if \(application\.currentTab === "audit"\)/);
+
+  // Check CSS styles for tab components
+  const css = readFileSync(resolve("src", "dashboard", "styles.css"), "utf8");
+  assert.match(css, /\.tab-scope-header/);
+  assert.match(css, /\.findings-filter-bar/);
+  assert.match(css, /\.findings-tab-list/);
+  assert.match(css, /\.finding-scope-tag/);
+  assert.match(css, /\.finding-card-actions/);
+});
+
+test("repository selection scopes overview metrics, runs, and tab views", () => {
+  const script = readFileSync(resolve("src", "dashboard", "app.js"), "utf8").replace(/\r\n/g, "\n");
+  assert.match(script, /const filterRepoId = application\.selectedRepositoryId \|\| application\.repositoryFilter \|\| "";/);
+  assert.match(script, /if \(filterRepoId !== "" &&\s*repositoryState\.repository\.id !== filterRepoId\) continue;/);
+  assert.match(script, /if \(targetRepoId !== null && repoState\.repository\.id !== targetRepoId\) continue;/);
+});
+
+
+
+
+

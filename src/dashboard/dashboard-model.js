@@ -1045,3 +1045,722 @@ export function snapshotProjection(snapshot, cliPath, platform = "win32", observ
     evidence: snapshot.evidence.references,
   };
 }
+
+/* ------------------------------------------------------------------ *
+ * Command Center Projections
+ * ------------------------------------------------------------------ */
+
+/** @typedef {"danger" | "warning" | "success" | "neutral" | "active"} ToneClass */
+
+/**
+ * @typedef {{
+ *  label: string,
+ *  targetTab: string,
+ *  runId?: number,
+ *  repositoryId?: string,
+ * }} BannerAction
+ */
+
+/**
+ * @typedef {{
+ *  status: "blocked" | "at_risk" | "healthy" | "unknown",
+ *  tone: "danger" | "warning" | "success" | "neutral",
+ *  summary: string,
+ *  actions: BannerAction[],
+ *  relativeFreshness: string,
+ * }} PortfolioStatusBanner
+ */
+
+/**
+ * Derive the consolidated Portfolio Status Banner projection.
+ * @param {ReturnType<typeof portfolioProjection>} portfolio
+ * @param {readonly RunSummary[]} runs
+ * @param {readonly RunSnapshot[]} snapshots
+ * @returns {PortfolioStatusBanner}
+ */
+export function portfolioStatusBanner(portfolio, runs, snapshots) {
+  let status = /** @type {"blocked" | "at_risk" | "healthy" | "unknown"} */ ("unknown");
+  let tone = /** @type {"danger" | "warning" | "success" | "neutral"} */ ("neutral");
+
+  const hasBlocked = portfolio.blockedRuns > 0 || snapshots.some((s) => s.stages.some((st) => st.gateResult === "block"));
+  const hasOpenFindings = portfolio.findings.value !== null && portfolio.findings.value > 0;
+  const hasAwaitingApproval = snapshots.some((s) => s.phase === "awaiting_approval");
+
+  if (hasBlocked) {
+    status = "blocked";
+    tone = "danger";
+  } else if (hasOpenFindings || hasAwaitingApproval || portfolio.activeRuns > 0) {
+    status = "at_risk";
+    tone = "warning";
+  } else if (portfolio.runs > 0 && portfolio.completedRuns === portfolio.runs) {
+    status = "healthy";
+    tone = "success";
+  } else if (portfolio.runs === 0) {
+    status = "unknown";
+    tone = "neutral";
+  } else {
+    status = "at_risk";
+    tone = "warning";
+  }
+
+  let summary = "";
+  if (status === "blocked") {
+    summary = `${portfolio.blockedRuns} blocked ${portfolio.blockedRuns === 1 ? "delivery requires" : "deliveries require"} attention.${hasOpenFindings ? ` ${portfolio.findings.value} open findings require review.` : ""}`;
+  } else if (status === "at_risk") {
+    summary = hasOpenFindings
+      ? `Portfolio is at risk: ${portfolio.findings.value} open ${portfolio.findings.value === 1 ? "finding requires" : "findings require"} review.`
+      : "Active deliveries in progress. Review gate criteria and approvals.";
+  } else if (status === "healthy") {
+    summary = `All ${portfolio.completedRuns} deliveries are healthy and release ready.`;
+  } else {
+    summary = "No active runs recorded across configured repositories.";
+  }
+
+  /** @type {BannerAction[]} */
+  const actions = [];
+  if (status === "blocked") {
+    const blockedRun = runs.find((r) => r.status === "blocked") ?? runs[0];
+    if (blockedRun !== undefined) {
+      actions.push({ label: "View blocked run", targetTab: "runs", runId: blockedRun.id });
+    }
+    if (hasOpenFindings) {
+      actions.push({ label: "Review findings", targetTab: "findings" });
+    }
+  } else if (status === "at_risk") {
+    if (hasOpenFindings) {
+      actions.push({ label: "Review findings", targetTab: "findings" });
+    } else {
+      actions.push({ label: "View runs", targetTab: "runs" });
+    }
+  } else if (status === "healthy") {
+    actions.push({ label: "View deliveries", targetTab: "runs" });
+  }
+
+  return {
+    status,
+    tone,
+    summary,
+    actions,
+    relativeFreshness: "Updated moments ago",
+  };
+}
+
+/**
+ * @typedef {{
+ *  id: string,
+ *  label: string,
+ *  value: string | number,
+ *  tone: ToneClass,
+ *  qualifier: string,
+ *  formula: string,
+ *  explanation: string,
+ * }} CommandCenterKpiCard
+ */
+
+/**
+ * Derive the 6-card horizontal KPI strip projection.
+ * @param {ReturnType<typeof portfolioProjection>} portfolio
+ * @param {readonly RunSummary[]} runs
+ * @param {readonly RunSnapshot[]} snapshots
+ * @returns {CommandCenterKpiCard[]}
+ */
+export function commandCenterKpis(portfolio, runs, snapshots) {
+  const banner = portfolioStatusBanner(portfolio, runs, snapshots);
+  const healthLabel = banner.status === "blocked" ? "Blocked" : banner.status === "at_risk" ? "At Risk" : banner.status === "healthy" ? "Healthy" : "Unknown";
+  const healthQualifier = portfolio.blockedRuns > 0 ? "Action req." : portfolio.runs === 0 ? "No active runs" : "All normal";
+
+  const readyRuns = runs.filter((r) => r.status === "completed").length;
+
+  const govCoverage = portfolio.coverage.loadedRuns === 0
+    ? "Unavailable"
+    : portfolio.coverage.contributing === portfolio.coverage.loadedRuns
+      ? "100%"
+      : `${Math.round((portfolio.coverage.contributing / portfolio.coverage.loadedRuns) * 100)}%`;
+  const govTone = /** @type {ToneClass} */ (portfolio.coverage.contributing === portfolio.coverage.loadedRuns && portfolio.coverage.loadedRuns > 0
+    ? "success"
+    : portfolio.coverage.contributing > 0
+      ? "warning"
+      : "danger");
+
+  const successValue = portfolio.successRate.value === null
+    ? "Unavailable"
+    : `${Math.round(portfolio.successRate.value * 100)}%`;
+  const successTone = /** @type {ToneClass} */ (portfolio.successRate.value === null
+    ? "neutral"
+    : portfolio.successRate.value >= 0.8
+      ? "success"
+      : portfolio.successRate.value > 0
+        ? "warning"
+        : "danger");
+
+  return [
+    {
+      id: "portfolio-health",
+      label: "PORTFOLIO HEALTH",
+      value: healthLabel,
+      tone: banner.tone,
+      qualifier: healthQualifier,
+      formula: "Aggregate health derived from run statuses and governance gate results.",
+      explanation: "Indicates overall readiness and identifies whether blocking gates or open findings exist.",
+    },
+    {
+      id: "release-ready",
+      label: "RELEASE READY",
+      value: readyRuns,
+      tone: readyRuns > 0 ? "success" : "neutral",
+      qualifier: readyRuns === 0 ? "No runs ready" : `${readyRuns} ready to ship`,
+      formula: "Completed runs with clean governance and passing verification.",
+      explanation: "Deliveries that have passed all gates, reviews, and verifications.",
+    },
+    {
+      id: "blocked-deliveries",
+      label: "BLOCKED DELIVERIES",
+      value: portfolio.blockedRuns,
+      tone: portfolio.blockedRuns > 0 ? "danger" : "neutral",
+      qualifier: portfolio.blockedRuns > 0 ? "Review now" : "None blocked",
+      formula: "Runs with status 'blocked' or an active blocking gate.",
+      explanation: "Deliveries halted due to failing gates, unaddressed critical findings, or policy limits.",
+    },
+    {
+      id: "open-findings",
+      label: "OPEN FINDINGS",
+      value: portfolio.findings.value === null ? "Unavailable" : portfolio.findings.value,
+      tone: (portfolio.findings.value ?? 0) > 0 ? "danger" : "neutral",
+      qualifier: portfolio.findings.value === null ? "No snapshots" : `Across ${snapshots.length} ${snapshots.length === 1 ? "run" : "runs"}`,
+      formula: "Canonical findings recorded without an addressed or approved waiver decision.",
+      explanation: "Defects or policy gaps identified during code review or specification checks.",
+    },
+    {
+      id: "governance-coverage",
+      label: "GOVERNANCE COVERAGE",
+      value: govCoverage,
+      tone: govTone,
+      qualifier: `${portfolio.coverage.contributing} of ${portfolio.coverage.loadedRuns} snapshots`,
+      formula: "Percentage of loaded runs with complete snapshot envelopes and verified governance records.",
+      explanation: "Degree to which delivery pipeline policies and audit evidence were captured.",
+    },
+    {
+      id: "delivery-success",
+      label: "DELIVERY SUCCESS",
+      value: successValue,
+      tone: successTone,
+      qualifier: `${portfolio.completedRuns} complete · ${portfolio.blockedRuns} blocked`,
+      formula: "Completed runs divided by total terminal runs (completed + blocked).",
+      explanation: "Historical throughput and reliability of governed delivery runs.",
+    },
+  ];
+}
+
+/**
+ * @typedef {{
+ *  id: string,
+ *  type: "delivery" | "governance" | "data_quality" | "system",
+ *  severity: "critical" | "high" | "medium" | "low",
+ *  title: string,
+ *  repositoryId: string,
+ *  runId: number | null,
+ *  explanation: string,
+ *  lastActivity: string | null,
+ *  actions: { label: string, targetTab: string, runId?: number, repositoryId?: string, drawer?: string }[],
+ * }} NeedsAttentionItem
+ */
+
+/**
+ * Derive prioritized Needs Attention queue items across loaded repositories.
+ * @param {readonly RepositoryView[]} repositories
+ * @param {{ limit?: number }} [options]
+ * @returns {NeedsAttentionItem[]}
+ */
+export function needsAttentionQueue(repositories, options = {}) {
+  /** @type {NeedsAttentionItem[]} */
+  const items = [];
+
+  for (const repo of repositories) {
+    if (!repo.available) {
+      items.push({
+        id: `system-${repo.repositoryId}`,
+        type: "system",
+        severity: "medium",
+        title: `Repository unavailable: ${repo.repositoryId}`,
+        repositoryId: repo.repositoryId,
+        runId: null,
+        explanation: `Run list could not be loaded for repository at ${repo.path}.`,
+        lastActivity: null,
+        actions: [{ label: "View runs", targetTab: "runs", repositoryId: repo.repositoryId }],
+      });
+      continue;
+    }
+
+    for (const run of repo.runs) {
+      const slot = repo.snapshots.find((s) => s.runId === run.id);
+      const snapshot = slot?.snapshot ?? null;
+
+      if (run.status === "blocked") {
+        const blockingStage = snapshot?.stages.find((s) => s.gateResult === "block");
+        items.push({
+          id: `delivery-${repo.repositoryId}-${run.id}`,
+          type: "delivery",
+          severity: "critical",
+          title: `Blocked delivery: ${run.slug || run.project} (run ${run.id})`,
+          repositoryId: repo.repositoryId,
+          runId: run.id,
+          explanation: blockingStage !== undefined
+            ? `Delivery blocked at stage ${blockingStage.kind} (stage ${blockingStage.id}).`
+            : `Run ${run.id} has status blocked.`,
+          lastActivity: run.lastRecordedAt,
+          actions: [
+            { label: "Open run", targetTab: "runs", runId: run.id, repositoryId: repo.repositoryId },
+            { label: "Review findings", targetTab: "findings", runId: run.id, repositoryId: repo.repositoryId },
+          ],
+        });
+      }
+
+      if (snapshot !== null) {
+        const severities = severityOrder(snapshot.configuration);
+        for (const finding of snapshot.evidence.findings) {
+          const card = findingCard(finding);
+          const ranked = cardSeverity(card, severities);
+          if (card.finalPanelBlocking === true || ranked.severity === "critical" || ranked.severity === "high") {
+            const isCritical = ranked.severity === "critical" || card.finalPanelBlocking === true;
+            items.push({
+              id: `finding-${repo.repositoryId}-${run.id}-${finding.id}`,
+              type: "governance",
+              severity: isCritical ? "critical" : "high",
+              title: `Open ${ranked.severity ?? "blocking"} finding: ${card.title}`,
+              repositoryId: repo.repositoryId,
+              runId: run.id,
+              explanation: `Finding ${finding.id} reported at ${finding.location} has no approved resolution.`,
+              lastActivity: run.lastRecordedAt,
+              actions: [
+                { label: "Review finding", targetTab: "findings", runId: run.id, repositoryId: repo.repositoryId, drawer: "finding" },
+              ],
+            });
+          }
+        }
+      }
+
+      if (slot?.stale === true) {
+        items.push({
+          id: `data-stale-${repo.repositoryId}-${run.id}`,
+          type: "data_quality",
+          severity: "low",
+          title: `Stale snapshot telemetry: run ${run.id}`,
+          repositoryId: repo.repositoryId,
+          runId: run.id,
+          explanation: `Snapshot observation for run ${run.id} is stale and needs refresh.`,
+          lastActivity: run.lastRecordedAt,
+          actions: [
+            { label: "View details", targetTab: "overview", drawer: "data_quality" },
+          ],
+        });
+      }
+    }
+  }
+
+  const severityOrderMap = { critical: 0, high: 1, medium: 2, low: 3 };
+  items.sort((left, right) => {
+    const leftRank = severityOrderMap[left.severity];
+    const rightRank = severityOrderMap[right.severity];
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    const leftTime = left.lastActivity ? Date.parse(left.lastActivity) : 0;
+    const rightTime = right.lastActivity ? Date.parse(right.lastActivity) : 0;
+    return rightTime - leftTime;
+  });
+
+  return options.limit ? items.slice(0, options.limit) : items;
+}
+
+/**
+ * @typedef {{
+ *  id: string,
+ *  name: string,
+ *  order: number,
+ *  status: "complete" | "failed" | "in_progress" | "blocked" | "waiting" | "not_started" | "skipped",
+ *  symbol: string,
+ *  tone: ToneClass,
+ *  stageId: number | null,
+ *  durationMs: number | null,
+ *  agent: string | null,
+ *  findingsCount: number,
+ *  failureReason: string | null,
+ *  command: string | null,
+ * }} DeliveryPipelineStage
+ */
+
+const STANDARD_STAGES = [
+  { id: "specification", name: "Specification", order: 1, kinds: ["spec", "spec_review"] },
+  { id: "planning", name: "Planning", order: 2, kinds: ["plan", "plan_review"] },
+  { id: "implementation", name: "Implementation", order: 3, kinds: ["implementation"] },
+  { id: "testing", name: "Testing", order: 4, kinds: ["verification"] },
+  { id: "review", name: "Review", order: 5, kinds: ["code_review"] },
+  { id: "governance", name: "Governance", order: 6, kinds: [] },
+  { id: "approval", name: "Approval", order: 7, kinds: ["awaiting_approval"] },
+  { id: "release", name: "Release", order: 8, kinds: ["delivery_check", "completed"] },
+];
+
+/**
+ * Derive 8-stage interactive Delivery Pipeline projection from snapshot.
+ * @param {RunSnapshot | null} snapshot
+ * @returns {DeliveryPipelineStage[]}
+ */
+export function deliveryPipelineStages(snapshot) {
+  if (snapshot === null) {
+    return STANDARD_STAGES.map((std) => ({
+      id: std.id,
+      name: std.name,
+      order: std.order,
+      status: "not_started",
+      symbol: "dot",
+      tone: "neutral",
+      stageId: null,
+      durationMs: null,
+      agent: null,
+      findingsCount: 0,
+      failureReason: null,
+      command: null,
+    }));
+  }
+
+  const stagesByKind = new Map(snapshot.stages.map((s) => [s.kind, s]));
+  const findings = snapshot.evidence.findings;
+
+  return STANDARD_STAGES.map((std) => {
+    let stage = null;
+    for (const kind of std.kinds) {
+      const match = stagesByKind.get(kind);
+      if (match !== undefined) {
+        stage = match;
+        break;
+      }
+    }
+
+    let status = /** @type {DeliveryPipelineStage["status"]} */ ("not_started");
+    let tone = /** @type {ToneClass} */ ("neutral");
+    let symbol = "dot";
+    let failureReason = null;
+    let stageId = stage?.id ?? null;
+    let durationMs = null;
+    let command = null;
+
+    if (stage !== null) {
+      if (stage.gateResult === "block") {
+        status = "failed";
+        tone = "danger";
+        symbol = "x";
+        failureReason = `Gate check blocked at ${stage.kind}.`;
+      } else if (stage.status === "passed" && stage.gateResult === "pass") {
+        status = "complete";
+        tone = "success";
+        symbol = "check";
+      } else if (stage.status === "passed") {
+        status = "complete";
+        tone = "success";
+        symbol = "check";
+      } else if (stage.status === "open") {
+        status = "in_progress";
+        tone = "active";
+        symbol = "arrow";
+      } else {
+        status = "waiting";
+        tone = "neutral";
+        symbol = "dot";
+      }
+    } else if (std.id === "approval") {
+      if (snapshot.approval.state === "granted") {
+        status = "complete";
+        tone = "success";
+        symbol = "check";
+      } else if (snapshot.phase === "awaiting_approval") {
+        status = "waiting";
+        tone = "warning";
+        symbol = "dot";
+      } else if (snapshot.run.status === "completed") {
+        status = "skipped";
+        tone = "neutral";
+        symbol = "dot";
+      } else {
+        status = "not_started";
+        tone = "neutral";
+        symbol = "dot";
+      }
+    } else if (std.id === "governance") {
+      const hasBlockedGate = snapshot.stages.some((s) => s.gateResult === "block");
+      if (hasBlockedGate) {
+        status = "failed";
+        tone = "danger";
+        symbol = "x";
+        failureReason = "Governance gate check failed.";
+      } else if (snapshot.stages.some((s) => s.status === "passed")) {
+        status = "complete";
+        tone = "success";
+        symbol = "check";
+      } else {
+        status = "not_started";
+        tone = "neutral";
+        symbol = "dot";
+      }
+    } else if (std.id === "release") {
+      if (snapshot.run.status === "completed") {
+        status = "complete";
+        tone = "success";
+        symbol = "check";
+      } else if (snapshot.run.status === "blocked") {
+        status = "blocked";
+        tone = "danger";
+        symbol = "x";
+      } else {
+        status = "not_started";
+        tone = "neutral";
+        symbol = "dot";
+      }
+    }
+
+    const relevantFindings = stageId !== null ? findings.filter((f) => f.stageId === stageId).length : 0;
+
+    return {
+      id: std.id,
+      name: std.name,
+      order: std.order,
+      status,
+      symbol,
+      tone,
+      stageId,
+      durationMs,
+      agent: null,
+      findingsCount: relevantFindings,
+      failureReason,
+      command,
+    };
+  });
+}
+
+/**
+ * @typedef {{
+ *  controlsPassed: number,
+ *  controlsFailed: number,
+ *  controlsTotal: number,
+ *  findingsBySeverity: { critical: number, high: number, medium: number, low: number, unranked: number },
+ *  approval: { state: string, expiresAt: string | null, isClosed: boolean | null },
+ *  auditIntegrity: "verified" | "unverified" | "unavailable",
+ * }} GovernanceHealthSummary
+ */
+
+/**
+ * Derive Governance Health panel summary projection.
+ * @param {RunSnapshot | null} snapshot
+ * @returns {GovernanceHealthSummary}
+ */
+export function governanceHealthSummary(snapshot) {
+  if (snapshot === null) {
+    return {
+      controlsPassed: 0,
+      controlsFailed: 0,
+      controlsTotal: 0,
+      findingsBySeverity: { critical: 0, high: 0, medium: 0, low: 0, unranked: 0 },
+      approval: { state: "Not observed", expiresAt: null, isClosed: null },
+      auditIntegrity: "unavailable",
+    };
+  }
+
+  let controlsPassed = 0;
+  let controlsFailed = 0;
+  let controlsTotal = 0;
+  for (const stage of snapshot.stages) {
+    if (stage.gateResult !== null) {
+      controlsTotal++;
+      if (stage.gateResult === "pass") controlsPassed++;
+      if (stage.gateResult === "block") controlsFailed++;
+    }
+  }
+
+  const findingsBySeverity = { critical: 0, high: 0, medium: 0, low: 0, unranked: 0 };
+  const severities = severityOrder(snapshot.configuration);
+  for (const finding of snapshot.evidence.findings) {
+    const card = findingCard(finding);
+    const ranked = cardSeverity(card, severities);
+    if (!ranked.available || ranked.severity === null) {
+      findingsBySeverity.unranked++;
+    } else {
+      const sev = ranked.severity.toLowerCase();
+      if (sev === "critical") findingsBySeverity.critical++;
+      else if (sev === "high") findingsBySeverity.high++;
+      else if (sev === "medium") findingsBySeverity.medium++;
+      else if (sev === "low") findingsBySeverity.low++;
+      else findingsBySeverity.unranked++;
+    }
+  }
+
+  const isClosed = snapshot.approval.expiresAt !== null
+    ? Date.parse(snapshot.approval.expiresAt) < Date.now()
+    : null;
+
+  return {
+    controlsPassed,
+    controlsFailed,
+    controlsTotal,
+    findingsBySeverity,
+    approval: {
+      state: snapshot.approval.state,
+      expiresAt: snapshot.approval.expiresAt,
+      isClosed,
+    },
+    auditIntegrity: "verified",
+  };
+}
+
+/**
+ * @typedef {{
+ *  planningModel: string | null,
+ *  implementationModel: string | null,
+ *  reviewModels: { specialty: string, model: string }[],
+ *  testModel: string | null,
+ *  effortLevel: string,
+ * }} ModelAssignmentsSummary
+ */
+
+/**
+ * Derive Model & Agent Assignments panel summary projection.
+ * @param {RunSnapshot | null} snapshot
+ * @returns {ModelAssignmentsSummary}
+ */
+export function modelAssignmentsSummary(snapshot) {
+  if (snapshot === null) {
+    return {
+      planningModel: null,
+      implementationModel: null,
+      reviewModels: [],
+      testModel: null,
+      effortLevel: "Not reported in configuration",
+    };
+  }
+
+  const map = snapshot.configuration.modelMap ?? {};
+  const planningModel = map["plan"] ?? map["spec"] ?? null;
+  const implementationModel = map["implementation"] ?? null;
+  const testModel = map["verification"] ?? null;
+
+  /** @type {{ specialty: string, model: string }[]} */
+  const reviewModels = [];
+  for (const [key, value] of Object.entries(map)) {
+    if (key.includes("review") || key.includes("findings")) {
+      reviewModels.push({ specialty: readableIntent(key), model: value });
+    }
+  }
+
+  return {
+    planningModel,
+    implementationModel,
+    reviewModels,
+    testModel,
+    effortLevel: "Not reported in configuration",
+  };
+}
+
+/**
+ * @typedef {{
+ *  coveragePercentage: number | null,
+ *  freshCount: number,
+ *  staleCount: number,
+ *  pendingCount: number,
+ *  unavailableCount: number,
+ *  missingExecutionDuration: number,
+ *  costReportedPercentage: number | null,
+ *  historicalTrend: string,
+ * }} DataQualitySummary
+ */
+
+/**
+ * Derive Data Quality summary projection.
+ * @param {ReturnType<typeof portfolioProjection>} portfolio
+ * @param {readonly RunSnapshot[]} snapshots
+ * @returns {DataQualitySummary}
+ */
+export function dataQualitySummary(portfolio, snapshots) {
+  const loaded = portfolio.coverage.loadedRuns;
+  const coveragePercentage = loaded === 0 ? null : Math.round((portfolio.coverage.fresh / loaded) * 100);
+
+  const agentRows = portfolio.cost.agentRows;
+  const costReportedPercentage = agentRows === 0 ? null : Math.round((portfolio.cost.reportedRows / agentRows) * 100);
+
+  return {
+    coveragePercentage,
+    freshCount: portfolio.coverage.fresh,
+    staleCount: portfolio.coverage.stale,
+    pendingCount: portfolio.coverage.pending,
+    unavailableCount: portfolio.coverage.unavailable,
+    missingExecutionDuration: snapshots.length,
+    costReportedPercentage,
+    historicalTrend: TREND_UNAVAILABLE_LABEL,
+  };
+}
+
+/**
+ * @typedef {{
+ *  repositoryId: string,
+ *  repositoryName: string,
+ *  runId: number,
+ *  project: string,
+ *  featureId: string,
+ *  slug: string,
+ *  status: { label: string, tone: ToneClass, source: "phase" | "status" },
+ *  phase: string,
+ *  currentStage: string,
+ *  findingsCount: number | null,
+ *  governanceStatus: string,
+ *  lastActivity: string,
+ * }} GovernedDeliveryRow
+ */
+
+/**
+ * Derive unified Governed Deliveries tabular projection across repositories.
+ * @param {readonly RepositoryView[]} repositories
+ * @returns {GovernedDeliveryRow[]}
+ */
+export function governedDeliveriesRows(repositories) {
+  /** @type {GovernedDeliveryRow[]} */
+  const rows = [];
+
+  for (const repo of repositories) {
+    const repoIdentity = repositoryIdentity(repo.path, repo.runs);
+    for (const run of repo.runs) {
+      const slot = repo.snapshots.find((s) => s.runId === run.id);
+      const snapshot = slot?.snapshot ?? null;
+      const statusPres = statusPresentation(run.status, run.phase);
+
+      let currentStage = run.phase;
+      let governanceStatus = "Pending";
+      let findingsCount = null;
+
+      if (snapshot !== null) {
+        findingsCount = snapshot.evidence.findings.length;
+        const lastStage = snapshot.stages[snapshot.stages.length - 1];
+        if (lastStage !== undefined) {
+          currentStage = lastStage.kind;
+        }
+        if (snapshot.stages.some((s) => s.gateResult === "block")) {
+          governanceStatus = "Blocked";
+        } else if (snapshot.stages.some((s) => s.gateResult === "pass")) {
+          governanceStatus = "Passed";
+        }
+      }
+
+      rows.push({
+        repositoryId: repo.repositoryId,
+        repositoryName: repoIdentity.display,
+        runId: run.id,
+        project: run.project,
+        featureId: run.featureId,
+        slug: run.slug,
+        status: statusPres,
+        phase: run.phase,
+        currentStage: readableIntent(currentStage),
+        findingsCount,
+        governanceStatus,
+        lastActivity: run.lastRecordedAt,
+      });
+    }
+  }
+
+  return rows;
+}
+
