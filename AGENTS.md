@@ -58,7 +58,12 @@ cost of $1.39473. Its two specialized code reviewers returned a clean first
 panel, delivery passed, and the operator then manually verified the delivered
 calculator output. That manual check supplements the run record: the frozen
 verification commands themselves checked only `node --version` and
-`npm --version`. A completed paid run never authorizes another spend.
+`npm --version`. A subsequent operator-authorized live run on 2026-09-11
+completed all stages including the code-review remediation loop (16 dispatches,
+total cost $2.05854, 2 panel executions, 1 remediation, final commit verified,
+6 declared artifacts delivered, run completed, and audit chain valid), preserved
+in durable target storage under `C:\Users\tamezs\buildWorks_test_repos`. A
+completed paid run never authorizes another spend.
 
 ## Windows harness launch
 
@@ -75,6 +80,11 @@ were already in the provider result. BuildWorks therefore also added explicit
 JSON-standard escaping instructions to both patch-producing prompts and
 regressions for direct launch, missing-executable reporting, and the prompt
 contract. The strict extractor remains unchanged; it does not guess repairs.
+
+The 2026-09-14 correction anchored closing code fences (`(?<=\n)```[ \t]*(?=\n|$)`)
+so markdown code blocks within JSON string literals cannot prematurely terminate
+extraction (hazard 1, item 9). The idle generation budget is 1800 seconds,
+decided exclusively by the frozen sandbox profile (hard rule 6).
 
 ## How to work here
 
@@ -153,8 +163,10 @@ provider spend. Nothing enforces these values — `check:docs` does not read the
 
 ## Session continuity
 
-Copilot uses the same project skills and learning record as Claude. The
-canonical project workflows are `.claude/skills/doc-check/SKILL.md` and
+Copilot and other agent environments use the same working rules, project skills,
+and learning record as Claude. `CLAUDE.md` and `AGENTS.md` are identical working
+rules at the repository root and must remain in sync. The canonical project
+workflows are `.claude/skills/doc-check/SKILL.md` and
 `.claude/skills/run-buildworks/SKILL.md`; their `.agents` skill entries only
 forward to those files. Use the `.claude` driver and design when operating
 BuildWorks; do not replace the runtime's Claude harness with Copilot.
@@ -262,10 +274,10 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
   the full chain against the real `claude` binary and reports what it cost:
   budget $1.25–$2.50 for a clean default run, potentially more when remediation
   adds an implementer dispatch and another full reviewer panel. The committed
-  design is the 20-requirement `web-calculator-design.md` beside the driver
-  rather than the trivial clamp design that preceded it. Change what a run
-  exercises by editing that file. See
-  `.claude/skills/run-buildworks/SKILL.md`.
+  default design is the 20-requirement `web-calculator-design.md` beside the driver.
+  Change what a run exercises with `--design <path>` and `--slug <slug>`
+  (such as `.claude/skills/run-buildworks/target-tap-design.md`), or by editing
+  that file. See `.claude/skills/run-buildworks/SKILL.md`.
 - `node scripts/sign-approval.mjs keygen|sign` — the operator's signing tool.
   It holds the only private key path in the repository and the system never
   invokes it.

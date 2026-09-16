@@ -10,7 +10,7 @@ const FIXTURES = join(process.cwd(), "test", "fixtures", "verify");
 
 function withRoot(fn: (root: string) => Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "bw-verify-cmd-"));
-  return fn(root).finally(() => rmSync(root, { recursive: true, force: true }));
+  return fn(root).finally(() => rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
 }
 
 function opts(root: string, overrides: Partial<Parameters<typeof runVerifyCommand>[1]> = {}) {

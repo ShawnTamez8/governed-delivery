@@ -133,10 +133,11 @@ export function runVerifyCommand(
       if (settled) return;
       settled = true;
       for (const t of timers) clearTimeout(t);
-      // Resolve only once the retained bytes are actually on disk: the
-      // evidence file is the thing this function promises, and a caller that
-      // reads it immediately must not race the flush.
-      evidence.end(() => {
+      // Resolve only once the retained bytes are actually on disk and the
+      // underlying file descriptor is closed: the evidence file is the thing
+      // this function promises, and a caller that reads or removes it
+      // immediately must not race the flush or close.
+      const finish = () => {
         if (evidenceError !== null) {
           reject(new Error(`cannot retain output for command ${cmd.name} at ${opts.evidencePath}: ${evidenceError}`));
           return;
@@ -156,7 +157,13 @@ export function runVerifyCommand(
           outputOverflow,
           evidenceRef: opts.evidencePath,
         });
-      });
+      };
+      if (evidence.closed) {
+        finish();
+      } else {
+        evidence.on("close", finish);
+        evidence.end();
+      }
     };
 
     const keep = (chunk: Buffer, into: Buffer[]) => {

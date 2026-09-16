@@ -63,7 +63,7 @@ artifact the operator signed for appears there as an exact changed path —
 otherwise it blocks the run naming what is missing). The model each stage
 uses is frozen
 at `bw new-run --model` and every spend entry point checks it. Plus the
-documentation checker. Commands: see [`CLAUDE.md`](CLAUDE.md).
+documentation checker. Commands: see [`CLAUDE.md`](CLAUDE.md) / [`AGENTS.md`](AGENTS.md).
 
 Step 5b shipped: an author-led correction to the two review stages.
 [`docs/features/step5b-upstream-findings/plan.md`](docs/features/step5b-upstream-findings/plan.md)
@@ -111,7 +111,7 @@ threshold does not require changing the review-loop implementation.
   constraints.
 - [`docs/hazards.md`](docs/hazards.md) — failure modes this kind of system
   is subject to, and what each requires.
-- [`CLAUDE.md`](CLAUDE.md) — how to work in this repository.
+- [`CLAUDE.md`](CLAUDE.md) / [`AGENTS.md`](AGENTS.md) — how to work in this repository.
 
 ## Local operator guide
 
