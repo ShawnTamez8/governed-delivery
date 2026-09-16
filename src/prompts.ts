@@ -762,7 +762,7 @@ directly, with no surrounding prose, no markdown fences, and no commentary.
 ${reconciliationDecisionContract(
     "specification",
     "task or coverage line",
-    'a task\'s node text is the task itself and a coverage entry\'s is `AC-001 -> <artifact path>`, so write "AC-001 -> src/a.ts", never "- AC-001 -> src/a.ts".',
+    'a task\'s node text is the task itself and a coverage entry\'s is `AC-001 -> <artifact path>` or `AC-001 -> not_applicable: <rationale> / <alternative verification>`, so write "AC-001 -> src/a.ts" or the full not_applicable line, never "- AC-001 -> src/a.ts".',
     exampleDecisions
   )}
 
@@ -774,6 +774,15 @@ making it consistent is the work; inventing a requirement the specification
 never states is not, however reasonable that requirement looks. Where the
 specification leaves a decision open, route the concern upstream with a
 complete proposal candidate, or return cannot_determine.
+
+Every task in ## Tasks and every line in ## Coverage is a normative node.
+Do not casually edit, polish, or rephrase coverage entries (whether naming an
+artifact or marked not_applicable) when addressing findings in ## Tasks.
+If a coverage line is changed, replaced, or added, it is a normative change:
+the exact new line is an added node and the replaced line is a removed node,
+and both must be claimed in normativeChanges by an addressed decision
+grounded in the specification. Unclaimed coverage line changes will cause
+reconciliation validation to fail.
 
 The revised plan must satisfy the same document schema as before:
 - frontmatter with feature and plan_for

@@ -1,20 +1,41 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-16, verify-command cleanup fix and code review)
+## Current state (2026-09-16, plan-reconciliation prompt coverage-node fix)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
 system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
-**Working state:** Branch `guided-project-bootstrap` sits on HEAD with a clean
-tree following the commit of the `verify-command` cleanup race fix, code review,
-and documentation synchronization.
-Verification: `npm run typecheck` clean; `node --test test/verify-command.test.ts`
-8/8 passed; `npm test` 1,178 passed, 5 skipped, 0 failed; `npm run check:docs`
-clean. Independent code review at
-`docs/features/verification-stage/2026-09-16-code-review.md` is `reconciled`
-with 0 findings.
+**Working state:** Branch `guided-project-bootstrap` has diagnosed and fixed the
+plan reconciliation prompt coverage-node gap.
+Verification: `npm run typecheck` clean; `node --test test/prompts.test.ts` 25/25
+passed; `node --test test/reconciliation.test.ts` 48/48 passed; `npm test`
+1,180 passed, 5 skipped, 0 failed; `npm run check:docs` clean.
+Live paid run target preserved at `C:\Users\tamezs\buildWorks_test_repos\target-tap-live\target`.
+Loopback dashboard actively serving at `http://127.0.0.1:50773/#token=...`
+(shellId `dashboard-server`).
+
+**Completed (plan-reconciliation prompt coverage-node fix):**
+Paid live run on `target-tap` completed 10 dispatches ($1.55366 total cost),
+passing stages `spec`, `spec_review`, Ed25519 external `awaiting_approval`, and
+`plan`. Stage 5 (`plan_review`) blocked at round 1 reconciliation because the
+plan author addressed task findings in `## Tasks` and claimed them, but
+incidentally rephrased the alternative verification of an existing
+`not_applicable` coverage line (`AC-011`) without claiming it in
+`normativeChanges`. `planNormativeNodes` treats all coverage lines as normative
+nodes, so multiset comparison failed closed with audit event 34.
+Fixed:
+1. `src/prompts.ts`: `buildPlanReconcilePrompt` updated to include the
+   `not_applicable` line format in `nodeForm`; explicitly instructed that every
+   task in `## Tasks` and every line in `## Coverage` is a normative node;
+   prohibited casual rewording of coverage entries when addressing task findings;
+   and stated that any modified coverage line must have its added and removed
+   node forms claimed in `normativeChanges` with specification grounding.
+2. `test/prompts.test.ts`: Added new constraints to `CONSTRAINT_STRINGS` and
+   asserted them in the generated plan reconciliation prompt test.
+3. Retained debug analysis:
+   `.claude/sessions/2026-09-16-debug-plan-reconcile-unclaimed-coverage-node.md`.
 
 **Completed (verify-command cleanup race fix & documentation sync):**
 Intermittent Windows `EPERM` failure in `test/verify-command.test.ts` ("a hung
@@ -33,7 +54,7 @@ command is killed with its whole tree at the ceiling") diagnosed and resolved:
 4. Independent code review:
    `docs/features/verification-stage/2026-09-16-code-review.md` (`reconciled`,
    0 findings).
-6. Updated `.claude/skills/run-buildworks/SKILL.md` to align the sample
+5. Updated `.claude/skills/run-buildworks/SKILL.md` to align the sample
    verified smoke output block with actual CLI outputs (exit 1 `target_unavailable`
    on non-git directory and exit 2 `unknown command bogus`).
 

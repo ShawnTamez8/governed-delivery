@@ -93,6 +93,8 @@ const CONSTRAINT_STRINGS = [
   "Copy each canonical AC ID",
   "do not copy or paraphrase criterion prose",
   "not_applicable",
+  "every line in ## Coverage is a normative node",
+  "Do not casually edit, polish, or rephrase coverage entries",
   "proposedContentChanges.plan",
   // The patch rules the implementation prompt states.
   "proposedPatches",
@@ -756,7 +758,10 @@ test("the generated plan reconciliation prompt carries the spec as governing inp
     // neither. The spec side carries the same pair for its own forms.
     "a task's node text is the task itself",
     "`AC-001 -> <artifact path>`",
+    "`AC-001 -> not_applicable: <rationale> / <alternative verification>`",
     "Leave off the list marker",
+    "every line in ## Coverage is a normative node",
+    "Do not casually edit, polish, or rephrase coverage entries",
     // The one-artifact rule, and the move that answers a second-artifact
     // finding without breaching it. This is the builder the measured block
     // came from.
