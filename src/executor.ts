@@ -23,13 +23,6 @@ export interface ExecutorDefinition {
 }
 
 /**
- * Idle timeout for large generation tasks (implementation authoring and
- * code-review remediation) that output multiple complete files or patches
- * in a single non-streaming payload.
- */
-export const LARGE_GENERATION_IDLE_TIMEOUT_SECONDS = 1800;
-
-/**
  * The one executor, hardcoded rather than loaded from configuration: a
  * config loader for a single fixed definition would be an abstraction with
  * no second consumer yet (hard rule 4). The shape matches section 11's YAML
@@ -74,6 +67,18 @@ export const CLAUDE_CODE: ExecutorDefinition = {
     allowedPaths: ["docs/features/**"],
     deniedPaths: [`${GOVERNANCE_PREFIX}**`],
     commandAllowlist: [],
+    // The only place the idle budget is decided. `--output-format json` is
+    // non-streaming, so no output arrives until generation completes and the
+    // idle budget is in practice the whole generation time for every stage;
+    // the recorded implementation dispatch ran 780,568 ms. Stages must not
+    // pass their own `idleTimeoutSeconds` — `invokeHarness` prefers a
+    // call-site value over this one, so a second decision here would let a
+    // live constant silently outrank the run's frozen profile (hard rule 6).
+    //
+    // Every field in this sandbox is inside the canonical-JSON comparison
+    // `requireFrozenBinding` makes, so changing any of them refuses every run
+    // frozen before the change, at its next dispatch, with no in-place repair
+    // path (hazard 6). Change them when no run is in progress.
     idleTimeoutSeconds: 1800,
     absoluteTimeoutSeconds: 3600,
     envPassthrough: ["PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "SystemRoot"],

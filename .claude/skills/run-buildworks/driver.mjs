@@ -5,6 +5,10 @@
 //   node .claude/skills/run-buildworks/driver.mjs prepare   # just build the target
 //   node .claude/skills/run-buildworks/driver.mjs paid --yes # real model spend
 //
+// Options: --design <path> drives a custom requirements document instead of
+// the committed web-calculator design, --slug <slug> names the feature it is
+// written to (lowercase kebab-case), --model <id>, --dir <path>.
+//
 // bw governs the repository it is run *in*, so every invocation here sets cwd
 // to a scratch repository built by prepareTarget() — never this one. The
 // scratch repo is left on disk; its path is the last line of output.
@@ -40,6 +44,7 @@ let target = null;
 let env = process.env;
 
 const DEFAULT_SLUG = "web-calculator";
+const DEFAULT_DESIGN = join(SKILL_DIR, "web-calculator-design.md");
 
 // The design lives beside this file rather than inside it. Two reasons, both
 // learned rather than assumed: a design is content, and pasting prose into a
@@ -48,15 +53,41 @@ const DEFAULT_SLUG = "web-calculator";
 // swapping the design is the normal way to change what a paid run exercises,
 // so it should not be a code edit.
 //
-// This file is the requirements document a completed paid run was governed by
-// (2026-09-04, $1.34097, 11 dispatches, all eight stages passed, four
-// artifacts delivered), byte for byte. It replaced a three-criterion clamp
-// design that ran for $0.24558 but produced clean panels every time: no
+// The default file is the requirements document a completed paid run was
+// governed by (2026-09-04, $1.34097, 11 dispatches, all eight stages passed,
+// four artifacts delivered), byte for byte. It replaced a three-criterion
+// clamp design that ran for $0.24558 but produced clean panels every time: no
 // findings, no reconciliation decisions, and therefore no exercise of the
 // review, remediation, or normative-accounting paths that most of the system
 // is. A design too small to attract a finding cannot test a governed chain,
 // and that is what the cheaper design was actually measuring.
-const DESIGN = readFileSync(join(SKILL_DIR, "web-calculator-design.md"), "utf8");
+//
+// `--design <path>` drives a different requirements document without
+// overwriting that record, and `--slug <slug>` names the feature directory it
+// is written to. They are independent: the slug is what the target repository
+// and the run agree on, and the design is the bytes. A custom design is worth
+// pairing with its own slug, because a run's identity is the project, feature,
+// slug and change-kind tuple, and reusing `web-calculator` for different
+// requirements makes two runs indistinguishable in the store.
+const SLUG = value("slug", DEFAULT_SLUG);
+if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(SLUG)) {
+  // The same pattern src/store.ts enforces, applied here because this value is
+  // interpolated into a filesystem path before the CLI ever sees it.
+  console.error(`invalid --slug ${SLUG}: must be lowercase kebab-case`);
+  process.exit(2);
+}
+const DESIGN_PATH = resolve(value("design", DEFAULT_DESIGN));
+if (!existsSync(DESIGN_PATH)) {
+  console.error(`design file not found: ${DESIGN_PATH}`);
+  process.exit(2);
+}
+const DESIGN = readFileSync(DESIGN_PATH, "utf8");
+if (DESIGN.trim() === "") {
+  // Every dispatch downstream reads this file. An empty one buys a paid chain
+  // against no requirements at all.
+  console.error(`design file is empty: ${DESIGN_PATH}`);
+  process.exit(2);
+}
 
 function exec(file, argv, opts = {}) {
   const r = spawnSync(file, argv, {
@@ -120,11 +151,11 @@ function prepareTarget(root) {
   );
   // The spec stage reads docs/features/<slug>/design.md from the target — the
   // one human-authored input in the whole chain. The slug has to match the
-  // run's, so this file and newRunArgs() share DEFAULT_SLUG. Deliberately
-  // small: every dispatch downstream reads it, and a vague design is what
+  // run's, so this file and newRunArgs() share SLUG. Deliberately small by
+  // default: every dispatch downstream reads it, and a vague design is what
   // makes a chain expensive.
-  mkdirSync(join(repo, "docs", "features", DEFAULT_SLUG), { recursive: true });
-  writeFileSync(join(repo, "docs", "features", DEFAULT_SLUG, "design.md"), DESIGN);
+  mkdirSync(join(repo, "docs", "features", SLUG), { recursive: true });
+  writeFileSync(join(repo, "docs", "features", SLUG, "design.md"), DESIGN);
   git("add", "-A");
   git("commit", "-qm", "scratch target");
   const head = exec("git", ["rev-parse", "HEAD"], { cwd: repo }).stdout.trim();
@@ -140,7 +171,7 @@ function prepareTarget(root) {
   return { root, repo, keys, key: join(keys, "approval.key"), pub, head };
 }
 
-function newRunArgs(slug = DEFAULT_SLUG) {
+function newRunArgs(slug = SLUG) {
   return ["new-run", "--project", "smoke", "--feature", slug, "--slug", slug,
           "--change-kind", "feature", "--model", value("model", "claude-sonnet-5")];
 }
@@ -218,6 +249,11 @@ function paidChain() {
   const probe = exec("claude", ["--version"]);
   if (probe.status !== 0) throw new Error("claude is not on PATH: the paid chain cannot run");
   console.log(`claude ${probe.stdout.trim()}`);
+  // What this run is about to buy, printed before the first dispatch: the cost
+  // record names a slug, and a slug alone does not say which requirements
+  // document produced it.
+  console.log(`design: ${DESIGN_PATH} (${DESIGN.length} bytes)`);
+  console.log(`slug:   ${SLUG}`);
 
   step("migrate", { exit: 0, match: /migrations applied/ }, () => bw(["migrate"]));
   const created = step("new-run", { exit: 0, match: /^\d+$/m }, () => bw(newRunArgs()));
@@ -395,6 +431,8 @@ env = { ...process.env, BW_APPROVAL_PUBLIC_KEY: target.pub };
 if (command === "prepare") {
   console.log(`target repository: ${target.repo}`);
   console.log(`starting commit:   ${target.head}`);
+  console.log(`design:            ${DESIGN_PATH}`);
+  console.log(`feature slug:      ${SLUG}`);
   console.log(`public key:        ${target.pub}`);
   console.log(`private key:       ${target.key}`);
   console.log(`\ndrive it with:\n  cd ${target.repo}`);

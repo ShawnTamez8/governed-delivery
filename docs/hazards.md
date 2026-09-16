@@ -70,6 +70,21 @@ The retained response is committed at
 `test/fixtures/recorded/implementation-simple-game-embedded-markdown-fence.json`
 and is the contract test.
 
+**What the anchoring costs, and why the cost is accepted.** Requiring each
+delimiter to begin its own line narrows the enumeration above, deliberately. A
+body whose final `}` and closing delimiter share a line no longer matches and
+falls through to the unfenced path. That shape has never been measured and is
+not in the list, and the lookbehind that refuses it is the same one that makes
+this item solvable, so it is accepted rather than worked around: there is no
+way to keep it without reopening the truncation this instance cost $2.83862 to
+find. Two things stop that narrowing from repeating item 8's failure. The
+opening delimiter is ` ```+ `, so a fence of four or more backticks is still
+accepted — that shape briefly regressed and was restored. And when the body
+carries a backtick run beginning a line, the refusal names the anchoring rule
+instead of claiming there was no fence, which is hazard 2: the operator who
+reads "no fence" about a body that visibly has one goes looking for the wrong
+thing. Read this item as "one fenced block, each delimiter alone on its line."
+
 ## 2. Discarded output is undiagnosable
 
 A rejected response whose bytes were discarded leaves only a truncated fragment

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CLAUDE_CODE, LARGE_GENERATION_IDLE_TIMEOUT_SECONDS } from "../src/executor.ts";
+import { CLAUDE_CODE } from "../src/executor.ts";
 
 test("the executor identity is claude-code", () => {
   assert.equal(CLAUDE_CODE.id, "claude-code");
@@ -69,7 +69,6 @@ test("session cost is declared reported, matching the recorded envelope", () => 
 
 test("the absolute ceiling is a multiple of the idle budget", () => {
   assert.equal(CLAUDE_CODE.sandbox.idleTimeoutSeconds, 1800);
-  assert.equal(LARGE_GENERATION_IDLE_TIMEOUT_SECONDS, 1800);
   assert.ok(CLAUDE_CODE.sandbox.absoluteTimeoutSeconds > CLAUDE_CODE.sandbox.idleTimeoutSeconds);
 });
 

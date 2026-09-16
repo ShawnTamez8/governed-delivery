@@ -743,9 +743,11 @@ test("the generated plan reconciliation prompt carries the spec as governing inp
     "Copy each canonical AC ID",
     "cite its AC ID",
     "Do not return an impact field",
-    // The plan side's own copy of the removal obligation, for the reason the
-    // conditional-field matrix is asserted twice: one shared builder, and
-    // nothing structural notices a sentence tested on one prompt only.
+    // The plan side's own copy of the removal obligation and of the
+    // single-claim rule, for the reason the conditional-field matrix is
+    // asserted twice: one shared builder, and nothing structural notices a
+    // sentence tested on one prompt only.
+    "superseded half counts as a removed node",
     "across the entire revision must be claimed",
     "Never duplicate or repeat the same node across multiple decisions",
     "Deleting an obligation is not a way to answer a finding",

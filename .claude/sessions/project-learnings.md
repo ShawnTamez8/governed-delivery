@@ -1,40 +1,86 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-15, two uncommitted layers on `guided-project-bootstrap`)
+## Current state (2026-09-16, review closure on `guided-project-bootstrap`)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
 system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
-**Working state:** Branch `guided-project-bootstrap` still sits on `3415032`
-with nothing committed, verified by `git rev-parse HEAD` and `git status
---porcelain`: 33 modified tracked files plus 11 untracked paths, 44 total. It
-now carries **two distinct layers**. Layer 1 is the guided project bootstrap.
-Layer 2 landed 2026-09-14 between 12:37 and 15:21 and the previous resume
-point — saved 10:00 that morning — does not mention it, so its file count grew
-from 23+10 without explanation. `git status --short` is the authoritative list.
-`CLAUDE.md` and `AGENTS.md` remain byte-identical and document the guided
-entrypoint and the `dashboard` command alongside the low-level inventory.
+**Working state:** Branch `guided-project-bootstrap` sits on `3235d23`, "Add
+guided bootstrap, anchor JSON fences, raise the generation timeout", verified by
+`git rev-parse HEAD`. Both layers the previous resume point described as
+uncommitted landed in that one commit on 2026-09-15 at 23:23, with a message
+that records all three changes and the retrospective plan and review. The
+2026-09-16 working tree carries ten modified tracked files and no untracked
+paths: the four closing changes below plus their documents. `git status
+--porcelain` is the authoritative list. Nothing is committed yet for today's
+work. Verification of it: `npm run typecheck` exit 0; `npm test` 1,183 tests,
+1,178 passing, 5 skipped, 0 failing — the recorded baseline; `npm run
+check:docs` clean; `git diff --check` exit 0; the free driver smoke 13/13. No
+paid dispatch was made.
 
-**Completed (layer 1):** `docs/features/guided-project-bootstrap/plan.md` is
-`Implemented` — Tasks 1-10 shipped. `2026-09-13-plan-review.md` is `reconciled`
-(3 accepted, 0 open) and `2026-09-13-code-review.md` is `reconciled` (8
-accepted, 0 open) after a final independent closure review reporting 0
-findings. Verification at closure: `npm test` 1,173 passed with 5 pre-existing
-skips, typecheck/docs/diff clean, the free smoke 13/13, and a fixture-backed
-guided journey that reached completed delivery with USD 0 across every agent
-row. `docs/runbooks/cli-operator.md` section 3 documents both guided paths.
+**Completed (layer 1, guided project bootstrap):**
+`docs/features/guided-project-bootstrap/plan.md` is `Implemented` — Tasks 1-10
+shipped. `2026-09-13-plan-review.md` is `reconciled` (3 accepted, 0 open) and
+`2026-09-13-code-review.md` is `reconciled` (8 accepted, 0 open) after a final
+independent closure review reporting 0 findings. `docs/runbooks/cli-operator.md`
+section 3 documents both guided paths.
 
-**In flight (layer 2):** Implemented and passing, but **undocumented** — no
-`docs/features/` plan, no review record, and no entry in this file before the
-2026-09-15 record below. It is three changes: the hazard-1 item 9 fence fix in
-`src/parse-output.ts` with its recorded fixture and two tests; the
-`normativeChanges` single-claim rule in `src/prompts.ts`; and an idle-timeout
-raise from 600 to 1800 seconds in `src/executor.ts` applied explicitly at the
-implementation-author and code-review-remediation dispatches. The measured
-`docs/hazards.md` item 9 entry plus the committed fixture is its only written
-record. Nobody has reviewed it.
+**Completed (layer 2, fence anchoring and the idle timeout):** Written up
+retrospectively at `docs/features/unfenced-json-extraction/plan.md`
+(`Implemented`, `## Amendment (2026-09-14)`) and reviewed at
+`2026-09-15-code-review.md`, which is **`reconciled` as of 2026-09-16** — seven
+findings, none open. Findings 1, 3 and 7 were fixed before the commit; 2, 4, 5
+and 6 were closed after it:
+
+- **5.** `LARGE_GENERATION_IDLE_TIMEOUT_SECONDS` and both call-site overrides
+  are deleted. The effective idle budget is still 1800 everywhere, which the
+  operator required for large PRDs: `requireFrozenBinding` guarantees frozen and
+  live executors are canonically identical before any dispatch, and
+  `src/dispatch.ts` supplies no default, so `src/harness.ts` resolves the frozen
+  `sandbox.idleTimeoutSeconds`. The frozen profile is now the only place the
+  budget is decided (hard rule 6). No test exercises a real 1800-second wait and
+  none was added — suite runtime is unchanged, which was an explicit operator
+  constraint.
+- **4.** The stranding constraint is recorded in a comment at
+  `CLAUDE_CODE.sandbox.idleTimeoutSeconds`: every field of that sandbox is
+  inside the canonical-JSON comparison, so changing any of them refuses every
+  run frozen before the change, with no in-place repair path (hazard 6).
+- **2.** `docs/hazards.md` item 9 now states that each delimiter must begin its
+  own line, that a closing fence sharing a line with content is therefore
+  refused, and why that cost is accepted. Read item 9 as "one fenced block, each
+  delimiter alone on its line."
+- **6.** The plan-side `"superseded half counts as a removed node"` scan is
+  restored in `test/prompts.test.ts`, proved by breaking: the altered assertion
+  failed with the plan-side message and nothing else, and the file restored to
+  SHA-256 `2306b8f7…`.
+
+**Also done 2026-09-16:** `.claude/skills/run-buildworks/driver.mjs` takes
+`--design <path>` and `--slug <slug>`, so a custom PRD no longer requires
+overwriting `web-calculator-design.md` — which is the byte-for-byte document the
+recorded 2026-09-04 and 2026-09-07 cost records were governed by. Defaults are
+unchanged, both values print before the first paid dispatch, and the driver
+refuses a non-kebab-case slug, an absent design, or an empty one before building
+anything. `SKILL.md` documents it under "Driving a custom PRD".
+
+**The custom PRD exists and is committed.** The operator supplied
+`C:\Users\tamezs\Downloads\Target Tap.md`; it is copied into the repository at
+`.claude/skills/run-buildworks/target-tap-design.md` (18,912 bytes, slug
+`target-tap`) because a machine-local Downloads path cannot govern a paid run
+whose cost record has to mean something later. The only change is stripped
+trailing whitespace on 236 lines — none had the two trailing spaces that make a
+Markdown hard break — and LF endings; content equivalence was proved by
+whitespace-normalized comparison. The free smoke drove it 13/13 with the design
+committed at `docs/features/target-tap/design.md` in the scratch target and a
+clean tree. **It has never been run against a provider and has no cost history.**
+It is about seven times the size of the web calculator (18,912 against 2,813
+bytes), and the design travels into every downstream dispatch, so budget above
+the $1.34–$2.06 the recorded runs cost. Two known gaps before spending: the
+scratch target's frozen verification commands are still only `node --version`
+and `npm --version`, so a `passed` verification will say nothing about whether
+the game works, and the PRD asks for unit, component, end-to-end, lint and
+accessibility checks that nothing in the chain will execute.
 
 **Decisions locked:** Hard Rule 2 holds — the guided initializer lives inside
 the existing CLI mutation authority and creates no private key, signer, package
@@ -45,31 +91,31 @@ is `static-web`. Guided mode is interactive only and refuses redirected input
 before mutation or spend. Run identity is the exact project, feature ID, slug
 and change-kind tuple; ambiguity refuses with IDs instead of choosing the
 newest. Installation is `npm install --global <absolute-checkout>`, not a packed
-or published artifact.
+or published artifact. The idle budget is 1800 seconds and stays there, decided
+only by the frozen sandbox.
 
 **Implementation boundary:** Presentation narrows, never alters. Interactive UI
 mutation, remote access, a second harness, a production executor switch, and
 fabricated telemetry remain unauthorized. No paid execution is authorized.
 
-**Running state:** A read-only dashboard is serving
-`http://127.0.0.1:61419` from this checkout over the two targets below. It is
-attached to the Copilot session that started it and dies with that session; its
-PID was not captured. Port and bearer token are process-lifetime only and
-change on every restart. Two targets hold real run state: the completed paid
-target `C:\Users\tamezs\buildWorks_test_repos\target` ($2.06, 16/16
-dispatches), and `C:\Repositories\testing-repos\simple-game-test`, a Git
-worktree with its own `.governance\state.db`. **Both temp-directory targets
-named by the previous resume point are gone** — the $1.81 blocked target and
-the whole `%TEMP%\bw-run-skill` tree no longer exist, as the logoff deletion
-timer predicted. No browser automation, background agent, or paid process is
-running.
+**Running state:** Nothing is running — no dashboard, no browser automation, no
+background agent, no paid process. The 2026-09-15 dashboard on
+`http://127.0.0.1:61419` died with the session that started it. One target holds
+real run state at `C:\Users\tamezs\buildWorks_test_repos\target` ($2.06, 16/16
+dispatches), with `C:\Repositories\testing-repos\simple-game-test` a Git
+worktree carrying its own `.governance\state.db` and three blocked runs. The
+`%TEMP%\bw-run-skill` tree was recreated by today's free smoke and deleted again
+with `driver.mjs clean`; no scratch target survives.
 
-**Open/deferred:** Layer 2 needs a review record and a commit decision, and the
-operator has made neither. `git diff --check` is no longer clean — one trailing
-blank line at `test/recorded-implementation-response.test.ts:79`, from layer 2.
-The `verify-command` EPERM cleanup race has now
-failed a **second** full suite, so `.claude/sessions/2026-09-13-debug-verify-cleanup-eperm.md`
-step 3 is live: preserve handle evidence and investigate, never a blind retry.
+**Open/deferred:** Today's ten modified files are unreviewed and uncommitted —
+the operator has made no commit decision. The `verify-command` EPERM cleanup
+race failed a **third** full suite on 2026-09-16 (`test/verify-command.test.ts`,
+"a hung command is killed with its whole tree at the ceiling"), and the
+immediate rerun passed at the full baseline. Its error text was lost: the first
+run's output was filtered to a summary, so the third occurrence produced no new
+handle evidence and
+`.claude/sessions/2026-09-13-debug-verify-cleanup-eperm.md` step 3 is still
+unsatisfied. Retain full output on any run that might carry it.
 `.claude/skills/run-buildworks/SKILL.md` carries a drifted "Verified output,
 2026-08-31" block — two sample lines no longer match while all 13 steps pass —
 and the operator has not decided whether to refresh it. Manual browser
@@ -78,8 +124,15 @@ deferred `RunSnapshot` agent-field projection keeps model, harness and duration
 rendering as unavailable. Production interactive guided mode is still proved as
 two composed checks, because redirected stdin is refused by design.
 
-**Next up:** Review and document layer 2, then present both layers for the
-operator's commit decision. Do not run a paid chain.
+**Next up:** The paid live chain against `target-tap` is ready to authorize and
+**not** authorized. Everything free is done: the PRD is committed, the driver
+drives it, and the smoke passes 13/13. What remains is the operator's decision
+on three things — whether to spend at all, whether an unknown cost above $2.06
+is acceptable, and whether to accept a `verify` stage that runs only two version
+probes against a PRD demanding five kinds of test. Do not run
+`driver.mjs paid --yes --design .claude/skills/run-buildworks/target-tap-design.md
+--slug target-tap` before that decision. Today's eleven modified files also
+still await a commit decision.
 
 ## Diagnostics quick-reference
 

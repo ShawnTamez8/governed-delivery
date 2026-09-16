@@ -190,25 +190,29 @@ expect to find it here only by way of this note.
   `src/reconciliation.ts` `convert()` already does; it constrains the model, not
   the code. `test/prompts.test.ts` scans for it on both reconciliation prompts —
   see review finding 6 for what the plan-side scan lost in the process.
-- **The idle timeout raised from 600 to 1800 seconds.** `src/executor.ts:77`
-  and `ARCHITECTURE.md:483`, plus a new exported
-  `LARGE_GENERATION_IDLE_TIMEOUT_SECONDS` applied at
-  `src/implementation-stage.ts:387` and `src/code-review-stage.ts:515`. The
-  executor runs `--output-format json`, which is non-streaming, so no output
-  arrives until generation completes and the idle budget is in practice the
-  total generation time; the recorded implementation dispatch ran 780,568 ms
-  against the old 600-second budget. `absoluteTimeoutSeconds` stays 3600.
-  Review findings 4 and 5 are about the two consequences nobody checked: every
-  profile frozen at 600 now fails `requireFrozenBinding`, and the timeout is
-  decided in two places that agree only by coincidence.
+- **The idle timeout raised from 600 to 1800 seconds.** `src/executor.ts` and
+  `ARCHITECTURE.md:483`. The executor runs `--output-format json`, which is
+  non-streaming, so no output arrives until generation completes and the idle
+  budget is in practice the total generation time; the recorded implementation
+  dispatch ran 780,568 ms against the old 600-second budget.
+  `absoluteTimeoutSeconds` stays 3600. As shipped on 2026-09-14 this also added
+  an exported `LARGE_GENERATION_IDLE_TIMEOUT_SECONDS` applied at
+  `src/implementation-stage.ts` and `src/code-review-stage.ts`; review findings
+  4 and 5 were about the two consequences nobody checked, and both are closed on
+  2026-09-16. The constant and both call-site overrides are gone, so the frozen
+  sandbox is the only place the idle budget is decided and every stage resolves
+  1800 from the run's own profile. The remaining consequence is recorded at the
+  field: every profile frozen at 600 fails `requireFrozenBinding`, and changing
+  any sandbox field does the same to every run frozen before the change.
 
 ### Gate
 
 Tasks A1–A4 done; `npm run typecheck` exit 0; the full suite at its known
 baseline; `npm run check:docs` clean; `git diff --check` exit 0. The review of
-2026-09-15 is `partially reconciled`: findings 1, 3 and 7 are fixed and 2, 4, 5
-and 6 remain open with recorded dispositions. Finding 4 is the one a future
-editor must not rediscover — changing any field of `CLAUDE_CODE.sandbox` makes
-`requireFrozenBinding` refuse every run frozen before the change, and there is
-no in-place repair path for an `in_progress` run. Nothing here authorizes a
-paid run.
+2026-09-15 is `reconciled` as of 2026-09-16: findings 1, 3 and 7 were fixed
+before the commit and 2, 4, 5 and 6 were closed after it, leaving none open.
+Finding 4 is the one a future editor must not rediscover — changing any field of
+`CLAUDE_CODE.sandbox` makes `requireFrozenBinding` refuse every run frozen
+before the change, and there is no in-place repair path for an `in_progress`
+run. That constraint now sits in a comment at the field itself. Nothing here
+authorizes a paid run.

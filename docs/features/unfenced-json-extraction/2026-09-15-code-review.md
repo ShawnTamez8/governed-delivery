@@ -6,8 +6,9 @@ same session as this review because the changes shipped without a governing plan
 
 **Review date:** 2026-09-15
 **Effort:** high
-**Status:** partially reconciled — findings 1, 3 and 7 fixed on 2026-09-15;
-findings 2, 4, 5 and 6 remain open. See the reconciliation block at the end.
+**Status:** reconciled — findings 1, 3 and 7 fixed on 2026-09-15; findings 2, 4,
+5 and 6 closed on 2026-09-16. No finding remains open. See the two
+reconciliation blocks at the end.
 
 **Hazards considered:** 1 is the entry the main change belongs to — item 9 is
 new, and the review's central question was whether anchoring the closing fence
@@ -361,3 +362,75 @@ restored byte-identically both times, SHA-256
 **Verification after the fixes.** `npm run typecheck` exit 0;
 `node --test test/parse-output.test.ts test/recorded-implementation-response.test.ts`
 17/17 passing.
+
+---
+
+## Reconciliation (2026-09-16): the four remaining findings
+
+The operator closed findings 2, 4, 5 and 6. Nothing above has been rewritten;
+this block carries their dispositions, and the 2026-09-15 block above stands as
+written. The review is now `reconciled`.
+
+**Finding 5 — fixed, and the operator's constraint is preserved.** The operator
+required that the effective idle budget remain 1800 seconds, on the evidence
+that a PRD with many or complex features needs it. Removing the call-site
+override does not change it. `requireFrozenBinding` runs before either stage
+constructs a dispatch (`src/implementation-stage.ts:108`,
+`src/code-review-stage.ts:96`) and compares the whole executor by canonical
+JSON, so any run that reaches a dispatch has a frozen `idleTimeoutSeconds`
+identical to the live one; `src/dispatch.ts:57-61` spreads the stage's
+`invocation` into the harness input without supplying a default, so with the
+override gone `src/harness.ts:212` resolves `undefined ??
+executor.sandbox.idleTimeoutSeconds` and every stage runs on the frozen 1800.
+`LARGE_GENERATION_IDLE_TIMEOUT_SECONDS` and both call-site overrides are
+deleted, and `src/executor.ts` now states at the field that it is the only
+place the idle budget is decided and why a stage must not pass its own. The
+operator also directed that no test may exercise a real 1800-second wait; none
+was added, and none existed — `test/executor.test.ts` asserts the constant
+instantly, the stage fixtures use 30, and the only live waits in the suite are
+the 1-second timeout paths at `test/harness.test.ts:165,177` and
+`test/dispatch.test.ts:101`. Suite runtime is unchanged.
+
+**Finding 4 — fixed, as the recorded constraint the finding asked for.** The
+comment now sits at `CLAUDE_CODE.sandbox.idleTimeoutSeconds` rather than only in
+the plan amendment, and it states the general rule rather than the instance:
+every field of this sandbox is inside the canonical-JSON comparison, so changing
+any of them refuses every run frozen before the change at its next dispatch,
+with no in-place repair path (hazard 6). Nothing is enforced in code, which
+remains correct — the binding check is the enforcement, and its refusal is the
+intended behaviour, not the defect.
+
+**Finding 2 — fixed, as documentation, which is what the finding asked for.**
+`docs/hazards.md` item 9 gains a paragraph stating that each delimiter must
+begin its own line, that a body whose final `}` shares a line with the closing
+fence is therefore refused, and why that cost is accepted: the lookbehind that
+refuses it is the same one that makes item 9 solvable, and there is no way to
+keep the shape without reopening the $2.83862 truncation. It records the two
+things that stop the narrowing from repeating item 8 — the `` ```+ `` opening
+delimiter and the refusal that names the anchoring rule — and closes with the
+one-line reading a future reviewer needs: one fenced block, each delimiter alone
+on its line. The operator separately confirmed that the anchoring as it stands
+is the behaviour they exercised against the test repository, and the only
+changes made to `src/parse-output.ts` after that exercise were the finding 1 and
+finding 3 fixes, which widen acceptance and change refusal wording respectively.
+
+**Finding 6 — fixed.** `"superseded half counts as a removed node"` is restored
+to the plan-side scan alongside the two duplicate-claim strings, and the comment
+above the group now describes both obligations instead of only the one it was
+written for.
+
+**Proved by breaking.** The restored plan-side assertion was changed to a
+string absent from the prompt; `node --test test/prompts.test.ts` then failed
+with exactly `plan reconcile prompt missing: SUPERSEDED-BREAK-PROBE counts as a
+removed node` and nothing else, proving the assertion runs against the plan
+prompt rather than passing on the spec-side copy. `test/prompts.test.ts` was
+restored byte-identically, SHA-256
+`2306b8f7022d332fa5537d099dd05f6fb49805b4eeff5bea6369be6cdbfef04f`. Finding 5's
+removal is not a guard and has no break-test; it is proved by the call chain
+above and by the suite.
+
+**Verification after these fixes.** `npm run typecheck` exit 0;
+`node --test` over `executor`, `prompts`, `implementation-stage`,
+`code-review-stage`, `harness` and `dispatch` — 139 tests, 138 passing, 1
+skipped, 0 failing; `node --test test/prompts.test.ts` 25/25 after the restore;
+the free driver smoke 13/13. No paid dispatch was made.

@@ -103,7 +103,10 @@ node .claude/skills/run-buildworks/driver.mjs report --dir <target> # what a fin
 node .claude/skills/run-buildworks/driver.mjs clean                 # delete every scratch target
 ```
 
-`--dir <path>` overrides the scratch location, `--model <name>` the model.
+`--dir <path>` overrides the scratch location, `--model <name>` the model,
+`--design <path>` the requirements document, and `--slug <slug>` the feature
+directory it is written to. The last two are how a run exercises something
+other than the web calculator; see "Driving a custom PRD" below.
 
 ## Run: the paid chain (spends real money)
 
@@ -164,7 +167,8 @@ is what `run 1 (clamp)` names in both. It now commits
 `.claude/skills/run-buildworks/web-calculator-design.md` under the slug
 `web-calculator`: a requirements document in PRD form — purpose, goals, scope,
 fifteen `RQ-###` functional requirements and five `NFR-###` non-functional
-ones. Change what a paid run exercises by editing that file, not the driver.
+ones. Change what a paid run exercises with `--design`, or by editing that file
+— never by editing the driver.
 
 The reason is not realism for its own sake. Every clamp run produced clean
 review panels: no findings, so no reconciliation decisions, so no exercise of
@@ -242,6 +246,69 @@ patch evidence, and verification logs. Code review creates no proposal, spike,
 waiver, or human-review decision. The fixture-backed `high-then-clean` stage
 test is the free remediation exercise; the 13-step smoke remains dispatch-free.
 
+## Driving a custom PRD
+
+`--design <path>` replaces the requirements document and `--slug <slug>` names
+the feature directory it is written to. Both work on `smoke`, `prepare` and
+`paid`, and both default to the committed web calculator, so an invocation
+without them is byte-for-byte what it was before.
+
+```bash
+node .claude/skills/run-buildworks/driver.mjs prepare \
+  --design ./my-prd.md --slug widget-shop
+node .claude/skills/run-buildworks/driver.mjs smoke \
+  --design ./my-prd.md --slug widget-shop
+```
+
+Use them together. A run's identity is the project, feature, slug and
+change-kind tuple, so pointing a second requirements document at
+`web-calculator` makes two runs that cannot be told apart in the store or in
+this skill's records. Give a new PRD its own kebab-case slug.
+
+Two designs are committed beside this file:
+
+| Design | Slug | Size | Status |
+|---|---|---|---|
+| `web-calculator-design.md` | `web-calculator` | 2,813 bytes | Exercised — 2026-09-04 ($1.34097, 11 dispatches) and 2026-09-07 ($1.39473, 13 dispatches) |
+| `target-tap-design.md` | `target-tap` | 18,912 bytes | **Never run.** No cost history |
+
+`target-tap-design.md` is a browser-game PRD in the operator's own format —
+12 `FR-##` functional requirements, 12 `AC-##` acceptance criteria, 10 `T-##`
+tests, plus accessibility, performance and delivery-evidence sections. It is
+about seven times the size of the web calculator, and the design travels into
+every downstream dispatch, so assume it costs more than the $1.34–$2.06 the
+recorded runs did. Nobody knows how much more. It is committed from
+`Target Tap.md` with trailing whitespace stripped and LF endings, which is the
+only difference from the operator's original.
+
+The path is resolved against the directory you invoke from, not the skill
+directory, and the driver refuses before building anything if the slug is not
+lowercase kebab-case, the design file is absent, or it is empty — an empty
+design buys a paid chain against no requirements at all. `prepare` and `paid`
+both print the design path and slug in use; on a paid run that line appears
+before the first dispatch, because the cost record names only a slug and a slug
+does not say which document produced it.
+
+What this does **not** do is make a paid run authorized. A custom PRD is
+unexercised by definition: nobody knows what it costs, which stages it blocks
+at, or whether its requirements are answerable. Drive the free smoke with it
+first, then get explicit authorization for the spend.
+
+**A driver run does not test what the PRD asks for.** `prepareTarget()` freezes
+`governed.yaml` with two cheap probes, `node --version` and `npm --version`, and
+those are the commands `verify` runs and the ones code-review remediation
+re-runs. A PRD that demands unit, component, end-to-end, lint and accessibility
+checks — Target Tap demands all five — still gets a `verify` stage that proves
+only that Node and npm exist. The chain's `passed` verification is therefore not
+evidence the delivered game works; the 2026-09-07 calculator run needed a manual
+check afterward for exactly this reason. Changing those commands means the
+scratch target must be able to install and run a real toolchain, which is a
+larger decision than swapping a design, so it has not been made.
+
+Do not edit `web-calculator-design.md` to run something else. It is the
+document the recorded 2026-09-04 and 2026-09-07 runs were governed by, and
+those cost records mean nothing once the bytes behind them change.
+
 ## Driving it by hand
 
 `prepare` prints the target path, both key paths, and a ready-made `migrate`
@@ -287,10 +354,11 @@ Then any command from the CLI's advanced usage. Keep
   stage costs money. There is no offline mode.
 - **The spec stage needs `docs/features/<slug>/design.md` in the target**, with
   `<slug>` matching `--slug`. Missing, it fails with `cannot read design
-  document …`. The driver commits
+  document …`. By default the driver commits
   `.claude/skills/run-buildworks/web-calculator-design.md` under the slug
-  `web-calculator`; a vague design is what makes a chain expensive, and a
-  trivial one is what makes it prove nothing.
+  `web-calculator`; `--design` and `--slug` replace both together. A vague
+  design is what makes a chain expensive, and a trivial one is what makes it
+  prove nothing.
 - **A target repo does not need to gitignore `.governance/`.** `openStore()`
   creates it before the clean-tree check, so `new-run` filters `.governance/`
   out of the porcelain output (hazard 11). Verified: a repo with no
