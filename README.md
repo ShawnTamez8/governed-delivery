@@ -11,13 +11,15 @@ validation.
 
 ## Status
 
-The local operator CLI provides no-spend readiness and inspection, explicit
-run creation, consent-bounded continuation, and external approval file
-transport. It also launches an authorized loopback-only, read-only dashboard
-over explicitly selected local repositories. See the
-[operator guide](#local-operator-guide). `bw` in the
-description below is shorthand for the checkout-local Node invocation, not
-an executable installed on PATH by `npm install`.
+The local operator CLI provides a guided `buildworks` entrypoint that can
+initialize one concrete static-web project, commit the operator-authored
+design, select or create an exact run identity, obtain consent for each paid
+range, and resume the existing governed stages. Approval remains an external
+signature handoff: BuildWorks exports canonical bytes and imports a detached
+signature but never receives private-key authority. The same CLI retains
+no-spend readiness and inspection, explicit low-level commands, and an
+authorized loopback-only, read-only dashboard over explicitly selected local
+repositories. See the [operator guide](#local-operator-guide).
 
 Build order steps 1-8 implemented: run store, stage chain, and audit chain
 over SQLite; the concrete harness adapter (`bw dispatch` spawns the `claude`
@@ -118,16 +120,119 @@ For a start-to-finish procedure, use the
 project setup, external approval, delivery inspection, and troubleshooting
 with user-selected paths. The reference below details the command contracts.
 
-This guide lets an operator inspect and advance an existing local delivery
-chain without manually sequencing its stages. It does not publish to GitHub,
-merge branches, sign on the operator's behalf, or recover partial stages.
+The guided path creates or continues one local project without exposing run
+IDs or low-level stage commands. The advanced reference remains available for
+inspection, recovery diagnostics, and explicit command automation. Neither path
+publishes to GitHub, merges branches, signs on the operator's behalf, or repairs
+partial stages.
+
+### Guided project bootstrap
+
+Use Node 24 or newer, npm, Git with a commit identity, and the native Claude
+Code executable on `PATH`. Install this checkout's development dependencies,
+then create checkout-linked global aliases:
+
+```powershell
+$BuildWorksCheckout = (Resolve-Path -LiteralPath (Read-Host 'Absolute path to the BuildWorks checkout')).Path
+Set-Location -LiteralPath $BuildWorksCheckout
+npm install
+if ($LASTEXITCODE -ne 0) { throw 'BuildWorks dependency installation failed.' }
+npm install --global $BuildWorksCheckout
+if ($LASTEXITCODE -ne 0) { throw 'BuildWorks checkout-link installation failed.' }
+buildworks --help
+bw --help
+```
+
+The global install links both commands to the complete checkout; it does not
+pack or publish an artifact. Keep the checkout at the installed path so
+migrations, dashboard assets, and TypeScript sources remain available.
+
+Configure the public half of an external Ed25519 signing authority before
+guided run creation:
+
+```powershell
+$env:BW_APPROVAL_PUBLIC_KEY = 'C:\Public Approval Material\approval.pub'
+```
+
+The corresponding private key must remain outside the filesystem and process
+identity available to BuildWorks verification. Verification receives `HOME`
+and `USERPROFILE` and is not filesystem-sandboxed, so a key stored under the
+same host identity is not contained merely because its path is absent from the
+child environment. Guided mode creates no key, never asks for a private-key
+path, and never invokes `scripts\sign-approval.mjs`.
+
+Create a project in an absent or empty directory:
+
+```powershell
+buildworks 'C:\Work\My Guided Project'
+```
+
+The command preflights Node, npm, Git, Claude Code, and Git identity; offers the
+single `static-web` starter; runs its generated `npm ci` and `npm test`; shows
+and commits only the generated baseline; and prints the exact
+`docs\features\<slug>\design.md` path. It refuses a nonempty non-Git directory,
+mismatched starter bytes, unrelated working-tree changes, and a nested project
+inside an existing worktree.
+
+Author the requested `design.md`, then rerun the same command:
+
+```powershell
+buildworks 'C:\Work\My Guided Project'
+```
+
+The command shows and commits only that design. For an existing repository it
+selects the sole committed nonempty design or asks among displayed slugs. When
+no persisted run identity exists, it asks for project, feature ID, change kind,
+and model; displayed suggestions are not silently accepted. A persisted run is
+matched by the exact project, feature ID, slug, and change kind tuple. Ambiguous
+identity tuples or multiple matching terminal/nonterminal runs refuse with
+their IDs instead of selecting the newest.
+
+Guided mode is interactive only. Redirected input refuses before mutation or
+spend. Each paid range displays the frozen models, verification commands,
+review budgets, and dispatch ceilings and requires its own explicit `yes`.
+The first accepted range stops at approval with exit 3.
+
+At that pause, BuildWorks exclusively creates:
+
+```text
+.governance/approval-handoff/<run-id>/payload.txt
+.governance/approval-handoff/<run-id>/signature.txt
+```
+
+Only `payload.txt` exists initially. Transfer it to the external signing
+authority through an approved channel. After the human reviews the
+specification and exact binding, that authority signs the payload and returns
+the detached base64 signature as `signature.txt`. Rerun `buildworks`; it
+redisplays the binding, asks for explicit approval submission, rechecks the
+payload, signature, expiry, and binding under the repository lock, records the
+approval, and asks separately before the remaining paid range.
+
+If a canonical retained payload expires before submission, rerunning
+`buildworks` atomically preserves that handoff as inert expired evidence and
+creates a fresh canonical payload. Stale signature bytes are never submitted
+or treated as authority. A malformed or noncanonical retained payload refuses
+instead of being rotated.
+
+On completion the command reports the retained branch, worktree, delivered
+commit, evidence reference, final findings count, and known recorded cost.
+`completed` means the frozen gates passed and every declared artifact changed;
+it does not prove behavior beyond the configured verification and review
+evidence.
+
+### Advanced manual workflow
+
+The following sections retain the explicit low-level commands for operators who
+need command automation, diagnostics, or manual approval transport.
 
 ### Prepare the checkout and target
 
 Use Node >=24, Git, and the native Claude Code executable on PATH. Install
 this checkout's development dependencies once with `npm install` from the
-BuildWorks checkout. There is no build, npm-link, or distributed-package
-installation step; SQL and other runtime assets resolve beside the checkout.
+BuildWorks checkout. `npm install` alone does not place this package's own
+commands on PATH; use `& node $BwCli` in the manual workflow or the
+checkout-linked global installation above. SQL and other runtime assets
+resolve beside the checkout.
 
 Set absolute paths in PowerShell. The target is an existing, separate Git
 worktree, not the BuildWorks checkout. Replace these example directories with
@@ -136,25 +241,22 @@ your own; spaces are supported.
 ```powershell
 $BuildWorksCheckout = (Resolve-Path -LiteralPath 'C:\Repositories\AI.Tools\governed-delivery').Path
 $BwCli = Join-Path $BuildWorksCheckout 'src\cli.ts'
-$BwSigner = Join-Path $BuildWorksCheckout 'scripts\sign-approval.mjs'
 $Target = (Resolve-Path -LiteralPath 'C:\Work\Target Project').Path
-$OperatorDirectory = (Resolve-Path -LiteralPath 'C:\Operator Keys').Path
-$env:BW_APPROVAL_PUBLIC_KEY = Join-Path $OperatorDirectory 'approval.pub'
-$OperatorKeyFile = Join-Path $OperatorDirectory 'approval.key'
+$TransportDirectory = (Resolve-Path -LiteralPath 'C:\Approval Transport').Path
+$env:BW_APPROVAL_PUBLIC_KEY = Join-Path $TransportDirectory 'approval.pub'
 $Project = 'local-project'
 $FeatureId = 'calculator-1'
 $Slug = 'calculator'
 $Model = Read-Host 'Authorized Claude model name to freeze for this run'
 ```
 
-The operator directory and signing key must be outside every repository.
-Use an existing PEM Ed25519 key pair. If a new pair is needed, the operator
-can separately run `& node $BwSigner keygen --out $OperatorDirectory`;
-that tool writes `approval.key` and `approval.pub` and refuses to replace an
-existing private key. Never give the private key to the CLI or an agent.
-Configure the public key before intake to bind its fingerprint into the
-frozen profile; a run created without that binding has only a partial signer
-guarantee, which later setup does not retroactively strengthen.
+The signing authority supplies an existing PEM Ed25519 public key. Keep the
+private key outside the filesystem and process identity available to the
+BuildWorks host; verification is not filesystem-sandboxed. If the authority
+uses `scripts\sign-approval.mjs`, it runs that tool on the separate authority
+host, not through BuildWorks. Never give the private key to the CLI or an
+agent. Configure the public key before intake to bind its fingerprint into the
+frozen profile; later setup does not retroactively strengthen that binding.
 
 The target must have a readable HEAD, a clean working tree, a committed
 `.gitignore` rule for `.governance/`, and committed verification configuration
@@ -447,8 +549,8 @@ $Submit = $Snapshot.operatorActions | Where-Object kind -eq 'approval_submit'
 if (-not $Request.eligible -or -not $Submit.eligible) { throw 'Approval actions are not ready.' }
 $ExpiresIndex = [array]::IndexOf($Request.args, '--expires')
 $Expires = $Request.args[$ExpiresIndex + 1]
-$PayloadFile = Join-Path $OperatorDirectory "run-$RunId-payload.txt"
-$SignatureFile = Join-Path $OperatorDirectory "run-$RunId-signature.txt"
+$PayloadFile = Join-Path $TransportDirectory "run-$RunId-payload.txt"
+$SignatureFile = Join-Path $TransportDirectory "run-$RunId-signature.txt"
 & node $BwCli approval-request --repo $Target --run $RunId --expires $Expires --out $PayloadFile
 if ($LASTEXITCODE -ne 0) { throw 'Payload export failed; do not sign.' }
 ```
@@ -458,26 +560,25 @@ trailing newline. It does not create parents or overwrite files. Without
 `--out`, the legacy command writes those same raw bytes to stdout; neither
 form grants approval.
 
-The next block is a **separate operator signing decision**, after reviewing
-the bound work and payload:
+Transfer `$PayloadFile` to the external authority through an approved channel.
+After a human reviews the bound work, the authority signs those exact bytes and
+returns a detached base64 Ed25519 signature. Place only that returned signature
+at `$SignatureFile`; never bring the private key onto the BuildWorks host.
 
 ```powershell
-if (Test-Path -LiteralPath $SignatureFile) { throw 'Choose a new signature filename.' }
-$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$Signature = Get-Content -LiteralPath $PayloadFile -Raw -Encoding utf8 | & node $BwSigner sign --key $OperatorKeyFile
-if ($LASTEXITCODE -ne 0) { throw 'External signing failed; do not submit.' }
-$Signature | Set-Content -LiteralPath $SignatureFile -Encoding utf8
+if (-not (Test-Path -LiteralPath $SignatureFile -PathType Leaf)) {
+    throw 'The external authority has not returned the detached signature.'
+}
 & node $BwCli approve --repo $Target --run $RunId --expires $Expires --signature-file $SignatureFile
 if ($LASTEXITCODE -ne 0) { throw 'Approval was not recorded; do not continue.' }
 ```
 
-The existing signer handles PowerShell BOM/CRLF transport. `--signature-file`
-accepts UTF-8, an optional leading BOM, and surrounding whitespace; unreadable
-or empty input is usage exit 2. Internal whitespace, malformed signatures,
-expired submissions, changed bindings/policy/key, and duplicates remain core
-refusals with their audit behavior. `--signature` remains available but cannot
-be combined with `--signature-file`. Expiry is checked at acceptance: it does
-not revoke an already granted approval.
+`--signature-file` accepts UTF-8, an optional leading BOM, and surrounding
+whitespace; unreadable or empty input is usage exit 2. Internal whitespace,
+malformed signatures, expired submissions, changed bindings/policy/key, and
+duplicates remain core refusals with their audit behavior. `--signature`
+remains available but cannot be combined with `--signature-file`. Expiry is
+checked at acceptance: it does not revoke an already granted approval.
 
 ### Continue and inspect delivery
 

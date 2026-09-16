@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 // One fixture serves both seats of the code-review panel, dispatching on
 // EMIT_MODE (default "ok").
@@ -100,10 +100,9 @@ function changedPaths() {
 const paths = changedPaths();
 const first = paths[0];
 
-// base.txt exists only in the worktree, so a retained raw output carrying
-// this marker proves the harness ran with its cwd set to the worktree (a read
-// failure throws and fails the dispatch instead).
-const marker = readFileSync("base.txt", "utf8");
+// Read a committed project file from the worktree. Legacy fixtures carry
+// base.txt; the generated static-web starter carries a root index.html.
+const marker = readFileSync(existsSync("base.txt") ? "base.txt" : "index.html", "utf8");
 
 const CORRECTNESS = "code-reviewer-correctness";
 const SECURITY = "code-reviewer-security";

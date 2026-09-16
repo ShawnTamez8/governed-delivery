@@ -600,6 +600,14 @@ your revision adds, replaces, or removes, exactly one entry in:
   of a replacement counts as an added node, and the
   superseded half counts as a removed node needing its own entry,
   which may cite the same excerpt.
+  Each added or removed node across the entire revision must be claimed in
+  normativeChanges by exactly one decision across the whole decisions list.
+  Never duplicate or repeat the same node across multiple decisions: doing so
+  makes the duplicate decision cannot_determine. If multiple findings are
+  addressed by the same document change, or if an addressed finding changes
+  only non-normative explanatory prose, place the normativeChanges entries on
+  only one decision and supply an empty array (normativeChanges: []) on the
+  other addressed decision(s).
   Deleting an obligation is not a way to answer a finding. Where the
   obligation itself is wrong, the two honest routes are rejected_with_rationale
   grounded in the ${sourceName} document, or an upstream disposition carrying a

@@ -1,16 +1,18 @@
 ---
 name: run-buildworks
-description: Run, drive, and smoke-test the BuildWorks bw CLI against a throwaway target repository. Use to run or start bw, launch a governed run end to end, exercise the stage chain and its gates, check what a run cost, or reproduce a stage failure outside this repository. Covers migrate, new-run, spec, approval-request, approve, plan, implement, verify, review, deliver, and verify-audit.
+description: Install, run, drive, and smoke-test the BuildWorks buildworks/bw CLI against a throwaway target repository. Use to start guided bootstrap, launch a governed run end to end, exercise the stage chain and its gates, check what a run cost, or reproduce a stage failure outside this repository.
 ---
 
 # Running BuildWorks
 
-`bw` is a CLI that governs **the repository it is run in**: it reads
-`governed.yaml` and `docs/features/<slug>/design.md` from that repository's
-starting commit, writes state to its `.governance/`, and creates git worktrees
-under it. So you never drive it against this repository — you build a scratch
-target and run it there. `.claude/skills/run-buildworks/driver.mjs` does that
-for you.
+`buildworks` and `bw` are aliases for one CLI. Guided mode accepts an optional
+target path and can initialize an absent or empty directory with the one
+authorized static-web starter. Once a repository exists, the CLI reads
+`governed.yaml` and `docs/features/<slug>/design.md` from its starting commit,
+writes state to its `.governance/`, and creates Git worktrees under it. Never
+drive a delivery run against this BuildWorks repository; use a scratch target.
+`.claude/skills/run-buildworks/driver.mjs` creates one for low-level smoke and
+paid-chain exercises.
 
 Paths below are relative to the repository root. Verified on Windows 11,
 Node v24.14.0, npm 11.18.0, git-bash and PowerShell, 2026-08-31.
@@ -22,13 +24,37 @@ Node v24.14.0, npm 11.18.0, git-bash and PowerShell, 2026-08-31.
 - **git** on PATH.
 - `npm install` once, for `typescript` and `@types/node`. No runtime
   dependencies — SQLite is `node:sqlite`.
+- `npm install --global <absolute-checkout>` for checkout-linked
+  `buildworks` and `bw` commands. This is not a packed or published artifact;
+  retain the checkout at that path.
 - Only for the paid chain: the native `claude` CLI on PATH (`claude --version`
   printed `2.1.263 (Claude Code)` here on 2026-09-07).
 
-There is **no `bw` binary** after `npm install`. `package.json` declares the
-bin, but npm does not link a private package's own bin, and
-`node_modules/.bin/` holds only `tsc`/`tsserver`. Every invocation is
-`node <repo>/src/cli.ts ...`, which is what the driver does.
+`npm install` by itself does not install this private package's own commands.
+The separate global checkout-link command above creates both aliases. The
+low-level driver intentionally invokes `node <repo>/src/cli.ts ...` directly.
+
+## Run: checkout-linked and guided free checks
+
+Install into a throwaway prefix so this check does not replace an operator's
+existing global command:
+
+```powershell
+$Checkout = (Get-Location).Path
+$Prefix = Join-Path $env:TEMP 'buildworks-linked-check'
+npm install --global $Checkout --prefix $Prefix
+if ($LASTEXITCODE -ne 0) { throw 'Checkout-link installation failed.' }
+& (Join-Path $Prefix 'buildworks.cmd') --help
+& (Join-Path $Prefix 'bw.cmd') --help
+node --test test/package-entrypoint.test.ts test/project-bootstrap.test.ts test/guided-command.test.ts
+```
+
+The installed-command test proves both shims execute outside the checkout. The
+guided tests use injected prompts because production guided mode deliberately
+refuses redirected stdin before mutation or spend. Together they cover
+checkout-linked resolution, starter verification and commits, exact identity,
+external approval handoff, separate consent ranges, and a complete fixture
+delivery with zero recorded cost. They do not dispatch the real provider.
 
 ## Run: the free smoke (start here)
 
@@ -61,7 +87,7 @@ ok    verify refuses without a passed implementation        exit=1  run 1's last
 ok    verify refuses a run that does not exist              exit=1  run 9999 does not exist
 ok    review refuses without a passed verification          exit=1  run 1's last stage is none, not a passed verification
 ok    verify-audit validates the chain                      exit=0  chain valid
-ok    an unknown command prints usage                       exit=2  usage: bw <command>
+ok    an unknown command prints usage                       exit=2  usage: buildworks [<path>]
 
 13/13 steps as expected
 ```
@@ -89,7 +115,10 @@ Without `--yes` it refuses. It drives the full sequence — `migrate`,
 `new-run`, `spec`, `approval-request` → `sign` → `approve`, `plan`,
 `implement`, `verify`, `review`, `deliver`, `verify-audit` — against the real `claude`
 binary, then asserts the terminal state and prints the per-dispatch cost from
-the store.
+the store. This is a test harness, not the production approval-authority
+pattern: its throwaway key exists solely to exercise signature verification.
+Never infer authorization for a paid run from this document or retain a real
+private key where target verification can read it.
 
 Verified run, 2026-08-31, `claude-sonnet-5`, all seven stages passed. This
 record predates step 8, so the run ends `in_progress` and `deliver` was not
@@ -224,7 +253,8 @@ cd <the target repository it printed>
 BW_APPROVAL_PUBLIC_KEY=<the public key it printed> node <repo>/src/cli.ts migrate
 ```
 
-Then any command from `bw`'s usage. Keep `BW_APPROVAL_PUBLIC_KEY` set on
+Then any command from the CLI's advanced usage. Keep
+`BW_APPROVAL_PUBLIC_KEY` set on
 **every** invocation, starting with `new-run` — see the first gotcha.
 
 ## Gotchas
@@ -235,6 +265,11 @@ Then any command from `bw`'s usage. Keep `BW_APPROVAL_PUBLIC_KEY` set on
   `BW_APPROVAL_PUBLIC_KEY` before creating the run, or the run is bound to a
   key you did not mean to use and the signature you produce later cannot
   verify.
+- **Guided mode never owns the private key.** Its fixed handoff directory
+  contains only canonical payload bytes and the detached signature returned by
+  an external authority. The private key must remain outside the filesystem and
+  identity available to unsandboxed target verification; placing it under
+  `HOME` or `USERPROFILE` is not containment.
 - **`sign-approval.mjs keygen` refuses `--out` under the current directory**,
   not just inside a git repository: the check is
   `enclosingRepo(out) || isPathInside(process.cwd(), out)`. Run it *from the
@@ -280,8 +315,7 @@ Then any command from `bw`'s usage. Keep `BW_APPROVAL_PUBLIC_KEY` set on
 ## Test
 
 ```bash
-npm test              # node --test — 822 tests as of 2026-09-07 (821 pass,
-                      # 1 pre-existing skip); prose count, drifts with the suite
+npm test              # node --test; inspect the discovered test count
 npm run typecheck     # strict tsc --noEmit
 npm run check:docs    # the documentation checker
 ```

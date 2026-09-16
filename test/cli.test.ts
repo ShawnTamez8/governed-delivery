@@ -151,7 +151,7 @@ test("an unknown command prints usage and exits 2", () => {
     assert.equal(r.status, 2);
     // stderr may carry the node:sqlite ExperimentalWarning before the usage
     // text; match anywhere in the output rather than anchoring to its start.
-    assert.match(r.stderr, /usage: bw <command>/);
+    assert.match(r.stderr, /usage: buildworks \[<path>\]/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

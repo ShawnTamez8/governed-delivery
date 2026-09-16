@@ -37,6 +37,55 @@ function git(rootDir: string, ...args: string[]) {
   });
 }
 
+export function inspectBootstrapPrerequisites(cwd: string): ReadinessCheck[] {
+  const checks: ReadinessCheck[] = [];
+  let minimumNodeMajor: number | null = null;
+  try {
+    const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { engines: { node: string } };
+    const minimum = /^>=(\d+)$/.exec(manifest.engines.node);
+    if (!minimum) throw new Error(`cannot derive the Node minimum from package.json engines.node ${manifest.engines.node}`);
+    minimumNodeMajor = Number(minimum[1]);
+    const supported = Number(process.versions.node.split(".")[0]) >= minimumNodeMajor;
+    checks.push({ name: "node", status: supported ? "pass" : "fail",
+      evidence: `Node ${process.versions.node}; checkout requires ${manifest.engines.node}.`,
+      repair: supported ? null : `Use Node ${minimumNodeMajor} or newer for this checkout.` });
+  } catch (error) {
+    checks.push({ name: "node", status: "fail", evidence: (error as Error).message,
+      repair: "Use a checkout with a readable Node engine requirement." });
+  }
+  const npm = spawnSync("npm", ["--version"], {
+    cwd, encoding: "utf8", shell: process.platform === "win32",
+  });
+  checks.push({ name: "npm", status: npm.status === 0 ? "pass" : "fail",
+    evidence: npm.status === 0 ? npm.stdout.trim() : npm.error?.message ?? npm.stderr.trim(),
+    repair: npm.status === 0 ? null : "Install npm and make it resolvable in this invocation's PATH." });
+  const version = git(cwd, "--version");
+  checks.push({ name: "git", status: version.status === 0 ? "pass" : "fail",
+    evidence: version.status === 0 ? version.stdout.trim() : version.error?.message ?? version.stderr.trim(),
+    repair: version.status === 0 ? null : "Install Git and make it resolvable in this invocation's PATH." });
+
+  const ambientSnapshot: NodeJS.ProcessEnv = {};
+  for (const name of CLAUDE_CODE.sandbox.envPassthrough) ambientSnapshot[name] = process.env[name];
+  const childEnv = buildHarnessEnvironment(CLAUDE_CODE, ambientSnapshot);
+  try {
+    const executablePath = resolveDoctorExecutable(CLAUDE_CODE.probe[0], {
+      env: childEnv,
+      cwd,
+      parentPath: ambientSnapshot.PATH,
+      noDefaultCurrentDirectoryInExePath: process.env.NoDefaultCurrentDirectoryInExePath !== undefined,
+    });
+    const probe = probeExecutor(CLAUDE_CODE, { executablePath, env: childEnv, cwd, timeoutMs: 5000 });
+    const output = [probe.stdout.trim(), probe.stderr.trim()].filter(Boolean).join("; ");
+    checks.push({ name: "executor_probe", status: "pass",
+      evidence: `${executablePath} ${CLAUDE_CODE.probe.slice(1).join(" ")}: ${output}`, repair: null });
+  } catch (error) {
+    checks.push({ name: "executor_probe", status: "fail",
+      evidence: error instanceof Error ? error.message : String(error),
+      repair: "Install the native Claude Code executable and make its version probe available on PATH." });
+  }
+  return checks;
+}
+
 export function checkIntakeRepository(rootDir: string): IntakeRepositoryResult {
   const checks: ReadinessCheck[] = [];
   const startingCommit = resolveStartingCommit(rootDir);
@@ -249,7 +298,7 @@ export function inspectReadiness(rootDir: string, options: { slug?: string } = {
     },
     limitations: [
       "Provider account authentication, model entitlement, and quota are not checked by the local version probe.",
-      "Private-key availability is not checked.",
+      "External signing-authority availability is not checked.",
       "The inventory covers only two documented user locations; managed/project settings, OS home fallback, actual file use under native flags, and effective precedence are not established.",
       "passedToChild describes the BuildWorks-supplied map only; Windows may add required system environment variables.",
       "Executable identity and ambient observations are current evidence, including under --run, not frozen facts or a pin for later worktree dispatches with different cwd or environment.",

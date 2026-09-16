@@ -683,6 +683,8 @@ test("the generated spec reconciliation prompt carries the decision contract and
     // from one contract builder, so a sentence missing from one of them would
     // be invisible to a scan that found it in the other.
     "superseded half counts as a removed node",
+    "across the entire revision must be claimed",
+    "Never duplicate or repeat the same node across multiple decisions",
     "Deleting an obligation is not a way to answer a finding",
     "source is always design",
     "does not authorize you to add an obligation",
@@ -744,7 +746,8 @@ test("the generated plan reconciliation prompt carries the spec as governing inp
     // The plan side's own copy of the removal obligation, for the reason the
     // conditional-field matrix is asserted twice: one shared builder, and
     // nothing structural notices a sentence tested on one prompt only.
-    "superseded half counts as a removed node",
+    "across the entire revision must be claimed",
+    "Never duplicate or repeat the same node across multiple decisions",
     "Deleting an obligation is not a way to answer a finding",
     // The plan side states its own node forms — a task and a coverage entry —
     // which are not the spec side's, so a shared assertion would prove

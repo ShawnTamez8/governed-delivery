@@ -21,6 +21,7 @@ Every parser that reads model output accepts or explicitly refuses each of:
 6. a fenced block that is not JSON
 7. CRLF line endings inside the fence
 8. prose before an unfenced object, e.g. `I'll finalize the spec now.\n\n{…}`
+9. fenced JSON whose string literals contain markdown code fences
 
 **Choose strictness by consequence.** Where bytes are canonicalized into an
 immutable record, refuse prose outside the fence: dropping it silently corrupts
@@ -53,6 +54,21 @@ and is the contract test. What this instance adds: the enumeration above is the
 contract every parser is held to, and a shape missing from it is a shape no
 reviewer will ask about — items 3 and 4 named prose around a *fence*, and a
 suite that worked all seven passed while the eighth blocked a paid run.
+
+**Measured, 2026-09-14, $2.83862.** The implementer author of a paid chain
+returned a valid fenced JSON `AgentResult` proposing 18 files, including a
+`README.md` whose content contained markdown code fences (` ``` `).
+`extractJsonBody` matched the closing fence with non-greedy `([\s\S]*?)``` `,
+terminating the block at the first triple backtick inside the JSON string and
+truncating the payload midway through `README.md` at position 43453 with
+"Unterminated string in JSON". In valid JSON, control characters including
+newlines must be escaped inside strings, so a literal newline followed by
+backticks (`(?<=\n)```[ \t]*(?=\n|$)`) cannot occur inside a valid JSON string.
+Requiring closing fences to begin on their own line prevents embedded markdown
+code fences in JSON string values from prematurely terminating the fence match.
+The retained response is committed at
+`test/fixtures/recorded/implementation-simple-game-embedded-markdown-fence.json`
+and is the contract test.
 
 ## 2. Discarded output is undiagnosable
 

@@ -15,7 +15,10 @@ The hard rules are constraints, not aspirations:
 2. One mutation authority — the CLI remains the only mutating surface. The
    2026-09-12 dashboard authorization permits one CLI-launched, loopback-only,
    read-only projection over the same core; interactive UI mutation requires a
-   later replacement decision and cannot create a second authority.
+   later replacement decision and cannot create a second authority. The
+   2026-09-13 guided-bootstrap authorization adds one concrete initializer and
+   approval handoff inside the same CLI authority; it creates no private key,
+   signer, package artifact, adapter framework, or second lifecycle.
 3. One schema per thing. No unions, no version discriminators, no compatibility
    handling. Nothing has shipped.
 4. No abstraction without two real implementations.
@@ -198,6 +201,9 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
 
 - `npm install` — one-time: dev dependencies (`typescript`, `@types/node`);
   commits `package-lock.json`.
+- `npm install --global <absolute-BuildWorks-checkout>` — one-time optional
+  checkout-linked installation exposing both `buildworks` and `bw`; the
+  checkout must remain at that path. This is not a packed or registry install.
 - `npm run typecheck` — strict `tsc --noEmit`.
 - `npm test` — `node --test` (Node 24 type stripping; relative imports carry
   explicit `.ts` extensions).
@@ -205,6 +211,18 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
   run before claiming a documentation change is consistent.
 - `node src/cli.ts --help` and `node src/cli.ts help <command>` — free help;
   no target, state, lock, or provider probe. Unknown options remain errors.
+- `buildworks [<path>]` — the guided entrypoint and the primary operator path.
+  A bare invocation targets the current directory; otherwise the first argument
+  must be an absolute or explicitly relative path. Guided mode refuses `--repo`.
+  `src/project-bootstrap.ts` offers only the `static-web` starter and commits
+  nothing but the generated baseline or the operator's one `design.md`;
+  `src/run-intake.ts` shares run creation and profile freeze with the low-level
+  path; `src/guided-command.ts` prompts for project, feature ID, change kind and
+  model, and matches a persisted run by the exact project, feature ID, slug and
+  change-kind tuple rather than the newest. It is interactive only — redirected
+  input refuses before mutation or spend — takes separate consent for each paid
+  range, and pauses at approval with exit 3. `README.md` and
+  `docs/runbooks/cli-operator.md` carry the full procedure.
 - `& node $BwCli doctor --repo $Target`, `& node $BwCli runs --repo $Target`,
   and `& node $BwCli status --repo $Target --run $RunId` — free readiness and
   read-only inspection. Set `$BwCli` to the absolute `src\cli.ts` in this
@@ -216,21 +234,29 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
   publication, or a later invocation. Exit 3 is the external approval pause.
   Exact-current schema, frozen age and intact boundaries are required; this
   is not arbitrary resume, implicit migration, or a failed-stage retry.
+- `& node $BwCli dashboard --repositories-file $RepositoriesFile` — the
+  loopback-only, read-only projection. It is the one command that refuses
+  `--repo`; its targets come from that file. It opens no writer, dispatches
+  nothing, listens on no external interface, and persists no state.
 - Existing low-level commands remain: `migrate`, `new-run`, `stage-add`,
   `stage-complete`, `dispatch`, `spec`, `plan`, `implement`, `verify`, `review`,
   `deliver`, `approval-request`, `approve`, `verify-audit`, `proposal-export`.
   Their numeric/path/raw-payload outputs remain unchanged. `new-run` requires
   project, feature, slug, change-kind and model; it never selects these
-  implicitly. All commands accept one `--repo`, defaulting to the invocation
-  worktree, so omitting it here targets BuildWorks itself.
+  implicitly. All of these commands accept one `--repo`, defaulting to the
+  invocation worktree, so omitting it here targets BuildWorks itself.
 - Approval transport: `approval-request --out` exclusively creates canonical
   bytes; `approve --signature-file` accepts an external UTF-8 signature file.
   Reuse one explicit `--expires`; the separate signer belongs to the operator.
   Transport/prompt paths resolve from the original invocation cwd, not
-  `--repo`. The README supplies the full byte-safe PowerShell workflow.
-- There is no `bw` on PATH after `npm install`: npm does not link a private
-  package's own bin, and `node_modules/.bin/` holds only `tsc` and `tsserver`.
-  No packaging, GitHub integration, or remote publication is implied.
+  `--repo`. Guided mode uses the same canonical payload and detached-signature
+  boundary; it never generates, reads, names, or invokes a private key. The
+  README supplies the full byte-safe PowerShell workflow.
+- `npm install` in this checkout still does not put `bw` on PATH: npm does not
+  link a private package's own bin into its own `node_modules/.bin/`. Use the
+  explicit checkout-linked global installation above when an installed alias is
+  required. No packed artifact, GitHub integration, or remote publication is
+  implied.
 - `node .claude/skills/run-buildworks/driver.mjs smoke` — builds that scratch
   target and drives the CLI against it, spending nothing. `paid --yes` drives
   the full chain against the real `claude` binary and reports what it cost:

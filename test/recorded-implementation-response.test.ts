@@ -25,6 +25,13 @@ const fixture = JSON.parse(
   )
 ) as RecordedImplementationFixture;
 
+const embeddedFenceFixture = JSON.parse(
+  readFileSync(
+    new URL("./fixtures/recorded/implementation-simple-game-embedded-markdown-fence.json", import.meta.url),
+    "utf8"
+  )
+) as { envelope: { result: string } };
+
 test("the recorded Task 10 implementer response reproduces its exact JSON refusal", () => {
   const extracted = extractJsonBody(fixture.envelope.result);
 
@@ -57,4 +64,15 @@ test("only the two measured invalid escapes prevent AgentResult validation", () 
   assert.equal(validated.ok, true);
   if (!validated.ok) return;
   assert.equal(validated.value.proposedPatches?.[0]?.files.length, 5);
+});
+
+test("recorded implementer response with embedded markdown code fences in string values extracts and validates", () => {
+  const extracted = extractJsonBody(embeddedFenceFixture.envelope.result);
+  assert.equal(extracted.kind, "ok");
+  if (extracted.kind !== "ok") return;
+
+  const validated = validateAgentResult("implementer", extracted.value);
+  assert.equal(validated.ok, true);
+  if (!validated.ok) return;
+  assert.equal(validated.value.proposedPatches?.[0]?.files.length, 18);
 });

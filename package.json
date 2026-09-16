@@ -6,7 +6,8 @@
     "node": ">=24"
   },
   "bin": {
-    "bw": "src/cli.ts"
+    "bw": "src/cli.ts",
+    "buildworks": "src/cli.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit && npm run typecheck:dashboard",

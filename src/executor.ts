@@ -23,6 +23,13 @@ export interface ExecutorDefinition {
 }
 
 /**
+ * Idle timeout for large generation tasks (implementation authoring and
+ * code-review remediation) that output multiple complete files or patches
+ * in a single non-streaming payload.
+ */
+export const LARGE_GENERATION_IDLE_TIMEOUT_SECONDS = 1800;
+
+/**
  * The one executor, hardcoded rather than loaded from configuration: a
  * config loader for a single fixed definition would be an abstraction with
  * no second consumer yet (hard rule 4). The shape matches section 11's YAML
@@ -67,7 +74,7 @@ export const CLAUDE_CODE: ExecutorDefinition = {
     allowedPaths: ["docs/features/**"],
     deniedPaths: [`${GOVERNANCE_PREFIX}**`],
     commandAllowlist: [],
-    idleTimeoutSeconds: 600,
+    idleTimeoutSeconds: 1800,
     absoluteTimeoutSeconds: 3600,
     envPassthrough: ["PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "SystemRoot"],
     network: "inherit",

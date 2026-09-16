@@ -3,6 +3,7 @@ import type { ExecutionGroup, RunSnapshot } from "./operator-state.ts";
 import type { Profile } from "./profile.ts";
 import type { CurrentReadiness, ReadinessCheck } from "./readiness.ts";
 import type { RunConfiguration } from "./operator-state.ts";
+import type { ApprovalBinding } from "./approval.ts";
 
 export type OperatorCommand = "doctor" | "runs" | "status" | "run";
 export type OperatorErrorCode = "usage" | "target_unavailable" | "state_missing" | "schema_unsupported" |
@@ -64,6 +65,61 @@ export function formatRunPreview(rootDir: string, snapshot: RunSnapshot, groups:
   ].join("\n");
 }
 
+export function formatGuidedApproval(
+  runId: number,
+  specPath: string,
+  binding: ApprovalBinding,
+  signer: string,
+  payloadPath: string,
+  signaturePath: string,
+): string {
+  return [
+    `Step 4: External approval for run ${runId}`,
+    `Reviewed specification: ${specPath}`,
+    `featureId: ${binding.featureId}`,
+    `specHash: ${binding.specHash}`,
+    `startingCommit: ${binding.startingCommit}`,
+    `profileHash: ${binding.profileHash}`,
+    `risk: ${binding.risk}`,
+    `expiresAt: ${binding.expiresAt}`,
+    `scope: ${JSON.stringify(binding.scope)}`,
+    `Signer bound at intake: ${signer}`,
+    `Canonical payload: ${payloadPath}`,
+    `Expected detached signature: ${signaturePath}`,
+    "Have the external approval authority review the binding and write signature.txt, then rerun buildworks.",
+    "",
+  ].join("\n");
+}
+
+export function formatGuidedTerminal(rootDir: string, snapshot: RunSnapshot): string {
+  const lines = [
+    `Step 6: Run ${snapshot.run.id} is ${snapshot.run.status}.`,
+    `Phase: ${snapshot.phase}`,
+    `Known recorded cost: USD ${snapshot.cost.knownUsd}`,
+  ];
+  for (const refusal of snapshot.workflowAction.reasons) {
+    lines.push(`Reason: ${refusal.code}: ${refusal.reason}`);
+  }
+  if (snapshot.delivery.branch !== null) lines.push(`Retained branch: ${snapshot.delivery.branch}`);
+  if (snapshot.delivery.worktreePath !== null) lines.push(`Retained worktree: ${snapshot.delivery.worktreePath}`);
+  if (snapshot.delivery.deliveredCommit !== null) lines.push(`Delivered commit: ${snapshot.delivery.deliveredCommit}`);
+  if (snapshot.delivery.resultRef !== null) lines.push(`Delivery evidence: ${snapshot.delivery.resultRef}`);
+  const finalFindings = snapshot.evidence.findings.filter((finding) => finding.finalPanelBlocking !== null);
+  lines.push(`Final findings: ${finalFindings.length}`);
+  for (const finding of finalFindings) {
+    const reports = finding.reports.map((report) =>
+      `${report.reviewerId ?? "reviewer unavailable"} ${report.severity}: ${report.subject}`).join(" | ");
+    lines.push(`Finding ${finding.id} at ${finding.location}; blocking=${finding.finalPanelBlocking}: ${reports}`);
+  }
+  for (const ref of snapshot.evidence.references.filter((entry) =>
+    entry.kind === "code_review_result" || entry.kind === "code_review_report")) {
+    lines.push(`Code review evidence: ${ref.ref} (${ref.availability})`);
+  }
+  const quotedRoot = `'${rootDir.replaceAll("'", "''")}'`;
+  lines.push(`Inspect: buildworks status --repo ${quotedRoot} --run ${snapshot.run.id}`);
+  return `${lines.join("\n")}\n`;
+}
+
 export function operatorCommand(command: string | null): command is OperatorCommand {
   return command === "doctor" || command === "runs" || command === "status" || command === "run";
 }
@@ -110,9 +166,8 @@ function approvalHandoff(snapshot: RunSnapshot): string[] {
     "Readiness covers the current public key only; operator signing-key availability has not been checked.",
     `Prospective expiry: ${expires} (not granted; reuse this exact value for export and submission).`,
     "PowerShell templates: set $BuildWorksCheckout to this tool's checkout and $PayloadFile/$SignatureFile to new absolute file paths with existing parents.",
-    "Set $OperatorKeyFile to your operator-managed signing key outside every repository. These commands are instructions only; BuildWorks never runs the signer.",
+    "An external approval authority creates $SignatureFile from the exact payload bytes. BuildWorks does not receive that authority.",
     "$BwCli = Join-Path $BuildWorksCheckout 'src\\cli.ts'",
-    "$BwSigner = Join-Path $BuildWorksCheckout 'scripts\\sign-approval.mjs'",
     `$Target = ${quoted(target)}`,
     `$RunId = ${snapshot.run.id}`,
     `$Expires = ${quoted(expires)}`,
@@ -122,11 +177,7 @@ function approvalHandoff(snapshot: RunSnapshot): string[] {
   ];
   if (submit.eligible) {
     lines.push(
-      "Step 2 — separately review the specification and payload; only if you authorize the bound work, run the external signer:",
-      "$OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
-      "$Signature = Get-Content -LiteralPath $PayloadFile -Raw -Encoding utf8 | & node $BwSigner sign --key $OperatorKeyFile",
-      "if ($LASTEXITCODE -ne 0) { throw 'External signing failed; do not submit.' }",
-      "$Signature | Set-Content -LiteralPath $SignatureFile -Encoding utf8",
+      "Step 2 — separately review the specification and payload; only if authorized, have the external authority write $SignatureFile.",
       "Step 3 — submit that signature with the same expiry (does not execute later stages):",
       "& node $BwCli approve --repo $Target --run $RunId --expires $Expires --signature-file $SignatureFile",
       "if ($LASTEXITCODE -ne 0) { throw 'Approval was not recorded; do not resume.' }",

@@ -13,7 +13,7 @@ import childProcess from "node:child_process";
 import { syncBuiltinESMExports } from "node:module";
 import { createPublicKey, generateKeyPairSync } from "node:crypto";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
-import { formatHelp } from "../src/cli-args.ts";
+import { formatHelp, parseArguments } from "../src/cli-args.ts";
 import { acquireLock, inspectLock } from "../src/lock.ts";
 import { buildHarnessEnvironment, parseEnvelope, PROMPT_MAX_BYTES } from "../src/harness.ts";
 import { DOCTOR_OBSERVATION_NAMES } from "../src/doctor-diagnostics.ts";
@@ -111,7 +111,7 @@ test("every help form succeeds without target resolution or state creation", () 
     for (const args of helpForms) {
       const result = cli(parent, parent, ...args);
       assert.equal(result.status, 0, `${args.join(" ")}: ${result.stderr}`);
-      assert.match(result.stdout, /usage: bw /);
+      assert.match(result.stdout, /usage: buildworks /);
       assert.deepEqual(inventory(parent), before, args.join(" "));
     }
   } finally {
@@ -123,7 +123,6 @@ test("malformed command lines refuse before target resolution, lock, migration, 
   const parent = workspace();
   try {
     const cases: { args: string[]; reason: RegExp }[] = [
-      { args: [], reason: /command/ },
       { args: ["unknown", "--help"], reason: /unknown command/ },
       { args: ["help", "unknown"], reason: /unknown command/ },
       { args: ["migrate", "--unknown"], reason: /unknown option --unknown/ },
@@ -188,10 +187,49 @@ test("malformed command lines refuse before target resolution, lock, migration, 
             assert.deepEqual(inventory(parent), before);
           }
         });
+
       }
     } finally {
       release();
     }
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("bare and path-shaped entries select guided mode while unknown words remain commands", () => {
+  const parent = workspace();
+  try {
+    const absolute = join(parent, "absolute target");
+    for (const [args, target] of [
+      [[], "."],
+      [["."], "."],
+      [[".."], ".."],
+      [[".\\child"], ".\\child"],
+      [["..\\child"], "..\\child"],
+      [["./child"], "./child"],
+      [["../child"], "../child"],
+      [[absolute], absolute],
+    ] as const) {
+      const parsed = parseArguments(args);
+      assert.equal(parsed.command, null);
+      assert.equal(parsed.guidedTarget, target);
+      assert.equal(parsed.help, false);
+    }
+    assert.throws(() => parseArguments(["typo"]), /unknown command typo/);
+    assert.throws(() => parseArguments(["--repo", absolute]), /guided mode does not accept --repo/);
+    const missing = join(parent, "not-created");
+    const before = inventory(parent);
+    for (const args of [[], [missing]]) {
+      const called = cli(parent, parent, ...args);
+      assert.equal(called.status, 1, called.stderr);
+      assert.match(called.stderr, /guided mode requires interactive input/);
+      assert.deepEqual(inventory(parent), before);
+    }
+    const help = cli(parent, parent, missing, "--help");
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout, /^usage: buildworks \[<path>\]/);
+    assert.deepEqual(inventory(parent), before);
   } finally {
     rmSync(parent, { recursive: true, force: true });
   }
@@ -652,15 +690,12 @@ test("Task 7 approval pause text shows bound external steps and withholds unavai
     assert.match(text, /signing-key availability has not been checked/);
     assert.ok(text.includes(snapshot.configuration.approvalSigner!));
     assert.match(text, /\$BwCli = Join-Path \$BuildWorksCheckout 'src\\cli\.ts'/);
-    assert.match(text, /\$BwSigner = Join-Path \$BuildWorksCheckout 'scripts\\sign-approval\.mjs'/);
     assert.match(text, /approval-request --repo \$Target --run \$RunId --expires \$Expires --out \$PayloadFile/);
-    assert.match(text, /\$OutputEncoding = \[System\.Text\.UTF8Encoding\]::new\(\$false\)/);
-    assert.match(text, /Get-Content -LiteralPath \$PayloadFile -Raw -Encoding utf8 \| & node \$BwSigner sign --key \$OperatorKeyFile/);
+    assert.match(text, /external (?:approval )?authority (?:creates|write).*?\$SignatureFile/i);
     assert.match(text, /approve --repo \$Target --run \$RunId --expires \$Expires --signature-file \$SignatureFile/);
     assert.match(text, /run --repo \$Target --run \$RunId/);
     assert.match(text, /new execution consent/i);
-    assert.match(text, /outside every repository/);
-    assert.doesNotMatch(text, /BEGIN PUBLIC KEY|BEGIN PRIVATE KEY|approval\.key/);
+    assert.doesNotMatch(text, /sign-approval|OperatorKeyFile|BEGIN PUBLIC KEY|BEGIN PRIVATE KEY|approval\.key/);
     assert.equal(JSON.stringify(envelope), jsonBefore, "text rendering cannot mutate the JSON contract");
     assert.equal(formatOperatorResult(envelope, true), `${jsonBefore}\n`);
     assert.equal(snapshotText(snapshot), text.slice(text.indexOf(`${snapshot.configuration.systemName}: run `)));
@@ -1536,7 +1571,7 @@ test("Task 6 run JSON usage and target errors remain a single refusal envelope",
       assert.equal(body.repository, null);
       assert.equal(body.result, null);
       assert.ok(body.reason);
-      assert.doesNotMatch(called.stdout, /usage: bw /);
+      assert.doesNotMatch(called.stdout, /usage: buildworks /);
       assert.deepEqual(inventory(parent), before);
     }
     const called = fixture.run(missing, ["--run=1", "--json"]);
@@ -2190,7 +2225,7 @@ test("Task 4 bare json survives malformed arguments and target failures without 
       assert.equal(body.repository, null);
       assert.equal(body.result, null);
       assert.ok(body.reason);
-      assert.doesNotMatch(result.stdout, /usage: bw /);
+      assert.doesNotMatch(result.stdout, /usage: buildworks /);
       assert.deepEqual(inventory(parent), before);
     }
     for (const command of ["doctor", "runs", "status"]) {

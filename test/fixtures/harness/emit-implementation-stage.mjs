@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // One fixture serves the implementation stage's single dispatch, dispatching
@@ -41,12 +41,12 @@ function scopePaths() {
 const mode = process.env.EMIT_MODE ?? "ok";
 const paths = scopePaths();
 
-// The content embeds base.txt read from the process working directory —
-// base.txt exists only in the worktree, so an applied file carrying this
-// marker proves the harness ran with its cwd set to the worktree (a read
-// failure throws and fails the dispatch instead).
+// The content embeds a committed project file read from the process working
+// directory. Legacy fixtures carry base.txt; the generated static-web starter
+// carries a root index.html that the BuildWorks checkout does not.
 function markerContent() {
-  const fromBase = readFileSync("base.txt", "utf8");
+  const markerPath = existsSync("base.txt") ? "base.txt" : "index.html";
+  const fromBase = readFileSync(markerPath, "utf8");
   return `export const fromBase = ${JSON.stringify(fromBase)};\n`;
 }
 

@@ -48,6 +48,43 @@ test("8. prose before an unfenced object is accepted", () => {
   assert.deepEqual(result, { kind: "ok", value: { a: 1 } });
 });
 
+test("9. fenced JSON containing markdown code fences inside string literals is accepted", () => {
+  const jsonWithFences = JSON.stringify({
+    status: "proposed",
+    content: "# Setup\n\n```bash\nnpm test\n```\n",
+  });
+  const wrapped = `\`\`\`json\n${jsonWithFences}\n\`\`\``;
+  const result = extractJsonBody(wrapped);
+  assert.deepEqual(result, {
+    kind: "ok",
+    value: {
+      status: "proposed",
+      content: "# Setup\n\n```bash\nnpm test\n```\n",
+    },
+  });
+});
+
+test("a four-backtick fence is accepted, which is the shape a model reaches for when the payload itself contains fences", () => {
+  const jsonWithFences = JSON.stringify({
+    status: "proposed",
+    content: "# Setup\n\n```bash\nnpm test\n```\n",
+  });
+  const wrapped = `\`\`\`\`json\n${jsonWithFences}\n\`\`\`\``;
+  const result = extractJsonBody(wrapped);
+  assert.deepEqual(result, { kind: "ok", value: JSON.parse(jsonWithFences) });
+});
+
+test("a fence the anchoring rejects is refused in language naming the rule, not claiming there was no fence", () => {
+  // The closing fence shares a line with the content, which item 9's anchoring
+  // rejects by design. The refusal must not say the body had no fence.
+  const result = extractJsonBody('```json\n{"a":1}```');
+  assert.equal(result.kind, "refused");
+  if (result.kind !== "refused") return;
+  assert.match(result.reason, /a fence the anchoring rejected/);
+  assert.match(result.reason, /a closing fence must begin its own line \(hazard 1, item 9\)/);
+  assert.doesNotMatch(result.reason, /^no fence,/);
+});
+
 /**
  * The spec authoring response that blocked the paid chain of 2026-09-06 at its
  * first stage, for $0.08103: one line of prose, a blank line, then a complete

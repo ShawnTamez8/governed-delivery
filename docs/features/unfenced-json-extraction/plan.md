@@ -98,3 +98,117 @@ not recur: the thirteen dispatches returned bare JSON (eight), a fence first
 fallback is proved against the recorded response that blocked and was not
 exercised live; the run says only that nothing this change touched broke a
 chain of thirteen dispatches.
+
+---
+
+## Amendment (2026-09-14): closing-fence anchoring
+
+**Amendment status:** Implemented. Reviewed retrospectively on 2026-09-15
+(`docs/features/unfenced-json-extraction/2026-09-15-code-review.md`); findings
+1, 3 and 7 were fixed before the commit, and findings 2, 4, 5 and 6 remain open.
+
+**This section was written after the fact.** The work below shipped without a
+plan and without a review; the tasks are a reconstruction of what the working
+tree contains, not a specification the implementation was measured against. It
+exists so the review has a governing document and so the next reader knows the
+ordering. Do not read it as evidence that the change was planned.
+
+**Goal:** `extractJsonBody` accepts a fenced JSON body whose string literals
+contain markdown code fences — `docs/hazards.md` entry 1, item 9 — which the
+previous non-greedy closing match truncated.
+
+**Source:** the retained implementation-author response of
+`simple-game-3`, dispatched `2026-09-14T19:56:37.176Z` at a dispatch cost of
+$1.0211774, which blocked run 3 of `C:\Repositories\testing-repos\simple-game-test`
+at a cumulative $2.8386176 with `implementation.content.invalid`. It is committed
+at `test/fixtures/recorded/implementation-simple-game-embedded-markdown-fence.json`
+with a full provenance block.
+
+**Hazards considered:** 1 is the entry this amendment extends — item 9 is the
+ninth shape, and the change was made in the one function that owns all nine.
+The reasoning it rests on is an invariant rather than a heuristic: a literal
+newline cannot appear unescaped inside a JSON string, so a closing fence
+required to begin a line cannot terminate a match inside a string value. 2
+governs the refusal text and is where the review found the amendment wanting:
+a body the new pattern rejects is reported as having no fence. 4 governs both
+new tests, which were confirmed failing against the unfixed regex before being
+reported as working, and hard rule 5 is satisfied because the authority is the
+retained response rather than the synthetic case beside it. 6 bears on the
+unrelated timeout change below and is finding 4 of the review. 7 does not apply:
+the fix is code written against a retained response, not another paid sample.
+5, 8, 9, 11, 13 and 14 do not bear on a change confined to one parser, one
+prompt sentence, one constant and their tests. 3, 10 and 12 bear on the two
+unrelated changes and are treated in the review rather than here.
+
+**Verification:** `npm run typecheck` clean; `npm test` 1175 passing, 1 failing,
+5 skipped, the failure being the known `verify-command.test.ts` EPERM cleanup
+race and passing on an isolated rerun; `npm run check:docs` clean.
+
+### Tasks
+
+- **Task A1: the closing fence must begin its own line.** In
+  `src/parse-output.ts`, replace `` ```[a-zA-Z]*\n([\s\S]*?)``` `` with a
+  pattern requiring the terminator to start a line, so a triple backtick inside
+  a JSON string value cannot end the block.
+  - Verify: `node --test test/parse-output.test.ts`
+  - Expected: shapes 1–8 unchanged; the embedded-fence shape extracts whole.
+- **Task A2: commit the response that blocked.** Extract the retained
+  implementer result into `test/fixtures/recorded/` with a provenance block
+  naming the run, dispatch time, capture date, cost, stage context, the recorded
+  refusal, and what was dropped from the harness envelope.
+  - Verify: `node --test test/recorded-implementation-response.test.ts`
+  - Expected: the 18-file patch extracts and `validateAgentResult` accepts it.
+- **Task A3: the catalogue names the shape.** Add item 9 to the enumeration in
+  `docs/hazards.md` entry 1, with the measured paragraph in the form its
+  siblings use.
+  - Verify: `npm run check:docs`
+  - Expected: clean.
+- **Task A4: the review's accepted findings are closed before the commit.**
+  Widen the opening fence to `` ```+ `` so a four-backtick fence still matches
+  (finding 1); branch the two fallback refusals on whether a line-anchored
+  backtick run is present, so a rejected fence is never reported as an absent
+  one (finding 3); remove the trailing blank line at
+  `test/recorded-implementation-response.test.ts:79` (finding 7).
+  - Verify: `node --test test/parse-output.test.ts test/recorded-implementation-response.test.ts`;
+    `git diff --check`
+  - Expected: 17/17 passing; `git diff --check` exit 0. Both new guards proved
+    by removal, with `src/parse-output.ts` restored byte-identically.
+
+### Unrelated changes that shipped in the same slice
+
+Neither of these touches `extractJsonBody`. They are recorded here because they
+were made in the same uncommitted window (2026-09-14 12:37–13:33) and would
+otherwise have no written home; filing them here is a bookkeeping decision, not
+a claim that they belong to this feature. A reader tracing either one should
+expect to find it here only by way of this note.
+
+- **The `normativeChanges` single-claim rule.** `src/prompts.ts:603-610` states
+  that each added or removed node is claimed by exactly one decision, that
+  duplicating a node across decisions makes the duplicate `cannot_determine`,
+  and that the honest form when one document change answers several findings is
+  an empty `normativeChanges` array on the other decisions. This describes what
+  `src/reconciliation.ts` `convert()` already does; it constrains the model, not
+  the code. `test/prompts.test.ts` scans for it on both reconciliation prompts —
+  see review finding 6 for what the plan-side scan lost in the process.
+- **The idle timeout raised from 600 to 1800 seconds.** `src/executor.ts:77`
+  and `ARCHITECTURE.md:483`, plus a new exported
+  `LARGE_GENERATION_IDLE_TIMEOUT_SECONDS` applied at
+  `src/implementation-stage.ts:387` and `src/code-review-stage.ts:515`. The
+  executor runs `--output-format json`, which is non-streaming, so no output
+  arrives until generation completes and the idle budget is in practice the
+  total generation time; the recorded implementation dispatch ran 780,568 ms
+  against the old 600-second budget. `absoluteTimeoutSeconds` stays 3600.
+  Review findings 4 and 5 are about the two consequences nobody checked: every
+  profile frozen at 600 now fails `requireFrozenBinding`, and the timeout is
+  decided in two places that agree only by coincidence.
+
+### Gate
+
+Tasks A1–A4 done; `npm run typecheck` exit 0; the full suite at its known
+baseline; `npm run check:docs` clean; `git diff --check` exit 0. The review of
+2026-09-15 is `partially reconciled`: findings 1, 3 and 7 are fixed and 2, 4, 5
+and 6 remain open with recorded dispositions. Finding 4 is the one a future
+editor must not rediscover — changing any field of `CLAUDE_CODE.sandbox` makes
+`requireFrozenBinding` refuse every run frozen before the change, and there is
+no in-place repair path for an `in_progress` run. Nothing here authorizes a
+paid run.

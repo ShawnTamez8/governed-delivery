@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { ExecutorDefinition } from "./executor.ts";
+import { type ExecutorDefinition, LARGE_GENERATION_IDLE_TIMEOUT_SECONDS } from "./executor.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
 import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
 import { dispatchOnce } from "./dispatch.ts";
@@ -384,7 +384,7 @@ export async function runImplementationStage(
         role: "author",
         requestedModel: model,
         prompt: buildImplementationAuthorPrompt(author, planContent, specContent, scope, headAtProposal),
-        invocation: { cwd: worktreePath },
+        invocation: { cwd: worktreePath, idleTimeoutSeconds: LARGE_GENERATION_IDLE_TIMEOUT_SECONDS },
       },
       rootDir
     );

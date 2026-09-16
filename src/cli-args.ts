@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { GATE_RESULTS, ROLES, validateRunIdentity } from "./store.ts";
 import { validateModelName } from "./profile.ts";
 
@@ -118,6 +119,7 @@ export class UsageError extends Error {}
 
 export interface CliArguments {
   command: string | null;
+  guidedTarget: string | null;
   args: ReadonlyMap<string, string>;
   flags: ReadonlySet<string>;
   repo: string | undefined;
@@ -172,10 +174,17 @@ export function parseArguments(argv: readonly string[]): CliArguments {
 
   const first = remaining.shift();
   let command: string | null = null;
+  let guidedTarget: string | null = null;
   let helpRequested = false;
   if (first === "help") {
     helpRequested = true;
     if (remaining[0] !== undefined && !remaining[0].startsWith("-")) command = remaining.shift()!;
+  } else if (first !== undefined && (
+    isAbsolute(first) || first === "." || first === ".." ||
+    first.startsWith(".\\") || first.startsWith("..\\") ||
+    first.startsWith("./") || first.startsWith("../")
+  )) {
+    guidedTarget = first;
   } else if (first !== undefined && !first.startsWith("-")) {
     command = first;
   } else if (first !== undefined) {
@@ -208,7 +217,10 @@ export function parseArguments(argv: readonly string[]): CliArguments {
     }
   }
   helpRequested ||= flags.has("help");
-  if (command === null && !helpRequested) throw new UsageError("missing command");
+  if (command === null && guidedTarget === null && !helpRequested) guidedTarget = ".";
+  if (guidedTarget !== null && repo !== undefined && !helpRequested) {
+    throw new UsageError("guided mode does not accept --repo; pass one path argument or run it in the target directory");
+  }
 
   for (const option of options) {
     const value = args.get(option.name);
@@ -228,7 +240,7 @@ export function parseArguments(argv: readonly string[]): CliArguments {
       throw new UsageError(`missing required option ${exclusive.map((name) => `--${name}`).join(" or ")}`);
     }
   }
-  return { command, args, flags, repo, help: helpRequested };
+  return { command, guidedTarget, args, flags, repo, help: helpRequested };
 }
 
 function synopsis(command: string): string {
@@ -245,10 +257,10 @@ export function formatHelp(command: string | null = null): string {
   const help = "  --help         show help without opening state";
   if (command !== null) {
     const definition = COMMANDS[command];
-    return `usage: bw ${synopsis(command)}\n${definition.description}\n${definition.exclusive
+    return `usage: buildworks ${synopsis(command)}\n${definition.description}\n${definition.exclusive
       ? `Options ${definition.exclusive.map((name) => `--${name}`).join(" and ")} are mutually exclusive.\n` : ""}\nGlobal options:\n${definition.acceptsRepo === false ? help : target + help}\n`;
   }
-  return `usage: bw <command> [options]\ncommands:\n${Object.entries(COMMANDS)
+  return `usage: buildworks [<path>]\n       buildworks <command> [options]\n\nGuided mode:\n  buildworks                continue the project in the current directory\n  buildworks <path>         create or continue one local project\n\nAdvanced commands:\n${Object.entries(COMMANDS)
     .map(([name, definition]) => `  ${synopsis(name).padEnd(78)} ${definition.description}`)
     .join("\n")}\n  help [command]  show general or command-specific help\n\nGlobal options:\n${target}${help}\n`;
 }

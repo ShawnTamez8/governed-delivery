@@ -59,6 +59,11 @@ export function profilePath(rootDir: string, runId: number): string {
   return join(profileDir(rootDir, runId), "profile.json");
 }
 
+/** The public approval handoff directory for one guided run. */
+export function approvalHandoffDir(rootDir: string, runId: number): string {
+  return join(rootDir, GOVERNANCE_DIR, "approval-handoff", String(runId));
+}
+
 /** The directory holding one run's verification command logs. */
 export function verificationEvidenceDir(rootDir: string, runId: number): string {
   return join(rootDir, GOVERNANCE_DIR, "verification", String(runId));

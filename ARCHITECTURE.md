@@ -57,10 +57,13 @@ read.
    and its evidence is queryable.
 2. **One mutation authority, staged operator surfaces.** The CLI calls the core
    directly and remains the only mutating surface until an explicit replacement
-   decision. A local dashboard may project the same core state only under the
-   bounded authorization in section 23: its host is launched by the CLI, binds
-   only to loopback, and calls the existing read projection without a second
-   state model. No RPC service, remote dashboard, or duplicated policy logic.
+   decision. Its guided entrypoint may initialize the one concrete starter,
+   commit only its displayed owned baseline and the operator-confirmed design,
+   and call the same intake, approval, and stage core as the low-level commands.
+   A local dashboard may project the same core state only under the bounded
+   authorization in section 23: its host is launched by the CLI, binds only to
+   loopback, and calls the existing read projection without a second state
+   model. No RPC service, remote dashboard, or duplicated policy logic.
    Interactive dashboard mutation requires a later decision that defines
    command parity and retires or narrows the CLI mutation path rather than
    allowing two authorities to drift.
@@ -153,12 +156,23 @@ must never write.
 
 ### Preconditions
 
-A git repository with a clean working tree at run start. The tree must still be
-clean between runs, which is a constraint on the ignore rules rather than on the
-operator: if anything the system writes during a run is tracked, every run ends
-dirty and the next one cannot start. The rule is simple — the system commits
-everything it writes to the run branch (projections and applied patches) and
-writes run state only to the ignored `.governance/` directory.
+The guided CLI may create one concrete `static-web` baseline in an absent or
+empty local target. It preflights Node, npm, Git, the native Claude executable,
+and Git commit identity before it writes project content; exclusively creates
+its closed starter file set; executes the generated verification commands; and
+commits only the displayed baseline after operator confirmation. Existing
+nonempty non-Git directories and existing repositories that do not already
+satisfy intake are refused rather than adopted or rewritten. This is one
+concrete initializer under the CLI mutation authority, not a target-stack
+adapter interface.
+
+Run intake still requires a git repository with a clean working tree. The tree
+must still be clean between runs, which is a constraint on the ignore rules
+rather than on the operator: if anything the system writes during a run is
+tracked, every run ends dirty and the next one cannot start. The rule is simple
+— the system commits everything it writes to the run branch (projections and
+applied patches) and writes run state only to the ignored `.governance/`
+directory.
 
 Verification commands live in a committed `governed.yaml` at the repository
 root, authored by the operator before the first run. The verification stage
@@ -466,7 +480,7 @@ sandbox:
   allowedPaths: [docs/features/**]   # document stages; implementation: the signed scope
   deniedPaths: [.governance/**]
   commandAllowlist: []
-  idleTimeoutSeconds: 600
+  idleTimeoutSeconds: 1800
   absoluteTimeoutSeconds: 3600       # the separate ceiling, a multiple of the idle budget
   envPassthrough: [PATH, HOME, USERPROFILE, APPDATA, TEMP, TMP, ...]
   network: inherit
@@ -621,6 +635,14 @@ held in machine-local configuration, never in a repository — binds feature ID,
 spec content hash, starting commit, profile hash, risk, expiry, and scope. The
 gate re-checks that policy has not changed since intake before honoring it.
 Worker sessions cannot resolve it and never receive signing secrets.
+
+The guided CLI preserves external signing authority. It writes the canonical
+payload under the selected run's ignored approval-handoff directory, exits at
+the approval pause, and later imports a detached signature after redisplaying
+the exact binding and receiving explicit submission confirmation. It never
+generates, locates, opens, or invokes a private key. The payload, expiry, and
+binding are recomputed under the repository lock before `approveRun` accepts
+the detached signature; changed bytes require a new external signing decision.
 
 The **profile** is the frozen record of everything the run resolved at start —
 model map, limits, policy, agent definitions, verification config, review panel
@@ -870,6 +892,15 @@ tasks belong to a run and have no independent lifecycle to keep consistent with
 anything. Making them a third artifact type is a large part of what went wrong
 before.
 
+**Guided identity remains explicit.** Guided mode selects one committed,
+nonempty design path, then identifies a run by the exact tuple of project,
+feature ID, slug, and change kind. When no persisted tuple exists, the operator
+confirms every field before intake; when several tuples or eligible designs
+exist, the operator selects one displayed value rather than the CLI choosing the
+newest. Run creation still uses the same validation, audit, and profile-freeze
+transaction as `new-run`. One matching nonterminal run resumes; ambiguous
+nonterminal or terminal-only matches refuse with their IDs.
+
 The rule underneath all of this: **enforce what has consequences.** Applying a
 patch, resolving an approval, completing a run — those get gates, because
 getting them wrong costs money or corrupts the tree. Whether a proposal is
@@ -888,6 +919,8 @@ report lives there.
   raw/<run>/...     retained raw model output, one file per invocation
   content/<hash>    content-addressed overflow for oversized prompts and results
   profiles/<run>/   the frozen profile snapshot for a run
+  approval-handoff/<run>/  canonical approval payload plus the detached
+                           signature supplied by the external authority
   verification/<run>/  retained command output, one file per command, plus the
                        structured result record handed to delivery_check
   proposals/<run>/  retained upstream-proposal evidence, one file per
@@ -1006,10 +1039,22 @@ append-only by convention, and it costs perhaps forty lines.
 
 ## 17. Security and secret handling
 
-**Signing material lives outside the repository.** Approval keys are never in
-the repo, never in a projection, and never in run state. A worker or agent
-session never receives them under any circumstance — an agent that can sign an
-approval has defeated the only human gate in the pipeline.
+**Signing material lives outside the BuildWorks host's execution authority.**
+Approval private keys are never in the repository, never in a projection, never
+in run state, and never on a filesystem or process identity that verification
+can access. A worker, agent session, verification command, and guided CLI never
+receives them under any circumstance — an actor that can sign an approval has
+defeated the only human gate in the pipeline. The configured public key,
+canonical payload, and detached signature are not secret.
+
+The repository's file signer remains an advanced external transport tool. It
+does not make a private key safe when the signer and verification share a host
+identity: verification is not filesystem-contained and receives `HOME` and
+`USERPROFILE`, so a predictable key under that identity is reachable even when
+its path is absent from the child environment. Guided mode therefore creates no
+default key and invokes no signer. An operator using the file signer must run it
+in an authority outside the BuildWorks host and return only the detached
+signature.
 
 **Pass named environment variables, never the whole environment.** Inheriting
 the parent environment puts credentials and machine state into a model context
@@ -1102,6 +1147,13 @@ consent, and explicit proposal export remain separate operator actions.
 Completed/blocked records remain inspectable, with missing evidence labelled;
 they are not reopened. No general mid-stage recovery, signing, publication,
 new stage, or intermediate voluntary stop control is introduced.
+
+The guided entrypoint adds no second lifecycle. It derives its next action from
+the same run snapshot and exact-boundary interpreter. Before creating a run it
+requires one selected design, one complete operator-confirmed identity tuple,
+and a configured external public key whose fingerprint the profile freezes.
+At approval it pauses for the detached signature; a later invocation imports
+that signature and requires fresh execution consent for post-approval work.
 
 **A retry that resends an identical prompt is not a retry.** A run
 died three times in planning producing byte-identical bad output. If a retry does
@@ -1231,9 +1283,21 @@ interactive mutation. The reason for the narrow boundary is to build reusable
 operator presentation over the current source of truth without pre-authorizing
 the command, security, and concurrency contracts required to replace the CLI.
 
+**Guided bootstrap authorization — 2026-09-13.** The operator authorized one
+checkout-linked `buildworks` alias and one concrete `static-web` initializer
+under the existing CLI mutation authority. The guided path may initialize an
+absent or empty local target, commit its displayed baseline and one
+operator-authored design, obtain an exact run identity, call the existing stage
+core, export canonical approval bytes, import an externally produced detached
+signature, and resume only from the same proven boundaries. It does not
+authorize a packed or registry package, target-stack adapter framework,
+private-key store, signing service, GitHub operation, new stage, or second
+harness.
+
 ## 24. Non-goals
 
 Explicitly not built, and not to be added without deleting something first:
 a workflow engine, multiple delivery surfaces, an editor extension, target-stack
-adapters, a plugin system, cross-machine resume, pull-request creation, and any
+adapter frameworks, a plugin system, cross-machine resume, pull-request
+creation, packed or registry distribution, a signing service, and any
 compatibility layer for state that no user has.

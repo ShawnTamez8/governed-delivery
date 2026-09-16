@@ -15,7 +15,7 @@ import {
 } from "./code-review.ts";
 import { verifyCommit } from "./commit-verification.ts";
 import { dispatchOnce } from "./dispatch.ts";
-import type { ExecutorDefinition } from "./executor.ts";
+import { type ExecutorDefinition, LARGE_GENERATION_IDLE_TIMEOUT_SECONDS } from "./executor.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import { parseVerificationHandoff } from "./handoff.ts";
 import { applyProposedPatches, checkWorktreeClean } from "./patch-application.ts";
@@ -512,7 +512,7 @@ export async function runCodeReviewStage(
               })),
             }))
           ),
-          invocation: { cwd: worktreePath },
+          invocation: { cwd: worktreePath, idleTimeoutSeconds: LARGE_GENERATION_IDLE_TIMEOUT_SECONDS },
         },
         rootDir
       );

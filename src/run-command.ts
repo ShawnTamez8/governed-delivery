@@ -23,6 +23,7 @@ export interface AdvanceRunOptions {
   json?: boolean;
   input?: Readable & { readonly isTTY?: boolean };
   stderr?: Writable;
+  consent?: (preview: string) => Promise<boolean>;
 }
 
 function remainingGroups(observed: RunObservation): ExecutionGroup[] {
@@ -130,9 +131,17 @@ export async function advanceRun(rootDir: string, runId: number, options: Advanc
     if (initial !== null) return initial;
     if (observed.profile === null) return result("refused", "evidence_invalid", observed.profileReason);
     const preview = observed;
-    stderr.write(formatRunPreview(rootDir, observed.snapshot, execution.remainingGroups, observed.profile));
+    const previewText = formatRunPreview(rootDir, observed.snapshot, execution.remainingGroups, observed.profile);
     execution.consent = "required";
-    if (!options.yes) {
+    if (options.consent !== undefined) {
+      if (!await options.consent(previewText)) {
+        execution.consent = "declined";
+        return result("consent_required", "consent_required", "Execution consent was declined, cancelled, or ended without an affirmative response; no work was started.");
+      }
+    } else {
+      stderr.write(previewText);
+    }
+    if (options.consent === undefined && !options.yes) {
       if (options.json || !input.isTTY) {
         return result("consent_required", "consent_required", "Execution requires --yes in JSON mode or with redirected stdin; no work was started.");
       }

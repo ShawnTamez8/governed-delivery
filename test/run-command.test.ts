@@ -197,6 +197,7 @@ test("TTY decline, EOF, and cancellation keep consent separate from execution an
           if (choice === "SIGINT") process.emit("SIGINT");
           else input.end(choice === "EOF" ? undefined : "no\n");
         });
+
       });
       const result = await advanceRun(root, runId, { input, stderr: output.stderr });
       assert.equal(asked, true);
@@ -210,6 +211,27 @@ test("TTY decline, EOF, and cancellation keep consent separate from execution an
     }));
   }
 });
+
+test("an injected consent callback receives the frozen preview without a lock and decides only this range", () => withRun(async ({ root, store, runId, profile }) => {
+  const before = durable(store, runId);
+  const previews: string[] = [];
+  const result = await advanceRun(root, runId, {
+    stderr: capture().stderr,
+    consent: async (preview) => {
+      previews.push(preview);
+      assert.equal(inspectLock(root).status, "absent");
+      return false;
+    },
+  });
+  assert.equal(result.outcome, "consent_required");
+  assert.equal(data(result).execution.consent, "declined");
+  assert.deepEqual(data(result).execution.groupsAttempted, []);
+  assert.deepEqual(durable(store, runId), before);
+  assert.equal(previews.length, 1);
+  assert.ok(previews[0]!.includes(JSON.stringify(profile.modelMap)));
+  assert.match(previews[0]!, /Remaining groups: spec/);
+  assert.equal(inspectLock(root).status, "absent");
+}));
 
 test("consent rechecks exact schema, observed boundary, profile, age, and writer ownership", async (t) => {
   for (const change of ["schema", "audit", "profile", "age", "writer"]) {

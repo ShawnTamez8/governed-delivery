@@ -1,0 +1,70 @@
+Requested outcome
+Implement docs/features/guided-project-bootstrap/plan.md end to end on a feature branch without provider spend.
+
+Baseline
+BuildWorks required checkout-local Node invocations, explicit low-level run creation and continuation, an existing prepared Git repository, and operator-managed approval commands. It had no guided project initializer or installed buildworks alias.
+
+Success criteria
+- Checkout-linked installation exposes buildworks and bw outside the checkout.
+- Guided mode safely initializes the one authorized static-web starter or selects an existing project.
+- The operator authors and commits exactly one design.md before run intake.
+- Run identity is exact over project, feature ID, slug, and change kind.
+- Guided mode obtains separate consent for each paid range and never spends in automated validation.
+- Approval uses canonical payload bytes and a detached signature from an external authority; guided mode never reads a private key.
+- The fixture-backed journey reaches completed delivery with queryable zero cost.
+- Documentation, focused tests, the full suite, type checking, diff checks, and the free smoke pass.
+
+Approved approach
+The reconciled plan accepted external-only signing, exact prompted identity, and npm install --global <absolute-checkout> as the installation contract. Work runs on branch guided-project-bootstrap. No paid execution was authorized.
+
+Material assumptions and boundaries
+- The concrete initializer supports static-web only.
+- Interactive guided mode refuses redirected stdin before mutation or spend.
+- The installed shims and full guided journey are validated as two composed checks because automated redirected input cannot drive production interactive mode.
+- Existing low-level CLI commands and the read-only dashboard remain supported.
+
+Files and behavior changed
+- Architecture and repository instructions authorize one guided initializer under the existing CLI mutation authority.
+- package.json and package-lock.json expose checkout-linked buildworks and bw aliases.
+- src/project-bootstrap.ts implements target classification, preflight, starter generation, generated verification, exact staging, commits, and design selection.
+- src/run-intake.ts shares run creation and profile freeze between low-level and guided paths.
+- src/guided-command.ts implements exact identity selection, continuation, consent callbacks, terminal reporting, and external approval handoff.
+- CLI argument/routing, readiness, repository resolution, paths, operator output, and run continuation were wired to the guided path.
+- Tests cover installation, bootstrap refusals, exact identity, approval binding and signature rechecks, continuation, CLI routing, and the complete fixture journey.
+- README.md, docs/runbooks/cli-operator.md, and .claude/skills/run-buildworks/SKILL.md make guided operation primary while retaining the advanced manual workflow.
+
+Validation performed
+- Exact focused guided suite: 240 of 241 initially passed; the only failure was a README heading fence changed by documentation editing. The fence was restored.
+- Direct regression after the full-suite findings: test/paths.test.ts and test/guided-command.test.ts passed 16/16; the complete guided fixture journey passed in 47 seconds.
+- npm run typecheck passed.
+- npm test passed 1170/1175 with 5 pre-existing skips and no failures.
+- npm run check:docs passed clean with 74 historical path warnings.
+- git --no-pager diff --check passed.
+- Free operational smoke passed 13/13 at C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1789365059413\target.
+- Checkout-linked shims were exercised from outside the checkout by test/package-entrypoint.test.ts.
+- The fixture-backed guided journey completed every architecture stage, retained delivery evidence, verified the audit chain, and recorded USD 0 across all agent rows.
+- Eight isolated guard mutations failed their intended assertions, were restored to exact hashes, and passed.
+
+Debugging evidence
+One full-suite attempt passed the process-tree assertions but hit an intermittent Windows EPERM while deleting its temporary directory. The exact test immediately passed in isolation and the complete suite then passed. Analysis is retained in .claude/sessions/2026-09-13-debug-verify-cleanup-eperm.md; no retry or production-code workaround was added.
+
+Independent review
+The full-diff review, including every untracked file, reported four initial confirmed findings: concurrent exact-tuple intake, expired-handoff dead-end, CRLF starter rejection, and incomplete terminal evidence. Follow-up passes found malformed-expiry rendering, missing reviewer attribution, a per-file archive race, and a remediation that made invalid stale signatures block renewal. All eight were accepted and fixed. The final independent closure review reported 0 findings. The durable review is docs/features/guided-project-bootstrap/2026-09-13-code-review.md.
+
+Post-review validation
+- npm test: 1173 passed, 5 skipped, 0 failed.
+- npm run typecheck: passed.
+- npm run check:docs: clean with 74 historical path warnings.
+- git --no-pager diff --check: passed.
+- Focused review regressions and complete no-spend guided fixture: passed.
+
+Result
+Tasks 1 through 10, independent review, finding remediation, and plan closure are complete. The plan status is Implemented.
+
+Deviations and limitations
+- Automated proof composes real installed shim execution with an injected-prompt guided function journey because production guided mode intentionally rejects redirected stdin.
+- The paid driver remains available but was not run. No real provider command or paid dispatch was executed.
+- No commit has been created.
+
+Rollback status
+All implementation changes are uncommitted on guided-project-bootstrap. Rollback must be surgical because the worktree may contain user changes; no whole-file restore or destructive Git command is authorized.

@@ -2,7 +2,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { acquireLock } from "./lock.ts";
-import { requireRunInProgress, openStore, StoreStateError, type Store } from "./store.ts";
+import { requireRunInProgress, openStore, StoreStateError, type ChangeKind, type Store } from "./store.ts";
 import { formatHelp, parseArguments, UsageError } from "./cli-args.ts";
 import { resolveRepositoryRoot, TargetUnavailableError } from "./repo-root.ts";
 import { appendAudit, verifyAuditChain } from "./audit.ts";
@@ -13,11 +13,11 @@ import { runImplementationStage } from "./implementation-stage.ts";
 import { runVerificationStage } from "./verification-stage.ts";
 import { runCodeReviewStage } from "./code-review-stage.ts";
 import { runDeliveryStage } from "./delivery-stage.ts";
-import { freezeProfile, loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
+import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
 import { approvalPayload, validateExpiry } from "./approval.ts";
 import { approveRun, buildBinding } from "./approval-stage.ts";
 import { APPROVAL_DEFAULT_LIFETIME_SECONDS, APPROVAL_MAX_LIFETIME_SECONDS } from "./policy.ts";
-import { checkIntakeRepository, inspectReadiness } from "./readiness.ts";
+import { inspectReadiness } from "./readiness.ts";
 import { ACTION_REASON_ORDER, readRunSnapshot, RunMissingError, type ActionReason } from "./operator-state.ts";
 import { canonicalJson } from "./canonical.ts";
 import { advanceRun } from "./run-command.ts";
@@ -29,6 +29,8 @@ import {
   formatOperatorResult, operatorCommand, operatorEnvelope, operatorExit,
   type OperatorCommand, type OperatorErrorCode,
 } from "./operator-output.ts";
+import { createRunIntake, RunIntakeFreezeError } from "./run-intake.ts";
+import { GuidedCommandError, runGuidedCommand } from "./guided-command.ts";
 
 // A malformed global option can fail before parsing selects a command. This
 // hint chooses only its error presentation; parseArguments still validates it.
@@ -62,6 +64,16 @@ async function main(): Promise<void> {
       process.stdout.write(formatHelp(command));
       return;
     }
+    if (parsed.guidedTarget !== null) {
+      process.exitCode = await runGuidedCommand(parsed.guidedTarget, {
+        invocationDirectory,
+        input: process.stdin,
+        stdout: process.stdout,
+        stderr: process.stderr,
+      });
+      return;
+    }
+    if (command === null) throw new UsageError("missing command");
     output = operatorCommand(command) ? command : null;
     json = parsed.flags.has("json");
     selectedRun = args.has("run") ? Number(args.get("run")) : null;
@@ -170,65 +182,21 @@ async function main(): Promise<void> {
         break;
       }
       case "new-run": {
-        const changeKind = args.get("change-kind")!;
-        const model = args.get("model")!;
-        // Everything below runs *before* the insert, and that ordering is the
-        // point: a repository that cannot verify must not get a run row that
-        // is guaranteed to block after every expensive stage has already
-        // spent. These are refusals about the repository, not the command
-        // line, so they exit 1 rather than as usage errors.
-        const intake = checkIntakeRepository(rootDir);
-        if (!intake.ok) {
-          console.error(intake.reason);
-          process.exitCode = 1;
-          break;
-        }
-        const run = store.insertRun(
-          args.get("project")!,
-          args.get("feature")!,
-          args.get("slug")!,
-          changeKind
-        );
-        appendAudit(store, {
-          runId: run.id,
-          stageId: null,
-          actor: "system",
-          actorType: "cli",
-          action: "run.create",
-          summary: `created run ${run.id} for ${run.slug}`,
-        });
-        // Hard rule 6: config is frozen at run start. A run with no profile
-        // can never be approved, so a freeze failure blocks it here rather
-        // than surfacing three stages later at the gate.
         try {
-          const frozen = freezeProfile(rootDir, run.id, intake.startingCommit!, model, intake.verification!);
-          store.setProfileRef(run.id, frozen.hash);
-          appendAudit(store, {
-            runId: run.id,
-            stageId: null,
-            actor: "system",
-            actorType: "cli",
-            action: "profile.freeze",
-            summary: `froze profile ${frozen.hash} for run ${run.id}`,
+          const created = createRunIntake(store, rootDir, {
+            project: args.get("project")!,
+            featureId: args.get("feature")!,
+            slug: args.get("slug")!,
+            changeKind: args.get("change-kind")! as ChangeKind,
+            model: args.get("model")!,
           });
-        } catch (err) {
-          appendAudit(store, {
-            runId: run.id,
-            stageId: null,
-            actor: "system",
-            actorType: "cli",
-            action: "profile.freeze.failed",
-            summary: (err as Error).message,
-          });
-          store.setRunStatus(run.id, "blocked");
-          // The rethrow below exits non-zero and prints the filesystem error,
-          // which never names the run. Without this line a caller scripting
-          // `bw new-run` gets no id at all — the run exists and is blocked,
-          // and nothing in the command's output says which one.
-          console.error(`run ${run.id} created but blocked: profile freeze failed`);
-          throw err;
+          console.log(String(created.run.id));
+        } catch (error) {
+          if (error instanceof RunIntakeFreezeError) {
+            console.error(`run ${error.runId} created but blocked: profile freeze failed`);
+          }
+          throw error;
         }
-        console.log(String(run.id));
         break;
       }
       case "stage-add": {
@@ -626,6 +594,11 @@ ${proposal.why_upstream}
       }
     }
   } catch (err) {
+    if (err instanceof GuidedCommandError) {
+      console.error(err.message);
+      process.exitCode = err.exitCode;
+      return;
+    }
     if (output !== null) {
       const code: OperatorErrorCode = err instanceof UsageError ? "usage"
         : err instanceof TargetUnavailableError ? "target_unavailable"

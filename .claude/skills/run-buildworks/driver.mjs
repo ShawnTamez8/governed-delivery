@@ -205,7 +205,7 @@ function freeSmoke() {
   step("verify-audit validates the chain", { exit: 0, match: /chain valid/ }, () =>
     bw(["verify-audit"]));
 
-  step("an unknown command prints usage", { exit: 2, match: /usage: bw <command>/ }, () =>
+  step("an unknown command prints usage", { exit: 2, match: /usage: buildworks \[<path>\]/ }, () =>
     bw(["bogus"]));
 
   return runId;

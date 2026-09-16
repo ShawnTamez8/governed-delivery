@@ -1,55 +1,85 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-13, dashboard command center redesign-3 implemented and repository-scoped)
+## Current state (2026-09-15, two uncommitted layers on `guided-project-bootstrap`)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
 system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
-**Working state:** Branch `cs_candidate_b` remains based on `4356151`. The
-working set across `src/dashboard/`, `src/dashboard-server.ts`,
-`src/dashboard-config.ts`, `src/operator-read.ts`, `test/dashboard-ui.test.ts`,
-`test/dashboard-server.test.ts`, `README.md`, and
-`docs/features/dashboard-redesign-3/` is uncommitted. No commit has been
-requested yet. `package.json` chains `typecheck:dashboard`.
+**Working state:** Branch `guided-project-bootstrap` still sits on `3415032`
+with nothing committed, verified by `git rev-parse HEAD` and `git status
+--porcelain`: 33 modified tracked files plus 11 untracked paths, 44 total. It
+now carries **two distinct layers**. Layer 1 is the guided project bootstrap.
+Layer 2 landed 2026-09-14 between 12:37 and 15:21 and the previous resume
+point — saved 10:00 that morning — does not mention it, so its file count grew
+from 23+10 without explanation. `git status --short` is the authoritative list.
+`CLAUDE.md` and `AGENTS.md` remain byte-identical and document the guided
+entrypoint and the `dashboard` command alongside the low-level inventory.
 
-**Completed:** `docs/features/dashboard-redesign-3/plan.md` is `Implemented` —
-all nine tasks shipped, and
-`docs/features/dashboard-redesign-3/2026-09-13-code-review.md` is `reconciled`.
-The dashboard is now a multi-tab enterprise command center (Overview, Runs,
-Findings, Governance, Models & Agents, Audit) featuring a 6-card KPI strip,
-Needs Attention queue, interactive 8-stage Delivery Pipeline, analytical panels,
-Governed Deliveries table, slide-over detail drawers, keyboard shortcuts (1-6,
-?, Esc), and repository-scoped filtering across all tabs. Verification:
-`npm test` 1177 tests passing, `npm run typecheck` exit 0, `npm run check:docs`
-clean.
+**Completed (layer 1):** `docs/features/guided-project-bootstrap/plan.md` is
+`Implemented` — Tasks 1-10 shipped. `2026-09-13-plan-review.md` is `reconciled`
+(3 accepted, 0 open) and `2026-09-13-code-review.md` is `reconciled` (8
+accepted, 0 open) after a final independent closure review reporting 0
+findings. Verification at closure: `npm test` 1,173 passed with 5 pre-existing
+skips, typecheck/docs/diff clean, the free smoke 13/13, and a fixture-backed
+guided journey that reached completed delivery with USD 0 across every agent
+row. `docs/runbooks/cli-operator.md` section 3 documents both guided paths.
 
-**In flight:** Nothing. No plan is mid-execution.
+**In flight (layer 2):** Implemented and passing, but **undocumented** — no
+`docs/features/` plan, no review record, and no entry in this file before the
+2026-09-15 record below. It is three changes: the hazard-1 item 9 fence fix in
+`src/parse-output.ts` with its recorded fixture and two tests; the
+`normativeChanges` single-claim rule in `src/prompts.ts`; and an idle-timeout
+raise from 600 to 1800 seconds in `src/executor.ts` applied explicitly at the
+implementation-author and code-review-remediation dispatches. The measured
+`docs/hazards.md` item 9 entry plus the committed fixture is its only written
+record. Nobody has reviewed it.
 
-**Decisions locked:** Invariant Hard Rule 2 holds: the dashboard is strictly
-read-only and loopback-only; targets are loaded via `--repositories-file <path>`.
-The Delivery Pipeline's "Governance" step represents cross-stage gate evaluation
-(`gate_result`) rather than a single database stage row (displaying `stageId: null`).
-Repository selection scopes the portfolio banner, 6-card KPI strip, exception
-queue, pipeline stepper, and all tab detail views to the active repository.
+**Decisions locked:** Hard Rule 2 holds — the guided initializer lives inside
+the existing CLI mutation authority and creates no private key, signer, package
+artifact, adapter framework, or second lifecycle, and the dashboard remains a
+read-only loopback projection. Signing stays external: guided mode exports
+canonical payload bytes and imports a detached signature only. The one starter
+is `static-web`. Guided mode is interactive only and refuses redirected input
+before mutation or spend. Run identity is the exact project, feature ID, slug
+and change-kind tuple; ambiguity refuses with IDs instead of choosing the
+newest. Installation is `npm install --global <absolute-checkout>`, not a packed
+or published artifact.
 
-**Implementation boundary:** Presentation narrows, never alters. Interactive
-mutation, remote access, WebSockets, new telemetry persistence, a second harness,
-and fabricated telemetry remain unauthorized.
+**Implementation boundary:** Presentation narrows, never alters. Interactive UI
+mutation, remote access, a second harness, a production executor switch, and
+fabricated telemetry remain unauthorized. No paid execution is authorized.
 
-**Running state:** No dashboard server, browser, background agent, or paid process
-is running. The completed paid target remains at
-`C:\Users\tamezs\buildWorks_test_repos\target` ($2.06, 16/16 dispatches) and the
-blocked paid target remains at
-`C:\Users\tamezs\AppData\Local\Temp\1\bw-run-skill\1789245101665\target` ($1.81).
+**Running state:** A read-only dashboard is serving
+`http://127.0.0.1:61419` from this checkout over the two targets below. It is
+attached to the Copilot session that started it and dies with that session; its
+PID was not captured. Port and bearer token are process-lifetime only and
+change on every restart. Two targets hold real run state: the completed paid
+target `C:\Users\tamezs\buildWorks_test_repos\target` ($2.06, 16/16
+dispatches), and `C:\Repositories\testing-repos\simple-game-test`, a Git
+worktree with its own `.governance\state.db`. **Both temp-directory targets
+named by the previous resume point are gone** — the $1.81 blocked target and
+the whole `%TEMP%\bw-run-skill` tree no longer exist, as the logoff deletion
+timer predicted. No browser automation, background agent, or paid process is
+running.
 
-**Open/deferred:** Manual browser evaluation of the command center layout and
-themes across dark/light modes and viewport sizes. Operator commit decision for
-the uncommitted dashboard working tree.
+**Open/deferred:** Layer 2 needs a review record and a commit decision, and the
+operator has made neither. `git diff --check` is no longer clean — one trailing
+blank line at `test/recorded-implementation-response.test.ts:79`, from layer 2.
+The `verify-command` EPERM cleanup race has now
+failed a **second** full suite, so `.claude/sessions/2026-09-13-debug-verify-cleanup-eperm.md`
+step 3 is live: preserve handle evidence and investigate, never a blind retry.
+`.claude/skills/run-buildworks/SKILL.md` carries a drifted "Verified output,
+2026-08-31" block — two sample lines no longer match while all 13 steps pass —
+and the operator has not decided whether to refresh it. Manual browser
+evaluation of the dashboard command center across themes and viewports. The
+deferred `RunSnapshot` agent-field projection keeps model, harness and duration
+rendering as unavailable. Production interactive guided mode is still proved as
+two composed checks, because redirected stdin is refused by design.
 
-**Next up:** Operator browser review of the redesigned command center, then a
-commit decision for the dashboard working tree. Do not run a paid chain.
+**Next up:** Review and document layer 2, then present both layers for the
+operator's commit decision. Do not run a paid chain.
 
 ## Diagnostics quick-reference
 
@@ -104,6 +134,8 @@ Durable project facts belong here, regardless of whether a host also caches them
 - Apply a formatting-honesty pattern to every value class at once. `countNode`
   paired abbreviated text with an exact accessible value while `usd()` shipped
   the raw float `$0.5452318`; the rule existed and was applied to one type.
+- Presentation may narrow, never alter: collapse, shorten or aggregate a value
+  only while it stays reachable and exact for assistive technology.
 - Popover click triggers attaching document-level listeners must use `{ once: true }`
   or explicit cleanup; otherwise re-renders accumulate handlers and leak memory/events.
 - Dashboard repository IDs in URL routes and APIs are deterministic base64url SHA-256
@@ -112,6 +144,47 @@ Durable project facts belong here, regardless of whether a host also caches them
 - Scoping repository views in the dashboard requires filtering the views array fed to
   `portfolioProjection`, `commandCenterKpis`, `needsAttentionQueue`, and `governedDeliveriesRows`
   by `selectedRepositoryId || repositoryFilter`.
+- Run identity has no uniqueness constraint in the schema, so a pre-prompt
+  snapshot is stale by the time intake inserts. Re-query the exact project,
+  feature ID, slug and change-kind tuple while holding the repository writer
+  lock, or two ordinary guided processes create duplicate nonterminal runs.
+- An expired approval handoff must be able to rotate. Move the whole handoff
+  directory atomically, validate the moved payload, then create fresh canonical
+  bytes; stale signature bytes are inert evidence, never a prerequisite for
+  renewal and never submitted to `approveRun`.
+- Compare committed blobs with LF source constants and compare the worktree with
+  HEAD through Git. Byte-comparing generated constants against working-tree text
+  rejects a clean `core.autocrlf=true` clone as a modified starter.
+- Guided mode refuses redirected stdin by design, so automated proof composes
+  real installed-shim execution with an injected-prompt journey. That
+  composition is a stated limitation, not end-to-end evidence of the production
+  interactive path.
+- Guided routing treats the first argument as a target only when it is absolute,
+  `.`, `..`, or starts with `.\`, `..\`, `./` or `../`; a bare name is parsed as
+  a command and exits 2. No argument means the current directory, and `--repo`
+  is refused in guided mode.
+- `.governance/` ignore coverage is a doctor readiness check only.
+  `checkIntakeRepository` filters the governance prefix out of its cleanliness
+  test, so intake requires a readable HEAD, a clean tree excluding governance
+  state, a committed `governed.yaml`, and (guided) a resolved
+  `BW_APPROVAL_PUBLIC_KEY`.
+- `doc-check` recognizes only backticked forward-slash paths under `src`,
+  `test`, `scripts`, `docs` or `.claude`, and `docs/runbooks/**` is reference
+  tier, where an unresolvable path is an error rather than a warning. Write
+  generated example paths in the runbook's Windows backslash form.
+- Anchor a closing code fence to the start of its own line. A non-greedy body
+  match ending at a bare triple backtick terminates at the first one appearing
+  *inside* a JSON string value, truncating the payload; a literal newline cannot
+  appear unescaped inside a valid JSON string, so requiring a preceding newline
+  is safe. This is hazard 1 item 9 and it cost $2.83862.
+- `src/harness.ts` prefers a per-dispatch `invocation.idleTimeoutSeconds` over
+  `executor.sandbox.idleTimeoutSeconds`, so a call-site override is live rather
+  than decorative — check the call site before assuming the sandbox default
+  governs a long dispatch.
+- The dashboard reads `--repositories-file` once at startup and holds the list
+  in memory. Adding or removing a target means editing the file and restarting
+  the command, which mints a new ephemeral port and a new bearer token; the old
+  URL is dead. There is no in-UI way to add a repository.
 
 ## Session records
 
@@ -199,23 +272,18 @@ A rationale that cannot be broken is not a rationale.
 ### CLI operator work: planning, review, implementation (2026-09-09/10)
 
 Operator chose `2026-09-09-docs-cli-operator-analysis.md`, not the outbound
-proposal, for 18 criteria/boundaries/transactional exceptions/distribution
-limits; `2026-09-09-cli-github-impact-analysis.md` is closed history. The plan
+proposal; `2026-09-09-cli-github-impact-analysis.md` is closed history. The plan
 review's 22 dispositions preserved full consent, complete arrays, raw approval
-bytes and bootstrap criteria; reconciliation granted no spend.
-
+bytes and bootstrap criteria, and granted no spend.
 `2026-09-10-cli-operator-implementation.txt` retains commands, ten late
-mutations and full approval testing after a contributor's external-signing
-filesystem limit. Deviations: target-relative evidence, disabled diff refresh,
-shared extraction; no stronger gate/schema. Standard I/O is the runner seam,
-stages own gates, and an invocation never retries failed groups including
-rolled-back delivery. Lowercase `# design` was required grounding; ascending
-severity and unattempted-group accounting needed correction. CLI 108 and full
-1071 passed with one OS symlink skip.
-
-A follow-up `gpt-5.5` review of HEAD plus untracked files passed nine
-index/key-isolation/delivery-retry cases; physical EOF resolved nonempty-line
-counting. DEP0190 had no retained traced origin, so no attribution was made.
+mutations and full approval testing. Deviations: target-relative evidence,
+disabled diff refresh, shared extraction; no stronger gate/schema. Standard I/O
+is the runner seam, stages own gates, and an invocation never retries failed
+groups including rolled-back delivery. Lowercase `# design` was required
+grounding; ascending severity and unattempted-group accounting needed
+correction. CLI 108 and full 1071 passed with one OS symlink skip. A follow-up
+`gpt-5.5` review passed nine index/key-isolation/delivery-retry cases; DEP0190
+had no retained traced origin, so no attribution was made.
 
 ### cc-switch reviewed and rejected as a harness abstraction (2026-09-11)
 
@@ -240,14 +308,12 @@ at `8cd5a2d9b959f4eb215b71feae690a9b1a14b2d2`; only version commands ran.
 Candidate B shipped at `4356151` with seven mutations; a later Windows
 executable-lookup fix closed separately with an eighth. Canonical environment
 reads preserve Windows key casing, and native lookup requires native path
-semantics rather than Node `statSync` equivalence.
-
-The authorized live chain used 16 dispatches/$2.4481306. One remediation landed,
-then final high finding 5 blocked code review at
-`511f64bbb34d3ed0c8066a7fd8fb4945dc6ba54e`; no delivery occurred. AC-013 maps
-Enter to equals, while the remediation's all-button exception conflicts with that
-requirement. Native browser ordering and generated-unit behavior remain
-unverified; the retained triage, live-run and recorded JSON files preserve the
+semantics rather than Node `statSync` equivalence. The authorized live chain
+used 16 dispatches/$2.4481306: one remediation landed, then final high finding 5
+blocked code review at `511f64bbb34d3ed0c8066a7fd8fb4945dc6ba54e` with no
+delivery. AC-013 maps Enter to equals, which the remediation's all-button
+exception contradicts. Native browser ordering and generated-unit behavior
+remain unverified; retained triage, live-run and recorded JSON files preserve
 limits, envelopes, artifacts, costs and hashes.
 
 ### Dashboard read-only increment implemented (2026-09-12)
@@ -266,121 +332,171 @@ command-copy and 480-pixel behavior.
 
 One explicitly authorized paid run used 16 dispatches and $1.8073754. Round 1
 remediated floating-point display at commit
-`270dc90fe939d3f1c60836a46151e361d37d6d47`; the final panel then blocked on
-high AC-018 mobile overflow at `src/styles.css:60`, so delivery did not run.
-Both security panels were clean and the audit chain was valid.
-
-The retained target and durable evidence paths are in Current state and
-`.claude/sessions/2026-09-12-paid-web-calculator-code-review-block.md`. The
+`270dc90fe939d3f1c60836a46151e361d37d6d47`; the final panel then blocked on high
+AC-018 mobile overflow at `src/styles.css:60`, so delivery did not run. Both
+security panels were clean and the audit chain was valid. Retained evidence is
+in `.claude/sessions/2026-09-12-paid-web-calculator-code-review-block.md`; the
 blocked run cannot receive another unreviewed remediation, and any replacement
 paid run needs new authorization.
 
-### Dashboard enterprise redesign requirements and plan (2026-09-12)
+### Dashboard redesign: requirements, density triage, command center (2026-09-12/13, committed at `3415032`)
 
-Requirements at
-`.claude/sessions/2026-09-12-requirements-dashboard-enterprise-redesign.md`; the
-full-path plan kept the HTTP and `RunSnapshot` contracts unchanged, added one
-pure checked browser projection module, and defined eight tasks with
-source-derived tests. One self-review reconciled five findings first: an
-invented out-of-window count, a command-formatting module cycle, exposed
-serialized decision lists, omitted operator-action metadata, and weakly verified
-contrast.
+Three passes over the same read-only projection, retained in
+`.claude/sessions/2026-09-12-requirements-dashboard-enterprise-redesign.md` and
+`.claude/sessions/2026-09-12-requirements-dashboard-density-triage.md`. The plan
+kept the HTTP and `RunSnapshot` contracts unchanged and added one pure checked
+browser projection module in `src/dashboard/dashboard-model.js`, testable in
+Node without DOM emulation; one self-review reconciled five findings, including
+an invented out-of-window count and a command-formatting module cycle. The
+operator then replaced hero-plus-collapse with six primary tabs, a KPI strip, an
+interactive eight-stage pipeline, a Needs Attention queue and slide-over drawers
+— still strictly read-only under Hard Rule 2 — and deferred the `RunSnapshot`
+agent-field extension, so model, harness and duration stay unavailable.
+Requested average execution time and trends have no `RunSnapshot` source and
+render unavailable rather than substituting wall-clock or verification duration.
+Governance is a synthesized cross-stage gate check keeping `stageId: null`. Code
+review caught `aria-busy` never cleared on four session-unavailable early
+returns, a token chart conflating reported zero with nothing reported, and a
+popover listener leaking across renders; all were fixed with mutation-proved
+regressions. Verified by `npm run typecheck`, `node --test
+test/dashboard-ui.test.ts` 32/32, `npm test` 1177 pass, and `npm run
+check:docs`.
 
-Requested average execution time and trends had no `RunSnapshot` source, so both
-render as unavailable rather than substituting wall-clock or verification
-duration. Aggregate only current run-list IDs, key snapshots by repository plus
-run, and parse stored decision list fields into structured values — never
-restore raw JSON as a fallback.
-
-### Redesign implemented, then operator review reopens density (2026-09-12)
+### Guided project bootstrap implemented; instruction files resynced (2026-09-13/14)
 
 #### Decisions and assumptions
-
-- Operator deferred the `RunSnapshot` extension that would project the agent
-  fields `agent_runs` already stores, so agent model, harness and duration stay
-  unavailable — the gap is now known to be projection, not data.
-- Operator chose hero plus aggressive collapse over tabs and sticky section
-  navigation; a sticky region costs the vertical space the objective needs.
-- Presentation may narrow, never alter: a value may be collapsed, shortened or
-  aggregated only while staying reachable and exact for assistive technology.
+- `docs/features/guided-project-bootstrap/plan.md` shipped Tasks 1-10 on branch
+  `guided-project-bootstrap`: checkout-linked `buildworks`/`bw` aliases, the one
+  `static-web` initializer in `src/project-bootstrap.ts`, shared run creation in
+  `src/run-intake.ts`, and guided identity, consent, continuation and terminal
+  reporting in `src/guided-command.ts`.
+- Signing stayed external. Guided mode exports canonical payload bytes and
+  imports a detached signature; it never creates, names, reads, or invokes a
+  private key, and it never runs `scripts/sign-approval.mjs`.
+- Interactive only by design: redirected input refuses before mutation or spend,
+  each paid range takes its own explicit consent, and the first accepted range
+  stops at approval with exit 3.
 
 #### What failed
-
-- `renderTokenChart` was edited to call a `tokenTable(groups)` helper that did
-  not exist; the trailing disclosure had to be extracted first. Applying a
-  review fix before extracting the code it depends on breaks the build.
-- `usd()` shipped raw floats (`$0.5452318`) while `countNode()` right above it
-  already paired abbreviated text with an exact accessible value. The honesty
-  pattern existed and was applied to one value class only.
-- Six section-level `.source-note` paragraphs, constant-valued table columns,
-  per-cell coverage parentheticals, raw hashes and input-only token cells made
-  the run view read as a report; the full defect catalogue with evidence is in
-  `.claude/sessions/2026-09-12-requirements-dashboard-density-triage.md`.
+- Four confirmed review findings: concurrent exact-tuple intake, an expired
+  handoff with no rotation path, a clean `core.autocrlf=true` clone rejected as
+  a changed starter, and terminal rerun output without the block reason or
+  findings. Four more surfaced on follow-up passes: malformed retained expiry
+  presented for signing, missing reviewer attribution, a per-file archive
+  validation-to-rename race, and a remediation that made an invalid stale
+  signature block renewal. All eight were accepted and fixed; the closure review
+  returned 0 findings.
+- A full-suite attempt hit an intermittent Windows EPERM deleting its temporary
+  directory. The test passed in isolation and the suite then passed; the
+  analysis is retained in
+  `.claude/sessions/2026-09-13-debug-verify-cleanup-eperm.md` and no retry or
+  production workaround was added. This was the **first** occurrence; see the
+  2026-09-15 record for the second, which activates that record's step 3.
 
 #### What worked
-
-- A separate `code-review` agent independently re-ran the suite and recomputed
-  contrast, returning two findings: `aria-busy` never cleared on the four
-  session-unavailable early returns, and a token chart conflating reported zero
-  with nothing reported. Both fixed with mutation-proved regressions.
-- Reading `insertFindingDecision` before trusting a label showed that grounding
-  is forbidden unless the disposition is `rejected_with_rationale` and normative
-  changes are forbidden unless it is `addressed` — so several "Not recorded"
-  rows were misreporting structurally impossible fields as missing evidence.
-- Eight mutations in a robocopy mirror, each proved and restored byte-exactly.
-  CRLF-aware anchor translation was required; two anchors missed on the first
-  pass because the files use CRLF and the anchors used `\n`.
-
-#### Running state
-
-- None. No server, browser, agent or paid process is running; the mutation
-  mirror and the `app.js` byte snapshot under `%TEMP%` were both deleted.
+- Eight isolated guard mutations failed their intended assertions and were
+  restored to exact hashes.
+- The fixture-backed journey completed every architecture stage, retained
+  delivery evidence, verified the audit chain, and recorded USD 0, so the whole
+  increment was proved without provider spend.
+- `test/package-entrypoint.test.ts` exercised the real checkout-linked shims
+  from outside the checkout rather than asserting package metadata.
 
 #### Verification
+- `npm test` 1,173 passed / 5 skipped; `npm run typecheck`, `npm run
+  check:docs` and `git --no-pager diff --check` clean; free smoke 13/13.
 
+#### Documentation sync (2026-09-14)
+- Edit `CLAUDE.md`, copy to `AGENTS.md`, then compare hashes — they must stay
+  byte-identical, and both carry the guided entrypoint and the `dashboard`
+  command, the only command that refuses `--repo`.
+- `docs/runbooks/cli-operator.md` section 3 split into "Initialize a new
+  project" and "Select an existing project"; a stated requirement for committed
+  `.governance/` ignore coverage was removed as false — that check exists only
+  in `inspectReadiness`, not `checkIntakeRepository`.
+- `driver.mjs clean` was deliberately not run, because it deletes retained
+  paid-evidence targets too.
+
+## Dashboard launch, and an undocumented second layer discovered (2026-09-15)
+
+### Decisions and assumptions
+- The operator asked only to launch the dashboard and add a second repository;
+  no commit, review, or spend was authorized, and none happened.
+- Targets were chosen by the assistant from this file's recorded paths, not by
+  operator instruction: the surviving paid target plus the operator-named
+  `C:\Repositories\testing-repos\simple-game-test`.
+- The repositories file is machine-local at
+  `C:\Users\tamezs\.copilot\session-state\d4c9f2f8-18c6-4755-a0d8-b45098406e5b\files\dashboard-repositories.json`
+  and is deliberately outside the repository; it is disposable, and its one
+  `repositories` member takes unique absolute paths only.
+- Asked which work to start next, the operator was unavailable, so the
+  assistant began the recommended option — review and document layer 2 — and
+  reached the reading and tracing stage before compaction.
+
+### What failed
+- `npm test` failed at 1,175 passed / 1 failed / 5 skipped after 769 s. The one
+  failure is `test/verify-command.test.ts:134`, EPERM removing
+  `bw-verify-cmd-*` from `%TEMP%`, with the functional process-tree assertions
+  already passed. **Second occurrence**, same signature as 2026-09-13, so the
+  debug record's step 3 now governs: preserve handle evidence, investigate open
+  handles, add no blind retry. `withRoot` already passes `force: true`, which
+  does not suppress EPERM.
+- The previous resume point was stale in two ways that mattered: it undercounted
+  the working set (23+10 against an actual 33+11) and it listed two temp targets
+  that no longer exist. A recorded path is not evidence the path still exists.
+
+### What worked
+- Isolated rerun passed in 2.9 s, confirming load-dependence rather than a
+  deterministic defect: `node --test --test-name-pattern "a hung command is
+  killed with its whole tree at the ceiling" test\verify-command.test.ts`.
+- Tracing `src/harness.ts` settled that the layer-2 per-dispatch
+  `idleTimeoutSeconds` override is honored rather than dead code — the sandbox
+  default is only a fallback.
+
+### Running state
+- Dashboard server: `http://127.0.0.1:61419`, launched from this checkout over
+  the two targets above - read-only loopback projection, no writer, no
+  dispatch - attached to the Copilot session that started it and stopped by
+  ending that session; PID `unknown`.
+- An earlier instance on port 56248 was stopped when the second repository was
+  added; its URL and token are dead.
+
+### Verification
 - `npm run typecheck` - clean across both programs.
-- `node --test test/dashboard-ui.test.ts test/dashboard-server.test.ts` - 22/22.
-- `npm test` - 1129 pass, 5 skip, 1 unrelated failure.
-- `npm run check:docs` and `git --no-pager diff --check` - clean.
+- `npm run check:docs` - `doc-check: clean`, 74 pre-existing warnings.
+- `npm test` - 1,175 passed, 1 failed, 5 skipped (the EPERM race above).
+- `Invoke-WebRequest http://127.0.0.1:61419/` - HTTP 200, 5,615 bytes.
+- `git status --porcelain` - 33 modified, 11 untracked, HEAD `3415032`.
+- `git --no-pager diff --check` - **not clean**: "new blank line at EOF" at
+  `test/recorded-implementation-response.test.ts:79`, introduced by layer 2.
+  Left unfixed deliberately, because editing unreviewed code during a
+  compaction pass is not this step's job.
 
-#### Deferred and open
+### Deferred and open
+- Open: layer 2 has no review record and no `docs/features/` plan. It changes a
+  parser, a prompt contract, and a dispatch timeout, and it is entirely
+  unreviewed. Reviewing it is the next action.
+- Open: the layer-2 idle-timeout change raised the sandbox default to 1800 *and*
+  introduced `LARGE_GENERATION_IDLE_TIMEOUT_SECONDS = 1800` applied at two call
+  sites, so both sources now carry the same literal and
+  `test/executor.test.ts` pins each to it. Whether the default was meant to move
+  at all is unresolved - an unverified assistant observation, not a finding.
+- Open: the EPERM handle holder is still unidentified, now across two
+  occurrences.
+- Open: `git --no-pager diff --check` is no longer clean — a trailing blank line
+  at `test/recorded-implementation-response.test.ts:79`. One-line fix, but it
+  belongs to the layer-2 review, not to a compaction pass.
 
-- Deferred: the agent-field projection, historical trends, cross-run comparison,
-  and effort levels, which are stored nowhere.
-- Open: four questions in the density requirements — findings expanded or
-  collapsed beside the hero, hash fragment length, sticky governed actions, and
-  whether the portfolio view is in scope.
+### Next time
+- Check `git status --porcelain` against the recorded file counts before
+  trusting a resume point; a count mismatch means an undocumented layer.
+- Re-test recorded external paths before reusing them. Temp-directory targets
+  on this host expire at logoff and two did.
+- When a documented debug record states a conditional next step, the recurrence
+  is the trigger — read the record before re-diagnosing the same symptom.
 
-#### Next time
-
-- Extract the shared helper before applying the review fix that calls it; the
-  two durable projection lessons are in the quick-reference above.
-
-### Dashboard enterprise command center & repository scoping (2026-09-13)
-
-#### Decisions and assumptions
-- Redesigned the dashboard from a report into an enterprise command center with 6 primary navigation tabs, a 6-card KPI strip, an interactive 8-stage Delivery Pipeline, Needs Attention queue, analytical panels, and slide-over drawers while keeping Hard Rule 2 intact (strictly read-only loopback projection).
-- Repository selection scopes all views (Overview, Runs, Findings, Governance, Models & Agents, Audit) dynamically to the chosen repository when active; "All repositories" restores cross-repository portfolio aggregation.
-- Governance in the 8-stage pipeline represents a synthesized cross-stage gate check rather than an individual database stage row, retaining `stageId: null`.
-
-#### What failed
-- A popover info button listener attached document-level `click` listeners without `{ once: true }`, accumulating listeners across repeated renders. Caught in code review and fixed.
-- Running full `node --test` suites without targeted test filters ran unnecessary long-duration suites (e.g. 101s on zero-token assertions). Used targeted patterns during iteration.
-
-#### What worked
-- Pure presentation model projections in `src/dashboard/dashboard-model.js` kept UI transformations testable in Node without DOM emulation or browser dependencies.
-- Filtering `application.repositories` inside `repositoryViews` cleanly updated all derived KPI, exception, pipeline, and table projections simultaneously without duplicating logic across tabs.
-- Mutation testing proved drawer trap accessibility, static asset constraints, and projection stability across five deliberate faults with exact text restoration.
-
-#### Running state
-- None. All test shells and background processes exited cleanly.
-
-#### Verification
-- `npm run typecheck` - clean across both base and dashboard tsconfig programs.
-- `node --test test/dashboard-ui.test.ts` - 32/32 tests pass.
-- `npm test` - 48 suites, 1177 tests passing.
-- `npm run check:docs` - clean, all documentation hazard rules satisfied.
-
-#### Next up
-- Operator browser verification of the command center across dark/light themes, followed by a commit decision for the working tree.
+### Next up
+- Review and document layer 2 — the fence fix, the prompt rule, and the idle
+  timeout — then present both layers for the operator's commit decision. No
+  paid run is authorized.
 

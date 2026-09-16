@@ -1,43 +1,47 @@
 # Runbook: Set up a project and deliver a feature with BuildWorks
 
 **Audience:** Developers, project owners, and operators using the local CLI.
-**Applies to:** The implemented checkout-local CLI, using PowerShell on Windows.
+**Applies to:** The checkout-linked guided CLI and advanced low-level commands,
+using PowerShell on Windows.
 **Maintainer:** BuildWorks maintainers; update this runbook when operator commands,
 approval transport, or setup requirements change.
 
-This runbook takes a separate Git project from initial setup to a retained,
-reviewed delivery branch. BuildWorks sequences the stages and records their
-evidence; the operator owns the requirements, spending consent, approval signature,
-and release decision.
+This runbook takes a new or existing local project from guided setup to a
+retained, reviewed delivery branch. BuildWorks sequences the stages and records
+their evidence; the operator owns the requirements, each spending consent,
+external approval signature, and release decision.
 
-It does not install a distributed `bw` package, scaffold an application, publish
-to GitHub, merge a branch, deploy, or repair an interrupted run. Claude Code is the
-implemented harness; selecting a different model does not select another harness.
-The commands below are operator instructions, not authorization for an agent to
-spend money or sign on your behalf.
+The concrete initializer creates only a static-web starter. BuildWorks does not
+publish to GitHub, merge a branch, deploy, sign, or repair an interrupted run.
+Claude Code is the implemented harness; selecting a different model does not
+select another harness. The commands below are operator instructions, not
+authorization for an agent to spend money or sign on your behalf.
 
 ## Workflow and decision boundaries
 
 ```mermaid
 flowchart TD
-    A[Prepare and commit the target project] --> B[Doctor and new-run: no provider spend]
-    B --> C[Operator consents to first run invocation]
-    C --> D[Specification and specification review: paid]
-    D --> E{Specification gate}
-    E -->|Blocked or failed| X[Stop and retain evidence]
-    E -->|Passed| F[Approval pause: exit 3]
-    F --> G[Human reviews and signs externally]
-    G --> H[Approve records the signature]
-    H --> I[Operator consents to another run invocation]
-    I --> J[Plan, plan review, and implementation: paid]
-    J --> K[Verification and code review]
-    K -->|Findings with another panel available| L[Paid remediation and renewed verification]
-    L --> K
-    K -->|Final gate blocks or execution fails| X
-    K -->|Passed| M[Deterministic delivery check]
-    M -->|Passed| N[Completed: exit 0]
-    M -->|Blocked or failed| X
-    N --> O[Human inspects and separately integrates the branch]
+    A[Install checkout-linked buildworks command] --> B[Run buildworks for a target path]
+    B --> C{Target ready?}
+    C -->|Absent or empty| D[Generate, verify, review, and commit static-web baseline]
+    C -->|Existing Git project| E[Select committed design]
+    D --> F[Operator authors design.md]
+    F --> E
+    E --> G[Select or prompt exact run identity]
+    G --> H[Operator consents to first paid range]
+    H --> I[Specification and specification review: paid]
+    I --> J{Specification gate}
+    J -->|Blocked or failed| X[Stop and retain evidence]
+    J -->|Passed| K[Guided approval handoff: exit 3]
+    K --> L[External authority returns detached signature]
+    L --> M[Operator reruns buildworks and confirms submission]
+    M --> N[Operator consents to second paid range]
+    N --> O[Plan, implementation, verification, and code review]
+    O -->|Final gate blocks or execution fails| X
+    O -->|Passed| P[Deterministic delivery check]
+    P -->|Passed| Q[Completed: exit 0]
+    P -->|Blocked or failed| X
+    Q --> R[Human inspects and separately integrates the branch]
 ```
 
 One execution consent covers every group in that invocation's preview, including
@@ -45,7 +49,216 @@ bounded internal remediation, until approval or terminalization. It is not
 single-stage consent, a hard dollar cap, signature authority, or consent to a
 later invocation. There is no voluntary stop-after option.
 
-## 1. Prepare the BuildWorks checkout
+## Guided procedure
+
+### 1. Install the checkout-linked command
+
+Use Node 24 or newer, npm, Git with a commit identity, and the native Claude
+Code executable on `PATH`. Arrange authorized Claude provider access and model
+entitlement separately. Obtain the BuildWorks repository through your normal
+Git workflow, then run:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
+$BuildWorksCheckout = (Resolve-Path -LiteralPath (Read-Host 'Absolute path to the BuildWorks checkout')).Path
+Set-Location -LiteralPath $BuildWorksCheckout
+npm install
+if ($LASTEXITCODE -ne 0) { throw 'BuildWorks dependency installation failed.' }
+npm install --global $BuildWorksCheckout
+if ($LASTEXITCODE -ne 0) { throw 'BuildWorks checkout-link installation failed.' }
+buildworks --help
+bw --help
+```
+
+Both aliases point into the complete retained checkout. This is not a packed
+or published installation. Moving or deleting the checkout breaks the links
+and removes runtime assets such as migrations.
+
+### 2. Configure only the external public key
+
+Obtain the PEM Ed25519 public key from the separate approval authority and
+configure it before run intake:
+
+```powershell
+$env:BW_APPROVAL_PUBLIC_KEY = 'C:\Public Approval Material\approval.pub'
+```
+
+The matching private key must remain outside the filesystem and process
+identity available to the BuildWorks host. Verification receives `HOME` and
+`USERPROFILE` and is not filesystem-sandboxed. Do not store the private key
+under the same user profile, place it in either repository, give it to an
+agent, or invoke a signer from guided mode.
+
+### 3. Initialize or select the project
+
+Run the same command for an absent, empty, or existing target:
+
+```powershell
+$Target = Read-Host 'Absolute path to the target project'
+buildworks $Target
+```
+
+An empty child directory inside an existing worktree resolves to that existing
+project; the CLI never creates a nested repository.
+
+The path argument must be absolute or explicitly relative — `.`, `..`, or a
+`.\` or `./` prefix. A bare name such as `myproject` is parsed as a command
+name and refused with exit 2. Running `buildworks` with no argument targets the
+current directory.
+
+#### Initialize a new project
+
+The initializer runs for an absent path or a standalone empty directory. It
+preflights `node`, `npm`, `git`, and a bounded native Claude Code version probe,
+and refuses with `project preflight failed: <check>: <evidence>` before writing
+anything if any of them fails. It then prompts, in this order:
+
+| Prompt | Answer |
+| --- | --- |
+| Project type | Type `static-web`. No other value is accepted, and three invalid answers end the command. |
+| Feature slug | The first feature's lowercase kebab-case slug. It names the design directory and becomes the run's frozen slug. |
+| Git author name and email | Asked only when the repository has no resolvable commit identity. Answers are written repository-local, never to your global Git configuration. |
+| Commit the generated baseline | Read the displayed staged diff first, then type `yes`. Any other answer aborts and leaves the generated files staged for inspection. |
+
+BuildWorks initializes Git when needed and writes exactly this baseline:
+
+| Generated path | Contents |
+| --- | --- |
+| `.gitignore` | Ignores the machine-local governance directory and `node_modules`. |
+| `governed.yaml` | The verification configuration: `npm ci` as `install`, then `npm test` as `test`. |
+| `package.json` and `package-lock.json` | A private ES-module manifest whose `test` script is `node --test`, with a dependency-free lockfile. |
+| `index.html` and `src\app.js` | The static-web page and the one module it loads. |
+| `test\starter.test.js` | A single placeholder test asserting that the page references that module. |
+| `README.md` | The generated project's own three-step instructions. |
+
+It then creates the empty feature directory, parses the generated configuration,
+runs the generated `npm ci` and `npm test`, displays the staged diff, and after
+your confirmation commits it as `Initialize BuildWorks static-web project`.
+
+The command then prints the exact
+`docs\features\<slug>\design.md` path and exits without creating a run. Author
+the requested behavior, constraints, exclusions, artifacts, and verification
+expectations in that file. Do not hand-author generated `spec.md` or `plan.md`.
+
+If the command is interrupted before the baseline commit, rerunning it resumes
+rather than restarting: it writes only missing files and keeps matching ones. It
+refuses instead of overwriting — mismatched bytes report `refusing to overwrite
+mismatched starter file`, an extra path reports `refusing unrelated path(s) in
+the partial starter`, and more than one feature directory refuses as ambiguous.
+
+**Strengthen verification before you spend.** The generated configuration
+freezes only `npm ci` and `npm test`, and the only generated test asserts that
+the starter page references its module. That gate cannot establish correctness
+for the feature you are about to request; see
+[Choose meaningful verification before intake](#choose-meaningful-verification-before-intake)
+and require the tests you expect in the design itself. Commit a strengthened
+`governed.yaml` **after** the guided design commit in step 4. Guided mode
+commits only the generated baseline or the design, refuses either commit while
+unrelated paths are dirty, and stops offering the design commit once the
+committed baseline no longer matches the generated bytes — after that, commit
+the design with your normal Git workflow.
+
+#### Select an existing project
+
+For an existing project, BuildWorks resolves the enclosing worktree root and
+requires a readable committed HEAD. It selects one committed, nonempty design or
+asks among displayed choices. It refuses nonempty non-Git targets, changed
+generated starter bytes, unrelated working-tree changes, empty designs, and
+ambiguous design choices. An initialized repository with no commit yet is
+treated as a new project and receives the starter.
+
+Run intake in step 4 additionally requires a working tree that is clean apart
+from the machine-local governance directory, `governed.yaml` committed at the
+starting commit, and a resolved `BW_APPROVAL_PUBLIC_KEY`. Git-ignoring the
+governance directory is reported as a `doctor` readiness failure and is strongly
+recommended, but intake filters that directory rather than blocking on it.
+
+### 4. Commit the design and create or resume the exact run
+
+Rerun the same command:
+
+```powershell
+buildworks $Target
+```
+
+BuildWorks shows and commits only the selected `design.md`. If no persisted
+identity tuple exists for that slug, it asks explicitly for project, feature
+ID, change kind (`feature` or `defect_fix`), and model. Suggested values are
+not silently accepted. Existing tuples are displayed and selected exactly by
+project, feature ID, slug, and change kind.
+
+One nonterminal run resumes even if older terminal records exist. More than one
+matching nonterminal run refuses. With no nonterminal run, one terminal record
+is reported and several terminal records refuse. Guided mode never chooses the
+newest record as an implicit tie-breaker.
+
+The command is interactive only. Redirected stdin refuses before mutation or
+spend. Review the preview and type `yes` only if you authorize its complete
+paid range. Decline, cancellation, or end-of-input starts no dispatch.
+
+### 5. Complete the external approval handoff
+
+The first paid range runs specification and specification review and stops at
+the valid approval boundary with exit 3. Guided mode exclusively creates the
+canonical payload here:
+
+```text
+<target>\.governance\approval-handoff\<run-id>\payload.txt
+```
+
+Review the specification, declared artifacts, risk, hashes, starting commit,
+profile, signer fingerprint, and expiry displayed by BuildWorks. Transfer
+`payload.txt` through an approved channel to the external authority. If the
+binding is acceptable, that authority signs the exact bytes and returns only
+the detached base64 Ed25519 signature. Place it at:
+
+```text
+<target>\.governance\approval-handoff\<run-id>\signature.txt
+```
+
+When `signature.txt` is not yet present, BuildWorks presents an interactive menu
+offering four options:
+1. **Approve:** Verifies the detached signature and proceeds if present.
+2. **Modify:** Prints guidance for updating requirements in `design.md` and starting a new run.
+3. **Reject:** Confirms operator rejection and records an `approval.refused` audit event.
+4. **Exit:** Leaves the run cleanly paused to review or sign later.
+
+Once `signature.txt` is placed, rerun `buildworks $Target`. The CLI redisplays
+the binding and asks whether to submit the detached signature. After `yes`, it
+acquires the repository lock, rechecks the payload, signature bytes, expiry,
+public key, and complete binding, then records approval. Any mismatch refuses
+without recording approval.
+
+If the canonical payload has expired, rerunning the command atomically
+quarantines the complete handoff directory as inert expired evidence and
+creates fresh canonical bytes. Any stale signature moves with that evidence but
+is never submitted. A malformed expiry or noncanonical payload refuses rather
+than being relabeled as an expired handoff.
+
+Approval does not authorize execution. Review the newly displayed paid range
+and provide a separate `yes` only if you authorize planning, implementation,
+verification, bounded code-review remediation, and delivery checking.
+
+### 6. Inspect and integrate the result
+
+On success the guided result reports the retained branch, worktree, delivered
+commit, delivery evidence, final findings count, and known recorded cost.
+Exercise the product using its own instructions and inspect the retained
+evidence before release. `completed` proves only that frozen gates passed and
+every signed declared artifact changed.
+
+Merging, pushing, creating a pull request, and deploying remain separate human
+decisions. Preserve `.governance` while its local database, logs, reports, and
+raw outputs are needed; a Git push does not back them up.
+
+## Advanced manual command reference
+
+Use the remaining procedure when explicit run IDs, JSON automation, individual
+low-level commands, or diagnostic inspection are required. It documents the
+same core but does not replace the guided default.
+
+### 1. Prepare the BuildWorks checkout
 
 Use Node 24 or newer, npm, Git with a working commit identity, and the native
 Claude Code executable on PATH. Arrange authorized Claude provider access and
@@ -60,7 +273,6 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 $BuildWorksCheckout = (Resolve-Path -LiteralPath (Read-Host 'Absolute path to the BuildWorks checkout')).Path
 $BwCli = Join-Path $BuildWorksCheckout 'src\cli.ts'
-$BwSigner = Join-Path $BuildWorksCheckout 'scripts\sign-approval.mjs'
 Set-Location -LiteralPath $BuildWorksCheckout
 
 node --version
@@ -80,15 +292,16 @@ if ($LASTEXITCODE -ne 0) { throw 'BuildWorks dependency installation failed.' }
 & node $BwCli help run
 ```
 
-There is no build or npm-link step. `npm install` does not place this private
-package's own `bw` executable on PATH. The complete checkout is needed because
-runtime assets, including migrations, resolve beside the source.
+`npm install` alone does not place this package's own commands on PATH. Use
+`& node $BwCli` in this advanced workflow or install the checkout-linked aliases
+as shown in the guided procedure. The complete checkout remains necessary
+because runtime assets, including migrations, resolve beside the source.
 
 Keep these variables in the same PowerShell session. The native-command setting
 lets the examples handle exit codes explicitly, including the expected exit 3;
 it has no native-command behavior on older PowerShell versions.
 
-## 2. Prepare a separate target repository
+### 2. Prepare a separate target repository
 
 Choose a durable local directory outside the BuildWorks checkout. Avoid temporary
 directories that the operating system may remove at logoff. Do not relocate an
@@ -126,14 +339,14 @@ Author the following inputs in the target using your editor:
 | `.gitignore` | Add `.governance/`, plus applicable dependency and build-output ignores. Do not ignore the design or verification configuration. |
 | `governed.yaml` | Declare real project verification commands as described below. |
 | `docs\features\<slug>\design.md` | State the desired behavior, users, requirements, constraints, exclusions, and acceptance expectations. The slug must match `$Slug`. |
-| Application baseline | Supply any source, package manifest, lockfile, and verification scripts needed to make the intended project build and run. BuildWorks has no application initializer. |
+| Application baseline | Supply any source, package manifest, lockfile, and verification scripts needed to make the intended project build and run. The advanced low-level workflow does not invoke the guided static-web initializer. |
 
 The design should explicitly require any tests or documentation you expect in
 the delivery. There is no separate implemented test-authoring or documentation
 stage that will fill those gaps later. You do not hand-author generated `spec.md`
 or `plan.md` for this workflow.
 
-### Choose meaningful verification before intake
+#### Choose meaningful verification before intake
 
 The following is an example for an npm project with a committed lockfile and
 working `test` and `typecheck` scripts, not a universal configuration:
@@ -170,7 +383,7 @@ production credentials or data exposed to them.
 Version-only commands such as `node --version` do not establish product
 correctness. Do not use them as the project's only delivery evidence.
 
-### Commit the starting state
+#### Commit the starting state
 
 Stage the intended baseline, design, configuration, and ignore rules explicitly
 using your normal Git workflow. Review the staged changes before committing.
@@ -187,43 +400,30 @@ Do not commit secrets or unrelated work. Intake requires a readable HEAD and a
 clean working tree. The verification configuration must be committed, not merely
 present on disk.
 
-## 3. Configure an external approval key
+### 3. Configure an external approval key
 
-The operator uses a PEM Ed25519 key pair outside every repository. BuildWorks
-receives only the public-key path. If another person signs, arrange their
-public key before intake and transfer the payload/signature through your
-organization's approved channel; never transfer their private key.
-
-For the same-machine operator example:
+The approval authority keeps a PEM Ed25519 private key outside the filesystem
+and process identity available to the BuildWorks host. BuildWorks receives only
+the public-key path. Arrange the public key before intake and transfer the
+payload/signature through your organization's approved channel.
 
 ```powershell
-$OperatorDirectory = Join-Path $env:USERPROFILE '.buildworks'
-$env:BW_APPROVAL_PUBLIC_KEY = Join-Path $OperatorDirectory 'approval.pub'
-$OperatorKeyFile = Join-Path $OperatorDirectory 'approval.key'
+$TransportDirectory = 'C:\Approval Transport'
+$env:BW_APPROVAL_PUBLIC_KEY = Join-Path $TransportDirectory 'approval.pub'
 ```
 
-Change the directory if your organization supplies another location. Ensure it
-is outside every repository and access-controlled for the operator.
-
-If you do not already have the appropriate pair, the operator may generate it
-separately, while the current directory is still the BuildWorks checkout:
-
-```powershell
-& node $BwSigner keygen --out $OperatorDirectory
-if ($LASTEXITCODE -ne 0) { throw 'Key generation failed; inspect the diagnostic.' }
-```
-
-Key generation creates the directory as needed and refuses to replace an
-existing private key. Do not delete an existing key to bypass that refusal.
-It also refuses an output directory inside a repository or under the invocation
-directory.
+The external authority creates and protects the key pair. If it uses
+`scripts\sign-approval.mjs`, it runs that script on its separate authority
+host. The BuildWorks host receives only `approval.pub` and later detached
+signature files. A private key under the BuildWorks user's profile is reachable
+to unsandboxed verification and is not acceptable containment.
 
 **Set `BW_APPROVAL_PUBLIC_KEY` before creating a run.** The signer fingerprint
 is frozen at intake. Adding or replacing a key later does not retroactively
 strengthen or change that binding. Never put the private key in the target,
 source control, prompts, logs, or an agent conversation.
 
-## 4. Inspect readiness and create the run
+### 4. Inspect readiness and create the run
 
 ```powershell
 & node $BwCli doctor --repo $Target --slug $Slug
@@ -288,7 +488,7 @@ printed in the diagnostic.
 Always pass `--repo $Target`: omitting it selects the invocation worktree,
 which in these examples is BuildWorks itself.
 
-## 5. Consent to specification work
+### 5. Consent to specification work
 
 This step spends provider money after consent:
 
@@ -312,7 +512,7 @@ already authorized the full previewed range. Costs depend on the project,
 model, output, and review/remediation work. There is no fixed price or enforced
 dollar cap.
 
-## 6. Review, sign, and submit approval
+### 6. Review, sign, and submit approval
 
 Inspect the paused run:
 
@@ -332,7 +532,7 @@ If the specification is unacceptable, stop without signing and retain the
 evidence. There is no general revise-and-resume or approval-revocation command.
 Do not edit generated artifacts to try to force the existing run through.
 
-### Export the canonical payload
+#### Export the canonical payload
 
 Use the expiry supplied by the eligible action and keep it unchanged through
 submission:
@@ -350,8 +550,8 @@ $ExpiresIndex = [array]::IndexOf($Request.args, '--expires')
 if ($ExpiresIndex -lt 0) { throw 'The approval action has no expiry; inspect the action.' }
 $Expires = $Request.args[$ExpiresIndex + 1]
 $TransportId = [guid]::NewGuid().ToString('N')
-$PayloadFile = Join-Path $OperatorDirectory "run-$RunId-$TransportId-payload.txt"
-$SignatureFile = Join-Path $OperatorDirectory "run-$RunId-$TransportId-signature.txt"
+$PayloadFile = Join-Path $TransportDirectory "run-$RunId-$TransportId-payload.txt"
+$SignatureFile = Join-Path $TransportDirectory "run-$RunId-$TransportId-signature.txt"
 
 & node $BwCli approval-request --repo $Target --run $RunId `
     --expires $Expires --out $PayloadFile
@@ -363,19 +563,17 @@ newline. It does not create parent directories or overwrite files. Exporting
 is not approval. The unique filenames avoid collisions between targets whose
 run IDs both start at 1.
 
-### Operator-only signing decision
+#### Operator-only signing decision
 
-Only after reviewing the bound work and exported payload, the human operator
-runs:
+Transfer `$PayloadFile` to the external authority. Only after reviewing the
+bound work and exact payload does that authority sign it and return the detached
+base64 signature. Place only that returned signature at `$SignatureFile`, then
+submit it from the BuildWorks host:
 
 ```powershell
-if (Test-Path -LiteralPath $SignatureFile) { throw 'Choose a new signature filename.' }
-$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$Signature = Get-Content -LiteralPath $PayloadFile -Raw -Encoding utf8 |
-    & node $BwSigner sign --key $OperatorKeyFile
-if ($LASTEXITCODE -ne 0) { throw 'External signing failed; do not submit.' }
-$Signature | Set-Content -LiteralPath $SignatureFile -Encoding utf8
-
+if (-not (Test-Path -LiteralPath $SignatureFile -PathType Leaf)) {
+    throw 'The external authority has not returned the detached signature.'
+}
 & node $BwCli approve --repo $Target --run $RunId `
     --expires $Expires --signature-file $SignatureFile
 if ($LASTEXITCODE -ne 0) { throw 'Approval was not recorded; do not continue.' }
@@ -394,7 +592,7 @@ already granted approval.
 Approval does not execute later stages. The CLI never opens the private key
 or invokes the signing tool.
 
-## 7. Consent to implementation and delivery
+### 7. Consent to implementation and delivery
 
 This invocation needs new execution consent and can spend provider money:
 
@@ -420,7 +618,7 @@ panel. The final panel applies the threshold without an unreviewed patch;
 lower-severity findings can remain. Consult the frozen snapshot for this run
 rather than assuming today's defaults were used.
 
-## 8. Inspect the delivery, costs, and remaining findings
+### 8. Inspect the delivery, costs, and remaining findings
 
 ```powershell
 & node $BwCli status --repo $Target --run $RunId
@@ -470,7 +668,7 @@ it for release. `completed` means the frozen gates passed and the declared
 artifacts changed. It does not prove all product behavior, establish that a
 test command ran meaningful tests, or erase below-threshold findings.
 
-## 9. Integrate separately and preserve evidence
+### 9. Integrate separately and preserve evidence
 
 The retained branch is the local deliverable. Merging, pushing, creating a pull
 request, and deploying are separate operator/release-owner decisions, using the
@@ -545,14 +743,19 @@ no persistence, transmission, config parsing, or repair.
 
 | Symptom | Action |
 | --- | --- |
-| `bw` is not found | Use `& node $BwCli ...` with the complete checkout; npm does not install this package's own command. |
+| `buildworks` or `bw` is not found | Re-run `npm install --global $BuildWorksCheckout` or use `& node $BwCli ...`; the links require the retained checkout. |
+| `project preflight failed: ...` | Repair the named tool or the native Claude Code probe and rerun. The initializer writes nothing until every preflight check passes. |
+| `refusing nonempty non-Git target` or `refusing to create a nested project inside the existing Git worktree` | The initializer accepts an absent path, a standalone empty directory, or an existing worktree root. Choose a path outside the enclosing repository, or prepare the project as an ordinary Git worktree first. |
+| `refusing to overwrite mismatched starter file` or `refusing unrelated path(s) in the partial starter` | An interrupted initialization resumes only while the partial starter still matches its generated bytes. Inspect the named path and restore or remove it deliberately; do not force the initializer past it. |
+| `no committed nonempty docs/features/<slug>/design.md was found` | Guided mode commits the design for you only while the baseline still matches the generated starter. After other commits, commit the design with your normal Git workflow, then rerun. |
+| `guided run creation requires a configured external approval public key` | Set `BW_APPROVAL_PUBLIC_KEY` as in step 2 before rerunning. Guided intake will not create a run bound to no signer. |
 | Native Claude probe fails or reports `ENOENT` | Repair the native executable installation/PATH. Do not wrap Claude in PowerShell or `cmd.exe` to work around an assumed shim. |
 | Doctor passes but a provider dispatch fails | Inspect the returned diagnostic and available retained output. Doctor does not establish authentication, model access, or quota. Preserve the failed run; renewed provider access does not make failed stages retryable. |
 | No readable HEAD, dirty tree, or uncommitted config/design | Commit the intended target inputs and deliberately resolve working-copy changes before intake. Confirm the target and slug. |
 | Invalid verification token or shape | Use the documented fixed YAML subset and argv constraints. Do not add shell command strings. Configuration changes require a fresh run. |
 | Verification fails in the run worktree | Read the named command's retained output. Check actual test failures, fresh-worktree dependencies, environment requirements, and generated tracked changes. Do not weaken the gate or rerun a failed group blindly. |
 | Public key missing/mismatched at approval | Restore the intended external public-key setup and compare its fingerprint with the frozen run. Do not replace the run's profile or private key to force acceptance. |
-| Signing material refused inside a repository | Use an operator-controlled directory outside every repository; run key generation from the checkout with output elsewhere. Never move a private key into the target. |
+| Private signing material is present on the BuildWorks host | Stop before execution. Move signing authority to a separate host or identity that verification cannot access; retain only the public key and returned detached signature on the BuildWorks host. |
 | Payload/signature filename already exists | Use new transport filenames; never overwrite canonical approval bytes. |
 | Approval expired or signature rejected | Read the binding diagnostic. Use one expiry across export/sign/submission; if expired before acceptance, start a fresh export/signing decision. Duplicate accepted approvals are refused, not execution commands. |
 | `schema_unsupported` | Use the matching checkout for newer state. For an older schema, follow the diagnostic and explicitly authorize `& node $BwCli migrate --repo $Target`; inspection and guided consent do not migrate. |

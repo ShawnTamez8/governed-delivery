@@ -99,7 +99,7 @@ test("sign refuses an empty payload rather than signing nothing", () => {
 test("nothing under src/ touches a private key", () => {
   // Section 17, asserted mechanically rather than promised in prose: the
   // system core only ever verifies.
-  const forbidden = ["createPrivateKey", "PRIVATE KEY", "approval.key"];
+  const forbidden = [/createPrivateKey/, /generateKeyPair/, /private[ -]?key/i, /approval\.key/];
   const walk = (dir: string): string[] =>
     readdirSync(dir).flatMap((entry) => {
       const full = join(dir, entry);
@@ -108,9 +108,11 @@ test("nothing under src/ touches a private key", () => {
   for (const file of walk(join(process.cwd(), "src"))) {
     const source = readFileSync(file, "utf8");
     for (const needle of forbidden) {
-      assert.ok(!source.includes(needle), `${file} must not reference ${needle}`);
+      assert.ok(!needle.test(source), `${file} must not reference ${needle}`);
     }
   }
+  const guided = readFileSync(join(process.cwd(), "src", "guided-command.ts"), "utf8");
+  assert.doesNotMatch(guided, /sign-approval\.mjs|OperatorKeyFile|node:crypto/);
 });
 
 test("a payload carrying a trailing newline signs the same bytes the gate verifies", () => {
