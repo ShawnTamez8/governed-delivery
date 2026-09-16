@@ -7,18 +7,17 @@ history; Current state wins when they disagree. This repository file is the
 system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
-**Working state:** Branch `guided-project-bootstrap` sits on `3235d23`, "Add
-guided bootstrap, anchor JSON fences, raise the generation timeout", verified by
-`git rev-parse HEAD`. Both layers the previous resume point described as
-uncommitted landed in that one commit on 2026-09-15 at 23:23, with a message
-that records all three changes and the retrospective plan and review. The
-2026-09-16 working tree carries ten modified tracked files and no untracked
-paths: the four closing changes below plus their documents. `git status
---porcelain` is the authoritative list. Nothing is committed yet for today's
-work. Verification of it: `npm run typecheck` exit 0; `npm test` 1,183 tests,
-1,178 passing, 5 skipped, 0 failing — the recorded baseline; `npm run
-check:docs` clean; `git diff --check` exit 0; the free driver smoke 13/13. No
-paid dispatch was made.
+**Working state:** Branch `guided-project-bootstrap` sits on `a420563`, "Close
+the unfenced-JSON code review and commit the Target Tap PRD", verified by
+`git rev-parse HEAD` with a clean `git status --porcelain`. It follows
+`3235d23`, "Add guided bootstrap, anchor JSON fences, raise the generation
+timeout", which landed on 2026-09-15 at 23:23 and carried both layers the
+previous resume point described as uncommitted. Today's commit is 12 files, 660
+insertions, 101 deletions. Nothing is pushed; no pull request exists.
+Verification before the commit: `npm run typecheck` exit 0; `npm test` 1,183
+tests, 1,178 passing, 5 skipped, 0 failing — the recorded baseline; `npm run
+check:docs` clean; `git diff --check` exit 0; the free driver smoke 13/13 on
+both the default design and `target-tap`. No paid dispatch was made.
 
 **Completed (layer 1, guided project bootstrap):**
 `docs/features/guided-project-bootstrap/plan.md` is `Implemented` — Tasks 1-10
@@ -107,9 +106,9 @@ worktree carrying its own `.governance\state.db` and three blocked runs. The
 `%TEMP%\bw-run-skill` tree was recreated by today's free smoke and deleted again
 with `driver.mjs clean`; no scratch target survives.
 
-**Open/deferred:** Today's ten modified files are unreviewed and uncommitted —
-the operator has made no commit decision. The `verify-command` EPERM cleanup
-race failed a **third** full suite on 2026-09-16 (`test/verify-command.test.ts`,
+**Open/deferred:** Today's work is committed as `a420563` and was self-reviewed
+only — no independent reviewer saw it, and nothing is pushed. The
+`verify-command` EPERM cleanup race failed a **third** full suite on 2026-09-16 (`test/verify-command.test.ts`,
 "a hung command is killed with its whole tree at the ceiling"), and the
 immediate rerun passed at the full baseline. Its error text was lost: the first
 run's output was filtered to a summary, so the third occurrence produced no new
@@ -131,8 +130,8 @@ on three things — whether to spend at all, whether an unknown cost above $2.06
 is acceptable, and whether to accept a `verify` stage that runs only two version
 probes against a PRD demanding five kinds of test. Do not run
 `driver.mjs paid --yes --design .claude/skills/run-buildworks/target-tap-design.md
---slug target-tap` before that decision. Today's eleven modified files also
-still await a commit decision.
+--slug target-tap` before that decision. The operator declined the spend on
+2026-09-16 and chose to commit first, which is done.
 
 ## Diagnostics quick-reference
 
