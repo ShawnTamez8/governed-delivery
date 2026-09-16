@@ -33,10 +33,9 @@ command is killed with its whole tree at the ceiling") diagnosed and resolved:
 4. Independent code review:
    `docs/features/verification-stage/2026-09-16-code-review.md` (`reconciled`,
    0 findings).
-5. Synchronized `CLAUDE.md` and `AGENTS.md` (byte-identical) and `README.md` at
-   root: documented the 2026-09-11 remediation live run, 2026-09-14 fence
-   anchoring, 1800s idle generation budget in the frozen sandbox, driver custom
-   PRD flags, and bidirectional cross-references.
+6. Updated `.claude/skills/run-buildworks/SKILL.md` to align the sample
+   verified smoke output block with actual CLI outputs (exit 1 `target_unavailable`
+   on non-git directory and exit 2 `unknown command bogus`).
 
 **Completed (layer 1, guided project bootstrap):**
 `docs/features/guided-project-bootstrap/plan.md` is `Implemented` — Tasks 1-10
@@ -75,8 +74,6 @@ fabricated telemetry remain unauthorized. No paid execution is authorized.
 background agent, no paid process.
 
 **Open/deferred:**
-- `.claude/skills/run-buildworks/SKILL.md` carries a drifted "Verified output,
-  2026-08-31" block — two sample lines no longer match while all 13 steps pass.
 - Manual browser evaluation of the dashboard command center across themes and
   viewports.
 - The deferred `RunSnapshot` agent-field projection keeps model, harness and

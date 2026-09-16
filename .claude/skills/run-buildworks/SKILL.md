@@ -72,13 +72,13 @@ every step `ok` or `FAIL`, prints `13/13 steps as expected`, and exits
 non-zero if any step drifted. Last line is the scratch repo's path — it is
 left on disk for you to poke at.
 
-Verified output, 2026-08-31:
+Verified output, 2026-09-16:
 
 ```
 ok    migrate                                               exit=0  migrations applied
 ok    new-run                                               exit=0  1
 ok    new-run refuses a dirty tree                          exit=1  the working tree is not clean: a run starts from a committed state (section 7). 1 path(s), first
-ok    new-run refuses a non-repository                      exit=1  not a git repository (or HEAD cannot be read): a run needs a starting commit to verify against
+ok    new-run refuses a non-repository                      exit=1  target_unavailable: cannot use <tempdir>/plain: fatal: not a git repository…
 ok    new-run refuses an uncommitted governed.yaml          exit=1  governed.yaml is not committed at 3b4a2c9d…: the verification con
 ok    new-run refuses an unknown change kind                exit=2  invalid change_kind nonsense: allowed values are feature, defect_fix
 ok    new-run refuses an unspawnable model name             exit=2  invalid model name "bad model name": must be 1-64 characters of letters, digits, dot, underscore
@@ -87,7 +87,7 @@ ok    verify refuses without a passed implementation        exit=1  run 1's last
 ok    verify refuses a run that does not exist              exit=1  run 9999 does not exist
 ok    review refuses without a passed verification          exit=1  run 1's last stage is none, not a passed verification
 ok    verify-audit validates the chain                      exit=0  chain valid
-ok    an unknown command prints usage                       exit=2  usage: buildworks [<path>]
+ok    an unknown command prints usage                       exit=2  unknown command bogus
 
 13/13 steps as expected
 ```
