@@ -39,7 +39,11 @@ to 2; `CODE_REVIEW_MAX_ROUNDS` permits 1-5 complete panel executions and
 defaults to 2; and `CODE_REVIEW_BLOCKING_SEVERITY` defaults to `high`. These
 values freeze at run start. Raising panel size also requires enough registered
 `code-findings` agents with distinct, non-empty specialist instructions; an
-unstaffable profile refuses before the run spends money.
+unstaffable profile refuses before the run spends money. Before dispatching
+reviewers, the stage verifies that all declared artifacts in the signed scope
+were delivered in the verified commit, blocking the stage and run immediately
+if any are missing. Reviewer prompts instruct specialists to audit the entire
+diff comprehensively rather than sampling or truncating upon finding early defects.
 
 Every non-empty panel before the final configured round sends all actionable
 findings together to the frozen implementer, commits the guarded patch, runs

@@ -1,20 +1,48 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-16, plan-reconciliation prompt coverage-node fix)
+## Current state (2026-09-16, code-review exhaustive audit & pre-dispatch artifact check)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
 system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
-**Working state:** Branch `guided-project-bootstrap` has diagnosed and fixed the
-plan reconciliation prompt coverage-node gap.
+**Working state:** Branch `guided-project-bootstrap` has implemented refined
+Option C (exhaustive code review audit prompt instruction) and pre-dispatch
+deterministic declared-artifact completeness check via `deliveryCoverage`.
 Verification: `npm run typecheck` clean; `node --test test/prompts.test.ts` 25/25
-passed; `node --test test/reconciliation.test.ts` 48/48 passed; `npm test`
-1,180 passed, 5 skipped, 0 failed; `npm run check:docs` clean.
-Live paid run target preserved at `C:\Users\tamezs\buildWorks_test_repos\target-tap-live\target`.
-Loopback dashboard actively serving at `http://127.0.0.1:50773/#token=...`
-(shellId `dashboard-server`).
+passed; `node --test test/code-review-stage.test.ts` passed; `npm run check:docs` clean.
+Both guards proven by breaking what they guard and confirming failure before restoring.
+
+**Completed (code-review exhaustive audit & pre-dispatch artifact check):**
+Paid live run `target-tap-live-2` completed 16 dispatches ($3.58933 total spend),
+passing stages 1-7 (spec, spec_review, awaiting_approval, plan, plan_review,
+implementation, verification). Stage 8 (`code_review`) blocked at round 2
+because Round 1 reported 3 defects which the implementer remediated, but
+Round 2 then reported 2 new high findings: Finding 11 (package.json test script
+referenced undeclared/uncreated `tests/component/view.test.js`) and Finding 12
+(rapid-click race condition on element dataset in the target's view component). Because
+Round 2 was the final configured round, the gate failed closed on the high findings.
+Fixed:
+1. `src/prompts.ts`: `buildCodeReviewPrompt` updated with explicit instructions
+   directing reviewers to conduct an exhaustive audit across the entire diff and
+   all changed paths within their specialty, rather than stopping after finding
+   early defects or returning only a sample; this instructs reviewers not to
+   sample and increases the likelihood of first-round completeness so that actionable
+   defects can be addressed together during the single remediation opportunity.
+2. `test/prompts.test.ts`: Added constraint strings to `CONSTRAINT_STRINGS` and
+   asserted them in the generated code reviewer prompt test.
+3. `src/code-review-stage.ts`: Reused `deliveryCoverage` and `git ls-tree` blob
+   existence checks after creating the stage row to deterministically verify that all
+   declared artifacts in `scope` appear in `changedPaths` and exist in the
+   `initialVerifiedCommit` tree. If any declared artifact is missing, the stage
+   immediately aborts via `code_review.artifact.missing`, marking the stage and run
+   as `blocked` before any reviewer dispatch. This satisfies the architectural rule
+   that failed post-approval requirements block terminally rather than stranding
+   the run in `in_progress`, while avoiding expensive code review dispatches
+   ($1.50-$3.50) on an incomplete delivery that `delivery_check` is guaranteed to fail.
+4. `test/code-review-stage.test.ts`: Added unit test verifying that a verified
+   range missing a declared artifact blocks the stage and the run.
 
 **Completed (plan-reconciliation prompt coverage-node fix):**
 Paid live run on `target-tap` completed 10 dispatches ($1.55366 total cost),

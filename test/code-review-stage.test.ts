@@ -910,6 +910,25 @@ test("a prose result is refused at the body boundary", async () => {
   });
 });
 
+test("a verified range that does not deliver all declared artifacts blocks the stage and the run", async () => {
+  await withVerifiedRun(
+    async (ctx) => {
+      const result = await review(ctx);
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(result.reason, /does not deliver declared artifact\(s\): src\/a1\.ts/);
+      const stage = stageOf(ctx)!;
+      assert.ok(stage, "code_review stage row must exist");
+      assert.equal(stage.status, "blocked");
+      assert.equal(stage.gate_result, "block");
+      assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+      assert.equal(eventsOf(ctx, "code_review.artifact.missing").length, 1);
+      assert.equal(verifyAuditChain(ctx.store), null);
+    },
+    { commitFiles: ["src/other.ts"] }
+  );
+});
+
 // --- the preconditions, each refused by name before the stage row ------------
 
 /** Every precondition refusal leaves no stage row and the run untouched. */

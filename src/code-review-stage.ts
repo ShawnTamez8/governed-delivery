@@ -27,6 +27,7 @@ import {
 import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
 import { buildCodeReviewPrompt, buildCodeReviewRemediationPrompt } from "./prompts.ts";
 import { upstreamPrefixFor, validateReviewerReports } from "./reconciliation.ts";
+import { deliveryCoverage } from "./delivery-coverage.ts";
 import { codeReviewPanel, codeReviewStaffingShortfall } from "./select.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
 
@@ -258,7 +259,8 @@ export async function runCodeReviewStage(
       reason: `cannot read the changed paths for ${patchBase}..${initialVerifiedCommit}: ${initialNames.detail}`,
     };
   }
-  if (initialNames.stdout.split("\0").filter((path) => path !== "").length === 0) {
+  const changedPaths = initialNames.stdout.split("\0").filter((path) => path !== "");
+  if (changedPaths.length === 0) {
     return {
       ok: false,
       reason: `run ${runId}'s verified range ${patchBase}..${initialVerifiedCommit} changed no files: a passed verification over a range that changed nothing is a state no honest run reaches, and a review of nothing must not pass`,
@@ -286,6 +288,23 @@ export async function runCodeReviewStage(
       "code_review.stage.create",
       `created code_review stage ${stage.id} for worktree ${worktreePath}; patchBase=${patchBase}; initialCommit=${initialVerifiedCommit}; panel=${panel.map((agent) => agent.id).join("+")}; panelSize=${profile.policy.codeReviewPanelSize}; maxRounds=${profile.policy.codeReviewMaxRounds}; threshold=${profile.policy.codeReviewBlockingSeverity}`
     );
+
+    const coverage = deliveryCoverage(scope, changedPaths);
+    const existsAtHead: Record<string, boolean> = {};
+    for (const artifact of coverage.declared) {
+      const entry = runGit(["ls-tree", initialVerifiedCommit, "--", artifact], worktreePath);
+      if (!entry.ok) {
+        return abort(stage.id, "code_review.stage.failed", `cannot read the verified commit tree for ${artifact}: ${entry.detail}`);
+      }
+      existsAtHead[artifact] = entry.stdout
+        .split(/\r?\n/)
+        .some((line) => line !== "" && line.split("\t")[0].split(" ")[1] === "blob");
+    }
+    const missing = [...coverage.missing, ...coverage.delivered.filter((p) => !existsAtHead[p])].sort();
+    if (missing.length > 0) {
+      const reason = `run ${runId}'s verified range ${patchBase}..${initialVerifiedCommit} does not deliver declared artifact(s): ${missing.join(", ")}`;
+      return abort(stage.id, "code_review.artifact.missing", reason);
+    }
 
     const agentByRun = new Map<number, string>();
     const rounds: CodeReviewRound[] = [];

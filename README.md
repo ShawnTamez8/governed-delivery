@@ -46,15 +46,17 @@ named environment passthrough and bounded per-command time and output limits,
 proving the worktree still holds the commit implementation left and is clean
 before and after every command, retaining each command's complete output, and
 handing the next stage a structured record naming the worktree and the
-verified commit); the code review stage (`bw review` — a frozen panel of two
-specialized code reviewers by default reads the verified change against the
-approved specification and plan, with the worktree as a read-only working
-directory; while another configured panel execution remains, all actionable
-findings are sent together to the frozen implementer, the resulting commit is
-verified with the frozen commands, and the full panel reviews it again; the
-last panel retains below-threshold findings without blocking and blocks only
-on findings at or above the independently frozen severity threshold); and
-the delivery stage (`bw deliver` — the final
+verified commit); the code review stage (`bw review` — a frozen panel of two specialized code
+reviewers by default reads the verified change against the approved
+specification and plan, with the worktree as a read-only working directory;
+the stage first verifies that all declared artifacts in the signed scope were
+delivered in the verified commit, blocking the stage and run immediately before
+reviewer dispatch if any are missing; while another configured panel execution
+remains, all actionable findings are sent together to the frozen implementer,
+the resulting commit is verified with the frozen commands, and the full panel
+reviews it again; the last panel retains below-threshold findings without
+blocking and blocks only on findings at or above the independently frozen
+severity threshold); and the delivery stage (`bw deliver` — the final
 deterministic gate, no dispatch and no model: it re-reads the verification
 record and the code-review record it is handed, cross-checks the two, re-reads
 the retained worktree, diffs the patch range between the recorded

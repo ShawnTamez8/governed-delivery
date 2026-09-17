@@ -238,6 +238,12 @@ const CONSTRAINT_STRINGS = [
   "most directly responsible for the criterion's observable outcome",
   "Several criteria may name the same path",
   "Report missing implementation work against the plan's tasks",
+  // The audit instruction (Option C): instructs reviewers not to sample or
+  // stop after early defects, increasing the likelihood of first-round
+  // completeness before the single remediation dispatch.
+  "Conduct an exhaustive audit across the entire diff and all changed paths within your specialty",
+  "Do not stop after finding the first few defects or return only a sample of issues",
+  "report every actionable defect you identify across all declared acceptance criteria and plan tasks",
 ];
 
 test("every constrained field's constraint appears in the prompt source", () => {
@@ -881,6 +887,9 @@ test("the generated code review prompt states every field the validator and the 
     "reproducible impact",
     "optional refactoring",
     "speculative hardening",
+    "Conduct an exhaustive audit across the entire diff and all changed paths within your specialty",
+    "Do not stop after finding the first few defects or return only a sample of issues",
+    "report every actionable defect you identify across all declared acceptance criteria and plan tasks",
     "SPEC-TEXT",
     "PLAN-TEXT",
     "DIFF-TEXT",
