@@ -1,20 +1,18 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-24, resilience panel and parallel code review — uncommitted)
+## Current state (2026-09-24, resilience panel and parallel code review — committed at `6ed1991`)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
 system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
-**Working state (verified 2026-09-24 with `git status` and `git log`):** Branch
-`guided-project-bootstrap`, HEAD `834d209` (2026-09-17). The working tree holds
-one uncommitted layer: 18 modified files (692 insertions, 141 deletions) plus
-untracked `docs/features/resilience-parallel-code-review/` and
-`src/agents/code-reviewer-state-integrity.ts`. `CLAUDE.md` and `AGENTS.md` are
-byte-identical.
+**Working state (verified 2026-09-24 with `git log`):** Branch
+`guided-project-bootstrap`, HEAD `6ed1991`, not pushed. That commit holds the
+resilience/parallel layer, the `withRoot` test fix and these session records.
+`CLAUDE.md` and `AGENTS.md` are byte-identical.
 
-**In flight — resilience panel and parallel code review (uncommitted):**
+**Shipped at `6ed1991` — resilience panel and parallel code review:**
 `docs/features/resilience-parallel-code-review/plan.md` is `Implemented`.
 `2026-09-17-plan-review.md` is `reconciled`; `2026-09-17-code-review.md` is
 `reconciled` with one medium finding (missing deterministic-order, multi-failure
@@ -22,10 +20,20 @@ and aggregate-cost regressions) accepted and fixed on 2026-09-18, each new guard
 break-tested. The change adds a third `code-findings` lens (resilience/state
 integrity), raises the default `CODE_REVIEW_PANEL_SIZE` to 3, launches reviewers
 within a panel concurrently, drains every launch, checks the worktree once when
-the panel is quiescent, and consumes reports in frozen panel order. The review
-record reports `npm test` 1,184 passed / 0 failed / 5 skipped, typecheck clean,
-`check:docs` clean with 75 warnings, `git diff --check` clean. **None of that
-was re-run on 2026-09-24**, and this layer has never run against a provider.
+the panel is quiescent, and consumes reports in frozen panel order. It has
+never run against a provider.
+
+**Checks before commit (2026-09-24):** typecheck and `check:docs` were clean
+(operator). The operator's `npm test` failed only on the recurring
+`test/verify-command.test.ts:134` cleanup EPERM. Node 26 `rmSync` never retried
+the transient external hold on `evidence.txt`, so the approved test-only fix
+makes `withRoot` retry only EPERM/EBUSY for about 2 s. It was validated by a
+held-file probe with a break-test, 256 stress runs (0 failures, one real lock
+absorbed), and a full suite run in which it passed
+(`.claude/sessions/2026-09-24-debug-verify-command-eperm-inert-retry.md`). That
+run's only failure, `test/cli-operator.test.ts:1394`, is environment-specific:
+it fails when launched from the assistant's tool shell and passed in the
+operator's terminal.
 
 **Committed since the last resume point:**
 - `834d209` — exhaustive-audit (anti-sampling) code-review prompt and a
@@ -68,7 +76,7 @@ cost $1.39–$3.59.
 dashboard on port 61419 is not listening (probed 2026-09-24).
 
 **Open/deferred:**
-- Commit of the resilience/parallel layer — not yet requested by the operator.
+- Pushing `guided-project-bootstrap` — not requested.
 - Manual browser evaluation of the dashboard across themes and viewports.
 - The `RunSnapshot` agent-field projection keeps model, harness and duration
   rendering as unavailable.
@@ -77,26 +85,9 @@ dashboard on port 61419 is not listening (probed 2026-09-24).
 - Whether a paid chain should exercise the three-lens concurrent panel, and at
   what budget and verification-command scope — operator decision.
 
-**Checks on the uncommitted layer (operator, 2026-09-24):** typecheck clean,
-`check:docs` clean, `npm test` 1,183 passed / 1 failed / 5 skipped. The one
-failure is the recurring `test/verify-command.test.ts:134` cleanup EPERM,
-unrelated to the layer: all functional assertions pass, and Node 26 `rmSync`
-never retried the transient external hold on `evidence.txt`. Analysis and the
-proposed test-only bounded-retry fix (awaiting approval):
-`.claude/sessions/2026-09-24-debug-verify-command-eperm-inert-retry.md`.
-The approved test-only fix is applied (uncommitted): `withRoot` retries only
-EPERM/EBUSY for about 2 s. It was validated by a held-file probe with a
-break-test, 256 stress runs (0 failures, one real retry absorbed), and the
-full suite, where the hung-command test passed.
-
-The only other full-suite failure, `test/cli-operator.test.ts:1394`
-(PowerShell 5.1 approval transport), turned out to be environment-specific: it
-fails every time when launched from the assistant's tool shell and passed in
-the operator's terminal on 2026-09-24. So the whole suite is green in the
-operator's environment, apart from the now-fixed `verify-command` flake.
-
-**Next up:** The operator decides whether to commit the resilience/parallel
-layer together with the `withRoot` test fix. No commit has been requested.
+**Next up:** Nothing is pending for the assistant. The next decisions are the
+operator's: whether to push `guided-project-bootstrap`, and whether to
+authorize a paid chain that exercises the three-lens concurrent panel.
 
 ## Diagnostics quick-reference
 
