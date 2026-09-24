@@ -35,7 +35,7 @@ stage or behaviour inherits either one.
 
 The implemented `code_review` loop has three independent release-policy knobs
 in `src/policy.ts`: `CODE_REVIEW_PANEL_SIZE` permits 2-5 reviewers and defaults
-to 2; `CODE_REVIEW_MAX_ROUNDS` permits 1-5 complete panel executions and
+to 3; `CODE_REVIEW_MAX_ROUNDS` permits 1-5 complete panel executions and
 defaults to 2; and `CODE_REVIEW_BLOCKING_SEVERITY` defaults to `high`. These
 values freeze at run start. Raising panel size also requires enough registered
 `code-findings` agents with distinct, non-empty specialist instructions; an
@@ -44,6 +44,16 @@ reviewers, the stage verifies that all declared artifacts in the signed scope
 were delivered in the verified commit, blocking the stage and run immediately
 if any are missing. Reviewer prompts instruct specialists to audit the entire
 diff comprehensively rather than sampling or truncating upon finding early defects.
+
+The seeded panel has three distinct lenses: correctness, security, and
+resilience/state integrity. Reviewers within one panel launch concurrently
+against the same frozen commit and inputs; the stage drains every launch,
+checks the shared worktree once after the panel is quiescent, and processes
+reports in frozen panel order. Raw responses and dispatch evidence may retain
+completion order. Remediation, verification, and successive panels remain
+sequential. An incomplete or integrity-failed panel blocks without a review
+record, remediation, or gate decision; clean valid sibling reports remain
+evidence when another reviewer fails.
 
 Every non-empty panel before the final configured round sends all actionable
 findings together to the frozen implementer, commits the guarded patch, runs
@@ -276,9 +286,10 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
 - `node .claude/skills/run-buildworks/driver.mjs smoke` — builds that scratch
   target and drives the CLI against it, spending nothing. `paid --yes` drives
   the full chain against the real `claude` binary and reports what it cost:
-  budget $1.25–$2.50 for a clean default run, potentially more when remediation
-  adds an implementer dispatch and another full reviewer panel. The committed
-  default design is the 20-requirement `web-calculator-design.md` beside the driver.
+  the historical $1.25–$2.50 range predates the three-reviewer default, so no
+  current dollar range is established. Remediation adds an implementer dispatch
+  and another full three-reviewer panel. The committed default design is the
+  20-requirement `web-calculator-design.md` beside the driver.
   Change what a run exercises with `--design <path>` and `--slug <slug>`
   (such as `.claude/skills/run-buildworks/target-tap-design.md`), or by editing
   that file. See `.claude/skills/run-buildworks/SKILL.md`.

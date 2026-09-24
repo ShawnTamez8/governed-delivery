@@ -9,5 +9,6 @@ console.log(
     type: "result",
     stdinLength: stdin.length,
     argv: process.argv.slice(2),
+    total_cost_usd: 0.125,
   })
 );

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import type { AgentDefinition } from "./agents.ts";
 import { validateAgentResult, type ProposedPatch } from "./agent-result.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
@@ -26,7 +27,11 @@ import {
 } from "./paths.ts";
 import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
 import { buildCodeReviewPrompt, buildCodeReviewRemediationPrompt } from "./prompts.ts";
-import { upstreamPrefixFor, validateReviewerReports } from "./reconciliation.ts";
+import {
+  upstreamPrefixFor,
+  validateReviewerReports,
+  type ReviewerReport,
+} from "./reconciliation.ts";
 import { deliveryCoverage } from "./delivery-coverage.ts";
 import { codeReviewPanel, codeReviewStaffingShortfall } from "./select.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
@@ -34,6 +39,21 @@ import { requireRunInProgress, type Store } from "./store.ts";
 export type CodeReviewStageResult =
   | { ok: true; stageId: number; resultRef: string }
   | { ok: false; reason: string };
+
+type ReviewerOutcome =
+  | {
+      reviewer: AgentDefinition;
+      status: "valid";
+      agentRunId: number;
+      reports: ReviewerReport[];
+      durationMs: number;
+    }
+  | {
+      reviewer: AgentDefinition;
+      status: "dispatch_failed" | "output_invalid";
+      reason: string;
+      durationMs: number;
+    };
 
 function runGit(
   args: string[],
@@ -272,8 +292,13 @@ export async function runCodeReviewStage(
   };
   const evidenceDir = codeReviewEvidenceDir(rootDir, runId);
   let stageId: number | null = null;
-  const abort = (activeStageId: number, action: string, reason: string): CodeReviewStageResult => {
-    audit(activeStageId, action, reason);
+  const abort = (
+    activeStageId: number,
+    action: string,
+    reason: string,
+    auditSummary: string = reason
+  ): CodeReviewStageResult => {
+    audit(activeStageId, action, auditSummary);
     store.completeStage(activeStageId, "", "block");
     store.setRunStatus(runId, "blocked");
     return { ok: false, reason };
@@ -357,8 +382,21 @@ export async function runCodeReviewStage(
         `round=${roundNumber}/${profile.policy.codeReviewMaxRounds}; commit=${currentCommit}; changedPaths=${changedPaths.length}; panel=${panel.map((agent) => agent.id).join("+")}`
       );
 
-      for (const reviewer of panel) {
+      const panelStartedAt = Date.now();
+      const panelIds = panel.map((reviewer) => reviewer.id).join("+");
+      audit(
+        stage.id,
+        "code_review.panel.start",
+        `round=${roundNumber}/${profile.policy.codeReviewMaxRounds}; commit=${currentCommit}; panel=${panelIds}`
+      );
+      const reviewerPromises = panel.map(async (reviewer): Promise<ReviewerOutcome> => {
         const startedAt = Date.now();
+        const invalid = (reason: string): ReviewerOutcome => ({
+          reviewer,
+          status: "output_invalid",
+          reason,
+          durationMs: Date.now() - startedAt,
+        });
         const dispatch = await dispatchOnce(
           store,
           executor,
@@ -373,74 +411,136 @@ export async function runCodeReviewStage(
           rootDir
         );
         if (!dispatch.ok) {
-          return abort(stage.id, "code_review.reviewer.failed", `round ${roundNumber}, commit ${currentCommit}, reviewer ${reviewer.id}: ${dispatch.reason}`);
-        }
-        const headAfter = runGit(["rev-parse", "HEAD"], worktreePath);
-        if (!headAfter.ok) {
-          return abort(stage.id, "code_review.worktree.dirty", `round ${roundNumber}: the worktree head could not be re-read after ${reviewer.id}: ${headAfter.detail}`);
-        }
-        if (headAfter.stdout.trim() !== currentCommit) {
-          return abort(stage.id, "code_review.worktree.dirty", `round ${roundNumber}: reviewer ${reviewer.id} moved the worktree head from ${currentCommit} to ${headAfter.stdout.trim()}`);
-        }
-        const cleanAfter = checkWorktreeClean(worktreePath);
-        if (!cleanAfter.ok) {
-          return abort(
-            stage.id,
-            "code_review.worktree.dirty",
-            cleanAfter.detail !== undefined
-              ? `round ${roundNumber}: cannot check worktree cleanliness after ${reviewer.id}: ${cleanAfter.detail}`
-              : `round ${roundNumber}: reviewer ${reviewer.id} left the worktree dirty in: ${cleanAfter.entries.join(", ")}`
-          );
+          return {
+            reviewer,
+            status: "dispatch_failed",
+            reason: dispatch.reason,
+            durationMs: Date.now() - startedAt,
+          };
         }
         const body = extractJsonBody(dispatch.envelope.resultText);
         if (body.kind === "refused") {
-          return abort(stage.id, "code_review.reviewer.failed", `round ${roundNumber}, reviewer ${reviewer.id} body refused: ${body.reason}`);
+          return invalid(`body refused: ${body.reason}`);
         }
         const result = validateAgentResult(reviewer.id, body.value);
         if (!result.ok) {
-          return abort(stage.id, "code_review.reviewer.failed", `round ${roundNumber}, reviewer ${reviewer.id} result refused: ${result.reason}`);
+          return invalid(`result refused: ${result.reason}`);
         }
         if (result.value.status !== "proposed") {
-          return abort(stage.id, "code_review.reviewer.failed", `round ${roundNumber}, reviewer ${reviewer.id} returned status ${result.value.status}, not proposed — a reviewer that cannot review must not pass the gate by absence`);
+          return invalid(
+            `returned status ${result.value.status}, not proposed — a reviewer that cannot review must not pass the gate by absence`
+          );
         }
         const content = result.value.proposedContentChanges as { findings?: unknown } | undefined;
         if (!Array.isArray(content?.findings)) {
-          return abort(stage.id, "code_review.reviewer.failed", `round ${roundNumber}, reviewer ${reviewer.id} result is missing proposedContentChanges.findings`);
+          return invalid("result is missing proposedContentChanges.findings");
         }
         const reports = validateReviewerReports(content.findings, {
           agentId: reviewer.id,
           upstreamPrefix: upstreamPrefixFor("plan"),
         });
         if (!reports.ok) {
-          return abort(stage.id, "code_review.reviewer.failed", `round ${roundNumber}, reviewer ${reviewer.id} result refused: ${reports.reason}`);
+          return invalid(`result refused: ${reports.reason}`);
         }
         const reportRefusal = validateCodeReviewReports(reports.value, changedPaths);
         if (reportRefusal !== null) {
-          return abort(stage.id, "code_review.reviewer.failed", `round ${roundNumber}, reviewer ${reviewer.id} result refused: ${reportRefusal}`);
+          return invalid(`result refused: ${reportRefusal}`);
         }
         for (const report of reports.value) {
           if (!profile.policy.severities.includes(report.severity)) {
-            return abort(stage.id, "code_review.reviewer.failed", `round ${roundNumber}, reviewer ${reviewer.id} result refused: severity ${JSON.stringify(report.severity)} is not in the frozen severities ${profile.policy.severities.join(", ")}`);
+            return invalid(
+              `result refused: severity ${JSON.stringify(report.severity)} is not in the frozen severities ${profile.policy.severities.join(", ")}`
+            );
           }
         }
-        agentByRun.set(dispatch.agentRunId, reviewer.id);
-        for (const report of reports.value) {
-          const finding = store.upsertCanonicalFinding(stage.id, roundNumber, report.intentKey, report.location);
-          store.insertFindingReport({
-            findingId: finding.id,
-            agentRunId: dispatch.agentRunId,
-            severity: report.severity,
-            classification: report.classification,
-            subject: report.subject,
-          });
-          audit(
-            stage.id,
-            "code_review.finding.record",
-            `round=${roundNumber}; commit=${currentCommit}; finding=${finding.id}; location=${report.location}; intent=${report.intentKey}; severity=${report.severity}; reviewer=${reviewer.id}`
-          );
+        return {
+          reviewer,
+          status: "valid",
+          agentRunId: dispatch.agentRunId,
+          reports: reports.value,
+          durationMs: Date.now() - startedAt,
+        };
+      });
+      const settled = await Promise.allSettled(reviewerPromises);
+      const outcomes: ReviewerOutcome[] = settled.map((result, index) =>
+        result.status === "fulfilled"
+          ? result.value
+          : {
+              reviewer: panel[index]!,
+              status: "dispatch_failed",
+              reason: `unexpected dispatch failure: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+              durationMs: Date.now() - panelStartedAt,
+            }
+      );
+
+      const headAfterPanel = runGit(["rev-parse", "HEAD"], worktreePath);
+      const cleanAfterPanel = checkWorktreeClean(worktreePath);
+      let integrity: "clean" | "dirty" | "check_failed" = "clean";
+      let integrityReason: string | null = null;
+      if (!headAfterPanel.ok) {
+        integrity = "check_failed";
+        integrityReason = `cannot read the worktree head after the panel: ${headAfterPanel.detail}`;
+      } else if (!cleanAfterPanel.ok && cleanAfterPanel.detail !== undefined) {
+        integrity = "check_failed";
+        integrityReason = `cannot check worktree cleanliness after the panel: ${cleanAfterPanel.detail}`;
+      } else if (headAfterPanel.stdout.trim() !== currentCommit) {
+        integrity = "dirty";
+        integrityReason = `the panel moved the worktree head from ${currentCommit} to ${headAfterPanel.stdout.trim()}`;
+      } else if (!cleanAfterPanel.ok) {
+        integrity = "dirty";
+        integrityReason = `the panel left the worktree dirty in: ${cleanAfterPanel.entries.join(", ")}`;
+      }
+
+      const outcomeStatuses = outcomes.map((outcome) =>
+        `${outcome.reviewer.id}:${integrity === "clean" ? outcome.status : outcome.status === "valid" ? "integrity_untrusted" : outcome.status}`
+      );
+      audit(
+        stage.id,
+        "code_review.panel.settled",
+        `round=${roundNumber}/${profile.policy.codeReviewMaxRounds}; commit=${currentCommit}; elapsedMs=${Date.now() - panelStartedAt}; outcomes=${outcomeStatuses.join(",")}; integrity=${integrity}`
+      );
+
+      if (integrity === "clean") {
+        for (const outcome of outcomes) {
+          if (outcome.status !== "valid") continue;
+          agentByRun.set(outcome.agentRunId, outcome.reviewer.id);
+          for (const report of outcome.reports) {
+            const finding = store.upsertCanonicalFinding(stage.id, roundNumber, report.intentKey, report.location);
+            store.insertFindingReport({
+              findingId: finding.id,
+              agentRunId: outcome.agentRunId,
+              severity: report.severity,
+              classification: report.classification,
+              subject: report.subject,
+            });
+            audit(
+              stage.id,
+              "code_review.finding.record",
+              `round=${roundNumber}; commit=${currentCommit}; finding=${finding.id}; location=${report.location}; intent=${report.intentKey}; severity=${report.severity}; reviewer=${outcome.reviewer.id}`
+            );
+          }
         }
+      }
+
+      const failures = outcomeStatuses.filter((status) => !status.endsWith(":valid"));
+      if (failures.length > 0) {
+        const failureSummary = `round=${roundNumber}/${profile.policy.codeReviewMaxRounds}; commit=${currentCommit}; failures=${failures.join(",")}; panel=${panelIds}`;
+        const details = outcomes
+          .filter((outcome) => outcome.status !== "valid")
+          .map((outcome) => `${outcome.reviewer.id}:${outcome.status} (${outcome.reason})`);
+        if (integrityReason !== null) details.push(`panel:integrity_untrusted (${integrityReason})`);
+        return abort(
+          stage.id,
+          "code_review.reviewer.failed",
+          `code-review panel failed after round ${roundNumber}/${profile.policy.codeReviewMaxRounds} at ${currentCommit}: ${details.join("; ")}`,
+          failureSummary
+        );
+      }
+
+      for (const outcome of outcomes) {
+        if (outcome.status !== "valid") continue;
         process.stderr.write(
-          `round ${roundNumber}/${profile.policy.codeReviewMaxRounds} reviewed ${reviewer.id} (${reviewer.specialty ?? "general review"}) at ${currentCommit.slice(0, 8)}: ${reports.value.length} finding(s) in ${Date.now() - startedAt}ms\n`
+          `round ${roundNumber}/${profile.policy.codeReviewMaxRounds} reviewed ${outcome.reviewer.id} (${outcome.reviewer.specialty ?? "general review"}) at ${currentCommit.slice(0, 8)}: ${outcome.reports.length} finding(s) in ${outcome.durationMs}ms\n`
         );
       }
 

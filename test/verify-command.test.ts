@@ -8,9 +8,32 @@ import { VERIFY_ENV_PASSTHROUGH, VERIFY_RETENTION_MAX_BYTES } from "../src/polic
 
 const FIXTURES = join(process.cwd(), "test", "fixtures", "verify");
 
+const REMOVE_ATTEMPTS = 20;
+const REMOVE_DELAY_MS = 100;
+
+/**
+ * On Windows something outside the process tree can hold a freshly closed
+ * evidence file briefly after a forced tree-kill, and Node 26's `rmSync`
+ * does not retry that EPERM despite `maxRetries` (probed 2026-09-24: it
+ * fails in about 1 ms against a held file). Retry only those codes, within a
+ * bounded budget, so a lasting hold still fails the test.
+ */
+async function removeRoot(root: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      rmSync(root, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if ((code !== "EPERM" && code !== "EBUSY") || attempt >= REMOVE_ATTEMPTS) throw err;
+      await new Promise((resolve) => setTimeout(resolve, REMOVE_DELAY_MS));
+    }
+  }
+}
+
 function withRoot(fn: (root: string) => Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "bw-verify-cmd-"));
-  return fn(root).finally(() => rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
+  return fn(root).finally(() => removeRoot(root));
 }
 
 function opts(root: string, overrides: Partial<Parameters<typeof runVerifyCommand>[1]> = {}) {

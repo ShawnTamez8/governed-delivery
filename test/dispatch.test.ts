@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
 import { dispatchOnce } from "../src/dispatch.ts";
 import { PROMPT_MAX_BYTES } from "../src/harness.ts";
+import { verifyAuditChain } from "../src/audit.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 
 const FIXTURES = join(process.cwd(), "test", "fixtures", "harness");
@@ -71,6 +72,32 @@ test("a successful dispatch records row, raw output, and a success audit event",
     assert.equal(row.independence, "configured_standalone");
     assert.ok(existsSync(join(root, row.raw_output_ref)));
     assert.deepEqual(auditActions(store), ["agent.dispatch"]);
+  });
+});
+
+test("three concurrent dispatches retain distinct evidence and one valid audit chain", async () => {
+  await withDispatchContext(async (store, root, stageId) => {
+    const executor = fixtureExecutor("echo-json");
+    const results = await Promise.all(
+      ["correctness", "security", "resilience"].map((agent) =>
+        dispatchOnce(
+          store,
+          executor,
+          { stageId, agent, role: "reviewer", requestedModel: "m", prompt: `review ${agent}` },
+          root
+        )
+      )
+    );
+    assert.ok(results.every((result) => result.ok));
+    const rows = store.query<{ raw_output_ref: string; cost: number | null }>(
+      "SELECT raw_output_ref, cost FROM agent_run ORDER BY id"
+    );
+    assert.equal(rows.length, 3);
+    assert.equal(new Set(rows.map((row) => row.raw_output_ref)).size, 3);
+    assert.deepEqual(rows.map((row) => row.cost), [0.125, 0.125, 0.125]);
+    assert.equal(rows.reduce((sum, row) => sum + (row.cost ?? 0), 0), 0.375);
+    assert.equal(auditActions(store).filter((action) => action === "agent.dispatch").length, 3);
+    assert.equal(verifyAuditChain(store), null);
   });
 });
 

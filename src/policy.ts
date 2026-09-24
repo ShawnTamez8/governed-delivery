@@ -59,7 +59,7 @@ export const PANEL_SIZE_MAX = 2;
  */
 export const CODE_REVIEW_PANEL_SIZE_FLOOR = 2;
 export const CODE_REVIEW_PANEL_SIZE_CEILING = 5;
-export const CODE_REVIEW_PANEL_SIZE = 2;
+export const CODE_REVIEW_PANEL_SIZE = 3;
 export const CODE_REVIEW_MAX_ROUNDS_FLOOR = 1;
 export const CODE_REVIEW_MAX_ROUNDS_CEILING = 5;
 export const CODE_REVIEW_MAX_ROUNDS = 2;

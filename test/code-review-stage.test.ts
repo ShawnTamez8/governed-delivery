@@ -6,7 +6,9 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -92,7 +94,16 @@ function fixtureExecutor(
       commandAllowlist: [],
       idleTimeoutSeconds: 30,
       absoluteTimeoutSeconds: 120,
-      envPassthrough: ["PATH", "SystemRoot", "TEMP", "TMP", "EMIT_MODE"],
+      envPassthrough: [
+        "PATH",
+        "SystemRoot",
+        "TEMP",
+        "TMP",
+        "EMIT_MODE",
+        "BW_TEST_REVIEW_BARRIER_DIR",
+        "BW_TEST_REVIEW_BARRIER_COUNT",
+        "BW_TEST_REVIEW_DELAY_MS",
+      ],
       network: "inherit",
     },
   };
@@ -125,15 +136,27 @@ function refreeze(root: string, store: Store, runId: number, mutate: (p: Profile
   store.setProfileRef(runId, sha256Hex(serialized));
 }
 
-async function withMode(fn: () => Promise<void>, mode: string): Promise<void> {
-  const before = process.env.EMIT_MODE;
-  process.env.EMIT_MODE = mode;
+async function withReviewEnvironment(
+  fn: () => Promise<void>,
+  values: Record<string, string | undefined>
+): Promise<void> {
+  const before = new Map(Object.keys(values).map((name) => [name, process.env[name]]));
+  for (const [name, value] of Object.entries(values)) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
   try {
     await fn();
   } finally {
-    if (before === undefined) delete process.env.EMIT_MODE;
-    else process.env.EMIT_MODE = before;
+    for (const [name, value] of before) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
+}
+
+async function withMode(fn: () => Promise<void>, mode: string): Promise<void> {
+  await withReviewEnvironment(fn, { EMIT_MODE: mode });
 }
 
 interface Ctx {
@@ -420,10 +443,10 @@ test("an empty panel result passes, records the panel, and leaves the run in pro
       assert.equal(ctx.store.getRun(ctx.runId)!.status, "in_progress");
 
       const runs = agentRuns(ctx, stage.id);
-      assert.equal(runs.length, 2, "the fixed panel seats both reviewers");
+      assert.equal(runs.length, 3, "the fixed panel seats all three reviewers");
       assert.deepEqual(
-        runs.map((r) => r.agent),
-        ["code-reviewer-correctness", "code-reviewer-security"]
+        runs.map((r) => r.agent).sort(),
+        ["code-reviewer-correctness", "code-reviewer-security", "code-reviewer-state-integrity"]
       );
       assert.ok(runs.every((r) => r.role === "reviewer"));
       // The cwd proof: the fixture read base.txt from its working directory,
@@ -436,7 +459,11 @@ test("an empty panel result passes, records the panel, and leaves the run in pro
 
       const record = readRecord(ctx.root, ctx.runId);
       assert.deepEqual(record.rounds[0]!.changedPaths, [ARTIFACT]);
-      assert.deepEqual(record.panel, ["code-reviewer-correctness", "code-reviewer-security"]);
+      assert.deepEqual(record.panel, [
+        "code-reviewer-correctness",
+        "code-reviewer-security",
+        "code-reviewer-state-integrity",
+      ]);
       assert.equal(record.outcome, "pass");
       assert.deepEqual(record.blocking, []);
       assert.equal(ctx.store.query("SELECT id FROM proposal").length, 0);
@@ -455,6 +482,168 @@ test("an empty panel result passes, records the panel, and leaves the run in pro
       assert.equal(verifyAuditChain(ctx.store), null);
     }, "ok");
   });
+});
+
+test("all reviewer subprocesses start before any finishes and panel evidence stays canonical", async () => {
+  const barrierDir = mkdtempSync(join(tmpdir(), "bw-review-barrier-"));
+  try {
+    await withVerifiedRun(async (ctx) => {
+      await withReviewEnvironment(async () => {
+        const result = await review(ctx);
+        assert.equal(result.ok, true, result.ok ? "" : result.reason);
+
+        const markers = readdirSync(barrierDir).sort();
+        assert.equal(markers.filter((name) => name.startsWith("started-")).length, 3);
+        assert.equal(markers.filter((name) => name.startsWith("finished-")).length, 3);
+        for (const marker of markers.filter((name) => name.startsWith("finished-"))) {
+          assert.equal(readFileSync(join(barrierDir, marker), "utf8"), "started=3\n");
+        }
+
+        const finished = (agent: string) => statSync(join(barrierDir, `finished-${agent}`)).mtimeMs;
+        assert.ok(
+          finished("code-reviewer-state-integrity") < finished("code-reviewer-correctness") &&
+            finished("code-reviewer-correctness") < finished("code-reviewer-security"),
+          "the fixture must finish in a different order than the canonical panel"
+        );
+
+        const panel = "code-reviewer-correctness+code-reviewer-security+code-reviewer-state-integrity";
+        const starts = eventsOf(ctx, "code_review.panel.start");
+        const settled = eventsOf(ctx, "code_review.panel.settled");
+        assert.equal(starts.length, 1);
+        assert.equal(settled.length, 1);
+        assert.equal(starts[0]!.summary, `round=1/2; commit=${ctx.verifiedCommit}; panel=${panel}`);
+        assert.match(
+          settled[0]!.summary,
+          new RegExp(
+            `^round=1/2; commit=${ctx.verifiedCommit}; elapsedMs=\\d+; outcomes=` +
+              "code-reviewer-correctness:valid,code-reviewer-security:valid,code-reviewer-state-integrity:valid; integrity=clean$"
+          )
+        );
+        assert.deepEqual(readRecord(ctx.root, ctx.runId).panel, panel.split("+"));
+      }, {
+        EMIT_MODE: "barrier",
+        BW_TEST_REVIEW_BARRIER_DIR: barrierDir,
+        BW_TEST_REVIEW_BARRIER_COUNT: "3",
+        BW_TEST_REVIEW_DELAY_MS: JSON.stringify({
+          "code-reviewer-correctness": 120,
+          "code-reviewer-security": 240,
+          "code-reviewer-state-integrity": 0,
+        }),
+      });
+    });
+  } finally {
+    rmSync(barrierDir, { recursive: true, force: true });
+  }
+});
+
+test("one reviewer failure drains slower siblings and retains valid sibling evidence", async () => {
+  const barrierDir = mkdtempSync(join(tmpdir(), "bw-review-failure-"));
+  try {
+    await withVerifiedRun(async (ctx) => {
+      await withReviewEnvironment(async () => {
+        const result = await review(ctx);
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+
+        assert.equal(readdirSync(barrierDir).filter((name) => name.startsWith("finished-")).length, 3);
+        assert.ok(existsSync(join(barrierDir, "finished-code-reviewer-security")), "the slow sibling drained");
+
+        const stage = stageOf(ctx)!;
+        assert.equal(stage.status, "blocked");
+        assert.equal(stage.output_ref, "");
+        assert.equal(agentRuns(ctx, stage.id).length, 2, "only successful reviewer runs are recorded");
+        const findings = ctx.store.getCanonicalFindings(stage.id);
+        assert.equal(findings.length, 1, "the valid sibling finding is retained");
+        assert.equal(findings[0]!.intent_key, "retained-sibling");
+        assert.equal(ctx.store.getFindingReports(findings[0]!.id).length, 1);
+
+        assert.equal(eventsOf(ctx, "code_review.panel.settled").length, 1);
+        assert.match(
+          eventsOf(ctx, "code_review.panel.settled")[0]!.summary,
+          /outcomes=code-reviewer-correctness:dispatch_failed,code-reviewer-security:valid,code-reviewer-state-integrity:valid; integrity=clean$/
+        );
+        assert.equal(eventsOf(ctx, "code_review.reviewer.failed").length, 1);
+        assert.equal(
+          eventsOf(ctx, "code_review.reviewer.failed")[0]!.summary,
+          `round=1/2; commit=${ctx.verifiedCommit}; failures=code-reviewer-correctness:dispatch_failed; panel=code-reviewer-correctness+code-reviewer-security+code-reviewer-state-integrity`
+        );
+        assert.equal(eventsOf(ctx, "code_review.gate.pass").length, 0);
+        assert.equal(eventsOf(ctx, "code_review.gate.block").length, 0);
+        assert.equal(agentRuns(ctx, stage.id).some((run) => run.role === "author"), false);
+        assert.ok(!existsSync(join(ctx.root, ".governance", "code-review", String(ctx.runId), "result.json")));
+        assert.ok(!existsSync(join(ctx.root, ".governance", "code-review", String(ctx.runId), "report.md")));
+        assert.equal(verifyAuditChain(ctx.store), null);
+      }, {
+        EMIT_MODE: "parallel-fail",
+        BW_TEST_REVIEW_BARRIER_DIR: barrierDir,
+        BW_TEST_REVIEW_BARRIER_COUNT: "3",
+        BW_TEST_REVIEW_DELAY_MS: JSON.stringify({
+          "code-reviewer-correctness": 20,
+          "code-reviewer-security": 220,
+          "code-reviewer-state-integrity": 100,
+        }),
+      });
+    });
+  } finally {
+    rmSync(barrierDir, { recursive: true, force: true });
+  }
+});
+
+test("multiple reviewer failures are summarized in canonical order after every sibling drains", async () => {
+  const barrierDir = mkdtempSync(join(tmpdir(), "bw-review-multi-failure-"));
+  try {
+    await withVerifiedRun(async (ctx) => {
+      await withReviewEnvironment(async () => {
+        const result = await review(ctx);
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+
+        assert.equal(readdirSync(barrierDir).filter((name) => name.startsWith("finished-")).length, 3);
+        const finished = (agent: string) => statSync(join(barrierDir, `finished-${agent}`)).mtimeMs;
+        assert.ok(
+          finished("code-reviewer-state-integrity") < finished("code-reviewer-correctness") &&
+            finished("code-reviewer-correctness") < finished("code-reviewer-security"),
+          "the two failures must complete out of canonical panel order before the valid sibling"
+        );
+
+        const stage = stageOf(ctx)!;
+        assert.equal(stage.status, "blocked");
+        assert.equal(stage.output_ref, "");
+        assert.equal(agentRuns(ctx, stage.id).length, 1, "only the successful reviewer run is recorded");
+        const findings = ctx.store.getCanonicalFindings(stage.id);
+        assert.equal(findings.length, 1, "the valid sibling finding is retained");
+        assert.equal(findings[0]!.intent_key, "retained-sibling");
+
+        assert.match(
+          eventsOf(ctx, "code_review.panel.settled")[0]!.summary,
+          /outcomes=code-reviewer-correctness:dispatch_failed,code-reviewer-security:valid,code-reviewer-state-integrity:dispatch_failed; integrity=clean$/
+        );
+        assert.equal(
+          eventsOf(ctx, "code_review.reviewer.failed")[0]!.summary,
+          `round=1/2; commit=${ctx.verifiedCommit}; failures=code-reviewer-correctness:dispatch_failed,code-reviewer-state-integrity:dispatch_failed; panel=code-reviewer-correctness+code-reviewer-security+code-reviewer-state-integrity`
+        );
+        assert.ok(
+          result.reason.indexOf("code-reviewer-correctness:dispatch_failed") <
+            result.reason.indexOf("code-reviewer-state-integrity:dispatch_failed"),
+          "the operator-facing failure reason stays in canonical panel order"
+        );
+        assert.equal(eventsOf(ctx, "code_review.gate.pass").length, 0);
+        assert.equal(eventsOf(ctx, "code_review.gate.block").length, 0);
+        assert.equal(verifyAuditChain(ctx.store), null);
+      }, {
+        EMIT_MODE: "parallel-multi-fail",
+        BW_TEST_REVIEW_BARRIER_DIR: barrierDir,
+        BW_TEST_REVIEW_BARRIER_COUNT: "3",
+        BW_TEST_REVIEW_DELAY_MS: JSON.stringify({
+          "code-reviewer-correctness": 100,
+          "code-reviewer-security": 220,
+          "code-reviewer-state-integrity": 0,
+        }),
+      });
+    });
+  } finally {
+    rmSync(barrierDir, { recursive: true, force: true });
+  }
 });
 
 // --- findings below the threshold -------------------------------------------
@@ -485,7 +674,7 @@ test("a below-threshold final finding passes after one remediation and is retain
       assert.deepEqual(record.blocking, []);
       assert.match(eventsOf(ctx, "code_review.gate.pass")[0]!.summary, /findings=1; blocking=0/);
       assert.equal(eventsOf(ctx, "code_review.finding.record").length, 2);
-      assert.equal(agentRuns(ctx, stage.id).length, 5);
+      assert.equal(agentRuns(ctx, stage.id).length, 7);
       assert.equal(verifyAuditChain(ctx.store), null);
     }, "low");
   });
@@ -499,13 +688,15 @@ test("high-then-clean remediates once, verifies, and passes the full second pane
       const stage = stageOf(ctx)!;
       const runs = agentRuns(ctx, stage.id);
       assert.deepEqual(
-        runs.map((run) => run.agent),
+        runs.map((run) => run.agent).sort(),
         [
           "code-reviewer-correctness",
-          "code-reviewer-security",
-          "implementer",
           "code-reviewer-correctness",
           "code-reviewer-security",
+          "code-reviewer-security",
+          "code-reviewer-state-integrity",
+          "code-reviewer-state-integrity",
+          "implementer",
         ]
       );
       const record = readRecord(ctx.root, ctx.runId);
@@ -526,6 +717,57 @@ test("high-then-clean remediates once, verifies, and passes the full second pane
   });
 });
 
+test("mixed-duration findings and their remediation prompt stay in canonical panel order", async () => {
+  const barrierDir = mkdtempSync(join(tmpdir(), "bw-review-mixed-order-"));
+  try {
+    await withVerifiedRun(async (ctx) => {
+      await withReviewEnvironment(async () => {
+        const result = await review(ctx);
+        assert.equal(result.ok, true, result.ok ? "" : result.reason);
+
+        const finished = (agent: string) => statSync(join(barrierDir, `finished-${agent}`)).mtimeMs;
+        assert.ok(
+          finished("code-reviewer-state-integrity") < finished("code-reviewer-correctness") &&
+            finished("code-reviewer-correctness") < finished("code-reviewer-security"),
+          "round 1 must finish in a different order than the canonical panel"
+        );
+        assert.equal(
+          readFileSync(join(barrierDir, "remediation-order-verified"), "utf8"),
+          "verified\n",
+          "the fixture accepted the remediation prompt's canonical reviewer order"
+        );
+
+        const record = readRecord(ctx.root, ctx.runId);
+        assert.equal(record.rounds.length, 2);
+        assert.deepEqual(
+          record.rounds[0]!.findings.map((finding) => finding.reports[0]!.agent),
+          [
+            "code-reviewer-correctness",
+            "code-reviewer-security",
+            "code-reviewer-state-integrity",
+          ],
+          "persisted findings follow frozen panel order, not completion order"
+        );
+        assert.ok(record.rounds[0]!.findings.every((finding) => finding.reports.length === 1));
+        assert.equal(record.rounds[0]!.remediation?.verification.outcome, "pass");
+        assert.deepEqual(record.rounds[1]!.findings, []);
+        assert.equal(verifyAuditChain(ctx.store), null);
+      }, {
+        EMIT_MODE: "mixed-then-clean",
+        BW_TEST_REVIEW_BARRIER_DIR: barrierDir,
+        BW_TEST_REVIEW_BARRIER_COUNT: "3",
+        BW_TEST_REVIEW_DELAY_MS: JSON.stringify({
+          "code-reviewer-correctness": 120,
+          "code-reviewer-security": 240,
+          "code-reviewer-state-integrity": 0,
+        }),
+      });
+    });
+  } finally {
+    rmSync(barrierDir, { recursive: true, force: true });
+  }
+});
+
 test("a frozen one-round profile blocks without dispatching remediation", async () => {
   await withVerifiedRun(async (ctx) => {
     refreeze(ctx.root, ctx.store, ctx.runId, (profile) => {
@@ -535,7 +777,7 @@ test("a frozen one-round profile blocks without dispatching remediation", async 
       const result = await review(ctx);
       assert.equal(result.ok, false);
       const stage = stageOf(ctx)!;
-      assert.equal(agentRuns(ctx, stage.id).length, 2);
+      assert.equal(agentRuns(ctx, stage.id).length, 3);
       const record = readRecord(ctx.root, ctx.runId);
       assert.equal(record.rounds.length, 1);
       assert.equal(record.rounds[0]!.remediation, null);
@@ -560,7 +802,7 @@ test("invalid remediation outputs fail closed before a second panel", async () =
         assert.match(result.reason, message);
         const stage = stageOf(ctx)!;
         assert.equal(stage.status, "blocked");
-        assert.equal(agentRuns(ctx, stage.id).length, 3, `${mode} must stop before round 2`);
+        assert.equal(agentRuns(ctx, stage.id).length, 4, `${mode} must stop before round 2`);
         assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
       }, mode);
     });
@@ -580,7 +822,7 @@ test("failed remediation verification retains its round record and stops", async
       if (result.ok) return;
       assert.match(result.reason, /remediation verification blocked/);
       const stage = stageOf(ctx)!;
-      assert.equal(agentRuns(ctx, stage.id).length, 3);
+      assert.equal(agentRuns(ctx, stage.id).length, 4);
       const record = readRecord(ctx.root, ctx.runId);
       assert.equal(record.rounds.length, 1);
       assert.equal(record.rounds[0]!.remediation?.verification.outcome, "block");
@@ -626,7 +868,7 @@ test("a finding at the frozen threshold blocks the run and retains the record", 
       assert.equal(eventsOf(ctx, "code_review.gate.block").length, 1);
       assert.ok(existsSync(ctx.worktreePath), "the worktree survives a block");
       // The panel completes before the gate decides, as the spec panel does.
-      assert.equal(agentRuns(ctx, stage.id).length, 5);
+      assert.equal(agentRuns(ctx, stage.id).length, 7);
       assert.equal(verifyAuditChain(ctx.store), null);
     }, "high");
   });
@@ -681,7 +923,7 @@ test("the gate orders by the frozen severity list, not the live one", async () =
   });
 });
 
-test("two reviewers reporting one identity make one finding with two reports", async () => {
+test("three reviewers reporting one identity make one finding with three reports", async () => {
   await withVerifiedRun(async (ctx) => {
     refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
       p.policy.codeReviewMaxRounds = 1;
@@ -693,9 +935,9 @@ test("two reviewers reporting one identity make one finding with two reports", a
       const findings = ctx.store.getCanonicalFindings(stage.id);
       assert.equal(findings.length, 1, "one canonical finding");
       const reports = ctx.store.getFindingReports(findings[0]!.id);
-      assert.equal(reports.length, 2, "two immutable reports, unfused");
-      assert.deepEqual(reports.map((r) => r.severity).sort(), ["high", "low"]);
-      assert.equal(new Set(reports.map((r) => r.agent_run_id)).size, 2);
+      assert.equal(reports.length, 3, "three immutable reports, unfused");
+      assert.deepEqual(reports.map((r) => r.severity).sort(), ["high", "low", "medium"]);
+      assert.equal(new Set(reports.map((r) => r.agent_run_id)).size, 3);
 
       const record = readRecord(ctx.root, ctx.runId);
       assert.equal(record.blocking.length, 1, "the finding blocks once");
@@ -878,7 +1120,9 @@ test("a reviewer that writes into the worktree is refused, naming what it left",
       assert.equal(result.ok, false);
       if (result.ok) return;
       assert.match(result.reason, /reviewer-residue\.txt/);
-      assert.equal(eventsOf(ctx, "code_review.worktree.dirty").length, 1);
+      assert.equal(eventsOf(ctx, "code_review.panel.settled").length, 1);
+      assert.match(eventsOf(ctx, "code_review.panel.settled")[0]!.summary, /integrity=dirty$/);
+      assert.equal(eventsOf(ctx, "code_review.reviewer.failed").length, 1);
       assert.equal(ctx.store.getCanonicalFindings(stageOf(ctx)!.id).length, 0);
       assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
       assert.ok(!existsSync(join(ctx.root, ".governance", "code-review", String(ctx.runId), "result.json")));
@@ -1176,7 +1420,7 @@ test("a frozen registry that cannot seat the panel is refused at the stage bound
     assert.equal(result.ok, false);
     if (result.ok) return;
     assert.match(result.reason, /cannot seat a code-review panel/);
-    assert.match(result.reason, /seats 1 code reviewer/);
+    assert.match(result.reason, /seats 2 code reviewers/);
     assertNoStage(ctx);
   });
 });

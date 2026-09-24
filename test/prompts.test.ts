@@ -24,6 +24,7 @@ import { IMPLEMENTER } from "../src/agents/implementer.ts";
 import { PLAN_AUTHOR } from "../src/agents/plan-author.ts";
 import { CODE_REVIEWER_CORRECTNESS } from "../src/agents/code-reviewer-correctness.ts";
 import { CODE_REVIEWER_SECURITY } from "../src/agents/code-reviewer-security.ts";
+import { CODE_REVIEWER_STATE_INTEGRITY } from "../src/agents/code-reviewer-state-integrity.ts";
 import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
 import { SPEC_REVIEWER_TRACEABILITY } from "../src/agents/spec-reviewer-traceability.ts";
 import { validatePanelRequest } from "../src/select.ts";
@@ -912,7 +913,7 @@ test("the generated code review prompt states every field the validator and the 
   assert.deepEqual(scraped![1]!.split("\n"), ["- js/a.js", "- css/b.css"]);
 });
 
-test("the security and correctness prompts carry distinct protected specialist instructions", () => {
+test("the correctness, security, and resilience prompts carry distinct protected specialist instructions", () => {
   const security = buildCodeReviewPrompt(
     CODE_REVIEWER_SECURITY,
     "SPEC",
@@ -929,9 +930,23 @@ test("the security and correctness prompts carry distinct protected specialist i
     "DIFF",
     "c".repeat(40)
   );
+  const resilience = buildCodeReviewPrompt(
+    CODE_REVIEWER_STATE_INTEGRITY,
+    "SPEC",
+    "PLAN",
+    ["src/a.ts"],
+    "DIFF",
+    "c".repeat(40)
+  );
   assert.ok(correctness.includes("behavioral defects"));
   assert.ok(security.includes("trust-boundary"));
+  assert.ok(resilience.includes("idempotency"));
+  assert.ok(resilience.includes("Do not report missing tests"));
+  assert.ok(resilience.includes("ordinary functional-result defects owned by correctness"));
+  assert.ok(resilience.includes("injection"));
   assert.notEqual(correctness, security);
+  assert.notEqual(correctness, resilience);
+  assert.notEqual(security, resilience);
 });
 
 test("the remediation prompt carries every report and advertises a valid patch result", () => {
@@ -1202,7 +1217,7 @@ test("CLI fixture composes existing emitters for all builder families with recei
     assert.equal(runRouter(root, implementationPrompt, IMPLEMENTER.id, ["--implementation-mode", "base-mismatch"]).proposedPatches![0]!.baseCommit, "0".repeat(40));
 
     for (const mode of ["ok", "high", "low", "high-then-clean"]) {
-      for (const reviewer of [CODE_REVIEWER_CORRECTNESS, CODE_REVIEWER_SECURITY]) {
+      for (const reviewer of [CODE_REVIEWER_CORRECTNESS, CODE_REVIEWER_SECURITY, CODE_REVIEWER_STATE_INTEGRITY]) {
         const prompt = buildCodeReviewPrompt(reviewer, specText as string, planText as string, scope, "", base);
         const result = runRouter(root, prompt, reviewer.id, ["--code-review-mode", mode]);
         const reports = validateReviewerReports(proposedChanges(result).findings, { agentId: reviewer.id, upstreamPrefix: "upstream:plan:" });

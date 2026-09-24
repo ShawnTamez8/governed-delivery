@@ -1412,8 +1412,12 @@ function parkVerifiedRun(
             patchBase,
             initialVerifiedCommit: verifiedCommit,
             finalVerifiedCommit: verifiedCommit,
-            panel: ["code-reviewer-correctness", "code-reviewer-security"],
-            panelSize: 2,
+            panel: [
+              "code-reviewer-correctness",
+              "code-reviewer-security",
+              "code-reviewer-state-integrity",
+            ],
+            panelSize: 3,
             maxRounds: 2,
             blockingSeverity: "high",
             severities: ["low", "medium", "high", "critical"],
@@ -1508,7 +1512,7 @@ test("review runs the frozen panel through the CLI and prints the record referen
         "SELECT agent, role FROM agent_run WHERE stage_id = ? ORDER BY id",
         [stage.id]
       );
-      assert.equal(runs.length, 2, "the fixed panel seats both reviewers");
+      assert.equal(runs.length, 3, "the fixed panel seats all three reviewers");
       assert.ok(runs.every((x) => x.role === "reviewer"));
     } finally {
       after.close();

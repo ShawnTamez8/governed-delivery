@@ -422,13 +422,18 @@ Risk is computed once, deterministically, at intake — from the spec's
 paths. It travels into the authorization for the operator to sign. An agent
 never assesses its own risk.
 
-Code review has a separate configured panel size, default two and bounded from
+Code review has a separate configured panel size, default three and bounded from
 two through five. Its panel is selected deterministically in agent-id order
 from frozen reviewers that emit `code-findings`, carry distinct specialties,
-and carry code-review instructions specific to those specialties. The two
-seeded specialties are correctness and security. Raising the configured size
-requires registering enough additional distinct specialists before the profile
-can freeze; it does not change either document-review panel rule above.
+and carry code-review instructions specific to those specialties. The three
+seeded specialties are correctness, security, and resilience. Resilience owns
+concrete timeout, retry, idempotency, concurrency, partial-failure, cleanup,
+transaction-boundary, recovery, and cross-store consistency defects; it does
+not absorb ordinary correctness, security, maintainability, or future QA/test
+authoring work. The stable reviewer IDs keep correctness and security in a
+deliberately configured two-seat panel. Raising the configured size requires
+registering enough additional distinct specialists before the profile can
+freeze; it does not change either document-review panel rule above.
 
 Keep it free of model routing and telemetry concerns. Entangling selection with
 semantic model tiers and capability preflight is what made the previous
@@ -521,8 +526,10 @@ leaks credentials and machine state into a model context.
 Enforcement starts at the invocation: proposal subprocesses run read-only
 (restricted mode, an explicit read-only tool inventory, no session
 persistence), and the stage asserts a clean worktree before and after the
-dispatch, because a prompt-level instruction is a request and the tree is
-checked, not trusted.
+quiescent dispatch group. A code-review panel may contain concurrent read-only
+subprocesses, so its postcondition is checked once only after every member has
+settled; a prompt-level instruction is a request and the tree is checked, not
+trusted.
 
 ### Reading the result
 
@@ -672,13 +679,28 @@ executor — and hands each the approved specification and plan, the complete
 changed-path set, and the unified diff from the original patch base through the
 current verified commit. The worktree is their read-only working directory. It
 asserts the worktree is at that commit and clean before the stage row exists
-and again after every dispatch, and records every report as immutable evidence
-on a canonical finding. Each selected definition contributes a distinct,
-protected specialty instruction to the prompt; the two seeded lenses are
-correctness and security. Reviewers may report only actionable defects in the
-current code. Style, preference, optional refactoring, speculative hardening,
-questions, and concerns that require changing the approved specification or
-plan are not findings in this stage.
+and once after every reviewer in a panel has settled. All reviewers in one
+panel launch against the same frozen commit and inputs without waiting for one
+another. The stage drains the complete panel, then validates and persists
+results in frozen panel order even though raw responses, agent-run IDs, and
+per-dispatch audit entries retain real completion order. Each accepted report
+is immutable evidence on a canonical finding. Each selected definition
+contributes a distinct, protected specialty instruction to the prompt; the
+three seeded lenses are correctness, security, and resilience. Reviewers may
+report only actionable defects in the current code. Style, preference,
+optional refactoring, speculative hardening, questions, and concerns that
+require changing the approved specification or plan are not findings in this
+stage.
+
+The quiescent panel check compares HEAD with the reviewed commit and runs the
+full worktree-clean guard exactly once after all members settle. A changed
+HEAD, dirty tree, or failed inspection invalidates the panel as a whole without
+claiming which concurrent reviewer caused it; raw and agent-run evidence is
+retained, but no reports or findings from that panel are accepted. With clean
+integrity, valid sibling reports remain attributable evidence when another
+reviewer fails, but the incomplete panel still blocks with no result record,
+remediation, or gate decision. No reviewer failure cancels or orphans a sibling
+dispatch, and no automatic retry or sequential fallback is introduced.
 
 Code review has a separate total panel-round budget, default two and bounded
 from one through five, frozen with its panel size and blocking severity at run
@@ -692,7 +714,8 @@ same frozen verification commands against the resulting commit. Only a passing
 verified commit reaches the next complete panel, which receives a newly
 computed full diff from the original patch base. A remediation that produces
 no patch or no new verified commit blocks instead of buying an identical
-retry.
+retry. Remediation, verification, and later panel rounds remain sequential;
+only independent reviewers within the current panel execute concurrently.
 
 The final panel never triggers another patch. It passes with no findings, and
 also passes when every final finding is below the frozen
@@ -1120,6 +1143,15 @@ Audit appends serialize under the database's single-writer lock, never the
 repository lock: one database serves several repositories, so a SQLite busy
 timeout with a bounded retry keeps a cross-project append waiting instead of
 failing.
+
+The one CLI/store writer may coordinate multiple concurrent read-only provider
+subprocesses inside one code-review panel without creating another mutation
+authority. Provider work overlaps; store writes remain synchronous at existing
+dispatch and post-settlement boundaries. The stage waits for every launched
+reviewer to settle before terminalizing, remediating, or gating. Parent-process
+termination remains a harness-wide limitation: this contract does not promise
+that `SIGINT` or `SIGTERM` drains children after the BuildWorks process itself
+has exited.
 
 Run state is machine-local. Guided continuation reads authoritative state,
 never a human-readable projection, and is permitted only at intact passed

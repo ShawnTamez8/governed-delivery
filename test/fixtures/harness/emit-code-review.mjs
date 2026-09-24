@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
-// One fixture serves both seats of the code-review panel, dispatching on
+// One fixture serves every seat of the code-review panel, dispatching on
 // EMIT_MODE (default "ok").
 //
 // The findings are built *from the prompt*, not from a literal: the agent id
@@ -46,6 +47,21 @@ if (remediationMatch) {
     .filter((line) => line !== "");
   if (scope.length === 0) throw new Error("emit-code-review: empty remediation scope");
   const target = scope[0];
+  if (mode === "mixed-then-clean") {
+    const reviewers = [
+      "code-reviewer-correctness",
+      "code-reviewer-security",
+      "code-reviewer-state-integrity",
+    ];
+    const positions = reviewers.map((reviewer) => stdin.indexOf(`reviewer ${reviewer}`));
+    if (positions.some((position) => position < 0) || !(positions[0] < positions[1] && positions[1] < positions[2])) {
+      throw new Error("emit-code-review: remediation findings are not in canonical panel order");
+    }
+    const reviewBarrierDir = process.env.BW_TEST_REVIEW_BARRIER_DIR;
+    if (reviewBarrierDir !== undefined) {
+      writeFileSync(join(reviewBarrierDir, "remediation-order-verified"), "verified\n");
+    }
+  }
   const current = readFileSync(target, "utf8");
   const file = {
     path: mode === "remediation-outside-scope" ? "outside.txt" : target,
@@ -80,6 +96,49 @@ if (!agentMatch) {
 }
 const agent = agentMatch[1];
 
+const barrierDir = process.env.BW_TEST_REVIEW_BARRIER_DIR;
+const postMixedRemediation =
+  mode === "mixed-then-clean" &&
+  barrierDir !== undefined &&
+  existsSync(join(barrierDir, "remediation-order-verified"));
+if (barrierDir !== undefined && !postMixedRemediation) {
+  const expected = Number(process.env.BW_TEST_REVIEW_BARRIER_COUNT);
+  if (!Number.isInteger(expected) || expected < 1) {
+    throw new Error("emit-code-review: BW_TEST_REVIEW_BARRIER_COUNT must be a positive integer");
+  }
+  let delays = {};
+  if (process.env.BW_TEST_REVIEW_DELAY_MS !== undefined) {
+    delays = JSON.parse(process.env.BW_TEST_REVIEW_DELAY_MS);
+  }
+  const delayMs = delays[agent] ?? 0;
+  if (!Number.isInteger(delayMs) || delayMs < 0) {
+    throw new Error(`emit-code-review: invalid delay for ${agent}`);
+  }
+  mkdirSync(barrierDir, { recursive: true });
+  writeFileSync(join(barrierDir, `started-${agent}`), "started\n");
+  const deadline = Date.now() + 5_000;
+  let startedCount = 0;
+  while (startedCount < expected) {
+    startedCount = readdirSync(barrierDir).filter((name) => name.startsWith("started-")).length;
+    if (startedCount >= expected) break;
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `emit-code-review: barrier expired for ${agent} after seeing ${startedCount}/${expected} starts`
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+  writeFileSync(join(barrierDir, `finished-${agent}`), `started=${startedCount}\n`);
+  if (
+    (mode === "parallel-fail" && agent === "code-reviewer-correctness") ||
+    (mode === "parallel-multi-fail" && (agent === "code-reviewer-correctness" || agent === "code-reviewer-state-integrity"))
+  ) {
+    process.stderr.write("fixture reviewer failure\n");
+    process.exit(3);
+  }
+}
+
 // The changed-paths block: `- <path>` lines between the "Changed paths:"
 // heading and the blank line that ends the list.
 function changedPaths() {
@@ -106,6 +165,7 @@ const marker = readFileSync(existsSync("base.txt") ? "base.txt" : "index.html", 
 
 const CORRECTNESS = "code-reviewer-correctness";
 const SECURITY = "code-reviewer-security";
+const STATE_INTEGRITY = "code-reviewer-state-integrity";
 
 function finding(overrides) {
   return {
@@ -129,13 +189,21 @@ function proposed(findings) {
   };
 }
 
-/** Findings from one named seat only; the other seat reports nothing. */
+/** Findings from one named seat only; the other seats report nothing. */
 function onlyFrom(seat, findings) {
   return proposed(agent === seat ? findings : []);
 }
 
 let agentResult;
-if (mode === "ok") {
+if (mode === "parallel-fail") {
+  agentResult = onlyFrom(STATE_INTEGRITY, [
+    finding({ intentKey: "retained-sibling", subject: "A valid sibling report survives another reviewer's failure." }),
+  ]);
+} else if (mode === "parallel-multi-fail") {
+  agentResult = onlyFrom(SECURITY, [
+    finding({ intentKey: "retained-sibling", subject: "A valid sibling report survives two reviewer failures." }),
+  ]);
+} else if (mode === "ok" || mode === "barrier") {
   agentResult = proposed([]);
 } else if (mode === "low") {
   agentResult = onlyFrom(CORRECTNESS, [finding({})]);
@@ -150,6 +218,18 @@ if (mode === "ok") {
     : onlyFrom(CORRECTNESS, [
         finding({ severity: "high", location: `${first}:1`, intentKey: "needs-remediation" }),
       ]);
+} else if (mode === "mixed-then-clean") {
+  const remediated = readFileSync(first, "utf8").includes("code-review-remediated");
+  agentResult = remediated
+    ? proposed([])
+    : proposed([
+        finding({
+          severity: "high",
+          location: `${first}:1`,
+          intentKey: `needs-${agent.replace("code-reviewer-", "")}-remediation`,
+          subject: `The ${agent} finding must retain canonical panel order.`,
+        }),
+      ]);
 } else if (
   mode === "remediation-empty" ||
   mode === "remediation-wrong-base" ||
@@ -160,11 +240,11 @@ if (mode === "ok") {
     finding({ severity: "high", location: `${first}:1`, intentKey: "needs-remediation" }),
   ]);
 } else if (mode === "shared") {
-  // Both seats report the same canonical identity — one location, one
-  // intentKey — at different severities: one finding, two immutable reports.
+  // All three seats report the same canonical identity — one location, one
+  // intentKey — at different severities: one finding, three immutable reports.
   agentResult = proposed([
     finding({
-      severity: agent === SECURITY ? "high" : "low",
+      severity: agent === SECURITY ? "high" : agent === STATE_INTEGRITY ? "medium" : "low",
       location: first,
       intentKey: "shared-concern",
     }),

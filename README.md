@@ -46,9 +46,12 @@ named environment passthrough and bounded per-command time and output limits,
 proving the worktree still holds the commit implementation left and is clean
 before and after every command, retaining each command's complete output, and
 handing the next stage a structured record naming the worktree and the
-verified commit); the code review stage (`bw review` — a frozen panel of two specialized code
+verified commit); the code review stage (`bw review` — a frozen panel of three specialized code
 reviewers by default reads the verified change against the approved
 specification and plan, with the worktree as a read-only working directory;
+correctness, security, and resilience reviewers within one panel run
+concurrently against the same commit, the stage waits for all three, and
+canonical findings remain ordered by the frozen panel;
 the stage first verifies that all declared artifacts in the signed scope were
 delivered in the verified commit, blocking the stage and run immediately before
 reviewer dispatch if any are missing; while another configured panel execution
@@ -101,7 +104,7 @@ are frozen into each new run's profile:
 
 | Constant | Default | Legal range / effect |
 | --- | --- | --- |
-| `CODE_REVIEW_PANEL_SIZE` | `2` | `2`–`5`; increasing it also requires enough registered `code-findings` reviewers with distinct, non-empty specialist instructions. |
+| `CODE_REVIEW_PANEL_SIZE` | `3` | `2`–`5`; changing it also requires enough registered `code-findings` reviewers with distinct, non-empty specialist instructions. |
 | `CODE_REVIEW_MAX_ROUNDS` | `2` | `1`–`5` total full-panel executions; `1` disables remediation because no re-review remains. |
 | `CODE_REVIEW_BLOCKING_SEVERITY` | `high` | Release-policy threshold applied only to the final panel in the frozen severity order. |
 

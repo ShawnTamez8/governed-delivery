@@ -383,23 +383,27 @@ test("duplicate eligible reviewer ids are refused before selection can collapse 
 test("the code-review panel takes exactly the frozen size in id order", () => {
   assert.deepEqual(
     codeReviewPanel(AGENTS, CODE_REVIEW_PANEL_SIZE, CLAUDE_CODE.id).map((a) => a.id),
+    ["code-reviewer-correctness", "code-reviewer-security", "code-reviewer-state-integrity"]
+  );
+  assert.deepEqual(
+    codeReviewPanel(AGENTS, 2, CLAUDE_CODE.id).map((a) => a.id),
     ["code-reviewer-correctness", "code-reviewer-security"]
   );
   const base = AGENTS.find((a) => a.id === "code-reviewer-correctness")!;
-  const added = ["database", "performance", "ui"].map((specialty, index) => ({
+  const added = ["database", "performance"].map((specialty) => ({
     ...base,
-    id: `code-reviewer-${String(index + 3).padStart(2, "0")}-${specialty}`,
+    id: `code-reviewer-z-${specialty}`,
     specialty,
     codeReviewInstructions: `Review concrete ${specialty} defects in current code.`,
   }));
   assert.deepEqual(
     codeReviewPanel([...AGENTS, ...added], 5, CLAUDE_CODE.id).map((a) => a.id),
     [
-      "code-reviewer-03-database",
-      "code-reviewer-04-performance",
-      "code-reviewer-05-ui",
       "code-reviewer-correctness",
       "code-reviewer-security",
+      "code-reviewer-state-integrity",
+      "code-reviewer-z-database",
+      "code-reviewer-z-performance",
     ]
   );
 });
@@ -431,10 +435,10 @@ test("the default registry staffs the code-review panel", () => {
   assert.equal(codeReviewStaffingShortfall(AGENTS, CODE_REVIEW_PANEL_SIZE, CLAUDE_CODE.id), null);
 });
 
-test("a registry holding one code reviewer cannot staff the panel floor", () => {
-  const thinned = AGENTS.filter((a) => a.id !== "code-reviewer-security");
+test("a registry holding two code reviewers cannot staff the default panel", () => {
+  const thinned = AGENTS.filter((a) => a.id !== "code-reviewer-state-integrity");
   const reason = codeReviewStaffingShortfall(thinned, CODE_REVIEW_PANEL_SIZE, CLAUDE_CODE.id);
-  assert.match(String(reason), /seats 1 code reviewer/);
+  assert.match(String(reason), /seats 2 code reviewers/);
   assert.match(String(reason), /code-reviewer-correctness/);
   assert.match(String(reason), new RegExp(`configured code-review panel of ${CODE_REVIEW_PANEL_SIZE}`));
 });
@@ -444,7 +448,7 @@ test("two code reviewers sharing a lens are one lens twice, not a panel of two",
     a.outputs.includes("code-findings") ? { ...a, specialty: "correctness" } : a
   );
   const reason = codeReviewStaffingShortfall(cloned, CODE_REVIEW_PANEL_SIZE, CLAUDE_CODE.id);
-  assert.match(String(reason), /seats the specialty correctness more than once/);
+  assert.match(String(reason), /seats the specialties correctness more than once/);
 });
 
 test("a code reviewer without a lens is refused by name", () => {
@@ -461,10 +465,10 @@ test("a code reviewer on another executor is not counted toward the panel", () =
   );
   assert.deepEqual(
     codeReviewPanel(wrongExecutor, CODE_REVIEW_PANEL_SIZE, CLAUDE_CODE.id).map((a) => a.id),
-    ["code-reviewer-correctness"]
+    ["code-reviewer-correctness", "code-reviewer-state-integrity"]
   );
   const reason = codeReviewStaffingShortfall(wrongExecutor, CODE_REVIEW_PANEL_SIZE, CLAUDE_CODE.id);
-  assert.match(String(reason), /seats 1 code reviewer on executor claude-code/);
+  assert.match(String(reason), /seats 2 code reviewers on executor claude-code/);
 });
 
 test("duplicate eligible code reviewer ids are refused before the panel is seated", () => {

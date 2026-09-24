@@ -417,7 +417,7 @@ test("the default installation staffs the configured panel", () => {
     assert.doesNotThrow(() => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION));
   });
   assert.ok(PANEL_SIZE_MAX >= REQUIRED_SPECIALTIES.length);
-  assert.equal(CODE_REVIEW_PANEL_SIZE, 2);
+  assert.equal(CODE_REVIEW_PANEL_SIZE, 3);
 });
 
 test("a registry that cannot staff the configured panel refuses at freeze time", () => {
@@ -460,7 +460,7 @@ test("a registry that cannot staff the code-review panel refuses at freeze time"
     const noCodeReviewers = AGENTS.filter((a) => !a.outputs.includes("code-findings"));
     assert.throws(
       () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, { agents: noCodeReviewers }),
-      /cannot freeze a profile for run 1: the agent registry seats 0 code reviewers on executor claude-code \(none at all\), which cannot fill the configured code-review panel of 2/
+      /cannot freeze a profile for run 1: the agent registry seats 0 code reviewers on executor claude-code \(none at all\), which cannot fill the configured code-review panel of 3/
     );
     assert.equal(
       existsSync(join(root, ".governance", "profiles", "1", "profile.json")),
@@ -478,7 +478,7 @@ test("the seeded registry staffs both panels, so a default installation freezes"
     const { profile } = freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION);
     assert.deepEqual(
       profile.agents.filter((a) => a.outputs.includes("code-findings")).map((a) => a.id),
-      ["code-reviewer-correctness", "code-reviewer-security"]
+      ["code-reviewer-correctness", "code-reviewer-security", "code-reviewer-state-integrity"]
     );
   });
 });

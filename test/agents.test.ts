@@ -61,7 +61,7 @@ test("the seeded reviewers can staff the code-review panel", () => {
   const codeReviewers = AGENTS.filter(
     (a) => a.role === "reviewer" && a.outputs.includes("code-findings")
   );
-  assert.ok(codeReviewers.length >= 2, "the code-review panel seats two lenses");
+  assert.ok(codeReviewers.length >= 3, "the default code-review panel seats three lenses");
   const specialties = new Set<string>();
   for (const agent of codeReviewers) {
     assert.deepEqual(
@@ -82,9 +82,16 @@ test("only code reviewers carry code-review instructions, and the seeded lenses 
   const codeReviewers = AGENTS.filter((a) => a.outputs.includes("code-findings"));
   assert.deepEqual(
     codeReviewers.map((a) => a.specialty).sort(),
-    ["correctness", "security"]
+    ["correctness", "resilience", "security"]
   );
-  assert.equal(new Set(codeReviewers.map((a) => a.codeReviewInstructions)).size, 2);
+  assert.equal(new Set(codeReviewers.map((a) => a.codeReviewInstructions)).size, 3);
+  const resilience = codeReviewers.find((a) => a.specialty === "resilience")!;
+  for (const required of ["idempotency", "transaction", "recovery", "safe degradation"]) {
+    assert.ok(resilience.codeReviewInstructions!.includes(required), `resilience instructions omit ${required}`);
+  }
+  for (const excluded of ["missing tests", "style", "injection", "ordinary functional-result defects"]) {
+    assert.ok(resilience.codeReviewInstructions!.includes(excluded), `resilience instructions omit the ${excluded} exclusion`);
+  }
   for (const agent of AGENTS.filter((a) => !a.outputs.includes("code-findings"))) {
     assert.equal(
       agent.codeReviewInstructions,

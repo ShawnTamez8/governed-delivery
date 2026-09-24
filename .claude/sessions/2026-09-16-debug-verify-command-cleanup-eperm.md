@@ -134,3 +134,11 @@ a standard Node.js option designed specifically for Windows directory cleanup ra
 
 None. Both mechanisms (premature resolution on `'finish'` and Windows asynchronous
 handle teardown) are verified.
+
+## Correction (2026-09-24)
+
+The `rmSync` `maxRetries`/`retryDelay` half of this fix is inert on Node v26.4.0:
+a direct probe shows `rmSync` failing with EPERM in 0–1 ms against a held file
+regardless of those options, and the failure recurred on 2026-09-24. The
+`'close'` correction to `src/verify-command.ts` stands. See
+`2026-09-24-debug-verify-command-eperm-inert-retry.md`.

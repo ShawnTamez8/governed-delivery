@@ -201,13 +201,15 @@ committed at
 `test/fixtures/recorded/plan-reconciliation-web-calculator-prd.json` and
 replayed by `test/reconciliation.test.ts`.
 
-**Budget $1.25–$2.50 for a full chain on this design, not the clamp's $0.25.**
-The clean default adds two code-reviewer dispatches, each carrying the full
+**The historical $1.25–$2.50 budget predates the three-reviewer default.** The
+clean default now adds three code-reviewer dispatches, each carrying the full
 diff of the run's patch range plus the approved specification and plan. A
 finding before the final configured panel adds one implementer dispatch,
-post-patch verification, and another full reviewer panel, so a remediating run
-can exceed that historical range. The free `smoke` still costs nothing: it
-reaches no dispatch.
+post-patch verification, and another three-reviewer panel: three dispatches for
+a clean one-panel review and seven for the default remediated path. Reviewers
+inside one panel start concurrently, so a fast failure does not avoid the cost
+of siblings already launched. No current paid evidence establishes a revised
+dollar range. The free `smoke` still costs nothing: it reaches no dispatch.
 
 **Cost is not fixed.** That run took 7 dispatches, not 5, because the plan gate
 passed in round 2 — `plan.gate.pass | plan_review gate passed in round 2` after
@@ -227,16 +229,20 @@ record above ends `in_progress` because it predates step 8.
 
 **The paid chain reviews the code before it delivers it.** Between `verify`
 and `deliver` the driver calls `review` once. The frozen profile selects two
-through five explicitly specialized reviewers (two are seeded: `correctness`
-and `security`) and permits one through five total full-panel executions. The
-defaults in `src/policy.ts` are two reviewers and two panels. Any non-final
-panel findings go together to the frozen implementer; guarded patches are
-committed, the frozen verification commands run, and the full panel reviews
-the new commit. The final panel blocks only at or above the independently
-frozen `CODE_REVIEW_BLOCKING_SEVERITY` (default `high`); lower-severity
-findings remain in the record without blocking. Policy edits affect only new
-runs. Raising panel size also requires enough registered `code-findings`
-reviewers with distinct non-empty specialist instructions.
+through five explicitly specialized reviewers (three are seeded:
+`correctness`, `security`, and `resilience`) and permits one through five total
+full-panel executions. The defaults in `src/policy.ts` are three reviewers and
+two panels. Reviewers within one panel launch concurrently against the same
+commit and inputs; the stage drains all of them, performs one quiescent
+worktree-integrity check, and consumes their results in frozen panel order.
+Any non-final panel findings go together to the frozen implementer; guarded
+patches are committed, the frozen verification commands run, and the full
+panel reviews the new commit. Remediation and later rounds remain sequential.
+The final panel blocks only at or above the independently frozen
+`CODE_REVIEW_BLOCKING_SEVERITY` (default `high`); lower-severity findings remain
+in the record without blocking. Policy edits affect only new runs. Raising
+panel size also requires enough registered `code-findings` reviewers with
+distinct non-empty specialist instructions.
 
 The paid driver reports panel executions, remediation attempts, final commit,
 and final gate from `.governance/code-review/<run>/result.json`. A block is a
