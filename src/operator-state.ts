@@ -126,7 +126,10 @@ export interface RunSnapshot {
   cost: CostTotals & {
     currency: "USD";
     byStage: (CostTotals & { stageId: number; kind: string })[];
-    byAgent: (CostTotals & { agent: string })[];
+    byAgent: (CostTotals & {
+      agent: string; roles: string[]; requestedModels: string[]; effectiveModels: string[];
+      effectiveModelUnreportedRows: number; durationMs: number | null;
+    })[];
   };
   activity: { lastRecordedAt: string; lastEvent: { id: number; action: string; summary: string; at: string } | null };
   writer: LockObservation;
@@ -374,9 +377,15 @@ export function readRunSnapshot(store: Store, rootDir: string, runId: number,
     cost: { currency: "USD", ...totals(agents, failed),
       byStage: stages.map((s) => ({ stageId: s.id, kind: s.kind,
         ...totals(agents.filter((a) => a.stage_id === s.id), failed.filter((a) => a.stage_id === s.id)) })),
-      byAgent: [...new Set([...agents.map((a) => a.agent), ...failed.map((a) => a.actor)])].sort().map((agent) => ({
-        agent, ...totals(agents.filter((a) => a.agent === agent), failed.filter((a) => a.actor === agent)),
-      })) },
+      byAgent: [...new Set([...agents.map((a) => a.agent), ...failed.map((a) => a.actor)])].sort().map((agent) => {
+        const selected = agents.filter((a) => a.agent === agent);
+        const distinct = (values: (string | null)[]) => [...new Set(values.filter((v) => v !== null))].sort();
+        return { agent, ...totals(selected, failed.filter((a) => a.actor === agent)),
+          roles: distinct(selected.map((a) => a.role)), requestedModels: distinct(selected.map((a) => a.requested_model)),
+          effectiveModels: distinct(selected.map((a) => a.effective_model)),
+          effectiveModelUnreportedRows: selected.filter((a) => a.effective_model === null).length,
+          durationMs: selected.length === 0 ? null : selected.reduce((sum, a) => sum + a.duration_ms, 0) };
+      }) },
     activity: { lastRecordedAt: lastActivity(run, stages, audit),
       lastEvent: audit.length ? { id: audit.at(-1)!.id, action: audit.at(-1)!.action,
         summary: audit.at(-1)!.summary, at: audit.at(-1)!.created_at } : null },

@@ -1,4 +1,41 @@
 {
   "autoCompactEnabled": true,
-  "autoCompactWindow": 500000
+  "autoCompactWindow": 500000,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://localhost:4200/api/hooks/claude/PreToolUse",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://localhost:4200/api/hooks/claude/PostToolUse",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://localhost:4200/api/hooks/claude/Stop",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
 }

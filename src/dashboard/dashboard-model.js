@@ -41,9 +41,6 @@ export const TOKEN_CLASSES = [
 
 export const TREND_UNAVAILABLE = "trend_unavailable";
 export const TREND_UNAVAILABLE_LABEL = "Trend unavailable";
-export const AGENT_MODEL_UNAVAILABLE = "Not reported at agent level";
-export const AVERAGE_EXECUTION_UNAVAILABLE_REASON =
-  "The authoritative run projection records no agent execution duration, and run wall-clock, stage elapsed, or verification-command time is not a substitute.";
 
 /* ------------------------------------------------------------------ *
  * Presentation primitives
@@ -340,6 +337,11 @@ export function portfolioProjection(repositories) {
   const costs = contributing.map((snapshot) => snapshot.cost);
   const cost = aggregateCost(costs);
   const tokens = aggregateTokens(costs);
+  // Mean recorded agent execution time: summed agent_run durations over the
+  // rows that recorded them. Stage or run wall-clock is not a substitute.
+  const timed = costs.flatMap((entry) => entry.byAgent).filter((group) => group.durationMs !== null);
+  const timedRows = timed.reduce((sum, group) => sum + group.agentRows, 0);
+  const timedMs = timed.reduce((sum, group) => sum + (group.durationMs ?? 0), 0);
   const snapshotsContributing = contributing.length;
   return {
     runs: runs.length,
@@ -363,7 +365,7 @@ export function portfolioProjection(repositories) {
     tokens: snapshotsContributing === 0
       ? { known: null, classes: TOKEN_CLASSES.map(({ key, label }) => ({ key, label, known: null, reportedRows: 0, unreportedRows: 0 })), partial: false }
       : tokens,
-    averageExecution: { value: null, reason: AVERAGE_EXECUTION_UNAVAILABLE_REASON },
+    averageExecution: { value: timedRows === 0 ? null : timedMs / timedRows, rows: timedRows },
     coverage: { ...coverage, contributing: snapshotsContributing },
     repositories: {
       configured: repositories.length,
@@ -465,8 +467,9 @@ export function costChartSeries(snapshot) {
 }
 
 /**
- * Per-agent analytics rows. Model and trend stay unavailable: the projection
- * binds neither a model nor a historical series to an agent row.
+ * Per-agent analytics rows. The model is each agent's recorded effective
+ * model, verbatim; it is unavailable only when no row reported one. Trend
+ * stays unavailable: the projection binds no historical series to an agent.
  * @param {RunSnapshot} snapshot
  */
 export function agentAnalytics(snapshot) {
@@ -480,8 +483,8 @@ export function agentAnalytics(snapshot) {
   }
   return snapshot.cost.byAgent.map((group) => ({
     agent: group.agent,
-    model: null,
-    modelLabel: AGENT_MODEL_UNAVAILABLE,
+    model: group.effectiveModels.length === 1 ? group.effectiveModels[0] ?? null : null,
+    modelLabel: group.effectiveModels.length === 0 ? "Unavailable" : group.effectiveModels.join(", "),
     executions: group.agentRows,
     tokens: tokenTotal(group),
     knownUsd: group.costReportedRows === 0 ? null : group.knownUsd,
@@ -1047,720 +1050,703 @@ export function snapshotProjection(snapshot, cliPath, platform = "win32", observ
 }
 
 /* ------------------------------------------------------------------ *
- * Command Center Projections
+ * Recorded workflow: stage ledger, run progression, finding status
  * ------------------------------------------------------------------ */
 
-/** @typedef {"danger" | "warning" | "success" | "neutral" | "active"} ToneClass */
+/** @param {number} count @param {string} one */
+function plural(count, one) {
+  return `${count} ${count === 1 ? one : `${one}s`}`;
+}
+
+/** @param {string} kind */
+function stageName(kind) {
+  return readableIntent(kind).toLowerCase();
+}
 
 /**
- * @typedef {{
- *  label: string,
- *  targetTab: string,
- *  runId?: number,
- *  repositoryId?: string,
- * }} BannerAction
+ * One segment per recorded stage, in recorded order. Nothing past the last
+ * recorded stage is drawn, so no stage sequence is duplicated from policy.
+ * A duration exists only where both a start and an end are recorded.
+ * @param {RunSnapshot} snapshot
  */
+export function stageLedger(snapshot) {
+  const segments = snapshot.stages.map((stage) => {
+    const start = stage.startedAt ?? stage.startEvidence.at;
+    const elapsed = start === null || stage.endedAt === null ? Number.NaN : Date.parse(stage.endedAt) - Date.parse(start);
+    /** @type {"passed" | "blocked" | "open" | "other"} */
+    const result = stage.gateResult === "block" ? "blocked"
+      : stage.status === "passed" && stage.gateResult === "pass" ? "passed"
+        : stage.status === "in_progress" ? "open" : "other";
+    return {
+      stageId: stage.id,
+      kind: stage.kind,
+      label: stagePresentation(stage).label,
+      result,
+      gateResult: stage.gateResult,
+      status: stage.status,
+      durationMs: Number.isNaN(elapsed) ? null : elapsed,
+    };
+  });
+  const status = snapshot.run.status;
+  /** @type {"completed" | "in_progress" | "stopped"} */
+  const terminal = status === "completed" ? "completed" : status === "in_progress" ? "in_progress" : "stopped";
+  return { segments, terminal };
+}
 
 /**
- * @typedef {{
- *  status: "blocked" | "at_risk" | "healthy" | "unknown",
- *  tone: "danger" | "warning" | "success" | "neutral",
- *  summary: string,
- *  actions: BannerAction[],
- *  relativeFreshness: string,
- * }} PortfolioStatusBanner
- */
-
-/**
- * Derive the consolidated Portfolio Status Banner projection.
- * @param {ReturnType<typeof portfolioProjection>} portfolio
- * @param {readonly RunSummary[]} runs
+ * How far each loaded run got. Columns are the stage kinds the runs recorded,
+ * ordered by each kind's minimum recorded ordinal (ties by kind name), so the
+ * order is derived from records rather than restated policy.
  * @param {readonly RunSnapshot[]} snapshots
- * @returns {PortfolioStatusBanner}
  */
-export function portfolioStatusBanner(portfolio, runs, snapshots) {
-  let status = /** @type {"blocked" | "at_risk" | "healthy" | "unknown"} */ ("unknown");
-  let tone = /** @type {"danger" | "warning" | "success" | "neutral"} */ ("neutral");
-
-  const hasBlocked = portfolio.blockedRuns > 0 || snapshots.some((s) => s.stages.some((st) => st.gateResult === "block"));
-  const hasOpenFindings = portfolio.findings.value !== null && portfolio.findings.value > 0;
-  const hasAwaitingApproval = snapshots.some((s) => s.phase === "awaiting_approval");
-
-  if (hasBlocked) {
-    status = "blocked";
-    tone = "danger";
-  } else if (hasOpenFindings || hasAwaitingApproval || portfolio.activeRuns > 0) {
-    status = "at_risk";
-    tone = "warning";
-  } else if (portfolio.runs > 0 && portfolio.completedRuns === portfolio.runs) {
-    status = "healthy";
-    tone = "success";
-  } else if (portfolio.runs === 0) {
-    status = "unknown";
-    tone = "neutral";
-  } else {
-    status = "at_risk";
-    tone = "warning";
-  }
-
-  let summary = "";
-  if (status === "blocked") {
-    summary = `${portfolio.blockedRuns} blocked ${portfolio.blockedRuns === 1 ? "delivery requires" : "deliveries require"} attention.${hasOpenFindings ? ` ${portfolio.findings.value} open findings require review.` : ""}`;
-  } else if (status === "at_risk") {
-    summary = hasOpenFindings
-      ? `Portfolio is at risk: ${portfolio.findings.value} open ${portfolio.findings.value === 1 ? "finding requires" : "findings require"} review.`
-      : "Active deliveries in progress. Review gate criteria and approvals.";
-  } else if (status === "healthy") {
-    summary = `All ${portfolio.completedRuns} deliveries are healthy and release ready.`;
-  } else {
-    summary = "No active runs recorded across configured repositories.";
-  }
-
-  /** @type {BannerAction[]} */
-  const actions = [];
-  if (status === "blocked") {
-    const blockedRun = runs.find((r) => r.status === "blocked") ?? runs[0];
-    if (blockedRun !== undefined) {
-      actions.push({ label: "View blocked run", targetTab: "runs", runId: blockedRun.id });
+export function stageMap(snapshots) {
+  /** @type {Map<string, number>} */
+  const first = new Map();
+  for (const snapshot of snapshots) {
+    for (const stage of snapshot.stages) {
+      first.set(stage.kind, Math.min(first.get(stage.kind) ?? Number.POSITIVE_INFINITY, stage.ordinal));
     }
-    if (hasOpenFindings) {
-      actions.push({ label: "Review findings", targetTab: "findings" });
-    }
-  } else if (status === "at_risk") {
-    if (hasOpenFindings) {
-      actions.push({ label: "Review findings", targetTab: "findings" });
-    } else {
-      actions.push({ label: "View runs", targetTab: "runs" });
-    }
-  } else if (status === "healthy") {
-    actions.push({ label: "View deliveries", targetTab: "runs" });
   }
-
+  const kinds = [...first.keys()].sort((left, right) =>
+    (first.get(left) ?? 0) - (first.get(right) ?? 0) || left.localeCompare(right));
+  const rows = snapshots.map((snapshot) => {
+    const ledger = stageLedger(snapshot);
+    /** @type {Map<string, "passed" | "blocked" | "open" | "other">} */
+    const results = new Map(ledger.segments.map((segment) => [segment.kind, segment.result]));
+    return {
+      runId: snapshot.run.id,
+      cells: kinds.map((kind) => results.get(kind) ?? "not_reached"),
+      terminal: ledger.terminal,
+      lastKind: ledger.segments.at(-1)?.kind ?? null,
+    };
+  });
   return {
-    status,
-    tone,
-    summary,
-    actions,
-    relativeFreshness: "Updated moments ago",
+    columns: kinds.map((kind, index) => ({
+      kind,
+      reached: rows.filter((row) => row.cells[index] !== "not_reached").length,
+      total: rows.length,
+      stopped: rows.filter((row) => row.terminal === "stopped" && row.lastKind === kind).length,
+      completed: rows.filter((row) => row.terminal === "completed" && row.lastKind === kind).length,
+    })),
+    rows,
   };
 }
 
 /**
- * @typedef {{
- *  id: string,
- *  label: string,
- *  value: string | number,
- *  tone: ToneClass,
- *  qualifier: string,
- *  formula: string,
- *  explanation: string,
- * }} CommandCenterKpiCard
+ * The dispositions the document gate blocks on. A copy of `src/plan-gate.ts`
+ * `BLOCKING_DISPOSITIONS`, because the dashboard cannot import from `src/`;
+ * a test pins the two lists together.
  */
+export const BLOCKING_DECISIONS = ["cannot_determine", "upstream_blocking"];
+
+/** @typedef {"addressed" | "rejected" | "open" | "blocking" | "non_blocking" | "earlier_round"} FindingStatus */
 
 /**
- * Derive the 6-card horizontal KPI strip projection.
- * @param {ReturnType<typeof portfolioProjection>} portfolio
- * @param {readonly RunSummary[]} runs
- * @param {readonly RunSnapshot[]} snapshots
- * @returns {CommandCenterKpiCard[]}
+ * A finding's status from recorded fields only. A recorded disposition speaks
+ * first, using the document gate's own blocking rule. Without one, a document
+ * finding is open; a code-review finding never carries a disposition, so its
+ * status is the final panel's recorded result, and a finding outside the final
+ * panel is remediation input from an earlier round rather than an open item.
+ * @param {{ decision: { disposition: string } | null, finalPanelBlocking: boolean | null }} card
+ * @param {string} stageKind
+ * @returns {FindingStatus}
  */
-export function commandCenterKpis(portfolio, runs, snapshots) {
-  const banner = portfolioStatusBanner(portfolio, runs, snapshots);
-  const healthLabel = banner.status === "blocked" ? "Blocked" : banner.status === "at_risk" ? "At Risk" : banner.status === "healthy" ? "Healthy" : "Unknown";
-  const healthQualifier = portfolio.blockedRuns > 0 ? "Action req." : portfolio.runs === 0 ? "No active runs" : "All normal";
+export function findingStatus(card, stageKind) {
+  const disposition = card.decision?.disposition ?? null;
+  if (disposition === "addressed") return "addressed";
+  if (disposition === "rejected_with_rationale") return "rejected";
+  if (disposition !== null) return BLOCKING_DECISIONS.includes(disposition) ? "blocking" : "non_blocking";
+  if (stageKind !== "code_review") return "open";
+  if (card.finalPanelBlocking === true) return "blocking";
+  return card.finalPanelBlocking === false ? "non_blocking" : "earlier_round";
+}
 
-  const readyRuns = runs.filter((r) => r.status === "completed").length;
+/**
+ * Every finding's status in one run, keyed by finding identifier.
+ * @param {RunSnapshot} snapshot
+ * @returns {Map<number, FindingStatus>}
+ */
+export function findingStatuses(snapshot) {
+  const kinds = new Map(snapshot.stages.map((stage) => [stage.id, stage.kind]));
+  return new Map(snapshot.evidence.findings.map((finding) =>
+    [finding.id, findingStatus(finding, kinds.get(finding.stageId) ?? "")]));
+}
 
-  const govCoverage = portfolio.coverage.loadedRuns === 0
-    ? "Unavailable"
-    : portfolio.coverage.contributing === portfolio.coverage.loadedRuns
-      ? "100%"
-      : `${Math.round((portfolio.coverage.contributing / portfolio.coverage.loadedRuns) * 100)}%`;
-  const govTone = /** @type {ToneClass} */ (portfolio.coverage.contributing === portfolio.coverage.loadedRuns && portfolio.coverage.loadedRuns > 0
-    ? "success"
-    : portfolio.coverage.contributing > 0
-      ? "warning"
-      : "danger");
+/**
+ * Finding counts by status across runs. `requireAttention` is blocking plus
+ * open: the findings an operator must act on.
+ * @param {readonly RunSnapshot[]} snapshots
+ */
+export function findingStatusCounts(snapshots) {
+  const counts = { addressed: 0, rejected: 0, open: 0, blocking: 0, non_blocking: 0, earlier_round: 0, total: 0, requireAttention: 0 };
+  for (const snapshot of snapshots) {
+    for (const status of findingStatuses(snapshot).values()) {
+      counts[status]++;
+      counts.total++;
+    }
+  }
+  counts.requireAttention = counts.blocking + counts.open;
+  return counts;
+}
 
-  const successValue = portfolio.successRate.value === null
-    ? "Unavailable"
-    : `${Math.round(portfolio.successRate.value * 100)}%`;
-  const successTone = /** @type {ToneClass} */ (portfolio.successRate.value === null
-    ? "neutral"
-    : portfolio.successRate.value >= 0.8
-      ? "success"
-      : portfolio.successRate.value > 0
-        ? "warning"
-        : "danger");
+/**
+ * What needs the operator: blocked runs, newest activity first, then findings
+ * whose status is blocking or open (blocking first, then the higher recorded
+ * severity, then the identifier). Addressed, rejected, non-blocking, and
+ * earlier-round findings are settled or superseded and never appear.
+ * @param {readonly RepositoryView[]} repositories
+ */
+export function needsAttentionQueue(repositories) {
+  const runs = [];
+  const findings = [];
+  for (const repository of repositories) {
+    for (const run of repository.runs) {
+      const snapshot = repository.snapshots.find((view) => view.runId === run.id)?.snapshot ?? null;
+      const statuses = snapshot === null ? new Map() : findingStatuses(snapshot);
+      if (run.status === "blocked") {
+        const segments = snapshot === null ? [] : stageLedger(snapshot).segments;
+        const stopped = segments.findLast((segment) => segment.result === "blocked") ?? segments.at(-1) ?? null;
+        const counted = [...statuses.values()];
+        runs.push({
+          kind: /** @type {const} */ ("run"),
+          id: `delivery-${repository.repositoryId}-${run.id}`,
+          repositoryId: repository.repositoryId,
+          repositoryPath: repository.path,
+          runId: run.id,
+          slug: run.slug,
+          project: run.project,
+          stageId: stopped?.stageId ?? null,
+          stageKind: stopped?.kind ?? null,
+          stageNumber: stopped === null ? null : segments.indexOf(stopped) + 1,
+          blocking: counted.filter((status) => status === "blocking").length,
+          open: counted.filter((status) => status === "open").length,
+          knownUsd: snapshot === null || snapshot.cost.costReportedRows === 0 ? null : snapshot.cost.knownUsd,
+          lastRecordedAt: run.lastRecordedAt,
+        });
+      }
+      if (snapshot === null) continue;
+      const severities = severityOrder(snapshot.configuration);
+      const stages = new Map(snapshot.stages.map((stage) => [stage.id, stage]));
+      for (const finding of snapshot.evidence.findings) {
+        const status = statuses.get(finding.id);
+        if (status !== "blocking" && status !== "open") continue;
+        const card = findingCard(finding);
+        const ranked = cardSeverity(card, severities);
+        findings.push({
+          kind: /** @type {const} */ ("finding"),
+          id: `finding-${repository.repositoryId}-${run.id}-${finding.id}`,
+          repositoryId: repository.repositoryId,
+          runId: run.id,
+          slug: run.slug,
+          findingId: finding.id,
+          status,
+          severity: ranked.severity,
+          rank: ranked.rank,
+          title: card.title,
+          location: finding.location,
+          stageId: finding.stageId,
+          stageKind: stages.get(finding.stageId)?.kind ?? null,
+          round: finding.round,
+          maxRounds: snapshot.configuration.codeReview?.maxRounds ?? null,
+          finalPanelBlocking: finding.finalPanelBlocking,
+        });
+      }
+    }
+  }
+  runs.sort((left, right) => Date.parse(right.lastRecordedAt) - Date.parse(left.lastRecordedAt));
+  findings.sort((left, right) =>
+    Number(right.status === "blocking") - Number(left.status === "blocking") ||
+    (right.rank ?? -1) - (left.rank ?? -1) ||
+    left.findingId - right.findingId ||
+    left.repositoryId.localeCompare(right.repositoryId) ||
+    left.runId - right.runId);
+  return { runs, findings };
+}
 
-  return [
+/* ------------------------------------------------------------------ *
+ * Run outcome, governance checks, telemetry coverage
+ * ------------------------------------------------------------------ */
+
+/**
+ * The run's outcome in one headline and one derived sentence. For a
+ * code-review block, the round is the highest recorded code-review finding
+ * round and the limit and threshold come from the frozen profile; nothing is
+ * parsed from event prose.
+ * @param {RunSnapshot} snapshot
+ * @param {Map<number, FindingStatus>} statuses
+ */
+export function runOutcome(snapshot, statuses) {
+  const segments = stageLedger(snapshot).segments;
+  const eligible = snapshot.workflowAction.eligible;
+  const base = {
+    eligible,
+    ineligibleStatement: eligible ? null : "No governed action is eligible for this run",
+    stageKind: /** @type {string | null} */ (null),
+    round: /** @type {number | null} */ (null),
+    maxRounds: /** @type {number | null} */ (null),
+    threshold: /** @type {string | null} */ (null),
+  };
+  if (snapshot.run.status === "completed") {
+    return {
+      ...base,
+      tone: "success",
+      headline: "Run completed",
+      sentence: snapshot.delivery.outcome === "pass"
+        ? `Delivery check passed; ${plural(snapshot.delivery.deliveredPaths.length, "declared artifact")} delivered.`
+        : "The run is recorded as completed; no passed delivery record is projected.",
+    };
+  }
+  if (snapshot.run.status === "blocked") {
+    const stopped = segments.findLast((segment) => segment.result === "blocked") ?? null;
+    if (stopped === null) {
+      return { ...base, tone: "danger", headline: "Run blocked", sentence: "The run is recorded as blocked without a blocking stage gate." };
+    }
+    const atStage = snapshot.evidence.findings.filter((finding) => finding.stageId === stopped.stageId);
+    if (stopped.kind === "code_review") {
+      const round = atStage.length === 0 ? null : Math.max(...atStage.map((finding) => finding.round));
+      const maxRounds = snapshot.configuration.codeReview?.maxRounds ?? null;
+      const threshold = snapshot.configuration.codeReview?.blockingSeverity ?? null;
+      const severities = severityOrder(snapshot.configuration);
+      const blocking = atStage.filter((finding) => finding.round === round && statuses.get(finding.id) === "blocking");
+      /** @type {Map<string, { count: number, rank: number }>} */
+      const bySeverity = new Map();
+      for (const finding of blocking) {
+        const ranked = cardSeverity(findingCard(finding), severities);
+        const key = ranked.severity ?? "unranked";
+        bySeverity.set(key, { count: (bySeverity.get(key)?.count ?? 0) + 1, rank: ranked.rank ?? -1 });
+      }
+      const described = [...bySeverity.entries()].sort((left, right) => right[1].rank - left[1].rank)
+        .map(([severity, entry]) => `${entry.count} ${severity}-severity`).join(" and ");
+      const panel = round === null ? "The final review panel"
+        : `The final review panel (round ${round}${maxRounds === null ? "" : ` of ${maxRounds}`})`;
+      const limit = threshold === null ? "the frozen blocking threshold" : `the ${threshold} blocking threshold`;
+      return {
+        ...base,
+        tone: "danger",
+        headline: "Run blocked at code review",
+        sentence: blocking.length === 0
+          ? `${panel} recorded a block with no blocking finding projected.`
+          : `${panel} reported ${described} ${blocking.length === 1 ? "finding" : "findings"} at or above ${limit}.`,
+        stageKind: stopped.kind,
+        round,
+        maxRounds,
+        threshold,
+      };
+    }
+    const undecided = atStage.filter((finding) => statuses.get(finding.id) === "open").length;
+    return {
+      ...base,
+      tone: "danger",
+      headline: `Run blocked at ${stageName(stopped.kind)}`,
+      sentence: `The ${stageName(stopped.kind)} gate recorded a block${undecided === 0 ? ""
+        : `; ${plural(undecided, "finding")} there ${undecided === 1 ? "has" : "have"} no recorded decision`}.`,
+      stageKind: stopped.kind,
+    };
+  }
+  const last = segments.at(-1) ?? null;
+  const waiting = snapshot.phase === "awaiting_approval";
+  return {
+    ...base,
+    tone: waiting ? "warning" : "active",
+    headline: waiting ? "Run awaiting approval" : "Run in progress",
+    sentence: last === null ? "No stage is recorded yet."
+      : `The latest recorded stage is ${stageName(last.kind)} (${last.label.toLowerCase()}).`,
+    stageKind: last?.kind ?? null,
+  };
+}
+
+/** @typedef {"passed" | "granted" | "blocked" | "in_progress" | "not_reached" | "not_evaluated" | "not_verified"} CheckResult */
+
+/**
+ * One categorical result per governed check, each with one evidence line.
+ * Required specialists are never evaluated, because the record binds no
+ * specialty to an agent, and the audit chain is never verified here, because
+ * only `verify-audit` recomputes it.
+ * @param {RunSnapshot} snapshot
+ * @param {Map<number, FindingStatus>} statuses
+ * @param {string | null} [observedAt]
+ */
+export function governanceChecks(snapshot, statuses, observedAt = null) {
+  /** @param {string} kind */
+  const stage = (kind) => snapshot.stages.find((entry) => entry.kind === kind) ?? null;
+  /** @param {RunSnapshot["stages"][number] | null} entry @returns {CheckResult} */
+  const gate = (entry) => entry === null ? "not_reached"
+    : entry.gateResult === "pass" ? "passed" : entry.gateResult === "block" ? "blocked" : "in_progress";
+  /** @param {RunSnapshot["stages"][number] | null} entry */
+  const findingsAt = (entry) => entry === null ? [] : snapshot.evidence.findings.filter((finding) => finding.stageId === entry.id);
+  /** @param {string} kind @param {string} label */
+  const documentCheck = (kind, label) => {
+    const entry = stage(kind);
+    const found = findingsAt(entry);
+    const addressed = found.filter((finding) => statuses.get(finding.id) === "addressed").length;
+    return { id: kind, label, result: gate(entry), evidence: entry === null ? "Not reached" : `${plural(found.length, "finding")}, ${addressed} addressed` };
+  };
+
+  const approval = snapshot.approval;
+  const approvalClosed = approvalWindow(approval, observedAt).closed;
+  const verification = stage("verification");
+  const commands = verification === null ? undefined
+    : snapshot.delivery.verification.find((entry) => entry.stageId === verification.id && entry.round === null);
+  const passed = commands?.commands.filter((command) => command.exitCode === 0 && command.blockedBecause === null) ?? [];
+  const review = stage("code_review");
+  const reviewed = findingsAt(review);
+  const round = reviewed.length === 0 ? null : Math.max(...reviewed.map((finding) => finding.round));
+  const final = reviewed.filter((finding) => finding.round === round);
+  const codeReview = snapshot.configuration.codeReview;
+  const delivered = stage("delivery_check");
+  const specialties = snapshot.configuration.documentReview?.requiredSpecialties ?? [];
+
+  /** @type {{ id: string, label: string, result: CheckResult, evidence: string }[]} */
+  const checks = [
+    documentCheck("spec_review", "Specification review"),
+    documentCheck("plan_review", "Plan review"),
     {
-      id: "portfolio-health",
-      label: "PORTFOLIO HEALTH",
-      value: healthLabel,
-      tone: banner.tone,
-      qualifier: healthQualifier,
-      formula: "Aggregate health derived from run statuses and governance gate results.",
-      explanation: "Indicates overall readiness and identifies whether blocking gates or open findings exist.",
+      id: "approval", label: "Human approval",
+      result: approval.state === "granted" ? "granted" : "not_reached",
+      evidence: approval.state === "granted"
+        ? `Granted ${approval.createdAt ?? "at an unrecorded time"}${approvalClosed === true ? "; window closed" : ""}`
+        : "No approval recorded",
     },
     {
-      id: "release-ready",
-      label: "RELEASE READY",
-      value: readyRuns,
-      tone: readyRuns > 0 ? "success" : "neutral",
-      qualifier: readyRuns === 0 ? "No runs ready" : `${readyRuns} ready to ship`,
-      formula: "Completed runs with clean governance and passing verification.",
-      explanation: "Deliveries that have passed all gates, reviews, and verifications.",
+      id: "verification", label: "Verification", result: gate(verification),
+      evidence: verification === null ? "Not reached"
+        : commands === undefined ? "No command record projected"
+          : `${passed.length} of ${plural(commands.commands.length, "frozen command")} passed: ${commands.commands.map((command) => command.argv.join(" ")).join(", ")}. Passed commands do not prove product correctness.`,
     },
     {
-      id: "blocked-deliveries",
-      label: "BLOCKED DELIVERIES",
-      value: portfolio.blockedRuns,
-      tone: portfolio.blockedRuns > 0 ? "danger" : "neutral",
-      qualifier: portfolio.blockedRuns > 0 ? "Review now" : "None blocked",
-      formula: "Runs with status 'blocked' or an active blocking gate.",
-      explanation: "Deliveries halted due to failing gates, unaddressed critical findings, or policy limits.",
+      id: "code_review", label: "Code review", result: gate(review),
+      evidence: review === null ? "Not reached" : round === null ? "No finding recorded"
+        : `Final panel round ${round}${codeReview === null ? "" : ` of ${codeReview.maxRounds}`}: ${final.filter((finding) => statuses.get(finding.id) === "blocking").length} blocking, ${final.filter((finding) => statuses.get(finding.id) === "non_blocking").length} below threshold${codeReview === null ? "" : `; threshold ${codeReview.blockingSeverity}`}`,
     },
     {
-      id: "open-findings",
-      label: "OPEN FINDINGS",
-      value: portfolio.findings.value === null ? "Unavailable" : portfolio.findings.value,
-      tone: (portfolio.findings.value ?? 0) > 0 ? "danger" : "neutral",
-      qualifier: portfolio.findings.value === null ? "No snapshots" : `Across ${snapshots.length} ${snapshots.length === 1 ? "run" : "runs"}`,
-      formula: "Canonical findings recorded without an addressed or approved waiver decision.",
-      explanation: "Defects or policy gaps identified during code review or specification checks.",
+      id: "delivery_check", label: "Delivery check", result: gate(delivered),
+      evidence: delivered === null ? "Not reached"
+        : snapshot.delivery.outcome === "pass" ? `${plural(snapshot.delivery.deliveredPaths.length, "declared artifact")} delivered`
+          : snapshot.delivery.outcome === "block" ? `${plural(snapshot.delivery.missingPaths.length, "declared artifact")} never committed`
+            : "No delivery record projected",
     },
     {
-      id: "governance-coverage",
-      label: "GOVERNANCE COVERAGE",
-      value: govCoverage,
-      tone: govTone,
-      qualifier: `${portfolio.coverage.contributing} of ${portfolio.coverage.loadedRuns} snapshots`,
-      formula: "Percentage of loaded runs with complete snapshot envelopes and verified governance records.",
-      explanation: "Degree to which delivery pipeline policies and audit evidence were captured.",
+      id: "required_specialists", label: "Required specialists", result: "not_evaluated",
+      evidence: specialties.length === 0 ? "No required specialty is configured"
+        : `Configured: ${specialties.join(", ")}; the record binds no specialty to an agent`,
     },
     {
-      id: "delivery-success",
-      label: "DELIVERY SUCCESS",
-      value: successValue,
-      tone: successTone,
-      qualifier: `${portfolio.completedRuns} complete · ${portfolio.blockedRuns} blocked`,
-      formula: "Completed runs divided by total terminal runs (completed + blocked).",
-      explanation: "Historical throughput and reliability of governed delivery runs.",
+      id: "audit_chain", label: "Audit chain", result: "not_verified",
+      evidence: "Not verified in this view; verify-audit recomputes the chain",
     },
   ];
+  return checks;
 }
 
 /**
- * @typedef {{
- *  id: string,
- *  type: "delivery" | "governance" | "data_quality" | "system",
- *  severity: "critical" | "high" | "medium" | "low",
- *  title: string,
- *  repositoryId: string,
- *  runId: number | null,
- *  explanation: string,
- *  lastActivity: string | null,
- *  actions: { label: string, targetTab: string, runId?: number, repositoryId?: string, drawer?: string }[],
- * }} NeedsAttentionItem
- */
-
-/**
- * Derive prioritized Needs Attention queue items across loaded repositories.
+ * Each repository's loaded runs, with the snapshot each one carries.
  * @param {readonly RepositoryView[]} repositories
- * @param {{ limit?: number }} [options]
- * @returns {NeedsAttentionItem[]}
  */
-export function needsAttentionQueue(repositories, options = {}) {
-  /** @type {NeedsAttentionItem[]} */
-  const items = [];
-
-  for (const repo of repositories) {
-    if (!repo.available) {
-      items.push({
-        id: `system-${repo.repositoryId}`,
-        type: "system",
-        severity: "medium",
-        title: `Repository unavailable: ${repo.repositoryId}`,
-        repositoryId: repo.repositoryId,
-        runId: null,
-        explanation: `Run list could not be loaded for repository at ${repo.path}.`,
-        lastActivity: null,
-        actions: [{ label: "View runs", targetTab: "runs", repositoryId: repo.repositoryId }],
-      });
-      continue;
-    }
-
-    for (const run of repo.runs) {
-      const slot = repo.snapshots.find((s) => s.runId === run.id);
-      const snapshot = slot?.snapshot ?? null;
-
-      if (run.status === "blocked") {
-        const blockingStage = snapshot?.stages.find((s) => s.gateResult === "block");
-        items.push({
-          id: `delivery-${repo.repositoryId}-${run.id}`,
-          type: "delivery",
-          severity: "critical",
-          title: `Blocked delivery: ${run.slug || run.project} (run ${run.id})`,
-          repositoryId: repo.repositoryId,
-          runId: run.id,
-          explanation: blockingStage !== undefined
-            ? `Delivery blocked at stage ${blockingStage.kind} (stage ${blockingStage.id}).`
-            : `Run ${run.id} has status blocked.`,
-          lastActivity: run.lastRecordedAt,
-          actions: [
-            { label: "Open run", targetTab: "runs", runId: run.id, repositoryId: repo.repositoryId },
-            { label: "Review findings", targetTab: "findings", runId: run.id, repositoryId: repo.repositoryId },
-          ],
-        });
-      }
-
-      if (snapshot !== null) {
-        const severities = severityOrder(snapshot.configuration);
-        for (const finding of snapshot.evidence.findings) {
-          const card = findingCard(finding);
-          const ranked = cardSeverity(card, severities);
-          if (card.finalPanelBlocking === true || ranked.severity === "critical" || ranked.severity === "high") {
-            const isCritical = ranked.severity === "critical" || card.finalPanelBlocking === true;
-            items.push({
-              id: `finding-${repo.repositoryId}-${run.id}-${finding.id}`,
-              type: "governance",
-              severity: isCritical ? "critical" : "high",
-              title: `Open ${ranked.severity ?? "blocking"} finding: ${card.title}`,
-              repositoryId: repo.repositoryId,
-              runId: run.id,
-              explanation: `Finding ${finding.id} reported at ${finding.location} has no approved resolution.`,
-              lastActivity: run.lastRecordedAt,
-              actions: [
-                { label: "Review finding", targetTab: "findings", runId: run.id, repositoryId: repo.repositoryId, drawer: "finding" },
-              ],
-            });
-          }
-        }
-      }
-
-      if (slot?.stale === true) {
-        items.push({
-          id: `data-stale-${repo.repositoryId}-${run.id}`,
-          type: "data_quality",
-          severity: "low",
-          title: `Stale snapshot telemetry: run ${run.id}`,
-          repositoryId: repo.repositoryId,
-          runId: run.id,
-          explanation: `Snapshot observation for run ${run.id} is stale and needs refresh.`,
-          lastActivity: run.lastRecordedAt,
-          actions: [
-            { label: "View details", targetTab: "overview", drawer: "data_quality" },
-          ],
-        });
-      }
-    }
+function loadedSnapshots(repositories) {
+  /** @type {{ repository: RepositoryView, run: RunSummary, snapshot: RunSnapshot | null }[]} */
+  const entries = [];
+  for (const repository of repositories) {
+    const slots = new Map(repository.snapshots.map((view) => [view.runId, view.snapshot]));
+    for (const run of repository.runs) entries.push({ repository, run, snapshot: slots.get(run.id) ?? null });
   }
-
-  const severityOrderMap = { critical: 0, high: 1, medium: 2, low: 3 };
-  items.sort((left, right) => {
-    const leftRank = severityOrderMap[left.severity];
-    const rightRank = severityOrderMap[right.severity];
-    if (leftRank !== rightRank) return leftRank - rightRank;
-    const leftTime = left.lastActivity ? Date.parse(left.lastActivity) : 0;
-    const rightTime = right.lastActivity ? Date.parse(right.lastActivity) : 0;
-    return rightTime - leftTime;
-  });
-
-  return options.limit ? items.slice(0, options.limit) : items;
+  return entries;
 }
 
 /**
- * @typedef {{
- *  id: string,
- *  name: string,
- *  order: number,
- *  status: "complete" | "failed" | "in_progress" | "blocked" | "waiting" | "not_started" | "skipped",
- *  symbol: string,
- *  tone: ToneClass,
- *  stageId: number | null,
- *  durationMs: number | null,
- *  agent: string | null,
- *  findingsCount: number,
- *  failureReason: string | null,
- *  command: string | null,
- * }} DeliveryPipelineStage
+ * "Can I trust this data?" as counts of what the agent rows actually reported.
+ * Token coverage is the least-reported token class, so "complete" means every
+ * row reported every class. History is never collected by this product.
+ * @param {readonly RepositoryView[]} repositories
  */
-
-const STANDARD_STAGES = [
-  { id: "specification", name: "Specification", order: 1, kinds: ["spec", "spec_review"] },
-  { id: "planning", name: "Planning", order: 2, kinds: ["plan", "plan_review"] },
-  { id: "implementation", name: "Implementation", order: 3, kinds: ["implementation"] },
-  { id: "testing", name: "Testing", order: 4, kinds: ["verification"] },
-  { id: "review", name: "Review", order: 5, kinds: ["code_review"] },
-  { id: "governance", name: "Governance", order: 6, kinds: [] },
-  { id: "approval", name: "Approval", order: 7, kinds: ["awaiting_approval"] },
-  { id: "release", name: "Release", order: 8, kinds: ["delivery_check", "completed"] },
-];
-
-/**
- * Derive 8-stage interactive Delivery Pipeline projection from snapshot.
- * @param {RunSnapshot | null} snapshot
- * @returns {DeliveryPipelineStage[]}
- */
-export function deliveryPipelineStages(snapshot) {
-  if (snapshot === null) {
-    return STANDARD_STAGES.map((std) => ({
-      id: std.id,
-      name: std.name,
-      order: std.order,
-      status: "not_started",
-      symbol: "dot",
-      tone: "neutral",
-      stageId: null,
-      durationMs: null,
-      agent: null,
-      findingsCount: 0,
-      failureReason: null,
-      command: null,
-    }));
-  }
-
-  const stagesByKind = new Map(snapshot.stages.map((s) => [s.kind, s]));
-  const findings = snapshot.evidence.findings;
-
-  return STANDARD_STAGES.map((std) => {
-    let stage = null;
-    for (const kind of std.kinds) {
-      const match = stagesByKind.get(kind);
-      if (match !== undefined) {
-        stage = match;
-        break;
-      }
-    }
-
-    let status = /** @type {DeliveryPipelineStage["status"]} */ ("not_started");
-    let tone = /** @type {ToneClass} */ ("neutral");
-    let symbol = "dot";
-    let failureReason = null;
-    let stageId = stage?.id ?? null;
-    let durationMs = null;
-    let command = null;
-
-    if (stage !== null) {
-      if (stage.gateResult === "block") {
-        status = "failed";
-        tone = "danger";
-        symbol = "x";
-        failureReason = `Gate check blocked at ${stage.kind}.`;
-      } else if (stage.status === "passed" && stage.gateResult === "pass") {
-        status = "complete";
-        tone = "success";
-        symbol = "check";
-      } else if (stage.status === "passed") {
-        status = "complete";
-        tone = "success";
-        symbol = "check";
-      } else if (stage.status === "open") {
-        status = "in_progress";
-        tone = "active";
-        symbol = "arrow";
-      } else {
-        status = "waiting";
-        tone = "neutral";
-        symbol = "dot";
-      }
-    } else if (std.id === "approval") {
-      if (snapshot.approval.state === "granted") {
-        status = "complete";
-        tone = "success";
-        symbol = "check";
-      } else if (snapshot.phase === "awaiting_approval") {
-        status = "waiting";
-        tone = "warning";
-        symbol = "dot";
-      } else if (snapshot.run.status === "completed") {
-        status = "skipped";
-        tone = "neutral";
-        symbol = "dot";
-      } else {
-        status = "not_started";
-        tone = "neutral";
-        symbol = "dot";
-      }
-    } else if (std.id === "governance") {
-      const hasBlockedGate = snapshot.stages.some((s) => s.gateResult === "block");
-      if (hasBlockedGate) {
-        status = "failed";
-        tone = "danger";
-        symbol = "x";
-        failureReason = "Governance gate check failed.";
-      } else if (snapshot.stages.some((s) => s.status === "passed")) {
-        status = "complete";
-        tone = "success";
-        symbol = "check";
-      } else {
-        status = "not_started";
-        tone = "neutral";
-        symbol = "dot";
-      }
-    } else if (std.id === "release") {
-      if (snapshot.run.status === "completed") {
-        status = "complete";
-        tone = "success";
-        symbol = "check";
-      } else if (snapshot.run.status === "blocked") {
-        status = "blocked";
-        tone = "danger";
-        symbol = "x";
-      } else {
-        status = "not_started";
-        tone = "neutral";
-        symbol = "dot";
-      }
-    }
-
-    const relevantFindings = stageId !== null ? findings.filter((f) => f.stageId === stageId).length : 0;
-
-    return {
-      id: std.id,
-      name: std.name,
-      order: std.order,
-      status,
-      symbol,
-      tone,
-      stageId,
-      durationMs,
-      agent: null,
-      findingsCount: relevantFindings,
-      failureReason,
-      command,
-    };
-  });
-}
-
-/**
- * @typedef {{
- *  controlsPassed: number,
- *  controlsFailed: number,
- *  controlsTotal: number,
- *  findingsBySeverity: { critical: number, high: number, medium: number, low: number, unranked: number },
- *  approval: { state: string, expiresAt: string | null, isClosed: boolean | null },
- *  auditIntegrity: "verified" | "unverified" | "unavailable",
- * }} GovernanceHealthSummary
- */
-
-/**
- * Derive Governance Health panel summary projection.
- * @param {RunSnapshot | null} snapshot
- * @returns {GovernanceHealthSummary}
- */
-export function governanceHealthSummary(snapshot) {
-  if (snapshot === null) {
-    return {
-      controlsPassed: 0,
-      controlsFailed: 0,
-      controlsTotal: 0,
-      findingsBySeverity: { critical: 0, high: 0, medium: 0, low: 0, unranked: 0 },
-      approval: { state: "Not observed", expiresAt: null, isClosed: null },
-      auditIntegrity: "unavailable",
-    };
-  }
-
-  let controlsPassed = 0;
-  let controlsFailed = 0;
-  let controlsTotal = 0;
-  for (const stage of snapshot.stages) {
-    if (stage.gateResult !== null) {
-      controlsTotal++;
-      if (stage.gateResult === "pass") controlsPassed++;
-      if (stage.gateResult === "block") controlsFailed++;
+export function telemetryCoverage(repositories) {
+  const portfolio = portfolioProjection(repositories);
+  const snapshots = loadedSnapshots(repositories).flatMap((entry) => entry.snapshot === null ? [] : [entry.snapshot]);
+  let rows = 0;
+  let cost = 0;
+  let model = 0;
+  let duration = 0;
+  const tokenClasses = TOKEN_CLASSES.map(() => 0);
+  for (const snapshot of snapshots) {
+    rows += snapshot.cost.agentRows;
+    cost += snapshot.cost.costReportedRows;
+    TOKEN_CLASSES.forEach(({ key }, index) => { tokenClasses[index] += snapshot.cost.tokens[key].reportedRows; });
+    for (const group of snapshot.cost.byAgent) {
+      model += group.agentRows - group.effectiveModelUnreportedRows;
+      if (group.durationMs !== null) duration += group.agentRows;
     }
   }
-
-  const findingsBySeverity = { critical: 0, high: 0, medium: 0, low: 0, unranked: 0 };
-  const severities = severityOrder(snapshot.configuration);
-  for (const finding of snapshot.evidence.findings) {
-    const card = findingCard(finding);
-    const ranked = cardSeverity(card, severities);
-    if (!ranked.available || ranked.severity === null) {
-      findingsBySeverity.unranked++;
-    } else {
-      const sev = ranked.severity.toLowerCase();
-      if (sev === "critical") findingsBySeverity.critical++;
-      else if (sev === "high") findingsBySeverity.high++;
-      else if (sev === "medium") findingsBySeverity.medium++;
-      else if (sev === "low") findingsBySeverity.low++;
-      else findingsBySeverity.unranked++;
-    }
-  }
-
-  const isClosed = snapshot.approval.expiresAt !== null
-    ? Date.parse(snapshot.approval.expiresAt) < Date.now()
-    : null;
-
   return {
-    controlsPassed,
-    controlsFailed,
-    controlsTotal,
-    findingsBySeverity,
-    approval: {
-      state: snapshot.approval.state,
-      expiresAt: snapshot.approval.expiresAt,
-      isClosed,
+    snapshots: { current: portfolio.coverage.fresh, total: portfolio.coverage.loadedRuns },
+    cost: { reported: cost, total: rows },
+    tokens: { reported: Math.min(...tokenClasses), total: rows },
+    model: { reported: model, total: rows },
+    duration: { reported: duration, total: rows },
+    history: /** @type {const} */ ("not_collected"),
+    audit: /** @type {const} */ ("not_verified"),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Models and agents
+ * ------------------------------------------------------------------ */
+
+/**
+ * Agent rows with share of known cost and per-execution figures. When every
+ * agent that ran reported exactly one effective model, equal to its only
+ * requested model, with no unreported row, `uniformModel` names it so the
+ * renderer states it once instead of repeating a column.
+ * @param {RunSnapshot} snapshot
+ */
+export function agentRows(snapshot) {
+  const total = snapshot.cost.costReportedRows === 0 ? null : snapshot.cost.knownUsd;
+  const rows = snapshot.cost.byAgent.map((group) => {
+    const knownUsd = group.costReportedRows === 0 ? null : group.knownUsd;
+    return {
+      agent: group.agent,
+      roles: group.roles,
+      requestedModels: group.requestedModels,
+      effectiveModels: group.effectiveModels,
+      effectiveModelUnreportedRows: group.effectiveModelUnreportedRows,
+      executions: group.agentRows,
+      knownUsd,
+      share: knownUsd === null || total === null || total === 0 ? null : knownUsd / total,
+      costPerExecution: knownUsd === null || group.agentRows === 0 ? null : knownUsd / group.agentRows,
+      durationMs: group.durationMs,
+      averageDurationMs: group.durationMs === null || group.agentRows === 0 ? null : group.durationMs / group.agentRows,
+      tokens: tokenTotal(group),
+      recordedFailedAttempts: group.recordedFailedAttempts,
+    };
+  });
+  const executed = rows.filter((row) => row.executions > 0);
+  const model = executed[0]?.effectiveModels[0] ?? null;
+  const uniform = model !== null && executed.every((row) => row.effectiveModelUnreportedRows === 0 &&
+    row.effectiveModels.length === 1 && row.effectiveModels[0] === model &&
+    row.requestedModels.length === 1 && row.requestedModels[0] === model);
+  return { rows, uniformModel: uniform ? model : null };
+}
+
+/**
+ * Where one run's cost, tokens, and time went. Stages that ran agents are
+ * sorted by known cost; the three maxima are plain rankings of recorded
+ * values, not judgements that a stage is abnormal; and each stage that ran no
+ * agent carries its recorded reason.
+ * @param {RunSnapshot} snapshot
+ */
+export function stageUsage(snapshot) {
+  const segments = stageLedger(snapshot).segments;
+  const ledger = new Map(segments.map((segment) => [segment.stageId, segment]));
+  const ordinals = new Map(snapshot.stages.map((stage) => [stage.id, stage.ordinal]));
+  const knownTotal = snapshot.cost.costReportedRows === 0 ? null : snapshot.cost.knownUsd;
+  const tokens = tokenTotal(snapshot.cost);
+  const stages = snapshot.cost.byStage.filter((group) => group.agentRows > 0).map((group) => {
+    const knownUsd = group.costReportedRows === 0 ? null : group.knownUsd;
+    const stageTokens = tokenTotal(group).known;
+    return {
+      stageId: group.stageId,
+      kind: group.kind,
+      knownUsd,
+      share: knownUsd === null || knownTotal === null || knownTotal === 0 ? null : knownUsd / knownTotal,
+      tokens: stageTokens,
+      tokenShare: stageTokens === null || tokens.known === null || tokens.known === 0 ? null : stageTokens / tokens.known,
+      durationMs: ledger.get(group.stageId)?.durationMs ?? null,
+    };
+  }).sort((left, right) => (right.knownUsd ?? -1) - (left.knownUsd ?? -1) ||
+    (ordinals.get(left.stageId) ?? 0) - (ordinals.get(right.stageId) ?? 0));
+  /**
+   * @template T
+   * @param {readonly T[]} list @param {(entry: T) => number | null} value
+   * @returns {T | null}
+   */
+  const highest = (list, value) => list.reduce((/** @type {T | null} */ best, entry) =>
+    value(entry) !== null && (best === null || (value(entry) ?? 0) > (value(best) ?? 0)) ? entry : best, null);
+  const withAgents = new Set(stages.map((entry) => entry.stageId));
+  const idle = snapshot.stages.filter((stage) => !withAgents.has(stage.id)).map((stage) => {
+    const commands = snapshot.delivery.verification.find((entry) => entry.stageId === stage.id && entry.round === null);
+    const reason = stage.kind === "awaiting_approval" && snapshot.approval.state === "granted" ? "approval granted"
+      : commands !== undefined
+        ? `${plural(commands.commands.length, "frozen command")} ${commands.outcome === "pass" ? "passed" : commands.outcome === "block" ? "blocked" : "recorded"}`
+        : "no agent rows recorded";
+    return { stageId: stage.id, kind: stage.kind, reason };
+  });
+  return {
+    stages,
+    highest: {
+      cost: highest(stages, (entry) => entry.knownUsd),
+      tokens: highest(stages, (entry) => entry.tokens),
+      duration: highest(segments, (entry) => entry.durationMs),
     },
-    auditIntegrity: "verified",
+    idle,
+    composition: tokens.classes.map((entry) => ({
+      key: entry.key,
+      label: entry.label,
+      known: entry.known,
+      share: entry.known === null || tokens.known === null || tokens.known === 0 ? null : entry.known / tokens.known,
+    })),
   };
 }
 
-/**
- * @typedef {{
- *  planningModel: string | null,
- *  implementationModel: string | null,
- *  reviewModels: { specialty: string, model: string }[],
- *  testModel: string | null,
- *  effortLevel: string,
- * }} ModelAssignmentsSummary
- */
+/* ------------------------------------------------------------------ *
+ * Relative time and search
+ * ------------------------------------------------------------------ */
 
 /**
- * Derive Model & Agent Assignments panel summary projection.
- * @param {RunSnapshot | null} snapshot
- * @returns {ModelAssignmentsSummary}
+ * A recorded time as "N days ago" relative to the observation, with the
+ * exact local time and zone kept for the hover. The recorded string stays on
+ * `utc` byte-for-byte.
+ * @param {string | null} value
+ * @param {string | null} observedAt
+ * @param {string} [timeZone]
  */
-export function modelAssignmentsSummary(snapshot) {
-  if (snapshot === null) {
-    return {
-      planningModel: null,
-      implementationModel: null,
-      reviewModels: [],
-      testModel: null,
-      effortLevel: "Not reported in configuration",
-    };
+export function relativeTimePresentation(value, observedAt, timeZone = undefined) {
+  const unavailable = { available: false, relative: "Unavailable", exact: "Unavailable", utc: "" };
+  const parsed = value === null ? Number.NaN : Date.parse(value);
+  if (value === null || Number.isNaN(parsed)) return unavailable;
+  let exact;
+  try {
+    exact = new Intl.DateTimeFormat("en-US", {
+      month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit",
+      timeZoneName: "short", timeZone,
+    }).format(new Date(parsed));
+  } catch {
+    return unavailable;
   }
+  const observed = observedAt === null ? Number.NaN : Date.parse(observedAt);
+  if (Number.isNaN(observed)) return { available: true, relative: exact, exact, utc: value };
+  const seconds = Math.max(0, Math.round((observed - parsed) / 1000));
+  const relative = seconds < 60 ? `${seconds}s ago`
+    : seconds < 3600 ? `${Math.floor(seconds / 60)} min ago`
+      : seconds < 86_400 ? `${Math.floor(seconds / 3600)} h ago`
+        : `${plural(Math.floor(seconds / 86_400), "day")} ago`;
+  return { available: true, relative, exact, utc: value };
+}
 
-  const map = snapshot.configuration.modelMap ?? {};
-  const planningModel = map["plan"] ?? map["spec"] ?? null;
-  const implementationModel = map["implementation"] ?? null;
-  const testModel = map["verification"] ?? null;
-
-  /** @type {{ specialty: string, model: string }[]} */
-  const reviewModels = [];
-  for (const [key, value] of Object.entries(map)) {
-    if (key.includes("review") || key.includes("findings")) {
-      reviewModels.push({ specialty: readableIntent(key), model: value });
-    }
-  }
-
-  return {
-    planningModel,
-    implementationModel,
-    reviewModels,
-    testModel,
-    effortLevel: "Not reported in configuration",
-  };
+/** @param {readonly (string | null)[]} values */
+function searchText(values) {
+  return values.filter((value) => value !== null && value !== "").join(" ").toLowerCase();
 }
 
 /**
- * @typedef {{
- *  coveragePercentage: number | null,
- *  freshCount: number,
- *  staleCount: number,
- *  pendingCount: number,
- *  unavailableCount: number,
- *  missingExecutionDuration: number,
- *  costReportedPercentage: number | null,
- *  historicalTrend: string,
- * }} DataQualitySummary
- */
-
-/**
- * Derive Data Quality summary projection.
- * @param {ReturnType<typeof portfolioProjection>} portfolio
- * @param {readonly RunSnapshot[]} snapshots
- * @returns {DataQualitySummary}
- */
-export function dataQualitySummary(portfolio, snapshots) {
-  const loaded = portfolio.coverage.loadedRuns;
-  const coveragePercentage = loaded === 0 ? null : Math.round((portfolio.coverage.fresh / loaded) * 100);
-
-  const agentRows = portfolio.cost.agentRows;
-  const costReportedPercentage = agentRows === 0 ? null : Math.round((portfolio.cost.reportedRows / agentRows) * 100);
-
-  return {
-    coveragePercentage,
-    freshCount: portfolio.coverage.fresh,
-    staleCount: portfolio.coverage.stale,
-    pendingCount: portfolio.coverage.pending,
-    unavailableCount: portfolio.coverage.unavailable,
-    missingExecutionDuration: snapshots.length,
-    costReportedPercentage,
-    historicalTrend: TREND_UNAVAILABLE_LABEL,
-  };
-}
-
-/**
- * @typedef {{
- *  repositoryId: string,
- *  repositoryName: string,
- *  runId: number,
- *  project: string,
- *  featureId: string,
- *  slug: string,
- *  status: { label: string, tone: ToneClass, source: "phase" | "status" },
- *  phase: string,
- *  currentStage: string,
- *  findingsCount: number | null,
- *  governanceStatus: string,
- *  lastActivity: string,
- * }} GovernedDeliveryRow
- */
-
-/**
- * Derive unified Governed Deliveries tabular projection across repositories.
+ * The searchable records of the loaded runs: runs, findings, and agents.
  * @param {readonly RepositoryView[]} repositories
- * @returns {GovernedDeliveryRow[]}
  */
-export function governedDeliveriesRows(repositories) {
-  /** @type {GovernedDeliveryRow[]} */
-  const rows = [];
-
-  for (const repo of repositories) {
-    const repoIdentity = repositoryIdentity(repo.path, repo.runs);
-    for (const run of repo.runs) {
-      const slot = repo.snapshots.find((s) => s.runId === run.id);
-      const snapshot = slot?.snapshot ?? null;
-      const statusPres = statusPresentation(run.status, run.phase);
-
-      let currentStage = run.phase;
-      let governanceStatus = "Pending";
-      let findingsCount = null;
-
-      if (snapshot !== null) {
-        findingsCount = snapshot.evidence.findings.length;
-        const lastStage = snapshot.stages[snapshot.stages.length - 1];
-        if (lastStage !== undefined) {
-          currentStage = lastStage.kind;
-        }
-        if (snapshot.stages.some((s) => s.gateResult === "block")) {
-          governanceStatus = "Blocked";
-        } else if (snapshot.stages.some((s) => s.gateResult === "pass")) {
-          governanceStatus = "Passed";
-        }
-      }
-
-      rows.push({
-        repositoryId: repo.repositoryId,
-        repositoryName: repoIdentity.display,
-        runId: run.id,
-        project: run.project,
-        featureId: run.featureId,
-        slug: run.slug,
-        status: statusPres,
-        phase: run.phase,
-        currentStage: readableIntent(currentStage),
-        findingsCount,
-        governanceStatus,
-        lastActivity: run.lastRecordedAt,
+export function searchIndex(repositories) {
+  const runs = [];
+  const findings = [];
+  const agents = [];
+  for (const { repository, run, snapshot } of loadedSnapshots(repositories)) {
+    runs.push({
+      repositoryId: repository.repositoryId, runId: run.id, label: run.slug, detail: run.project,
+      text: searchText([run.slug, run.project, run.featureId, repository.path, run.status, run.phase]),
+    });
+    if (snapshot === null) continue;
+    const statuses = findingStatuses(snapshot);
+    const severities = severityOrder(snapshot.configuration);
+    for (const finding of snapshot.evidence.findings) {
+      const card = findingCard(finding);
+      findings.push({
+        repositoryId: repository.repositoryId, runId: run.id, findingId: finding.id, label: card.title, detail: finding.location,
+        text: searchText([card.title, finding.location, finding.intentKey, cardSeverity(card, severities).severity,
+          statuses.get(finding.id) ?? null]),
+      });
+    }
+    for (const group of snapshot.cost.byAgent) {
+      agents.push({
+        repositoryId: repository.repositoryId, runId: run.id, agent: group.agent, label: group.agent,
+        detail: group.roles.join(", "), text: searchText([group.agent, ...group.roles]),
       });
     }
   }
+  return { runs, findings, agents };
+}
 
-  return rows;
+/**
+ * Entries containing every whitespace-separated term of the query.
+ * @param {ReturnType<typeof searchIndex>} index
+ * @param {string} query
+ */
+export function searchMatches(index, query) {
+  const terms = query.toLowerCase().split(/\s+/).filter((term) => term !== "");
+  if (terms.length === 0) return { runs: [], findings: [], agents: [] };
+  /** @param {{ text: string }} entry */
+  const matches = (entry) => terms.every((term) => entry.text.includes(term));
+  return { runs: index.runs.filter(matches), findings: index.findings.filter(matches), agents: index.agents.filter(matches) };
+}
+
+/* ------------------------------------------------------------------ *
+ * Live observation (ARCHITECTURE.md section 23, 2026-09-24)
+ * ------------------------------------------------------------------ */
+
+/** The auto-refresh cadence: a presentation constant, not run configuration. */
+export const AUTO_REFRESH_INTERVAL_MS = 15_000;
+
+/**
+ * Whether a run may be shown live. The repository writer lock is the only
+ * liveness evidence, and it names a process, not a run or an agent, so LIVE
+ * needs all four: the run in progress, an open stage, the lock observed live,
+ * and that observation less than two refresh intervals old.
+ * @param {RunSnapshot} snapshot
+ * @param {string | null} observedAt
+ * @param {number} now
+ * @param {number} intervalMs
+ * @returns {"live" | "no_live_writer" | "lock_unreadable" | "not_in_progress"}
+ */
+export function liveness(snapshot, observedAt, now, intervalMs) {
+  if (snapshot.run.status !== "in_progress") return "not_in_progress";
+  if (snapshot.writer.status === "unreadable") return "lock_unreadable";
+  const observed = observedAt === null ? Number.NaN : Date.parse(observedAt);
+  const fresh = !Number.isNaN(observed) && now - observed < 2 * intervalMs;
+  const open = snapshot.stages.some((stage) => stage.status === "in_progress");
+  return open && snapshot.writer.status === "live" && fresh ? "live" : "no_live_writer";
+}
+
+/**
+ * The run IDs whose snapshot one auto-refresh tick re-reads: those whose fresh
+ * run-list summary differs from the held snapshot, whose run is in progress,
+ * or whose held envelope is stale or absent. An unchanged settled run is not
+ * re-read.
+ * @param {readonly SnapshotView[]} held
+ * @param {readonly RunSummary[]} summaries
+ * @returns {number[]}
+ */
+export function autoRefreshPlan(held, summaries) {
+  const slots = new Map(held.map((view) => [view.runId, view]));
+  return summaries.filter((summary) => {
+    const view = slots.get(summary.id);
+    if (view === undefined || view.snapshot === null || view.stale) return true;
+    const snapshot = view.snapshot;
+    return summary.status === "in_progress" || summary.status !== snapshot.run.status ||
+      summary.phase !== snapshot.phase || summary.lastRecordedAt !== snapshot.activity.lastRecordedAt;
+  }).map((summary) => summary.id);
+}
+
+/**
+ * The runs that changed between two observations, as `repositoryId:runId`
+ * keys, so each earns one highlight. The first observation highlights nothing,
+ * and a repository that was unavailable before contributes nothing.
+ * @param {readonly RepositoryView[] | null} previous
+ * @param {readonly RepositoryView[]} next
+ * @returns {string[]}
+ */
+export function changedRuns(previous, next) {
+  if (previous === null) return [];
+  /** @type {Map<string, RunSummary>} */
+  const before = new Map();
+  const known = new Set();
+  for (const repository of previous) {
+    if (!repository.available) continue;
+    known.add(repository.repositoryId);
+    for (const run of repository.runs) before.set(`${repository.repositoryId}:${run.id}`, run);
+  }
+  const changed = [];
+  for (const repository of next) {
+    if (!known.has(repository.repositoryId)) continue;
+    for (const run of repository.runs) {
+      const key = `${repository.repositoryId}:${run.id}`;
+      const prior = before.get(key);
+      if (prior === undefined || prior.status !== run.status || prior.phase !== run.phase ||
+          prior.lastRecordedAt !== run.lastRecordedAt) changed.push(key);
+    }
+  }
+  return changed;
 }
 

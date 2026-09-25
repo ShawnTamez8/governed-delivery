@@ -2,16 +2,14 @@
 /** @typedef {import("../operator-state.ts").RunSnapshot} RunSnapshot */
 
 import {
-  AGENT_MODEL_UNAVAILABLE, AGENT_TOKEN_CLASS_NOTE, AVERAGE_EXECUTION_UNAVAILABLE_REASON,
-  FINDING_ORDER_STATEMENT, MALFORMED_LIST_REASON,
-  MALFORMED_NORMATIVE_REASON, TREND_UNAVAILABLE_LABEL,
-  cardSeverity, collapsedColumnStatement, commandCenterKpis, constantColumn, coverageQualifier,
-  dataQualitySummary, deliveryPipelineStages, finalPanelBlockingSummary, findingCard,
-  forbiddenFieldStatement, fullCoverageStatement, governanceHealthSummary, governedDeliveriesRows,
-  identityPresentation, latestTimestamp, modelAssignmentsSummary, needsAttentionQueue, orderFindings,
-  portfolioProjection, portfolioStatusBanner, repositoryIdentity, runExecutiveSummary,
-  severityOrder, snapshotProjection, snapshotState, statusPresentation, timestampPresentation,
-  usdPresentation,
+  AGENT_TOKEN_CLASS_NOTE, AUTO_REFRESH_INTERVAL_MS, FINDING_ORDER_STATEMENT, MALFORMED_LIST_REASON,
+  MALFORMED_NORMATIVE_REASON,
+  agentRows, autoRefreshPlan, cardSeverity, changedRuns, finalPanelBlockingSummary, findingCard, findingStatus,
+  findingStatusCounts, findingStatuses, forbiddenFieldStatement, governanceChecks, identityPresentation,
+  latestTimestamp, liveness, needsAttentionQueue, orderFindings, portfolioProjection, readableIntent,
+  relativeTimePresentation, repositoryIdentity, runExecutiveSummary, runOutcome, searchIndex, searchMatches,
+  severityOrder, snapshotProjection, snapshotState, stageLedger, stageMap, stageUsage, statusPresentation,
+  telemetryCoverage, timestampPresentation, usdPresentation,
 } from "./dashboard-model.js";
 
 const TOKEN_KEY = "governed-delivery-dashboard-token";
@@ -166,7 +164,9 @@ export function isEditableTarget(target) {
 export function shortcutDestination(firstKey, secondKey, editable = false, disabled = false) {
   if (editable || disabled) return null;
   if (firstKey === "/") return "run-search";
+  if (firstKey === "?") return "shortcuts";
   if (firstKey !== "g") return null;
+  if (secondKey === "o") return "overview";
   if (secondKey === "r") return "runs";
   if (secondKey === "f") return "findings";
   if (secondKey === "a") return "governance";
@@ -280,25 +280,18 @@ function svg(tag, attributes = {}) {
 
 /** @type {Record<string, string>} */
 const ICON_PATHS = {
-  runs: "M4 5h16M4 12h16M4 19h10",
-  blocked: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM6 6l12 12",
-  active: "M5 12h4l2-6 3 12 2-6h3",
-  findings: "M12 3l9 16H3zM12 9v5M12 17h.01",
-  cost: "M12 3v18M8 7h6a3 3 0 0 1 0 6H9a3 3 0 0 0 0 6h7",
-  tokens: "M4 17h4V9H4zM10 17h4V5h-4zM16 17h4v-6h-4z",
-  success: "M4 13l5 5L20 6",
-  duration: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v6l4 2",
   stale: "M21 12a9 9 0 1 1-3-6.7M21 3v6h-6",
   check: "M4 13l5 5L20 6",
   x: "M5 5l14 14M19 5L5 19",
   arrow: "M5 12h12M12 5l7 7-7 7",
   dot: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z",
+  copy: "M9 9h10v10H9zM5 15V5h10",
 };
 
-/** Decorative icon: adjacent visible text always carries the meaning. @param {string} name */
-function icon(name) {
+/** Decorative icon: adjacent visible text always carries the meaning. @param {string} name @param {string} [extra] */
+function icon(name, extra = "") {
   const node = svg("svg", {
-    class: "icon", viewBox: "0 0 24 24", width: "20", height: "20",
+    class: `icon${extra}`, viewBox: "0 0 24 24", width: "20", height: "20",
     "aria-hidden": "true", focusable: "false",
   });
   node.append(svg("path", {
@@ -316,8 +309,8 @@ function exactCount(value) {
 /** @param {number} value */
 function abbreviated(value) {
   const magnitude = Math.abs(value);
-  if (magnitude >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
-  if (magnitude >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (magnitude >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`;
+  if (magnitude >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
   if (magnitude >= 10_000) return `${(value / 1_000).toFixed(1)}K`;
   return exactCount(value);
 }
@@ -339,6 +332,50 @@ function text(value, fallback = "Unavailable") {
   return value === null || value === "" ? fallback : value;
 }
 
+/** @param {number} count @param {string} one @param {string} [many] */
+function plural(count, one, many = `${one}s`) {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+/** A readable stage name in lower case, for use inside a sentence. @param {string} kind */
+function stageLower(kind) {
+  return readableIntent(kind).toLowerCase();
+}
+
+/** The last two segments of a recorded path; the full path stays on hover. @param {string} path */
+function pathTail(path) {
+  const separator = path.includes("\\") ? "\\" : "/";
+  return path.split(/[/\\]+/).filter((segment) => segment !== "").slice(-2).join(separator);
+}
+
+/** A recorded duration in the largest two units. @param {number | null} ms */
+function duration(ms) {
+  if (ms === null) return "Unavailable";
+  if (ms < 1000) return `${ms} ms`;
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
+  return `${Math.floor(seconds / 3600)}h ${String(Math.floor((seconds % 3600) / 60)).padStart(2, "0")}m`;
+}
+
+/** A share of a known total; a share below one percent is never rounded to zero. @param {number | null} share */
+function shareText(share) {
+  if (share === null) return "Unavailable";
+  return share > 0 && share < 0.01 ? "<1%" : `${Math.round(share * 100)}%`;
+}
+
+/** @param {...(Node | string)} parts */
+function fragment(...parts) {
+  const node = document.createDocumentFragment();
+  node.append(...parts);
+  return node;
+}
+
+/** A count that takes its alarm tone only when it is above zero. @param {number} count @param {string} tone @param {string} label */
+function toned(count, tone, label) {
+  return element("span", label, count > 0 ? `tone-${tone}` : "");
+}
+
 /** @param {[string, Node | string][]} entries @param {string} [className] */
 function definitionList(entries, className = "definitions") {
   const list = element("dl", null, className);
@@ -355,7 +392,7 @@ function definitionList(entries, className = "definitions") {
 /** @param {string} caption @param {string[]} headers @param {(Node | string)[][]} rows */
 function dataTable(caption, headers, rows) {
   const scroll = element("div", null, "table-scroll");
-  const table = element("table");
+  const table = element("table", null, "table");
   table.append(element("caption", caption));
   const head = element("thead");
   const headRow = element("tr");
@@ -382,6 +419,86 @@ function dataTable(caption, headers, rows) {
   return scroll;
 }
 
+/** @typedef {"ascending" | "descending"} SortDirection */
+/**
+ * @template T
+ * @typedef {{
+ *   label: string,
+ *   cell: (row: T) => Node | string,
+ *   sort?: (row: T) => number | string,
+ *   numeric?: boolean,
+ *   className?: string,
+ *   headClass?: string,
+ *   title?: (row: T) => string,
+ * }} TableColumn
+ */
+
+/**
+ * One table with optional sortable headings. The sort is presentation only: it
+ * reorders loaded rows and never reaches the route or a request.
+ * @template T
+ * @param {{
+ *   caption: string, key: string, rows: readonly T[], columns: TableColumn<T>[],
+ *   application: DashboardApplication, defaultSort?: { column: string, direction: SortDirection },
+ *   rowSetup?: (tr: HTMLElement, row: T) => void,
+ * }} spec
+ */
+function sortableTable(spec) {
+  const scroll = element("div", null, "table-scroll");
+  const table = element("table", null, "table");
+  table.append(element("caption", spec.caption, "visually-hidden"));
+  const state = spec.application.sorts.get(spec.key) ?? spec.defaultSort ?? null;
+  const headRow = element("tr");
+  for (const column of spec.columns) {
+    const heading = element("th", null, column.numeric === true ? "num" : column.headClass ?? "");
+    heading.setAttribute("scope", "col");
+    const sort = column.sort;
+    if (sort === undefined) {
+      heading.textContent = column.label;
+    } else {
+      if (state?.column === column.label) heading.setAttribute("aria-sort", state.direction);
+      const button = /** @type {HTMLButtonElement} */ (element("button", column.label, "sort"));
+      button.type = "button";
+      button.dataset.control = `sort:${spec.key}:${column.label}`;
+      button.addEventListener("click", () => {
+        const direction = state?.column === column.label && state.direction === "descending" ? "ascending" : "descending";
+        spec.application.sorts.set(spec.key, { column: column.label, direction });
+        render(spec.application);
+      });
+      heading.append(button);
+    }
+    headRow.append(heading);
+  }
+  const head = element("thead");
+  head.append(headRow);
+  const sortBy = state === null ? undefined : spec.columns.find((column) => column.label === state.column)?.sort;
+  const rows = [...spec.rows];
+  if (sortBy !== undefined && state !== null) {
+    const sign = state.direction === "ascending" ? 1 : -1;
+    rows.sort((left, right) => {
+      const a = sortBy(left);
+      const b = sortBy(right);
+      const order = typeof a === "number" && typeof b === "number" ? a - b : String(a).localeCompare(String(b));
+      return sign * order;
+    });
+  }
+  const body = element("tbody");
+  for (const row of rows) {
+    const tr = element("tr");
+    for (const column of spec.columns) {
+      const cell = element("td", null, `${column.numeric === true ? "num " : ""}${column.className ?? ""}`.trim());
+      cell.append(column.cell(row));
+      if (column.title !== undefined) cell.title = column.title(row);
+      tr.append(cell);
+    }
+    spec.rowSetup?.(tr, row);
+    body.append(tr);
+  }
+  table.append(head, body);
+  scroll.append(table);
+  return scroll;
+}
+
 /** @param {string} title @param {string} id @param {string} [className] */
 function panel(title, id, className = "") {
   const section = element("section", null, `panel ${className}`.trim());
@@ -391,12 +508,66 @@ function panel(title, id, className = "") {
   return section;
 }
 
-/** @param {string} label @param {string} tone */
-function badge(label, tone) {
-  const node = element("span", null, `badge tone-${tone}`);
-  node.append(icon(tone === "success" ? "check" : tone === "danger" || tone === "critical" ? "x" : tone === "active" ? "arrow" : "dot"));
-  node.append(element("span", label));
-  return node;
+let headingSequence = 0;
+
+/**
+ * A region heading row: title, then an optional count, information control,
+ * trailing controls, and a subtitle.
+ * @param {string} title
+ * @param {{ count?: string | null, info?: HTMLElement | null, end?: Node | null, sub?: Node | string | null }} [parts]
+ */
+function regionHead(title, parts = {}) {
+  const head = element("div", null, "region-head");
+  const heading = element("h3", title);
+  heading.id = `heading-${++headingSequence}`;
+  head.append(heading);
+  if (parts.count !== undefined && parts.count !== null) head.append(element("span", parts.count, "count num"));
+  if (parts.info !== undefined && parts.info !== null) head.append(parts.info);
+  if (parts.end !== undefined && parts.end !== null) {
+    const end = element("span", null, "end");
+    end.append(parts.end);
+    head.append(end);
+  }
+  if (parts.sub !== undefined && parts.sub !== null) {
+    const sub = element("span", null, "sub");
+    sub.append(parts.sub);
+    head.append(sub);
+  }
+  return head;
+}
+
+/** @param {string} title @param {Parameters<typeof regionHead>[1]} [parts] */
+function region(title, parts = {}) {
+  const section = element("section", null, "region");
+  const head = regionHead(title, parts);
+  section.setAttribute("aria-labelledby", head.firstElementChild?.id ?? "");
+  section.append(head);
+  return section;
+}
+
+/** @param {string} title @param {Node} right */
+function viewHead(title, right) {
+  const head = element("div", null, "view-head");
+  head.append(element("h2", title, "view-title"), right);
+  return head;
+}
+
+/** @param {string} title */
+function layer(title) {
+  const section = element("section", null, "layer");
+  const heading = element("h3", title, "layer-label");
+  heading.id = `heading-${++headingSequence}`;
+  section.setAttribute("aria-labelledby", heading.id);
+  section.append(heading);
+  return section;
+}
+
+/**
+ * A filled badge states a state; an outline badge states a severity.
+ * @param {string} label @param {string} tone @param {"state" | "severity"} [shape]
+ */
+function badge(label, tone, shape = "state") {
+  return element("span", label, shape === "state" ? `badge is-state tone-${tone}` : `badge tone-${tone}`);
 }
 
 /** @param {string} message @param {string} [tone] */
@@ -407,12 +578,50 @@ function callout(message, tone = "warning") {
   return node;
 }
 
-/** @param {string} summaryText @param {Node} content */
+/** @param {string} summaryText @param {HTMLElement} content */
 function disclosure(summaryText, content) {
-  const details = element("details");
+  const details = element("details", null, "technical");
   details.append(element("summary", summaryText));
+  content.classList.add("technical-body");
   details.append(content);
   return details;
+}
+
+/**
+ * A method explanation behind the section's information control, so it stays
+ * one activation away and in the accessibility tree without taking a line.
+ * @param {string} title @param {string} explanation
+ */
+function sectionNote(title, explanation) {
+  const note = element("div", null, "section-note");
+  note.append(metricInfoButton(title, explanation), element("span", "About this section"));
+  return note;
+}
+
+/**
+ * A single-choice chip group. Choosing a chip records the filter and re-renders.
+ * A chip whose count is zero is disabled unless it is the one selected.
+ * @param {string} label @param {string} key
+ * @param {{ value: string, label: string, count?: number }[]} options
+ * @param {string} selected @param {(value: string) => void} choose
+ */
+function chipGroup(label, key, options, selected, choose) {
+  const group = element("span", null, "chips");
+  group.setAttribute("role", "group");
+  group.setAttribute("aria-label", label);
+  for (const option of options) {
+    const chip = /** @type {HTMLButtonElement} */ (element("button", option.label, "chip"));
+    chip.type = "button";
+    chip.dataset.control = `${key}:${option.value}`;
+    chip.setAttribute("aria-pressed", String(option.value === selected));
+    if (option.count !== undefined) {
+      chip.append(element("span", String(option.count), "num"));
+      chip.disabled = option.count === 0 && option.value !== selected && option.value !== "";
+    }
+    chip.addEventListener("click", () => choose(option.value));
+    group.append(chip);
+  }
+  return group;
 }
 
 /**
@@ -423,19 +632,25 @@ function disclosure(summaryText, content) {
  * `build` runs immediately and its result is appended, so expanding performs no
  * read and needs no refresh. The open attribute is never set and collapse state
  * is never recorded: it is presentation only and must not reach the route.
- * @param {number | null} count @param {string} staleNote @param {() => HTMLElement} build
+ * @param {string} countLabel @param {string} staleNote @param {() => HTMLElement} build
+ * @param {Node | string | null} [hint]
  */
-function collapsibleSection(count, staleNote, build) {
+function collapsibleSection(countLabel, staleNote, build, hint = null) {
   const section = build();
-  const details = /** @type {HTMLDetailsElement} */ (element("details"));
+  const details = /** @type {HTMLDetailsElement} */ (element("details", null, "section"));
   const summary = element("summary");
   const heading = section.firstElementChild;
   if (heading instanceof HTMLHeadingElement) summary.append(heading);
-  if (count !== null) summary.append(element("span", `${count}`, "section-count"));
+  summary.append(element("span", countLabel, "section-count"));
   if (staleNote !== "") {
     const note = element("span", null, "section-stale");
     note.append(icon("stale"), element("span", staleNote));
     summary.append(note);
+  }
+  if (hint !== null) {
+    const node = element("span", null, "section-hint");
+    node.append(hint);
+    summary.append(node);
   }
   const body = element("div", null, "section-body");
   while (section.firstChild !== null) body.append(section.firstChild);
@@ -451,17 +666,28 @@ function collapsibleSection(count, staleNote, build) {
 /**
  * Copy one recorded value to the clipboard. The button places text and does
  * nothing else: it opens no writer, collects no consent, and executes nothing.
+ * It reads "Copied" until it loses focus.
  * @param {string} buttonLabel @param {string} value @param {string} subject
  * @param {DashboardApplication} application @param {string} [suffix]
  */
 function copyControl(buttonLabel, value, subject, application, suffix = " It has not been executed.") {
-  const copy = /** @type {HTMLButtonElement} */ (element("button", buttonLabel));
+  const copy = /** @type {HTMLButtonElement} */ (element("button", null, "copy-control"));
   copy.type = "button";
-  copy.className = "copy-control";
+  const label = element("span", buttonLabel);
+  copy.append(icon("copy", " is-small"), label);
+  if (!buttonLabel.toLowerCase().includes(subject.toLowerCase())) {
+    copy.append(element("span", ` (${subject})`, "visually-hidden"));
+  }
   copy.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(value);
       application.live.textContent = `${subject} copied.${suffix}`;
+      copy.classList.add("is-copied");
+      label.textContent = "Copied";
+      copy.addEventListener("blur", () => {
+        copy.classList.remove("is-copied");
+        label.textContent = buttonLabel;
+      }, { once: true });
     } catch (error) {
       application.live.textContent = `Clipboard failed for the ${subject}; nothing was copied: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -624,26 +850,24 @@ export function closeDrawer() {
 }
 
 /**
- * Renders an accessible definition popover trigger for KPI and metric cards.
+ * An accessible information control for a heading or metric. The popover holds
+ * method text that would otherwise take a line of its own.
  * @param {string} title
  * @param {string} formula
- * @param {string} explanation
+ * @param {string} [explanation]
  */
-export function metricInfoButton(title, formula, explanation) {
+export function metricInfoButton(title, formula, explanation = "") {
   const wrapper = element("span", null, "info-trigger-wrapper");
-  const button = /** @type {HTMLButtonElement} */ (element("button", "\u24d8", "info-trigger"));
+  const button = /** @type {HTMLButtonElement} */ (element("button", "i", "info-trigger"));
   button.type = "button";
   button.setAttribute("aria-label", `Information about ${title}`);
   button.setAttribute("aria-expanded", "false");
 
-  const popover = element("div", null, "metric-popover");
+  const popover = element("span", null, "metric-popover");
   popover.setAttribute("role", "tooltip");
   popover.setAttribute("aria-hidden", "true");
-  popover.append(
-    element("h4", title),
-    element("p", formula, "popover-formula"),
-    element("p", explanation, "popover-explanation"),
-  );
+  popover.append(element("h4", title), element("p", formula));
+  if (explanation !== "") popover.append(element("p", explanation));
 
   function closePopover() {
     button.setAttribute("aria-expanded", "false");
@@ -679,838 +903,952 @@ export function metricInfoButton(title, formula, explanation) {
   return wrapper;
 }
 
-/**
- * Build run detail drawer content.
- * @param {RunSnapshot} snapshot
- * @param {ReturnType<typeof runExecutiveSummary>} summary
- * @param {DashboardApplication} application
- * @returns {HTMLElement}
- */
-export function buildRunDetailDrawer(snapshot, summary, application) {
-  const container = element("div", null, "drawer-content");
-  const projection = snapshotProjection(snapshot, application.inventory?.cliPath ?? "", application.platform);
-  const summaryPanel = renderExecutiveSummary(summary, projection, application);
-  container.append(summaryPanel, limitationsBlock(snapshot.limitations));
-  return container;
-}
+/* ------------------------------------------------------------------ *
+ * Recorded vocabulary shared by every view
+ * ------------------------------------------------------------------ */
+
+/** @typedef {import("./dashboard-model.js").FindingStatus} FindingStatus */
+
+/** @type {Record<FindingStatus, { label: string, tone: string, rank: number, active: boolean }>} */
+const FINDING_STATUS = {
+  blocking: { label: "Blocking", tone: "danger", rank: 0, active: true },
+  open: { label: "Open", tone: "warning", rank: 1, active: true },
+  non_blocking: { label: "Non-blocking", tone: "neutral", rank: 2, active: true },
+  earlier_round: { label: "Earlier round", tone: "neutral", rank: 3, active: false },
+  rejected: { label: "Rejected", tone: "neutral", rank: 4, active: false },
+  addressed: { label: "Addressed", tone: "success", rank: 5, active: false },
+};
+
+/** @type {Record<string, { name: string, description: string }>} */
+const COMMAND_PRESENTATION = {
+  status: { name: "Run status", description: "Inspect one run without changing state." },
+  doctor: { name: "Readiness check", description: "Inspect local readiness without spending." },
+  "verify-audit": { name: "Verify audit chain", description: "Recompute the whole audit chain for this repository." },
+  workflow: { name: "Next workflow step", description: "The run's recorded next governed action." },
+};
+
+/** @type {Record<import("./dashboard-model.js").CheckResult, [string, string]>} */
+const CHECK_RESULT = {
+  passed: ["Passed", "success"],
+  granted: ["Granted", "success"],
+  blocked: ["Blocked", "danger"],
+  in_progress: ["In progress", "active"],
+  not_reached: ["Not reached", "neutral"],
+  not_evaluated: ["Not evaluated", "neutral"],
+  not_verified: ["Not verified in this view", "neutral"],
+};
+
+/** @type {Record<string, string>} */
+const TOKEN_SERIES = { input: "series-2", output: "series-3", cacheRead: "series-4", cacheWrite: "series-8" };
 
 /**
- * Build finding detail drawer content.
- * @param {ReturnType<typeof findingCard>} card
- * @param {DashboardApplication} application
- * @returns {HTMLElement}
+ * @typedef {{
+ *   repositoryId: string, runId: number, runLabel: string, path: string,
+ *   card: ReturnType<typeof findingCard>, status: FindingStatus, stageKind: string,
+ *   severity: ReturnType<typeof cardSeverity>,
+ * }} FindingRow
  */
-export function buildFindingDetailDrawer(card, application) {
-  const container = element("div", null, "drawer-content");
-  const head = element("div", null, "finding-head");
-  head.append(element("h3", `Finding ${card.id}: ${card.title}`));
-  container.append(head);
-  container.append(definitionList([
-    ["Recorded intent key", card.intentKey],
-    ["Location", card.location],
-    ["Stage and round", `${card.stageId}, round ${card.round}`],
-    ["Disposition", card.decision === null ? "Open: no decision is recorded." : card.decision.disposition],
-    ["Final-panel blocking", card.finalPanelBlocking === true ? "Yes" : card.finalPanelBlocking === false ? "No" : "Not projected"],
-  ], "definitions compact"));
-
-  if (card.reports.length > 0) {
-    const reportsList = element("ul", null, "report-list");
-    for (const report of card.reports) {
-      const item = element("li", null, "report");
-      item.append(badge(report.severity, severityTone(report.severity)));
-      item.append(element("p", report.subject, "report-subject"));
-      item.append(element("p", `${text(report.reviewerId, "Reviewer not recorded")} · agent run ${report.agentRunId}`, "source-note"));
-      reportsList.append(item);
-    }
-    container.append(reportsList);
-  }
-
-  container.append(decisionEvidence(card, application));
-  return container;
-}
-
-/**
- * Build pipeline stage detail drawer content.
- * @param {import("./dashboard-model.js").DeliveryPipelineStage} stage
- * @param {DashboardApplication} application
- * @returns {HTMLElement}
- */
-export function buildPipelineStageDrawer(stage, application) {
-  const container = element("div", null, "drawer-content");
-  container.append(element("h3", `${stage.order}. ${stage.name}`));
-  container.append(badge(stage.status.toUpperCase(), stage.tone));
-
-  /** @type {[string, Node | string][]} */
-  const facts = [
-    ["Stage ID", stage.stageId === null ? "None" : String(stage.stageId)],
-    ["Status", stage.status],
-    ["Findings recorded", String(stage.findingsCount)],
-  ];
-  if (stage.failureReason !== null) {
-    facts.push(["Failure reason", stage.failureReason]);
-  }
-  if (stage.durationMs !== null) {
-    facts.push(["Duration", `${stage.durationMs}ms`]);
-  }
-  container.append(definitionList(facts, "definitions compact"));
-
-  if (stage.failureReason !== null) {
-    container.append(callout(`Stage execution blocked: ${stage.failureReason}`, "danger"));
-  }
-  return container;
-}
-
-/**
- * Build data quality detail drawer content.
- * @param {import("./dashboard-model.js").DataQualitySummary} dataQuality
- * @param {DashboardApplication} application
- * @returns {HTMLElement}
- */
-export function buildDataQualityDrawer(dataQuality, application) {
-  const container = element("div", null, "drawer-content");
-  container.append(element("h3", "Data Quality & Telemetry Observability"));
-  container.append(definitionList([
-    ["Snapshot coverage", dataQuality.coveragePercentage === null ? "Unavailable" : `${dataQuality.coveragePercentage}%`],
-    ["Fresh snapshots", String(dataQuality.freshCount)],
-    ["Stale snapshots", String(dataQuality.staleCount)],
-    ["Pending / Loading", String(dataQuality.pendingCount)],
-    ["Unavailable snapshots", String(dataQuality.unavailableCount)],
-    ["Missing execution duration", `${dataQuality.missingExecutionDuration} runs`],
-    ["Cost reported rows", dataQuality.costReportedPercentage === null ? "Unavailable" : `${dataQuality.costReportedPercentage}%`],
-    ["Historical trend status", dataQuality.historicalTrend],
-  ], "definitions compact"));
-  container.append(element("p", AVERAGE_EXECUTION_UNAVAILABLE_REASON, "source-note"));
-  return container;
-}
-
-/**
- * Build model assignments detail drawer content.
- * @param {import("./dashboard-model.js").ModelAssignmentsSummary} assignments
- * @param {DashboardApplication} application
- * @returns {HTMLElement}
- */
-export function buildModelAssignmentsDrawer(assignments, application) {
-  const container = element("div", null, "drawer-content");
-  container.append(element("h3", "Model & Agent Assignments"));
-  container.append(definitionList([
-    ["Planning model", text(assignments.planningModel, "Not configured")],
-    ["Implementation model", text(assignments.implementationModel, "Not configured")],
-    ["Test model", text(assignments.testModel, "Not configured")],
-    ["Reasoning effort level", assignments.effortLevel],
-  ], "definitions compact"));
-
-  if (assignments.reviewModels.length > 0) {
-    container.append(element("h4", "Code Review Panel Specialists"));
-    container.append(dataTable("Reviewer specialties and assigned model identifiers",
-      ["Specialty", "Model identifier"],
-      assignments.reviewModels.map((r) => [r.specialty, r.model])));
-  }
-  return container;
-}
 
 /* ------------------------------------------------------------------ *
- * Command Center Overview Canvas
+ * Finding drawer
  * ------------------------------------------------------------------ */
 
 /**
- * Render the Portfolio Status Banner.
- * @param {ReturnType<typeof portfolioStatusBanner>} banner
+ * Build finding detail drawer content. The recorded report subjects stay
+ * verbatim, and the decision evidence keeps every audit field.
+ * @param {FindingRow} row
  * @param {DashboardApplication} application
  * @returns {HTMLElement}
  */
-export function renderPortfolioBanner(banner, application) {
-  const section = element("section", null, `portfolio-banner tone-${banner.tone}`);
-  section.setAttribute("role", "region");
-  section.setAttribute("aria-label", "Portfolio Status Overview");
-
-  const left = element("div", null, "banner-status-group");
-  const badgeIcon = banner.status === "healthy" ? "✓" : banner.status === "blocked" ? "✕" : "⚠";
-  const badgeLabel = banner.status === "healthy" ? "Healthy" : banner.status === "blocked" ? "Blocked" : banner.status === "at_risk" ? "At Risk" : "Unknown";
-  const statusBadge = element("span", `${badgeIcon} ${badgeLabel}`, `status-badge tone-${banner.tone}`);
-  const summaryText = element("p", banner.summary, "banner-summary");
-  left.append(statusBadge, summaryText);
-
-  const right = element("div", null, "banner-actions-group");
-  for (const action of banner.actions) {
-    const btn = /** @type {HTMLButtonElement} */ (element("button", action.label, "btn-action"));
-    btn.type = "button";
-    btn.addEventListener("click", () => {
-      if (action.targetTab) {
-        if (action.runId !== undefined) {
-          application.selectedRunId = action.runId;
-        }
-        switchTab(application, action.targetTab);
-      }
-    });
-    right.append(btn);
+export function buildFindingDetailDrawer(row, application) {
+  const card = row.card;
+  const container = element("div", null, "drawer-content");
+  const chips = element("div", null, "drawer-chips");
+  const status = FINDING_STATUS[row.status];
+  chips.append(
+    badge(status.label, status.tone),
+    badge(row.severity.available ? row.severity.severity ?? "" : "Severity unranked",
+      row.severity.available ? severityTone(row.severity.severity ?? "") : "neutral", "severity"),
+    copyControl("Copy location", card.location, "finding location", application, ""),
+  );
+  container.append(chips);
+  container.append(definitionList([
+    ["Location", element("span", card.location, "mono")],
+    ["Stage", `${readableIntent(row.stageKind)} · stage ${card.stageId} · round ${card.round}`],
+    ["Intent key", element("span", card.intentKey, "mono")],
+    ["Disposition", card.decision === null
+      ? row.stageKind === "code_review" ? "None: code-review findings carry no disposition" : "None recorded"
+      : card.decision.disposition],
+    ["Final panel", card.finalPanelBlocking === true ? "Blocking"
+      : card.finalPanelBlocking === false ? "Below threshold" : "Not a final-panel result"],
+  ]));
+  const reports = element("section");
+  reports.append(element("h4", `Reports (${card.reports.length})`, "eyebrow"));
+  for (const report of card.reports) {
+    const tone = severityTone(report.severity);
+    const item = element("article", null, `report tone-${tone}`);
+    item.append(
+      badge(report.severity, tone, "severity"),
+      element("p", report.subject, "report-subject"),
+      element("p", `${text(report.reviewerId, "Reviewer not recorded")} · agent run ${report.agentRunId} · ${report.classification}`, "report-meta"),
+    );
+    reports.append(item);
   }
-  const freshness = element("span", banner.relativeFreshness, "banner-freshness");
-  right.append(freshness);
+  container.append(reports);
+  container.append(disclosure("Recorded decision evidence", decisionEvidence(card, application)));
+  return container;
+}
 
-  section.append(left, right);
+/** @param {DashboardApplication} application @param {FindingRow} row @param {HTMLElement | null} trigger */
+function openFindingDrawer(application, row, trigger) {
+  openDrawer(`${row.card.title} #${row.card.id}`, `Finding · ${row.runLabel} · ${pathTail(row.path)}`,
+    () => buildFindingDetailDrawer(row, application), application, trigger);
+}
+
+/**
+ * Every finding of one snapshot as a row, with its status from `findingStatus`
+ * and its severity ranked by `cardSeverity` against the run's frozen order.
+ * @param {string} repositoryId @param {string} path @param {RunSnapshot} snapshot
+ * @returns {FindingRow[]}
+ */
+function snapshotFindingRows(repositoryId, path, snapshot) {
+  const severities = severityOrder(snapshot.configuration);
+  const kinds = new Map(snapshot.stages.map((stage) => [stage.id, stage.kind]));
+  return snapshot.evidence.findings.map((finding) => {
+    const card = findingCard(finding);
+    const stageKind = kinds.get(finding.stageId) ?? "";
+    return {
+      repositoryId, runId: snapshot.run.id, runLabel: `${snapshot.run.slug} #${snapshot.run.id}`, path,
+      card, status: findingStatus(card, stageKind), stageKind, severity: cardSeverity(card, severities),
+    };
+  });
+}
+
+/** Status first, then the higher ranked severity, then the identifier. @param {FindingRow} left @param {FindingRow} right */
+function compareFindingRows(left, right) {
+  return FINDING_STATUS[left.status].rank - FINDING_STATUS[right.status].rank ||
+    (right.severity.rank ?? -1) - (left.severity.rank ?? -1) || left.card.id - right.card.id;
+}
+
+/**
+ * The drawer opener for a finding named by identifiers, as search and the
+ * attention queue carry them.
+ * @param {DashboardApplication} application @param {string} repositoryId @param {number} runId
+ * @param {number} findingId @param {HTMLElement | null} trigger
+ */
+function openFindingById(application, repositoryId, runId, findingId, trigger) {
+  const state = application.repositories.get(repositoryId);
+  const slot = state?.snapshots.get(runId);
+  const snapshot = slot === undefined ? null : slotSnapshot(slot);
+  if (state === undefined || snapshot === null) return;
+  const row = snapshotFindingRows(repositoryId, state.repository.path, snapshot).find((entry) => entry.card.id === findingId);
+  if (row !== undefined) openFindingDrawer(application, row, trigger);
+}
+
+/* ------------------------------------------------------------------ *
+ * Scope: the repository selection every view honours
+ * ------------------------------------------------------------------ */
+
+/**
+ * The header selection scopes every view. A selected run does not narrow the
+ * scope: opening a run from another repository returns the scope to all
+ * repositories instead, so only the header's own value is passed.
+ * @param {DashboardApplication} application
+ */
+function scopeViews(application) {
+  return repositoryViews({ repositories: application.repositories, repositoryFilter: application.repositoryFilter });
+}
+
+/** @typedef {{ repositoryId: string, path: string, run: RunSummary, snapshot: RunSnapshot | null, stale: boolean, loading: boolean }} ScopeEntry */
+
+/**
+ * The loaded runs in scope with the snapshot each carries, newest activity first.
+ * @param {ReturnType<typeof repositoryViews>} views
+ * @returns {ScopeEntry[]}
+ */
+function scopeEntries(views) {
+  const entries = views.flatMap((view) => view.runs.map((run) => {
+    const slot = view.snapshots.find((entry) => entry.runId === run.id);
+    return {
+      repositoryId: view.repositoryId, path: view.path, run,
+      snapshot: slot?.snapshot ?? null, stale: slot?.stale ?? false, loading: slot?.loading ?? false,
+    };
+  }));
+  return entries.sort((left, right) =>
+    Date.parse(right.run.lastRecordedAt) - Date.parse(left.run.lastRecordedAt) ||
+    left.repositoryId.localeCompare(right.repositoryId) || right.run.id - left.run.id);
+}
+
+/** The latest run-list observation across every configured repository. @param {DashboardApplication} application */
+function observationTime(application) {
+  /** @type {string | null} */
+  let latest = null;
+  for (const state of application.repositories.values()) {
+    const at = state.runs.envelope?.observedAt ?? null;
+    if (at !== null && (latest === null || Date.parse(at) > Date.parse(latest))) latest = at;
+  }
+  return latest;
+}
+
+/** @param {DashboardApplication} application @param {string} repositoryId @param {number} runId */
+function snapshotObservedAt(application, repositoryId, runId) {
+  return application.repositories.get(repositoryId)?.snapshots.get(runId)?.resource.envelope?.observedAt ?? null;
+}
+
+/** @param {DashboardApplication} application */
+function scopeData(application) {
+  const views = scopeViews(application);
+  const entries = scopeEntries(views);
+  const snapshots = entries.flatMap((entry) => entry.snapshot === null ? [] : [entry.snapshot]);
+  return {
+    views, entries, snapshots,
+    portfolio: portfolioProjection(views),
+    counts: findingStatusCounts(snapshots),
+    observedAt: observationTime(application),
+  };
+}
+
+/** @typedef {ReturnType<typeof scopeData>} ScopeData */
+
+/**
+ * The view's scope, named by the recorded project and the path tail, never by
+ * a repository identifier.
+ * @param {DashboardApplication} application @param {ScopeData} data
+ */
+function scopeLabel(application, data) {
+  const label = element("span", null, "scope-label");
+  const count = element("strong", `${plural(data.entries.length, "run")} loaded`);
+  const view = application.repositoryFilter === "" ? null : data.views[0] ?? null;
+  if (view === null) {
+    label.append(element("span", "All repositories · "), count,
+      element("span", ` from ${plural(application.repositories.size, "repository", "repositories")}`));
+  } else {
+    const identity = repositoryIdentity(view.path, view.runs);
+    const tail = element("span", pathTail(view.path), "mono");
+    tail.title = view.path;
+    label.append(element("span", `${identity.display} · `), tail, element("span", " · "), count);
+  }
+  return label;
+}
+
+/** Loaded values are unavailable, or still loading, until a snapshot contributes. @param {ScopeData} data @param {() => Node | string} value */
+function snapshotValue(data, value) {
+  if (data.snapshots.length > 0 || data.entries.length === 0) return value();
+  return data.entries.some((entry) => entry.loading) ? "Loading" : "Unavailable";
+}
+
+/* ------------------------------------------------------------------ *
+ * Cards
+ * ------------------------------------------------------------------ */
+
+/**
+ * One status card: label, primary value with status, breakdown, optional
+ * visualization, and a named click-through on one stretched button.
+ * @param {{
+ *   label: string, info?: HTMLElement, value: Node | string, textValue?: boolean,
+ *   unit?: Node | string, status?: Node | null, breakdown?: Node | string, viz?: Node[],
+ *   go?: string, onGo?: () => void,
+ * }} spec
+ */
+function statusCard(spec) {
+  const card = element("article", null, spec.onGo === undefined ? "card" : "card is-link");
+  if (spec.onGo !== undefined && spec.go !== undefined) {
+    const target = /** @type {HTMLButtonElement} */ (element("button", null, "card-target"));
+    target.type = "button";
+    target.setAttribute("aria-label", `${spec.label}: ${spec.go}`);
+    target.dataset.control = `card:${spec.label}`;
+    target.addEventListener("click", spec.onGo);
+    card.append(target);
+  }
+  const label = element("div", null, "card-label");
+  label.append(element("span", spec.label, "eyebrow"));
+  if (spec.info !== undefined) label.append(spec.info);
+  const row = element("div", null, "card-row");
+  const value = element("span", null, spec.textValue === true ? "card-value is-text" : "card-value");
+  value.append(spec.value);
+  row.append(value);
+  if (spec.unit !== undefined) {
+    const unit = element("span", null, "card-unit");
+    unit.append(spec.unit);
+    row.append(unit);
+  }
+  if (spec.status !== undefined && spec.status !== null) row.append(spec.status);
+  card.append(label, row);
+  if (spec.breakdown !== undefined) {
+    const breakdown = element("div", null, "card-breakdown");
+    breakdown.append(spec.breakdown);
+    card.append(breakdown);
+  }
+  for (const node of spec.viz ?? []) card.append(node);
+  if (spec.go !== undefined) card.append(element("span", spec.go, "card-go"));
+  return card;
+}
+
+/** Tokens consumed and the cost they generated: two cards in one frame, tokens first. @param {HTMLElement} tokens @param {HTMLElement} cost */
+function usagePair(tokens, cost) {
+  const pair = element("div", null, "card-pair");
+  pair.setAttribute("role", "group");
+  pair.setAttribute("aria-label", "Usage: tokens and known cost");
+  pair.append(tokens, cost);
+  return pair;
+}
+
+function costInfo() {
+  return metricInfoButton("Known cost", "The sum of costs reported on recorded agent rows in scope.",
+    "Complete reporting means every tracked row reported a cost. It is not a claim that every possible cost is known: process loss and missing telemetry can hide spend.");
+}
+
+/** @param {number} reported @param {number} rows */
+function reportingBadge(reported, rows) {
+  if (rows === 0) return null;
+  return reported === rows ? badge("Reporting complete", "success") : badge("Partial", "warning");
+}
+
+/**
+ * A proportion bar drawn with SVG attributes, because the policy forbids inline style.
+ * @param {[string, number][]} parts @param {string} label
+ */
+function splitBar(parts, label) {
+  const total = parts.reduce((sum, [, count]) => sum + count, 0) || 1;
+  const bar = svg("svg", {
+    class: "split-bar", viewBox: "0 0 100 6", preserveAspectRatio: "none", role: "img", "aria-label": label,
+  });
+  let x = 0;
+  for (const [className, count] of parts) {
+    if (count <= 0) continue;
+    const width = (count / total) * 100;
+    bar.append(svg("rect", {
+      class: className, x: x.toFixed(2), y: "0", width: Math.max(width - 0.8, 0.5).toFixed(2), height: "6",
+    }));
+    x += width;
+  }
+  return bar;
+}
+
+/** A text legend for a proportion bar; the bar's own label carries the counts. @param {[string, string][]} items */
+function legend(items) {
+  const node = element("div", null, "legend");
+  node.setAttribute("aria-hidden", "true");
+  for (const [tone, label] of items) {
+    const item = element("span", null, `tone-${tone}`);
+    item.append(element("span", null, "swatch"), element("span", label));
+    node.append(item);
+  }
+  return node;
+}
+
+/** A muted share bar; the top entry is drawn slightly stronger. @param {number} fraction @param {boolean} top */
+function meterBar(fraction, top) {
+  const bar = svg("svg", {
+    class: `bar-svg is-muted${top ? " is-top" : ""}`, viewBox: "0 0 100 8", preserveAspectRatio: "none",
+    "aria-hidden": "true", focusable: "false",
+  });
+  bar.append(svg("rect", { x: "0", y: "0", width: (Math.max(0, fraction) * 100).toFixed(1), height: "8", rx: "1" }));
+  return bar;
+}
+
+/** @param {import("./dashboard-model.js").TokenTotal} tokens @param {string} [label] @param {() => void} [onGo] */
+function tokensCard(tokens, label = "Tokens", onGo = undefined) {
+  const known = tokens.known;
+  const pairs = element("dl", null, "card-list is-pairs");
+  for (const entry of tokens.classes) {
+    pairs.append(element("dt", entry.known === null ? "Unavailable" : abbreviated(entry.known)), element("dd", entry.label.toLowerCase()));
+  }
+  return statusCard({
+    label,
+    value: known === null ? "Unavailable" : fragment(abbreviated(known), element("span", " tokens", "visually-hidden")),
+    breakdown: known === null ? "No contributing agent row reported a token class"
+      : fragment(element("span", exactCount(known), "mono"), " exact"),
+    viz: [pairs],
+    ...(onGo === undefined ? {} : { go: "View token usage", onGo }),
+  });
+}
+
+/**
+ * @param {{ knownUsd: number | null, reportedRows: number, agentRows: number }} cost
+ * @param {string} [label] @param {() => void} [onGo]
+ */
+function costCard(cost, label = "Known cost", onGo = undefined) {
+  return statusCard({
+    label, info: costInfo(), value: moneyNode(cost.knownUsd),
+    status: reportingBadge(cost.reportedRows, cost.agentRows),
+    breakdown: `Cost reported for ${cost.reportedRows} of ${cost.agentRows} tracked rows`,
+    ...(onGo === undefined ? {} : { go: "View cost by stage", onGo }),
+  });
+}
+
+/**
+ * The Overview's four status cards. Each click-through carries the filter it names.
+ * @param {ScopeData} data @param {DashboardApplication} application
+ */
+function renderStatusCards(data, application) {
+  const { portfolio, counts } = data;
+  const blocked = portfolio.blockedRuns;
+  const active = portfolio.activeRuns;
+  const completed = portfolio.completedRuns;
+  const cards = element("div", null, "cards is-four");
+  cards.append(statusCard({
+    label: "Run health", value: String(blocked), unit: toned(blocked, "danger", "Blocked"),
+    breakdown: fragment(`${completed} completed · ${active} in progress · `, element("strong", `${portfolio.runs} total`)),
+    viz: [
+      splitBar([["is-blocked", blocked], ["is-running", active], ["is-completed", completed]],
+        `${blocked} blocked, ${active} in progress, ${completed} completed`),
+      legend([["danger", "Blocked"], ["active", "In progress"], ["success", "Completed"]]),
+    ],
+    go: "View blocked runs",
+    onGo: () => { application.runFilter = "blocked"; switchTab(application, "runs"); application.main.focus(); },
+  }));
+  const settled = counts.total - counts.requireAttention;
+  const settledBreakdown = element("div", null, "card-breakdown");
+  settledBreakdown.append(
+    `${counts.addressed} addressed · ${counts.non_blocking} non-blocking · ${counts.earlier_round} earlier round · ${counts.rejected} rejected · `,
+    element("strong", `${counts.total} total`));
+  cards.append(statusCard({
+    label: "Active findings",
+    info: metricInfoButton("Finding states",
+      "Require attention: blocking (a final code-review panel result at or above the frozen threshold, or a blocking recorded decision) and open (a document-review finding with no recorded decision).",
+      "Non-blocking: a final-panel result below the threshold. Earlier round: code-review input the remediation loop consumed. Addressed and rejected: recorded decisions."),
+    value: snapshotValue(data, () => String(counts.requireAttention)), unit: "require attention",
+    breakdown: fragment(toned(counts.blocking, "danger", `${counts.blocking} blocking`), " · ",
+      toned(counts.open, "warning", `${counts.open} open`)),
+    viz: [
+      splitBar([["is-attention", counts.blocking], ["is-open", counts.open], ["is-settled", settled]],
+        `${counts.requireAttention} of ${counts.total} findings require attention`),
+      settledBreakdown,
+    ],
+    go: "View findings",
+    onGo: () => { application.findingStatusFilter = "attention"; switchTab(application, "findings"); application.main.focus(); },
+  }));
+  const toModels = () => { switchTab(application, "models"); application.main.focus(); };
+  cards.append(usagePair(
+    tokensCard(portfolio.tokens, "Tokens", toModels),
+    costCard({ knownUsd: portfolio.cost.knownUsd, reportedRows: portfolio.cost.reportedRows, agentRows: portfolio.cost.agentRows },
+      "Known cost", toModels)));
+  return cards;
+}
+
+/* ------------------------------------------------------------------ *
+ * Stage ledger and liveness
+ * ------------------------------------------------------------------ */
+
+/** @param {"passed" | "blocked" | "open" | "other"} result */
+function segmentClass(result) {
+  return `is-${result}`;
+}
+
+/**
+ * Whether a loaded run may be drawn live: the model's four-part rule, and only
+ * while auto-refresh keeps the observation fresh.
+ * @param {DashboardApplication} application @param {string} repositoryId @param {RunSnapshot} snapshot
+ */
+function runLiveness(application, repositoryId, snapshot) {
+  return liveness(snapshot, snapshotObservedAt(application, repositoryId, snapshot.run.id), Date.now(), AUTO_REFRESH_INTERVAL_MS);
+}
+
+/**
+ * The run's recorded stages in recorded order, from `stageLedger`. At micro
+ * size it is one segment per stage and a terminal cell; at full size each
+ * stage carries its name, gate result, and duration.
+ * @param {RunSnapshot} snapshot @param {boolean} full @param {boolean} live
+ */
+function stageLedgerNode(snapshot, full, live) {
+  const ledger = stageLedger(snapshot);
+  const segments = ledger.segments;
+  const endClass = ledger.terminal === "completed" ? "is-completed" : ledger.terminal === "stopped" ? "is-stopped" : "is-progress";
+  if (!full) {
+    const endText = ledger.terminal === "completed" ? "run completed" : ledger.terminal === "stopped" ? "run stopped" : "run in progress";
+    const node = element("span", null, "ledger");
+    node.setAttribute("role", "img");
+    node.setAttribute("aria-label", `${plural(segments.length, "recorded stage")}: ${segments
+      .map((segment) => `${stageLower(segment.kind)} ${segment.label.toLowerCase()}`).join(", ")}; ${endText}`);
+    node.title = segments.map((segment) => `${readableIntent(segment.kind)}: ${segment.label}`).join("\n");
+    for (const segment of segments) {
+      node.append(element("span", null,
+        `ledger-seg ${segmentClass(segment.result)}${live && segment.result === "open" ? " is-live" : ""}`));
+    }
+    node.append(element("span", null, `ledger-end ${endClass}`));
+    return node;
+  }
+  const list = element("ol", null, "ledger-full");
+  list.setAttribute("aria-label", "Recorded stages in recorded order");
+  for (const segment of segments) {
+    const step = element("li", null,
+      `ledger-step ${segmentClass(segment.result)}${live && segment.result === "open" ? " is-live" : ""}`);
+    step.append(element("span", null, "bar"), element("span", readableIntent(segment.kind), "name"),
+      element("span", `gate ${segment.gateResult ?? "none"} · ${duration(segment.durationMs)}`, "meta"));
+    list.append(step);
+  }
+  if (ledger.terminal !== "in_progress") {
+    const step = element("li", null, `ledger-step ${endClass}`);
+    const meta = element("span", null, "meta");
+    if (ledger.terminal === "stopped") meta.textContent = "no later stage";
+    else meta.append(shortTimeNode(snapshot.activity.lastRecordedAt));
+    step.append(element("span", null, "bar"), element("span", ledger.terminal === "stopped" ? "Stopped" : "Completed", "name"), meta);
+    list.append(step);
+  }
+  return list;
+}
+
+/**
+ * The liveness tag. The lock names a process in this repository, not a run or
+ * an agent. With auto-refresh off the observation ages, so LIVE is stated as
+ * of the last observation and never pulses.
+ * @param {ReturnType<typeof liveness>} state @param {boolean} autoRefresh
+ */
+function liveTag(state, autoRefresh) {
+  if (state === "not_in_progress") return null;
+  const live = state === "live" && autoRefresh;
+  const tag = element("span", null, `live-tag ${live ? "is-live" : "is-static"}`);
+  tag.title = "The repository writer lock names a process in this repository, not a run or an agent.";
+  tag.append(element("span", null, "dot"), element("span", state === "live"
+    ? autoRefresh ? "Live" : "Live at last observation"
+    : state === "lock_unreadable" ? "Writer lock unreadable" : "No live writer"));
+  return tag;
+}
+
+/** A recorded time as "N min ago" relative to the observation; the exact time is on hover. @param {string | null} value @param {string | null} observedAt */
+function relativeNode(value, observedAt) {
+  const presentation = relativeTimePresentation(value, observedAt);
+  if (!presentation.available) return element("span", presentation.relative, "unavailable");
+  const node = /** @type {HTMLTimeElement} */ (element("time", presentation.relative));
+  node.dateTime = presentation.utc;
+  node.title = presentation.exact;
+  return node;
+}
+
+const SHORT_TIME = new Intl.DateTimeFormat("en-US", {
+  month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short",
+});
+
+/** A recorded time as a short local date and time; the exact time is on hover. @param {string | null} value */
+function shortTimeNode(value) {
+  const presentation = relativeTimePresentation(value, null);
+  if (!presentation.available) return element("span", "Unavailable", "unavailable");
+  const node = /** @type {HTMLTimeElement} */ (element("time", SHORT_TIME.format(new Date(presentation.utc))));
+  node.dateTime = presentation.utc;
+  node.title = presentation.exact;
+  return node;
+}
+
+/* ------------------------------------------------------------------ *
+ * Overview
+ * ------------------------------------------------------------------ */
+
+/** @type {Record<string, string>} */
+const MAP_CELL_LABEL = { passed: "passed", blocked: "blocked", open: "in progress", other: "recorded", not_reached: "not reached" };
+
+/**
+ * How far each loaded run got, from `stageMap`.
+ * @param {ScopeData} data @param {DashboardApplication} application
+ */
+function renderStageMap(data, application) {
+  const loaded = data.entries.filter((entry) => entry.snapshot !== null);
+  const snapshots = loaded.map((entry) => /** @type {RunSnapshot} */ (entry.snapshot));
+  const map = stageMap(snapshots);
+  const section = region("Run progression", {
+    info: metricInfoButton("Run progression",
+      "Columns are the stage kinds the loaded runs recorded, in recorded stage order. Each run is one cell per column; an empty cell is a stage that run has not reached.",
+      "A marker shows where a run stopped or completed. Only a stage with fresh live-writer telemetry animates."),
+  });
+  if (map.columns.length === 0) {
+    section.append(element("p", loaded.length === 0 ? "No loaded run has a snapshot yet." : "No loaded run has recorded a stage.", "att-empty"));
+    return section;
+  }
+  const live = loaded.map((entry) => application.autoRefresh && entry.snapshot !== null &&
+    runLiveness(application, entry.repositoryId, entry.snapshot) === "live");
+  const list = element("ol", null, "stage-map");
+  list.setAttribute("aria-label", "Loaded runs by recorded stage");
+  map.columns.forEach((column, index) => {
+    const item = element("li", null, "map-stage");
+    const name = element("span", readableIntent(column.kind), "name");
+    name.title = readableIntent(column.kind);
+    const track = element("span", null, "map-track");
+    track.setAttribute("aria-hidden", "true");
+    /** @type {string[]} */
+    const spoken = [];
+    map.rows.forEach((row, rowIndex) => {
+      const entry = loaded[rowIndex];
+      const cell = row.cells[index] ?? "not_reached";
+      if (entry === undefined) return;
+      const className = cell === "passed" ? "" : cell === "not_reached" ? " is-empty" : ` is-${cell}`;
+      const node = element("span", null, `map-cell${className}${cell === "open" && live[rowIndex] === true ? " is-live" : ""}`);
+      const label = `${entry.run.slug} #${entry.run.id} · ${pathTail(entry.path)}: ${MAP_CELL_LABEL[cell] ?? cell}`;
+      node.title = label;
+      spoken.push(label);
+      track.append(node);
+    });
+    const marks = element("span", null, "map-marks");
+    if (column.stopped > 0) marks.append(element("span", `${column.stopped} blocked here`, "map-mark tone-danger"));
+    if (column.completed > 0) marks.append(element("span", `${column.completed} completed`, "map-mark tone-success"));
+    item.append(name, track, element("span", `${column.reached}/${column.total} reached`, "reached"), marks,
+      element("span", spoken.join("; "), "visually-hidden"));
+    list.append(item);
+  });
+  section.append(list);
+  return section;
+}
+
+const ATTENTION_CAP = 8;
+
+/**
+ * What needs the operator, from `needsAttentionQueue`: blocked runs, then
+ * blocking and open findings. Findings carry no age because a finding row
+ * records no time.
+ * @param {ScopeData} data @param {DashboardApplication} application
+ */
+function renderAttentionQueue(data, application) {
+  const queue = needsAttentionQueue(data.views);
+  const blocking = queue.findings.filter((item) => item.status === "blocking").length;
+  const open = queue.findings.length - blocking;
+  const total = queue.runs.length + queue.findings.length;
+  const title = total === 0 ? "Nothing requires attention" : `${plural(total, "item")} require${total === 1 ? "s" : ""} attention`;
+  const filter = application.attentionFilter;
+  const section = region(title, total === 0 ? {} : {
+    info: metricInfoButton("Order", "Ordered by operational impact, severity, and recency: blocked runs by latest activity, then blocking findings, then open findings, each by recorded severity."),
+    end: chipGroup("Show", "attention", [
+      { value: "", label: "All", count: total },
+      { value: "run", label: "Blocked runs", count: queue.runs.length },
+      { value: "blocking", label: "Blocking findings", count: blocking },
+      { value: "open", label: "Open findings", count: open },
+    ], filter, (value) => { application.attentionFilter = value; render(application); }),
+    sub: "Blocked runs are prioritized, followed by blocking and open findings.",
+  });
+  if (total === 0) {
+    section.append(element("p", "No blocked runs and no blocking or open findings in this scope.", "att-empty"));
+    return section;
+  }
+  const runs = filter === "" || filter === "run" ? queue.runs : [];
+  const findings = filter === "run" ? [] : queue.findings.filter((item) => filter === "" || item.status === filter);
+  const shownRuns = runs.slice(0, ATTENTION_CAP);
+  const shownFindings = findings.slice(0, Math.max(0, ATTENTION_CAP - shownRuns.length));
+  if (shownRuns.length > 0) {
+    const head = element("div", "Blocked runs ", "group-head");
+    head.append(element("span", String(runs.length), "num"));
+    const list = element("ol");
+    for (const item of shownRuns) {
+      const entry = element("li", null, "att-item tone-danger");
+      const badges = element("span", null, "att-badges");
+      badges.append(badge("Blocked", "danger"));
+      const main = element("span", null, "att-main");
+      const target = /** @type {HTMLButtonElement} */ (element("button", null, "att-title"));
+      target.type = "button";
+      target.dataset.control = `attention-run:${item.repositoryId}:${item.runId}`;
+      target.append(`${item.slug} `, element("span", `#${item.runId}`, "num"),
+        ` · stopped at ${item.stageKind === null ? "an unrecorded stage" : stageLower(item.stageKind)}`);
+      target.addEventListener("click", () => openRun(application, item.repositoryId, item.runId));
+      const meta = element("span", null, "att-meta");
+      const tail = element("span", pathTail(item.repositoryPath), "mono");
+      tail.title = item.repositoryPath;
+      meta.append(`${item.project} · `, tail, item.stageNumber === null ? "" : ` · stage ${item.stageNumber}`);
+      main.append(target, meta);
+      const facts = element("span", null, "att-facts");
+      facts.append(item.blocking > 0 ? element("strong", plural(item.blocking, "blocking finding"), "tone-danger")
+        : item.open > 0 ? element("strong", plural(item.open, "open finding"), "tone-warning")
+          : element("span", "No blocking or open finding"),
+      ` · ${usdPresentation(item.knownUsd).display} known cost`);
+      const age = element("span", null, "att-age");
+      age.append(relativeNode(item.lastRecordedAt, data.observedAt));
+      const actions = element("span", null, "att-actions");
+      const view = /** @type {HTMLButtonElement} */ (element("button", "View findings", "text-btn is-quiet"));
+      view.type = "button";
+      view.addEventListener("click", () => openRun(application, item.repositoryId, item.runId, true));
+      actions.append(view);
+      entry.append(badges, main, facts, age, actions);
+      list.append(entry);
+    }
+    section.append(head, list);
+  }
+  if (shownFindings.length > 0) {
+    const head = element("div", "Findings ", "group-head");
+    head.append(element("span", String(findings.length), "num"));
+    const list = element("ol");
+    for (const item of shownFindings) {
+      const status = item.status === "blocking" ? FINDING_STATUS.blocking : FINDING_STATUS.open;
+      const entry = element("li", null, `att-item tone-${status.tone}`);
+      const badges = element("span", null, "att-badges");
+      badges.append(badge(status.label, status.tone),
+        badge(item.severity ?? "Unranked", item.severity === null ? "neutral" : severityTone(item.severity), "severity"));
+      const main = element("span", null, "att-main");
+      const target = /** @type {HTMLButtonElement} */ (element("button", null, "att-title"));
+      target.type = "button";
+      target.dataset.control = `attention-finding:${item.repositoryId}:${item.runId}:${item.findingId}`;
+      target.append(`${item.title} `, element("span", `#${item.findingId}`, "num"));
+      target.addEventListener("click", () => openFindingById(application, item.repositoryId, item.runId, item.findingId, target));
+      const meta = element("span", null, "att-meta");
+      meta.append(`${item.slug} #${item.runId} · ${item.stageKind === null ? "Unrecorded stage" : readableIntent(item.stageKind)}, round ${item.round} · `,
+        element("span", item.location, "mono"));
+      main.append(target, meta);
+      const facts = element("span", item.status === "blocking"
+        ? `Final panel, round ${item.round}${item.maxRounds === null ? "" : ` of ${item.maxRounds}`}`
+        : "No recorded decision", "att-facts");
+      const actions = element("span", null, "att-actions");
+      actions.append(copyControl("Copy location", item.location, "finding location", application, ""));
+      entry.append(badges, main, facts, element("span", null, "att-age"), actions);
+      list.append(entry);
+    }
+    section.append(head, list);
+  }
+  if (runs.length > shownRuns.length || findings.length > shownFindings.length) {
+    const foot = element("div", null, "region-foot");
+    foot.append(element("span", `Showing ${shownRuns.length + shownFindings.length} of ${runs.length + findings.length}`));
+    if (runs.length > shownRuns.length) {
+      const all = /** @type {HTMLButtonElement} */ (element("button", "View all blocked runs", "text-btn"));
+      all.type = "button";
+      all.addEventListener("click", () => { application.runFilter = "blocked"; switchTab(application, "runs"); });
+      foot.append(all);
+    }
+    if (findings.length > shownFindings.length) {
+      const all = /** @type {HTMLButtonElement} */ (element("button", "View all findings requiring attention", "text-btn"));
+      all.type = "button";
+      all.addEventListener("click", () => { application.findingStatusFilter = "attention"; switchTab(application, "findings"); });
+      foot.append(all);
+    }
+    section.append(foot);
+  }
   return section;
 }
 
 /**
- * Render the 6-card outcome-focused Horizontal KPI Strip.
- * @param {ReturnType<typeof commandCenterKpis>} kpis
- * @param {DashboardApplication} application
- * @returns {HTMLElement}
+ * @param {ScopeEntry[]} entries @param {string} filter
+ * @param {Map<string, Map<number, FindingStatus>>} statuses
  */
-export function renderCommandCenterKpis(kpis, application) {
-  const strip = element("div", null, "kpi-strip");
-  strip.setAttribute("role", "region");
-  strip.setAttribute("aria-label", "Portfolio Key Performance Indicators");
+function filterEntries(entries, filter, statuses) {
+  return entries.filter((entry) => {
+    const status = entry.run.status;
+    if (filter === "blocked") return status === "blocked";
+    if (filter === "completed") return status === "completed";
+    if (filter === "running") return status !== "blocked" && status !== "completed";
+    if (filter === "has-blocking") {
+      return [...(statuses.get(`${entry.repositoryId}:${entry.run.id}`)?.values() ?? [])].includes("blocking");
+    }
+    return true;
+  });
+}
 
-  for (const kpi of kpis) {
-    const card = element("div", null, `kpi-card tone-${kpi.tone}`);
-    card.setAttribute("tabindex", "0");
-    card.setAttribute("role", "button");
-    card.setAttribute("aria-label", `${kpi.label}: ${kpi.value}, ${kpi.qualifier}`);
-
-    const header = element("div", null, "kpi-card-header");
-    const label = element("span", kpi.label, "kpi-label");
-    const infoBtn = metricInfoButton(kpi.label, kpi.formula, kpi.explanation);
-    header.append(label, infoBtn);
-
-    const body = element("div", null, "kpi-card-body");
-    const val = element("span", String(kpi.value), "kpi-value");
-    const qual = element("span", kpi.qualifier, "kpi-qualifier");
-    body.append(val, qual);
-
-    card.append(header, body);
-
-    card.addEventListener("click", (e) => {
-      if (e.target instanceof HTMLElement && e.target.closest(".info-trigger-wrapper")) return;
-      if (kpi.id === "portfolio-health" || kpi.id === "blocked-deliveries") {
-        switchTab(application, "runs");
-      } else if (kpi.id === "open-findings") {
-        switchTab(application, "findings");
-      } else if (kpi.id === "governance-coverage") {
-        switchTab(application, "governance");
-      } else if (kpi.id === "release-ready" || kpi.id === "delivery-success") {
-        switchTab(application, "runs");
-      }
-    });
-    card.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        card.click();
-      }
-    });
-
-    strip.append(card);
+/** @param {ScopeEntry[]} entries */
+function entryStatuses(entries) {
+  /** @type {Map<string, Map<number, FindingStatus>>} */
+  const statuses = new Map();
+  for (const entry of entries) {
+    if (entry.snapshot !== null) statuses.set(`${entry.repositoryId}:${entry.run.id}`, findingStatuses(entry.snapshot));
   }
+  return statuses;
+}
+
+/**
+ * The loaded runs as one table. Every ledger comes from `stageLedger`; a
+ * pending snapshot shows a skeleton rather than an empty ledger.
+ * @param {ScopeEntry[]} entries @param {Map<string, Map<number, FindingStatus>>} statuses
+ * @param {DashboardApplication} application @param {string} key
+ * @param {{ repositoryId: string, runId: number } | null} selected @param {string | null} observedAt
+ */
+function runTableNode(entries, statuses, application, key, selected, observedAt) {
+  /** @param {ScopeEntry} entry */
+  const counts = (entry) => {
+    const values = [...(statuses.get(`${entry.repositoryId}:${entry.run.id}`)?.values() ?? [])];
+    return { total: values.length, blocking: values.filter((value) => value === "blocking").length, open: values.filter((value) => value === "open").length };
+  };
+  /** @param {ScopeEntry} entry */
+  const knownUsd = (entry) => entry.snapshot === null || entry.snapshot.cost.costReportedRows === 0 ? null : entry.snapshot.cost.knownUsd;
+  /** @type {TableColumn<ScopeEntry>[]} */
+  const columns = [
+    {
+      label: "Run", sort: (entry) => `${entry.run.slug} ${entry.run.id}`,
+      cell: (entry) => {
+        const cell = element("div", null, "run-cell");
+        const link = /** @type {HTMLButtonElement} */ (element("button", null, "row-link"));
+        link.type = "button";
+        link.dataset.control = `${key}-run:${entry.repositoryId}:${entry.run.id}`;
+        link.append(`${entry.run.slug} `, element("span", `#${entry.run.id}`, "num"));
+        const tail = element("span", pathTail(entry.path), "run-path");
+        tail.title = entry.path;
+        cell.append(link, tail);
+        return cell;
+      },
+    },
+    { label: "Project", className: "muted col-secondary", headClass: "col-secondary", cell: (entry) => entry.run.project },
+    {
+      label: "State", sort: (entry) => entry.run.status,
+      cell: (entry) => {
+        const presentation = statusPresentation(entry.run.status, entry.run.phase);
+        const cell = element("span", null, "state-stage");
+        cell.append(badge(presentation.label, presentation.tone));
+        if (entry.snapshot !== null) {
+          const stopped = stageLedger(entry.snapshot).segments.findLast((segment) => segment.result === "blocked") ?? null;
+          if (stopped !== null && entry.run.status === "blocked") cell.append(element("span", readableIntent(stopped.kind), "stage-name"));
+          const tag = liveTag(runLiveness(application, entry.repositoryId, entry.snapshot), application.autoRefresh);
+          if (tag !== null) cell.append(tag);
+        }
+        if (entry.stale) cell.append(element("span", "Stale", "section-stale"));
+        return cell;
+      },
+    },
+    {
+      label: "Recorded stages",
+      cell: (entry) => {
+        if (entry.snapshot !== null) {
+          return stageLedgerNode(entry.snapshot, false, application.autoRefresh &&
+            runLiveness(application, entry.repositoryId, entry.snapshot) === "live");
+        }
+        const state = snapshotState({ runId: entry.run.id, snapshot: null, stale: entry.stale, loading: entry.loading });
+        if (state === "pending") {
+          const pending = element("span", null, "skeleton ledger-skeleton");
+          pending.append(element("span", "Loading", "visually-hidden"));
+          return pending;
+        }
+        return element("span", "Unavailable", "unavailable");
+      },
+    },
+    {
+      label: "Findings", numeric: true, sort: (entry) => counts(entry).total,
+      cell: (entry) => {
+        if (entry.snapshot === null) return element("span", "Unavailable", "unavailable");
+        const value = counts(entry);
+        const cell = element("span", null, "count-cell");
+        if (value.blocking > 0) cell.append(element("span", `${value.blocking} blocking`, "count-flag tone-danger"));
+        else if (value.open > 0) cell.append(element("span", `${value.open} open`, "count-flag tone-warning"));
+        cell.append(element("span", String(value.total)));
+        return cell;
+      },
+    },
+    { label: "Known cost", numeric: true, sort: (entry) => knownUsd(entry) ?? -1, cell: (entry) => moneyNode(knownUsd(entry)) },
+    {
+      label: "Last activity", numeric: true, className: "muted", sort: (entry) => Date.parse(entry.run.lastRecordedAt),
+      cell: (entry) => relativeNode(entry.run.lastRecordedAt, observedAt),
+    },
+  ];
+  return sortableTable({
+    caption: selected === null ? "Loaded runs" : "Loaded runs; select a row to inspect the run",
+    key, rows: entries, columns, application,
+    defaultSort: { column: "Last activity", direction: "descending" },
+    rowSetup: (tr, entry) => {
+      tr.className = application.justUpdated.has(`${entry.repositoryId}:${entry.run.id}`) ? "is-row-link just-updated" : "is-row-link";
+      if (selected !== null) {
+        tr.setAttribute("aria-selected", String(selected.repositoryId === entry.repositoryId && selected.runId === entry.run.id));
+      }
+      tr.addEventListener("click", () => openRun(application, entry.repositoryId, entry.run.id));
+    },
+  });
+}
+
+/**
+ * Recent runs on the Overview: newest activity first, state chips, sortable
+ * headings, and a footer naming the per-repository limit.
+ * @param {ScopeData} data @param {DashboardApplication} application
+ */
+function renderRunTable(data, application) {
+  const statuses = entryStatuses(data.entries);
+  const blocked = data.entries.filter((entry) => entry.run.status === "blocked").length;
+  const completed = data.entries.filter((entry) => entry.run.status === "completed").length;
+  const all = /** @type {HTMLButtonElement} */ (element("button", "View all runs", "text-btn"));
+  all.type = "button";
+  all.addEventListener("click", () => switchTab(application, "runs"));
+  const section = region("Recent runs", {
+    count: String(data.entries.length),
+    end: fragment(chipGroup("State", "recent", [
+      { value: "", label: "All", count: data.entries.length },
+      { value: "blocked", label: "Blocked", count: blocked },
+      { value: "running", label: "In progress", count: data.entries.length - blocked - completed },
+      { value: "completed", label: "Completed", count: completed },
+    ], application.recentFilter, (value) => { application.recentFilter = value; render(application); }), all),
+  });
+  const shown = filterEntries(data.entries, application.recentFilter, statuses);
+  if (data.entries.length === 0) section.append(element("p", "No run is loaded in this scope.", "att-empty"));
+  else if (shown.length === 0) section.append(element("p", "No loaded run matches this filter.", "att-empty"));
+  else section.append(runTableNode(shown, statuses, application, "recent", null, data.observedAt));
+  section.append(element("div", `Latest ${application.limit} per repository · select a column heading to sort`, "region-foot"));
+  return section;
+}
+
+/** @param {string} label @param {string} state @param {string} tone @param {string} note */
+function coverageCell(label, state, tone, note) {
+  const cell = element("div", null, "coverage-cell");
+  const value = element("span", null, `coverage-state tone-${tone}`);
+  value.append(element("span", null, "dot"), element("span", state, "text-default"));
+  cell.append(element("span", label, "eyebrow"), value, element("span", note, "coverage-note"));
+  return cell;
+}
+
+/** @param {{ reported: number, total: number }} count @param {string} complete */
+function coverageState(count, complete) {
+  if (count.total === 0) return /** @type {[string, string]} */ (["No agent rows", "neutral"]);
+  return /** @type {[string, string]} */ (count.reported === count.total ? [complete, "success"] : ["Partial", "warning"]);
+}
+
+/** "Can I trust this data?" as counts of what the loaded rows reported. @param {ReturnType<typeof repositoryViews>} views */
+function coverageStrip(views) {
+  const coverage = telemetryCoverage(views);
+  const strip = element("div", null, "coverage");
+  const snapshots = coverage.snapshots;
+  strip.append(coverageCell("Snapshots",
+    snapshots.total === 0 ? "None loaded" : snapshots.current === snapshots.total ? "Current" : "Partial",
+    snapshots.total === 0 ? "neutral" : snapshots.current === snapshots.total ? "success" : "warning",
+    `${snapshots.current} of ${snapshots.total} loaded and current`));
+  strip.append(coverageCell("Cost", ...coverageState(coverage.cost, "Reported"), `${coverage.cost.reported} of ${coverage.cost.total} agent rows`));
+  strip.append(coverageCell("Tokens", ...coverageState(coverage.tokens, "Reported"), `${coverage.tokens.reported} of ${coverage.tokens.total} agent rows`));
+  strip.append(coverageCell("Model attribution", ...coverageState(coverage.model, "Reported"),
+    `effective model on ${coverage.model.reported} of ${coverage.model.total} rows`));
+  strip.append(coverageCell("Duration", ...coverageState(coverage.duration, "Recorded"), `${coverage.duration.reported} of ${coverage.duration.total} agent rows`));
+  strip.append(coverageCell("History", "Not collected", "neutral", "each view is a current snapshot"));
+  strip.append(coverageCell("Audit chain", "Not verified here", "neutral", "verify-audit recomputes it"));
   return strip;
 }
 
-/**
- * Render the Needs Attention exception queue.
- * @param {ReturnType<typeof needsAttentionQueue>} queue
- * @param {DashboardApplication} application
- * @returns {HTMLElement}
- */
-export function renderNeedsAttention(queue, application) {
-  const panelEl = panel(`Needs Attention (${queue.length})`, "needs-attention", "needs-attention-panel");
-
-  if (queue.length === 0) {
-    panelEl.append(element("p", "No items require attention. All delivery gates and governance checks have passed.", "empty-state"));
-    return panelEl;
-  }
-
-  const list = element("div", null, "attention-list");
-  for (const item of queue) {
-    const card = element("article", null, `attention-card severity-${item.severity}`);
-    card.setAttribute("role", "listitem");
-
-    const header = element("div", null, "attention-card-header");
-    const typeChip = element("span", item.type.toUpperCase(), `category-chip category-${item.type}`);
-    const severityBadge = element("span", item.severity.toUpperCase(), `badge tone-${severityTone(item.severity)}`);
-    const titleText = element("h3", item.title, "attention-title");
-    header.append(typeChip, severityBadge, titleText);
-
-    const body = element("div", null, "attention-card-body");
-    const explanation = element("p", item.explanation, "attention-explanation");
-    const meta = element("div", null, "attention-meta");
-    const scopeTag = element("span", `${item.repositoryId} · Run #${item.runId}`, "attention-scope");
-    const timeTag = element("span", null, "attention-time");
-    timeTag.append(recordedTime(item.lastActivity));
-    meta.append(scopeTag, timeTag);
-    body.append(explanation, meta);
-
-    const actions = element("div", null, "attention-actions");
-    for (const action of item.actions) {
-      const btn = /** @type {HTMLButtonElement} */ (element("button", action.label, "btn-action-sm"));
-      btn.type = "button";
-      btn.addEventListener("click", () => {
-        if (action.drawer === "data_quality") {
-          const repo = application.repositories.get(item.repositoryId);
-          const slot = item.runId !== null ? repo?.snapshots.get(item.runId) : undefined;
-          const snap = slot ? slotSnapshot(slot) : null;
-          const dq = dataQualitySummary(portfolioProjection(repositoryViews(application)), snap ? [snap] : []);
-          openDrawer("Data Quality & Telemetry", "Quality Details", () => buildDataQualityDrawer(dq, application), application, btn);
-        } else if (action.drawer === "finding") {
-          const repo = application.repositories.get(item.repositoryId);
-          const slot = item.runId !== null ? repo?.snapshots.get(item.runId) : undefined;
-          const snap = slot ? slotSnapshot(slot) : null;
-          const finding = snap?.evidence.findings.find((f) => `finding-${item.repositoryId}-${item.runId}-${f.id}` === item.id);
-          if (finding) {
-            const cardData = findingCard(finding);
-            openDrawer(`Finding ${cardData.id}`, "Finding Details", () => buildFindingDetailDrawer(cardData, application), application, btn);
-          } else {
-            switchTab(application, "findings");
-          }
-        } else if (action.targetTab) {
-          if (action.runId !== undefined) {
-            application.selectedRunId = action.runId;
-            application.selectedRepositoryId = action.repositoryId ?? application.selectedRepositoryId;
-          }
-          switchTab(application, action.targetTab);
-        }
-      });
-      actions.append(btn);
-    }
-
-    card.append(header, body, actions);
-    list.append(card);
-  }
-
-  panelEl.append(list);
-  return panelEl;
+/** @param {ScopeData} data */
+function renderCoverage(data) {
+  const section = element("section", null, "region");
+  section.setAttribute("aria-label", "Telemetry coverage");
+  section.append(coverageStrip(data.views));
+  return section;
 }
 
 /**
- * Render the 8-stage interactive Delivery Pipeline stepper.
- * @param {RunSnapshot | null} targetSnapshot
- * @param {string | null} targetRepoId
- * @param {number | null} targetRunId
- * @param {DashboardApplication} application
- * @returns {HTMLElement}
- */
-export function renderDeliveryPipeline(targetSnapshot, targetRepoId, targetRunId, application) {
-  const panelEl = panel("Delivery Pipeline", "pipeline", "delivery-pipeline-panel");
-
-  if (!targetSnapshot || targetRepoId === null || targetRunId === null) {
-    panelEl.append(element("p", "No run selected or available for pipeline inspection.", "empty-state"));
-    return panelEl;
-  }
-
-  const headerMeta = element("div", null, "pipeline-header-meta");
-  const targetTag = element("span", `Inspecting: ${targetRepoId} / Run #${targetRunId}`, "pipeline-target-badge");
-  headerMeta.append(targetTag);
-  panelEl.append(headerMeta);
-
-  const stages = deliveryPipelineStages(targetSnapshot);
-  const stepper = element("ol", null, "pipeline-stepper");
-
-  for (let i = 0; i < stages.length; i++) {
-    const stage = stages[i];
-    const item = element("li", null, `stepper-step step-${stage.status}`);
-    item.setAttribute("role", "button");
-    item.setAttribute("tabindex", "0");
-    item.setAttribute("aria-label", `${stage.name}: ${stage.status}`);
-
-    const iconNode = element("div", null, `step-icon step-icon-${stage.symbol}`);
-    const symbolText = stage.symbol === "check" ? "✓" : stage.symbol === "x" ? "✕" : stage.symbol === "clock" ? "⏳" : "•";
-    iconNode.textContent = symbolText;
-
-    const content = element("div", null, "step-content");
-    const name = element("span", stage.name, "step-name");
-    const badgeEl = element("span", stage.status.replace("_", " ").toUpperCase(), `badge tone-${stage.tone}`);
-    content.append(name, badgeEl);
-
-    if (stage.durationMs !== null) {
-      content.append(element("span", `${stage.durationMs}ms`, "step-duration"));
-    }
-
-    item.append(iconNode, content);
-
-    item.addEventListener("click", () => {
-      openDrawer(stage.name, "Pipeline Stage", () => buildPipelineStageDrawer(stage, application), application, item);
-    });
-    item.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        item.click();
-      }
-    });
-
-    stepper.append(item);
-  }
-
-  panelEl.append(stepper);
-  return panelEl;
-}
-
-/**
- * Render the Governance Health panel.
- * @param {ReturnType<typeof governanceHealthSummary> | null} summary
- * @param {DashboardApplication} application
- * @returns {HTMLElement}
- */
-export function renderGovernanceHealth(summary, application) {
-  const panelEl = panel("Governance Health", "governance-health", "governance-health-panel");
-
-  if (!summary) {
-    panelEl.append(element("p", "No run governance evidence observed yet.", "empty-state"));
-    return panelEl;
-  }
-
-  const content = element("div", null, "governance-health-content");
-
-  const controlsRow = element("div", null, "health-row");
-  const controlsLabel = element("span", "Enforced Controls", "health-label");
-  const controlsVal = element("span", `${summary.controlsPassed} of ${summary.controlsTotal} passed`, "health-val");
-  controlsRow.append(controlsLabel, controlsVal);
-  content.append(controlsRow);
-
-  const findingsBlock = element("div", null, "health-findings-block");
-  const findingsTitle = element("span", "Findings by Severity", "health-label");
-  const sevGroup = element("div", null, "severity-counts-group");
-  const sevs = summary.findingsBySeverity;
-  sevGroup.append(
-    element("span", `Critical: ${sevs.critical}`, `badge tone-${sevs.critical > 0 ? "critical" : "neutral"}`),
-    element("span", `High: ${sevs.high}`, `badge tone-${sevs.high > 0 ? "danger" : "neutral"}`),
-    element("span", `Medium: ${sevs.medium}`, `badge tone-${sevs.medium > 0 ? "warning" : "neutral"}`),
-    element("span", `Low: ${sevs.low}`, `badge tone-${sevs.low > 0 ? "active" : "neutral"}`),
-  );
-  findingsBlock.append(findingsTitle, sevGroup);
-  content.append(findingsBlock);
-
-  const approvalRow = element("div", null, "health-row");
-  const approvalLabel = element("span", "Approval Gate", "health-label");
-  const approvalState = summary.approval.state === "granted"
-    ? (summary.approval.isClosed ? "Expired" : "Granted")
-    : summary.approval.state === "requested" ? "Awaiting approval" : "Not requested";
-  const approvalTone = summary.approval.state === "granted" && !summary.approval.isClosed ? "success" : "warning";
-  const approvalBadge = element("span", approvalState, `badge tone-${approvalTone}`);
-  approvalRow.append(approvalLabel, approvalBadge);
-  content.append(approvalRow);
-
-  const auditRow = element("div", null, "health-row");
-  const auditLabel = element("span", "Audit Integrity", "health-label");
-  const auditBadge = element("span", "Verified Hash Chain", "badge tone-success");
-  auditRow.append(auditLabel, auditBadge);
-  content.append(auditRow);
-
-  const actionRow = element("div", null, "panel-action-row");
-  const actionBtn = /** @type {HTMLButtonElement} */ (element("button", "Open governance view →", "action-link"));
-  actionBtn.type = "button";
-  actionBtn.setAttribute("data-tab", "governance");
-  actionBtn.addEventListener("click", () => {
-    switchTab(application, "governance");
-  });
-  actionRow.append(actionBtn);
-  content.append(actionRow);
-
-  panelEl.append(content);
-  return panelEl;
-}
-
-/**
- * Render the Model & Agent Assignments panel.
- * @param {ReturnType<typeof modelAssignmentsSummary> | null} assignments
- * @param {DashboardApplication} application
- * @returns {HTMLElement}
- */
-export function renderModelAssignments(assignments, application) {
-  const panelEl = panel("Model & Agent Assignments", "model-assignments", "model-assignments-panel");
-
-  if (!assignments) {
-    panelEl.append(element("p", "No model configuration recorded for current run.", "empty-state"));
-    return panelEl;
-  }
-
-  const content = element("div", null, "model-assignments-content");
-
-  const defs = definitionList([
-    ["Planning model", text(assignments.planningModel, "Not configured")],
-    ["Implementation model", text(assignments.implementationModel, "Not configured")],
-    ["Test model", text(assignments.testModel, "Not configured")],
-    ["Reasoning effort", assignments.effortLevel],
-    ["Reviewer specialists", assignments.reviewModels.length > 0 ? `${assignments.reviewModels.length} assigned` : "None configured"],
-  ], "definitions compact");
-  content.append(defs);
-
-  const actionRow = element("div", null, "panel-action-row");
-  const actionBtn = /** @type {HTMLButtonElement} */ (element("button", "View assignment details →", "action-link"));
-  actionBtn.type = "button";
-  actionBtn.setAttribute("data-action", "model-drawer");
-  actionBtn.addEventListener("click", () => {
-    openDrawer("Model & Agent Assignments", "Configuration", () => buildModelAssignmentsDrawer(assignments, application), application, actionBtn);
-  });
-  actionRow.append(actionBtn);
-  content.append(actionRow);
-
-  panelEl.append(content);
-  return panelEl;
-}
-
-/**
- * Render the Lower Analytical Row (AI Governance & Utilization + Data Quality).
- * @param {ReturnType<typeof portfolioProjection>} portfolio
- * @param {readonly RunSnapshot[]} snapshots
- * @param {DashboardApplication} application
- * @returns {HTMLElement}
- */
-export function renderLowerAnalytics(portfolio, snapshots, application) {
-  const row = element("div", null, "analytical-row lower-row grid-12");
-
-  const aiPanel = panel("AI Governance & Utilization", "ai-governance", "ai-governance-panel col-6");
-  const aiContent = element("div", null, "ai-governance-content");
-
-  const costDisplay = usdPresentation(portfolio.cost.knownUsd).display;
-  const tokenDisplay = portfolio.tokens.known !== null ? exactCount(portfolio.tokens.known) : "Unavailable";
-  const costReported = portfolio.cost.reportedRows;
-  const costTotal = portfolio.cost.reportedRows + portfolio.cost.unreportedRows;
-  const coverageText = costTotal > 0 ? `${costReported} of ${costTotal} agent rows reported` : "No agent rows observed";
-
-  const aiDefs = definitionList([
-    ["Total Known Cost", costDisplay],
-    ["Reported Tokens", tokenDisplay],
-    ["Reporting Coverage", coverageText],
-  ], "definitions compact");
-  aiContent.append(aiDefs);
-
-  const aiActionRow = element("div", null, "panel-action-row");
-  const aiActionBtn = /** @type {HTMLButtonElement} */ (element("button", "View Cost & Token Analytics →", "action-link"));
-  aiActionBtn.type = "button";
-  aiActionBtn.addEventListener("click", () => {
-    switchTab(application, "runs");
-  });
-  aiActionRow.append(aiActionBtn);
-  aiContent.append(aiActionRow);
-  aiPanel.append(aiContent);
-
-  const dqSummary = dataQualitySummary(portfolio, snapshots);
-  const dqPanel = panel("Data Quality & Telemetry", "data-quality", "data-quality-panel col-6");
-  const dqContent = element("div", null, "data-quality-content");
-
-  const covPct = dqSummary.coveragePercentage !== null ? `${dqSummary.coveragePercentage}%` : "Unavailable";
-  const dqDefs = definitionList([
-    ["Snapshot Coverage", covPct],
-    ["Fresh Snapshots", `${dqSummary.freshCount} fresh · ${dqSummary.staleCount} stale`],
-    ["Missing Duration", `${dqSummary.missingExecutionDuration} runs`],
-    ["Historical Trend", dqSummary.historicalTrend],
-  ], "definitions compact");
-  dqContent.append(dqDefs);
-
-  const dqActionRow = element("div", null, "panel-action-row");
-  const dqActionBtn = /** @type {HTMLButtonElement} */ (element("button", "View Data Quality Details →", "action-link"));
-  dqActionBtn.type = "button";
-  dqActionBtn.addEventListener("click", () => {
-    openDrawer("Data Quality & Telemetry", "Quality Details", () => buildDataQualityDrawer(dqSummary, application), application, dqActionBtn);
-  });
-  dqActionRow.append(dqActionBtn);
-  dqContent.append(dqActionRow);
-  dqPanel.append(dqContent);
-
-  row.append(aiPanel, dqPanel);
-  return row;
-}
-
-/**
- * Render the Governed Deliveries enterprise table.
- * @param {ReturnType<typeof repositoryViews>} views
- * @param {DashboardApplication} application
- * @returns {HTMLElement}
- */
-export function renderGovernedDeliveriesTable(views, application) {
-  const panelEl = panel("Governed Deliveries", "deliveries", "governed-deliveries-panel");
-  const rows = governedDeliveriesRows(views);
-
-  const metaRow = element("div", null, "deliveries-meta-row");
-  metaRow.append(element("span", `${rows.length} total deliveries`, "deliveries-count-badge"));
-  panelEl.append(metaRow);
-
-  if (rows.length === 0) {
-    panelEl.append(element("p", "No deliveries have been recorded yet.", "empty-state"));
-    return panelEl;
-  }
-
-  const scrollWrapper = element("div", null, "table-scroll");
-  const table = element("table", null, "deliveries-table");
-
-  const thead = element("thead");
-  const headerTr = element("tr");
-  for (const h of ["Repository / Run", "Status", "Stage / Phase", "Findings", "Governance Decision", "Last Activity", "Action"]) {
-    const th = element("th", h);
-    if (h === "Findings" || h === "Action") th.classList.add("text-right");
-    headerTr.append(th);
-  }
-  thead.append(headerTr);
-  table.append(thead);
-
-  const tbody = element("tbody");
-  for (const row of rows) {
-    const tr = element("tr");
-
-    const repoCell = element("td");
-    const repoName = element("span", `${row.repositoryId} #${row.runId}`, "delivery-repo-name");
-    const slugLabel = element("span", row.slug, "delivery-slug-label");
-    repoCell.append(repoName, slugLabel);
-
-    const statusCell = element("td");
-    statusCell.append(badge(row.status.label, row.status.tone));
-
-    const stageCell = element("td");
-    const stageText = element("span", row.currentStage, "delivery-stage-text");
-    const phaseText = element("span", row.phase.replace("_", " "), "delivery-phase-text");
-    stageCell.append(stageText, phaseText);
-
-    const findingsCell = element("td", null, "text-right");
-    if (row.findingsCount === null) {
-      findingsCell.append(element("span", "Unavailable", "unavailable"));
-    } else {
-      const fVal = element("span", String(row.findingsCount), row.findingsCount > 0 ? "findings-badge-highlight" : "findings-badge-zero");
-      findingsCell.append(fVal);
-    }
-
-    const govCell = element("td");
-    const govTone = row.governanceStatus === "granted" ? "success" : row.governanceStatus === "requested" ? "warning" : "neutral";
-    const govBadge = element("span", row.governanceStatus, `badge tone-${govTone}`);
-    govCell.append(govBadge);
-
-    const activityCell = element("td");
-    activityCell.append(recordedTime(row.lastActivity));
-
-    const actionCell = element("td", null, "text-right");
-    const openBtn = /** @type {HTMLButtonElement} */ (element("button", "Open", "btn-action-sm"));
-    openBtn.type = "button";
-    openBtn.addEventListener("click", () => {
-      application.selectedRepositoryId = row.repositoryId;
-      application.selectedRunId = row.runId;
-      const repo = application.repositories.get(row.repositoryId);
-      const slot = repo?.snapshots.get(row.runId);
-      const snap = slot ? slotSnapshot(slot) : null;
-      if (snap) {
-        const sum = runExecutiveSummary(snap, {
-          repositoryPath: repo?.repository.path ?? "",
-          runs: runSummaries(repo?.runs ?? emptyResourceState()),
-          observedAt: slot?.resource.envelope?.observedAt ?? null,
-        });
-        openDrawer(`Run #${row.runId}: ${row.slug}`, "Run Details", () => buildRunDetailDrawer(snap, sum, application), application, openBtn);
-      } else {
-        switchTab(application, "runs");
-      }
-    });
-    actionCell.append(openBtn);
-
-    tr.append(repoCell, statusCell, stageCell, findingsCell, govCell, activityCell, actionCell);
-    tbody.append(tr);
-  }
-
-  table.append(tbody);
-  scrollWrapper.append(table);
-  panelEl.append(scrollWrapper);
-  return panelEl;
-}
-
-/**
- * Render the Command Center Overview canvas.
+ * The Overview as four labelled layers over the header's repository scope.
  * @param {DashboardApplication} application
  * @returns {HTMLElement}
  */
 export function renderOverviewTab(application) {
-  const container = element("div", null, "overview-canvas");
-
-  const views = repositoryViews(application);
-  const portfolio = portfolioProjection(views);
-  const runs = views.flatMap((v) => v.runs);
-  /** @type {RunSnapshot[]} */
-  const snapshots = [];
-  for (const v of views) {
-    for (const s of v.snapshots) {
-      if (s.snapshot !== null) snapshots.push(s.snapshot);
-    }
-  }
-
-  // 1. Portfolio Status Banner
-  const banner = portfolioStatusBanner(portfolio, runs, snapshots);
-  container.append(renderPortfolioBanner(banner, application));
-
-  // 2. 6-card Horizontal KPI Strip
-  const kpis = commandCenterKpis(portfolio, runs, snapshots);
-  container.append(renderCommandCenterKpis(kpis, application));
-
-  // Determine active target snapshot for Overview panels
-  /** @type {RunSnapshot | null} */
-  let targetSnapshot = null;
-  let targetRepoId = application.selectedRepositoryId || application.repositoryFilter || null;
-  let targetRunId = application.selectedRunId;
-
-  if (targetRepoId && targetRunId) {
-    const repo = application.repositories.get(targetRepoId);
-    const slot = repo?.snapshots.get(targetRunId);
-    targetSnapshot = slot ? slotSnapshot(slot) : null;
-  }
-
-  const queue = needsAttentionQueue(views);
-  if (!targetSnapshot && queue.length > 0) {
-    for (const item of queue) {
-      if (item.runId === null) continue;
-      if (targetRepoId !== null && item.repositoryId !== targetRepoId) continue;
-      const repo = application.repositories.get(item.repositoryId);
-      const slot = repo?.snapshots.get(item.runId);
-      const snap = slot ? slotSnapshot(slot) : null;
-      if (snap) {
-        targetSnapshot = snap;
-        targetRepoId = item.repositoryId;
-        targetRunId = item.runId;
-        break;
-      }
-    }
-  }
-
-  if (!targetSnapshot && snapshots.length > 0) {
-    targetSnapshot = snapshots[0] ?? null;
-    for (const v of views) {
-      if (targetRepoId !== null && v.repositoryId !== targetRepoId) continue;
-      const found = v.snapshots.find((s) => s.snapshot === targetSnapshot);
-      if (found) {
-        targetRepoId = v.repositoryId;
-        targetRunId = found.runId;
-        break;
-      }
-    }
-  }
-
-  // 3. Primary Analytical Row (Needs Attention + Delivery Pipeline)
-  const primaryRow = element("div", null, "analytical-row primary-row grid-12");
-  const needsAttentionEl = renderNeedsAttention(queue, application);
-  needsAttentionEl.classList.add("col-7");
-
-  const pipelineEl = renderDeliveryPipeline(targetSnapshot, targetRepoId, targetRunId, application);
-  pipelineEl.classList.add("col-5");
-
-  primaryRow.append(needsAttentionEl, pipelineEl);
-  container.append(primaryRow);
-
-  // 4. Secondary Analytical Row (Governance Health + Model Assignments)
-  const secondaryRow = element("div", null, "analytical-row secondary-row grid-12");
-  const govSummary = targetSnapshot ? governanceHealthSummary(targetSnapshot) : null;
-  const govHealthEl = renderGovernanceHealth(govSummary, application);
-  govHealthEl.classList.add("col-6");
-
-  const modelSummary = targetSnapshot ? modelAssignmentsSummary(targetSnapshot) : null;
-  const modelEl = renderModelAssignments(modelSummary, application);
-  modelEl.classList.add("col-6");
-
-  secondaryRow.append(govHealthEl, modelEl);
-  container.append(secondaryRow);
-
-  // 5. Lower Analytical Row (AI Governance & Utilization + Data Quality)
-  const lowerRow = renderLowerAnalytics(portfolio, snapshots, application);
-  container.append(lowerRow);
-
-  // 6. Governed Deliveries Enterprise Table
-  const deliveriesTableEl = renderGovernedDeliveriesTable(views, application);
-  container.append(deliveriesTableEl);
-
+  const data = scopeData(application);
+  const container = element("div", null, "overview-view");
+  container.append(viewHead("Overview", scopeLabel(application, data)));
+  const status = layer("Operational status");
+  status.append(renderStatusCards(data, application), renderStageMap(data, application));
+  const attention = element("div", null, "layer");
+  attention.append(renderAttentionQueue(data, application));
+  const recent = element("div", null, "layer");
+  recent.append(renderRunTable(data, application));
+  const trust = layer("Can I trust this data?");
+  trust.append(renderCoverage(data));
+  container.append(status, attention, recent, trust);
   return container;
 }
 
 /* ------------------------------------------------------------------ *
- * Portfolio KPI bar
+ * Repository notices
  * ------------------------------------------------------------------ */
 
 /**
- * @param {string} label @param {string} iconName @param {Node | string} value
- * @param {string} scope @param {string} [detail]
+ * A repository that cannot contribute table rows still says so: a refused or
+ * failed run list, a stale one, or a repository with no recorded run. A
+ * repository whose runs are in the table and current needs no notice.
+ * @param {HTMLElement} parent @param {RepositoryState} repositoryState @param {DashboardApplication} application
  */
-function kpiCard(label, iconName, value, scope, detail = "") {
-  const card = element("article", null, "kpi-card");
-  const head = element("div", null, "kpi-head");
-  head.append(icon(iconName), element("h3", label));
-  card.append(head);
-  const primary = element("p", null, "kpi-value");
-  if (typeof value === "string") primary.textContent = value;
-  else primary.append(value);
-  card.append(primary);
-  card.append(element("p", scope, "kpi-scope"));
-  if (detail !== "") card.append(element("p", detail, "kpi-detail"));
-  return card;
-}
-
-/** @param {ReturnType<typeof portfolioProjection>} projection */
-function coverageText(projection) {
-  const { coverage } = projection;
-  return `${coverage.contributing} of ${coverage.loadedRuns} loaded runs supplied a snapshot` +
-    ` (${coverage.fresh} current, ${coverage.stale} stale, ${coverage.pending} loading,` +
-    ` ${coverage.unavailable} unavailable).`;
-}
-
-/** @param {HTMLElement} parent @param {ReturnType<typeof portfolioProjection>} projection */
-function renderKpiBar(parent, projection) {
-  const section = panel("Portfolio health", "portfolio-health", "kpi-panel");
-  section.append(element("p",
-    `Scope: every run in the loaded window across ${projection.repositories.configured} configured ` +
-    `${projection.repositories.configured === 1 ? "repository" : "repositories"}.`,
-    "source-note"));
-  if (projection.limitedScope) {
-    section.append(callout("At least one repository reports more runs beyond the selected limit. These metrics cover only the loaded window, and the read route does not report how many runs are outside it."));
-  }
-  if (projection.repositories.unavailable > 0) {
-    section.append(callout(`${projection.repositories.unavailable} configured ${projection.repositories.unavailable === 1 ? "repository has" : "repositories have"} no loaded run list. Their runs are excluded from every metric.`));
-  }
-  const grid = element("div", null, "kpi-grid");
-  const runScope = `${projection.runs} loaded run ${projection.runs === 1 ? "summary" : "summaries"}.`;
-  grid.append(kpiCard("Runs", "runs", countNode(projection.runs), runScope));
-  grid.append(kpiCard("Blocked Runs", "blocked", countNode(projection.blockedRuns),
-    "Persisted status blocked.", runScope));
-  grid.append(kpiCard("Active Runs", "active", countNode(projection.activeRuns),
-    "Persisted status in progress.", "This does not assert that an agent is executing now."));
-  grid.append(kpiCard("Findings", "findings",
-    projection.findings.value === null ? "Unavailable" : countNode(projection.findings.value),
-    "Canonical findings in loaded snapshots."));
-  grid.append(kpiCard("Known Cost", "cost", moneyNode(projection.cost.knownUsd),
-    "Reported spend in loaded snapshots.",
-    projection.cost.knownUsd === null
-      ? "No contributing agent row reported a cost. Unreported rows are not zero-cost executions."
-      : `${projection.cost.reportedRows} reported and ${projection.cost.unreportedRows} unreported agent rows of ${projection.cost.agentRows}.`));
-  grid.append(kpiCard("Total Tokens", "tokens",
-    projection.tokens.known === null ? "Unavailable" : countNode(projection.tokens.known),
-    "Sum of reported input, output, cache-read, and cache-write tokens.",
-    projection.tokens.classes
-      .map((entry) => `${entry.label}: ${entry.known === null ? "unavailable" : exactCount(entry.known)}`)
-      .join(", ")));
-  grid.append(kpiCard("Success Rate", "success",
-    projection.successRate.value === null ? "Unavailable" : `${(projection.successRate.value * 100).toFixed(1)}%`,
-    "Completed divided by completed plus blocked terminal runs.",
-    projection.successRate.terminalRuns === 0
-      ? "No terminal run is loaded, so no rate exists."
-      : `${projection.successRate.completedRuns} completed and ${projection.successRate.blockedRuns} blocked terminal runs.`));
-  grid.append(kpiCard("Average Execution Time", "duration", "Unavailable",
-    "Mean recorded agent execution duration per run.", projection.averageExecution.reason));
-  section.append(grid);
-  // One shared reason for eight cards is one statement, not eight repetitions.
-  section.append(element("p",
-    `${TREND_UNAVAILABLE_LABEL} for every metric above: the read route exposes one observation per run and no historical series, so no direction of travel can be derived.`,
-    "source-note"));
-  section.append(element("p", coverageText(projection), "source-note"));
-  parent.append(section);
-}
-
-/* ------------------------------------------------------------------ *
- * Repository portfolio
- * ------------------------------------------------------------------ */
-
-/** @param {HTMLElement} parent @param {RepositoryState} repositoryState @param {DashboardApplication} application */
-function renderRepository(parent, repositoryState, application) {
-  const article = element("article", null, "repository");
+function renderRepositoryNotice(parent, repositoryState, application) {
+  const article = element("article", null, "region");
   const status = resourceStatus(repositoryState.runs);
   const envelope = repositoryState.runs.envelope;
   const list = runListResult(repositoryState.runs);
   // The heading names the recorded project identity, so the loaded run list
   // must resolve before it is appended rather than after.
   const identity = repositoryIdentity(repositoryState.repository.path, list?.runs ?? []);
-  article.append(element("h3", identity.display));
+  article.append(regionHead(`${identity.display} · ${pathTail(repositoryState.repository.path)}`));
   if (status !== "") {
     const node = callout(status, repositoryState.runs.stale ? "warning" : "danger");
     node.setAttribute("role", "status");
     article.append(node);
   }
   if (envelope === null || list === null) {
+    if (status === "" && repositoryState.runs.attemptedAt === null) return;
     article.append(element("p", repositoryState.runs.reason === null
       ? "No run list has been observed."
       : "No run list is available for this repository.", "empty-state"));
@@ -1528,90 +1866,19 @@ function renderRepository(parent, repositoryState, application) {
     parent.append(article);
     return;
   }
-  // The submitted path and the canonical repository the route resolved are two
-  // different recorded facts, so both are shown and neither is merged away.
-  article.append(definitionList([
-    ["Canonical repository", text(envelope.repository)],
-    ["Observed", recordedTime(envelope.observedAt)],
-  ], "definitions compact"));
-  article.append(disclosure("Repository request detail", definitionList([
-    ["Submitted path", repositoryState.repository.path],
-    ["Run limit", String(list.limit)],
-  ], "definitions compact")));
-  const query = application.search.toLowerCase();
-  const visible = list.runs.filter((entry) =>
-    (application.statusFilter === "" || entry.status === application.statusFilter) &&
-    (application.phaseFilter === "" || entry.phase === application.phaseFilter) &&
-    (query === "" || [entry.id, entry.project, entry.featureId, entry.slug].join(" ").toLowerCase().includes(query)));
-  if (visible.length === 0) {
-    article.append(element("p", "No loaded run matches the current display filters. Portfolio metrics still cover the full loaded window.", "empty-state"));
-  } else {
-    const scroll = element("div", null, "table-scroll");
-    const table = element("table", null, "run-table");
-    table.append(element("caption", `Runs for ${identity.display}`));
-    const head = element("thead");
-    const headRow = element("tr");
-    for (const label of ["Run", "Project", "Feature", "Slug", "State", "Last activity", "Snapshot"]) {
-      const cell = element("th", label);
-      cell.setAttribute("scope", "col");
-      headRow.append(cell);
-    }
-    head.append(headRow);
-    table.append(head);
-    const body = element("tbody");
-    for (const run of visible) {
-      const row = element("tr");
-      if (application.selectedRepositoryId === repositoryState.repository.id &&
-          application.selectedRunId === run.id) row.setAttribute("aria-current", "true");
-      const first = element("td");
-      const select = /** @type {HTMLButtonElement} */ (element("button", `View run ${run.id}`));
-      select.type = "button";
-      select.className = "run-select";
-      select.addEventListener("click", () => selectRun(application, repositoryState.repository.id, run.id));
-      first.append(select);
-      row.append(first);
-      for (const value of [run.project, run.featureId, run.slug]) row.append(element("td", String(value)));
-      const presentation = statusPresentation(run.status, run.phase);
-      const stateCell = element("td");
-      stateCell.append(badge(presentation.label, presentation.tone));
-      row.append(stateCell);
-      const activity = element("td");
-      activity.append(recordedTime(run.lastRecordedAt));
-      row.append(activity);
-      const slot = repositoryState.snapshots.get(run.id);
-      const state = slot === undefined ? "unavailable" : snapshotState({
-        runId: run.id, snapshot: slotSnapshot(slot), stale: slot.resource.stale, loading: slot.loading,
-      });
-      row.append(element("td", {
-        fresh: "Current", stale: "Stale", pending: "Loading", unavailable: "Unavailable",
-      }[state], `snapshot-${state}`));
-      body.append(row);
-    }
-    table.append(body);
-    scroll.append(table);
-    article.append(scroll);
-  }
-  article.append(element("p", list.hasMore
-    ? `More runs exist beyond the selected limit of ${list.limit}. The read route does not report how many.`
-    : `All runs within the selected limit of ${list.limit} are shown.`, "source-note"));
-  parent.append(article);
+  if (status !== "") parent.append(article);
 }
 
 /* ------------------------------------------------------------------ *
- * Selected run: executive summary, timeline, activity
+ * Selected run: header, KPI strip, ledger, outcome, timeline, activity
  * ------------------------------------------------------------------ */
 
-/** @param {string} label @param {Node | string} value @param {string} detail */
-function summaryTile(label, value, detail) {
-  const tile = element("article", null, "summary-tile");
-  tile.append(element("h4", label));
-  const primary = element("p", null, "summary-value");
-  if (typeof value === "string") primary.textContent = value;
-  else primary.append(value);
-  tile.append(primary);
-  if (detail !== "") tile.append(element("p", detail, "summary-detail"));
-  return tile;
-}
+/**
+ * @typedef {{
+ *   snapshot: RunSnapshot, statuses: Map<number, FindingStatus>, observedAt: string | null,
+ *   repositoryId: string, path: string,
+ * }} RunContext
+ */
 
 /** @param {string[]} limitations */
 function limitationsBlock(limitations) {
@@ -1631,16 +1898,97 @@ function limitationsBlock(limitations) {
   return block;
 }
 
+/** One figure of a KPI strip. @param {string} label @param {Node | string} value @param {Node | string} note @param {string} [extra] @param {string} [valueClass] */
+function kpi(label, value, note, extra = "", valueClass = "") {
+  const node = element("div", null, `kpi ${extra}`.trim());
+  const primary = element("span", null, `kpi-value ${valueClass}`.trim());
+  primary.append(value);
+  const secondary = element("span", null, "kpi-note");
+  secondary.append(note);
+  node.append(element("span", label, "eyebrow"), primary, secondary);
+  return node;
+}
+
 /**
- * The triage answer the run view opens on. Every claim here is copied from the
- * projected executive summary, which selects from projected records; nothing is
- * parsed out of the eligibility prose and no remediation sentence is invented.
+ * The outcome statement: the model's headline and derived sentence, whether a
+ * governed action is eligible, the actions an operator takes next, and the
+ * verbatim technical facts behind a disclosure. Nothing is parsed from event
+ * prose.
  * @param {ReturnType<typeof runExecutiveSummary>} summary
  * @param {ReturnType<typeof snapshotProjection>} projection
- * @param {DashboardApplication} application
+ * @param {DashboardApplication} application @param {RunContext} context
  */
-function renderExecutiveSummary(summary, projection, application) {
-  const section = panel("Run summary", "run-summary", "executive-summary");
+function renderRunOutcome(summary, projection, application, context) {
+  const outcome = runOutcome(context.snapshot, context.statuses);
+  const node = element("div", null, `outcome tone-${outcome.tone}`);
+  const statement = element("div");
+  statement.append(element("h4", outcome.headline), element("p", outcome.sentence),
+    element("p", outcome.ineligibleStatement === null ? "A governed action is eligible." : `${outcome.ineligibleStatement}.`, "next"));
+  const statuses = [...context.statuses.values()];
+  const blocking = statuses.filter((status) => status === "blocking").length;
+  const open = statuses.filter((status) => status === "open").length;
+  const actions = element("div", null, "outcome-actions");
+  if (blocking + open > 0) {
+    const view = /** @type {HTMLButtonElement} */ (element("button", `View ${blocking > 0 ? "blocking" : "open"} findings`, "btn"));
+    view.type = "button";
+    view.addEventListener("click", () => focusRunSection("run-findings"));
+    actions.append(view);
+  }
+  const status = projection.governance.commands.find((command) => command.kind === "status") ?? null;
+  if (status !== null) actions.append(copyControl("Copy status command", status.text, "status command", application));
+  // snapshotProjection files the workflow action's own command under the kind
+  // "workflow". An execution group is never a command kind, so matching on
+  // action.group would silently never resolve.
+  const projected = projection.governance.commands.find((command) => command.kind === "workflow") ?? null;
+  if (projected !== null && projected.eligible) {
+    actions.append(copyControl("Copy next-step command", projected.text, "next-step command", application));
+  }
+
+  const action = summary.nextAction;
+  const event = context.snapshot.activity.lastEvent;
+  const codeReview = projection.governance.configuration.codeReview;
+  const writer = projection.overview.writer;
+  /** @type {[string, Node | string][]} */
+  const facts = [];
+  if (event !== null) {
+    facts.push(["Last event", fragment(element("span", event.action, "mono"), " · ", recordedTime(event.at))]);
+    facts.push(["Event summary", element("span", event.summary, "mono")]);
+  }
+  facts.push(["Next action", `${text(action.group, "No recorded group")} · ${action.eligible ? "eligible" : "not eligible"}`]);
+  if (action.reasons.length > 0) {
+    facts.push(["Refusal", fragment(...action.reasons.flatMap((reason, index) => [
+      ...(index === 0 ? [] : ["; "]), element("span", reason.code, "mono"), ` ${reason.reason}`,
+    ]))]);
+  }
+  if (projected !== null) facts.push(["Next-step command", element("code", projected.text, "command-text")]);
+  if (codeReview !== null) {
+    facts.push(["Blocking threshold", fragment(element("span", codeReview.blockingSeverity, "mono"),
+      ` · panel ${codeReview.panelSize} · max rounds ${codeReview.maxRounds}`)]);
+  }
+  if (projection.delivery.finalReviewedCommit !== null) {
+    facts.push(["Final reviewed commit", identityNode(identityPresentation(projection.delivery.finalReviewedCommit), "final reviewed commit", application)]);
+  }
+  facts.push(["Writer lock", fragment(element("span", writer.status, "mono"),
+    writer.status === "live" ? " — a writer process holds this repository's lock" : " — no live writer in this repository")]);
+  const details = element("details", null, "technical");
+  details.append(element("summary", "Technical details"), definitionList(facts, "definitions technical-body"));
+  node.append(statement, actions, details);
+  return node;
+}
+
+/**
+ * The run view's opening region: the run header, the selected-run KPI strip
+ * (kept separate from the page cards), the full ledger, and the outcome. Every
+ * claim here is copied from the projected summary and the model's outcome.
+ * @param {ReturnType<typeof runExecutiveSummary>} summary
+ * @param {ReturnType<typeof snapshotProjection>} projection
+ * @param {DashboardApplication} application @param {RunContext} context
+ */
+function renderExecutiveSummary(summary, projection, application, context) {
+  const section = element("section", null, "region");
+  section.id = "run-summary";
+  section.tabIndex = -1;
+  section.dataset.control = "run-summary";
   const run = projection.overview.run;
   // R10: the latest recorded timestamp is surfaced here; the ones it supersedes
   // stay in the Run detail disclosure. Which one is latest is decided by the
@@ -1650,73 +1998,57 @@ function renderExecutiveSummary(summary, projection, application) {
     { label: "Updated", value: run.updatedAt },
     { label: "Last recorded activity", value: projection.overview.activity.lastRecordedAt },
   ]);
-  const head = element("div", null, `summary-head tone-${summary.state.tone}`);
-  head.append(badge(summary.state.label, summary.state.tone));
-  head.append(element("p",
-    `${summary.repository.display} · run ${summary.run.id} · ${summary.run.slug} · ${summary.run.changeKind}`,
-    "summary-identity"));
-  head.append(element("p", summary.state.source === "phase"
-    ? `Derived phase ${projection.overview.phase}; persisted status ${projection.overview.run.status}.`
-    : `Persisted status ${projection.overview.run.status}; derived phase ${projection.overview.phase}.`, "source-note"));
-  section.append(head);
+  const state = runLiveness(application, context.repositoryId, context.snapshot);
+  const live = state === "live" && application.autoRefresh;
 
-  const grid = element("div", null, "summary-grid");
-  const blocking = summary.blockingFinding;
-  grid.append(summaryTile("Blocking finding",
-    blocking.available ? `Finding ${blocking.id}: ${blocking.title}` : "Unavailable",
-    blocking.available
-      ? `${blocking.finalPanelBlocking
-        ? "The final code-review panel recorded this finding as blocking."
-        : blocking.finalPanelProjected
-          ? "The final code-review panel recorded no blocking finding, so this is the highest-ranked recorded finding."
-          : "No final-panel result is projected for this run, so this is the highest-ranked recorded finding."}` +
-        ` Severity ${blocking.severityAvailable ? blocking.severity : "unranked"}` +
-        `${blocking.tiedWith > 0 ? `, tied with ${blocking.tiedWith} other recorded ${blocking.tiedWith === 1 ? "finding" : "findings"}` : ""}` +
-        `. Stage ${blocking.stageId}, round ${blocking.round}, at ${blocking.location}.`
-      : blocking.reason ?? ""));
-  grid.append(summaryTile("Known cost", moneyNode(summary.cost.available ? projection.cost.knownUsd : null),
-    summary.cost.available
-      ? `${projection.cost.costReportedRows} reported and ${projection.cost.costUnreportedRows} unreported of ${projection.cost.agentRows} agent rows.`
-      : "No contributing agent row reported a cost."));
-  grid.append(summaryTile("Known tokens",
-    summary.tokens.known === null ? "Unavailable" : countNode(summary.tokens.known),
-    summary.tokens.known === null
-      ? "No contributing agent row reported a token class."
-      : "Sum of reported input, output, cache-read, and cache-write tokens."));
+  const body = element("div", null, "region-body");
+  const eyebrow = element("div", null, "run-head");
+  eyebrow.append(element("span", "Selected run", "eyebrow"));
+  const head = element("div", null, "run-head");
+  const title = element("h2", `${summary.run.slug}`, "run-title");
+  title.id = `heading-${++headingSequence}`;
+  section.setAttribute("aria-labelledby", title.id);
+  title.append(element("span", `#${summary.run.id}`, "num"));
+  head.append(title, badge(summary.state.label, summary.state.tone));
+  const tag = liveTag(state, application.autoRefresh);
+  if (tag !== null) head.append(tag);
+  const meta = element("div", null, "run-meta");
+  const path = element("span", context.path, "mono");
+  path.title = context.path;
+  const latest = element("span");
+  if (stamps.latest !== null) latest.append(`${stamps.latest.label.toLowerCase()} `, relativeNode(stamps.latest.value, context.observedAt));
+  meta.append(path, element("span", `project ${summary.run.project}`), element("span", `feature ${summary.run.featureId}`),
+    element("span", `change ${summary.run.changeKind}`), latest);
+  body.append(eyebrow, head, meta);
+  section.append(body);
 
-  const action = summary.nextAction;
-  const next = element("article", null, "summary-tile next-action");
-  next.append(element("h4", "Next action"));
-  next.append(element("p", text(action.group), "summary-value"));
-  next.append(badge(action.eligible ? "Eligible" : "Not eligible", action.eligible ? "success" : "neutral"));
-  if (action.reasons.length === 0) {
-    next.append(element("p", "No recorded refusal reason.", "empty-state"));
-  } else {
-    const reasons = element("ul", null, "reason-list");
-    for (const reason of action.reasons) {
-      const item = element("li");
-      item.append(element("strong", reason.code), element("span", ` ${reason.reason}`));
-      reasons.append(item);
-    }
-    next.append(reasons);
-  }
-  // snapshotProjection files the workflow action's own command under the kind
-  // "workflow". An execution group is never a command kind, so matching on
-  // action.group would silently never resolve.
-  const projected = projection.governance.commands.find((command) => command.kind === "workflow") ?? null;
-  if (projected !== null) {
-    next.append(element("code", projected.text, "command-text"));
-    next.append(copyControl(`Copy ${projected.kind} command`, projected.text, `${projected.kind} command`, application));
-  }
-  grid.append(next);
-  section.append(grid);
-
-  if (stamps.latest !== null) {
-    const recent = element("p", null, "source-note");
-    recent.append(element("span", `Most recent recorded timestamp — ${stamps.latest.label}: `));
-    recent.append(recordedTime(stamps.latest.value));
-    section.append(recent);
-  }
+  const segments = stageLedger(context.snapshot).segments;
+  const stopped = segments.findLast((segment) => segment.result === "blocked") ?? null;
+  const counts = [...context.statuses.values()];
+  const blocking = counts.filter((status) => status === "blocking").length;
+  const open = counts.filter((status) => status === "open").length;
+  const tokens = summary.tokens;
+  const output = tokens.classes.find((entry) => entry.key === "output")?.known ?? null;
+  const strip = element("div", null, "kpis");
+  strip.append(stopped !== null && run.status === "blocked"
+    ? kpi("State", `Blocked at ${stageLower(stopped.kind)}`, `stage ${segments.indexOf(stopped) + 1} of ${segments.length} recorded`, "", "is-text tone-danger")
+    : run.status === "completed"
+      ? kpi("State", "Completed", `${plural(segments.length, "stage")} recorded`, "", "is-text tone-success")
+      : kpi("State", summary.state.label, segments.length === 0 ? "no stage recorded"
+        : `latest ${stageLower(segments[segments.length - 1]?.kind ?? "")}`, "", `is-text tone-${summary.state.tone}`));
+  const [findingCount, findingLabel, findingTone] = blocking > 0 ? [blocking, "blocking findings", "tone-danger"]
+    : open > 0 ? [open, "open findings", "tone-warning"] : [0, "findings require attention", ""];
+  strip.append(kpi("Findings", String(findingCount), `${findingLabel} · ${context.snapshot.evidence.findings.length} recorded`, "", findingTone));
+  const tokenNote = element("span", tokens.known === null ? "No row reported a token class"
+    : `${exactCount(tokens.known)} total · ${output === null ? "output unavailable" : `${exactCount(output)} out`}`, "mono");
+  tokenNote.title = "input · output · cache read · cache write";
+  strip.append(kpi("Tokens", tokens.known === null ? "Unavailable" : abbreviated(tokens.known), tokenNote, "is-usage"));
+  strip.append(kpi("Known cost", moneyNode(summary.cost.available ? projection.cost.knownUsd : null), "for these tokens", "is-usage"));
+  strip.append(kpi("Telemetry", fragment(String(projection.cost.costReportedRows),
+    element("span", ` of ${projection.cost.agentRows}`, "muted")), "agent rows reported"));
+  section.append(strip);
+  section.append(stageLedgerNode(context.snapshot, true, live));
+  section.append(renderRunOutcome(summary, projection, application, context));
 
   for (const entry of summary.grouped) {
     section.append(element("p", entry.statement, "unavailable"));
@@ -1762,7 +2094,7 @@ function renderExecutiveSummary(summary, projection, application) {
 /** @param {ReturnType<typeof snapshotProjection>} projection */
 function renderTimeline(projection) {
   const section = panel("Workflow timeline", "workflow");
-  section.append(element("p", "Recorded stages in their recorded order. A stage the run never recorded is absent rather than complete, and no stage runs in parallel.", "source-note"));
+  section.append(sectionNote("Workflow timeline", "Recorded stages in their recorded order. A stage the run never recorded is absent rather than complete, and no stage runs in parallel."));
   if (projection.stageViews.length === 0) {
     section.append(element("p", "No stage has been recorded for this run.", "empty-state"));
     return section;
@@ -1799,7 +2131,7 @@ function renderTimeline(projection) {
 /** @param {ReturnType<typeof snapshotProjection>} projection */
 function renderActivity(projection) {
   const section = panel("Activity", "activity");
-  section.append(element("p", "Recorded stage start evidence, stage completion timestamps, and the single latest audit event this projection exposes. This is not the complete audit stream.", "source-note"));
+  section.append(sectionNote("Activity", "Recorded stage start evidence, stage completion timestamps, and the single latest audit event this projection exposes. This is not the complete audit stream."));
   section.append(definitionList([
     ["Last recorded activity", recordedTime(projection.overview.activity.lastRecordedAt)],
   ], "definitions compact"));
@@ -1831,21 +2163,17 @@ function renderActivity(projection) {
 /** @param {ReturnType<typeof snapshotProjection>} projection */
 function renderCostCards(projection) {
   const section = panel("Cost and token coverage", "cost");
-  section.append(element("p", "Values come only from this run's recorded agent rows. An unreported row is not a zero-cost execution.", "source-note"));
-  const grid = element("div", null, "kpi-grid");
+  const strip = element("div", null, "kpis");
   const cost = projection.cost;
-  grid.append(kpiCard("Known cost", "cost",
-    moneyNode(cost.costReportedRows === 0 ? null : cost.knownUsd), `Currency ${cost.currency}.`,
-    `${cost.costReportedRows} reported and ${cost.costUnreportedRows} unreported of ${cost.agentRows} agent rows.`));
-  grid.append(kpiCard("Agent rows", "runs", countNode(cost.agentRows), "Recorded agent executions.",
-    `${cost.recordedFailedAttempts} recorded failed attempts. A failed attempt carries no inferred spend.`));
+  strip.append(kpi("Known cost", moneyNode(cost.costReportedRows === 0 ? null : cost.knownUsd),
+    `${cost.costReportedRows} reported and ${cost.costUnreportedRows} unreported of ${cost.agentRows} agent rows · ${cost.currency}`, "is-usage"));
+  strip.append(kpi("Agent rows", countNode(cost.agentRows),
+    `${plural(cost.recordedFailedAttempts, "recorded failed attempt")}; a failed attempt carries no inferred spend`));
   for (const entry of projection.tokens.classes) {
-    grid.append(kpiCard(`${entry.label} tokens`, "tokens",
-      entry.known === null ? "Unavailable" : countNode(entry.known),
-      entry.unreportedRows > 0 ? "Partial coverage." : "Complete coverage.",
-      `${entry.reportedRows} reported and ${entry.unreportedRows} unreported rows. Exact total ${entry.known === null ? "unavailable" : exactCount(entry.known)}.`));
+    strip.append(kpi(`${entry.label} tokens`, entry.known === null ? "Unavailable" : countNode(entry.known),
+      `${entry.reportedRows} reported and ${entry.unreportedRows} unreported rows${entry.unreportedRows > 0 ? " · partial" : ""}`, "is-usage"));
   }
-  section.append(grid);
+  section.append(strip);
   return section;
 }
 
@@ -1965,7 +2293,7 @@ function renderAgentCostChart(projection) {
 /** @param {ReturnType<typeof snapshotProjection>} projection */
 function renderTokenChart(projection) {
   const section = panel("Recorded token consumption by workflow stage", "tokens");
-  section.append(element("p", "The horizontal axis is recorded stage ordinal, not wall-clock time. A stage with no reported row for a class leaves a gap rather than a zero.", "source-note"));
+  section.append(sectionNote("Token consumption", "The horizontal axis is recorded stage ordinal, not wall-clock time. A stage with no reported row for a class leaves a gap rather than a zero."));
   const groups = projection.charts.tokensByStage;
   if (groups.length === 0) {
     section.append(element("p", "This run has no recorded stage token group.", "empty-state"));
@@ -2048,14 +2376,6 @@ function tokenTable(groups) {
   ));
 }
 
-/** @param {{ known: number | null, reportedRows: number, unreportedRows: number } | undefined} entry */
-function tokenCell(entry) {
-  if (entry === undefined) return "Unavailable";
-  const qualifier = coverageQualifier(entry);
-  const total = entry.known === null ? "Unavailable" : exactCount(entry.known);
-  return qualifier === null ? total : `${total} (${qualifier})`;
-}
-
 /**
  * Cost and token evidence as one section. The four existing views keep their
  * own ids and captions; grouping them only stops four separate headings from
@@ -2064,7 +2384,7 @@ function tokenCell(entry) {
  */
 function renderCostAndTokens(projection) {
   const section = panel("Cost and tokens", "cost-and-tokens");
-  section.append(element("p", AGENT_TOKEN_CLASS_NOTE, "source-note"));
+  section.append(sectionNote("Cost and tokens", `${AGENT_TOKEN_CLASS_NOTE} Values come only from this run's recorded agent rows; an unreported row is not a zero-cost execution.`));
   section.append(
     renderCostCards(projection),
     renderStageCostChart(projection),
@@ -2074,61 +2394,209 @@ function renderCostAndTokens(projection) {
   return section;
 }
 
-/** @param {ReturnType<typeof snapshotProjection>} projection */
-function renderAgentTable(projection) {
+/** @typedef {ReturnType<typeof agentRows>["rows"][number]} AgentRow */
+/** @typedef {ReturnType<typeof stageUsage>["stages"][number]} UsageStage */
+
+/**
+ * The agents of one run as a sortable table, sorted by known cost, with the
+ * model stated once when every row reported the same requested model.
+ * @param {RunSnapshot} snapshot @param {DashboardApplication} application
+ */
+function agentTableParts(snapshot, application) {
+  const { rows, uniformModel } = agentRows(snapshot);
+  const executions = rows.reduce((sum, row) => sum + row.executions, 0);
+  const modelLine = uniformModel !== null
+    ? fragment("Every agent row reported model ", element("span", uniformModel, "mono"), ` (${executions} of ${executions} rows, as requested).`)
+    : fragment("Model is each agent's recorded effective model; the requested model is in its tooltip.");
+  if (rows.length === 0) return { rows, modelLine, table: element("p", "This run has no recorded agent group.", "empty-state") };
+  const maxCost = Math.max(0, ...rows.map((row) => row.knownUsd ?? 0));
+  const top = rows.reduce((/** @type {AgentRow | null} */ best, row) =>
+    row.knownUsd !== null && (best === null || row.knownUsd > (best.knownUsd ?? 0)) ? row : best, null);
+  /** @type {TableColumn<AgentRow>[]} */
+  const columns = [
+    { label: "Agent", className: "mono", sort: (row) => row.agent, cell: (row) => row.agent },
+    { label: "Role", className: "muted", cell: (row) => row.roles.length === 0 ? "Not recorded" : row.roles.join(", ") },
+  ];
+  if (uniformModel === null) {
+    columns.push({
+      label: "Model", className: "mono",
+      cell: (row) => row.effectiveModels.length === 0 ? element("span", "Unavailable", "unavailable") : row.effectiveModels.join(", "),
+      title: (row) => `requested ${row.requestedModels.join(", ") || "not recorded"} · effective ${row.effectiveModels.join(", ") || "not reported"}` +
+        `${row.effectiveModelUnreportedRows > 0 ? ` · ${plural(row.effectiveModelUnreportedRows, "row")} reported no model` : ""}`,
+    });
+  }
+  columns.push(
+    { label: "Share of known cost", className: "usage-bar", cell: (row) => meterBar(maxCost === 0 ? 0 : (row.knownUsd ?? 0) / maxCost, row === top) },
+    {
+      label: "Known cost", numeric: true, sort: (row) => row.knownUsd ?? -1, cell: (row) => moneyNode(row.knownUsd),
+      title: (row) => row.costPerExecution === null ? "Cost per execution unavailable" : `${usdPresentation(row.costPerExecution).display} per execution`,
+    },
+    { label: "Share", numeric: true, className: "muted", cell: (row) => shareText(row.share) },
+    {
+      label: "Executions", numeric: true, sort: (row) => row.executions, cell: (row) => String(row.executions),
+      title: (row) => row.recordedFailedAttempts > 0 ? plural(row.recordedFailedAttempts, "recorded failed attempt") : "No recorded failed attempt",
+    },
+    {
+      label: "Tokens", numeric: true, sort: (row) => row.tokens.known ?? -1,
+      cell: (row) => row.tokens.known === null ? element("span", "Unavailable", "unavailable") : abbreviated(row.tokens.known),
+      title: (row) => row.tokens.known === null ? "No row reported a token class" : `${exactCount(row.tokens.known)} tokens`,
+    },
+    {
+      label: "Total time", numeric: true, sort: (row) => row.durationMs ?? -1, cell: (row) => duration(row.durationMs),
+      title: (row) => row.averageDurationMs === null ? "Average time unavailable" : `${duration(Math.round(row.averageDurationMs))} per execution`,
+    },
+  );
+  const table = sortableTable({
+    caption: "Agents, highest known cost first", key: "agents", rows, columns, application,
+    defaultSort: { column: "Known cost", direction: "descending" },
+  });
+  table.firstElementChild?.classList.add("usage-table");
+  return { rows, modelLine, table };
+}
+
+function agentInfo() {
+  return metricInfoButton("Agent comparison",
+    "Shares are of this run's known cost. Hover Known cost for cost per execution and Total time for average time per execution. The model column appears whenever agents report different models, a requested model differs from the effective one, or a row reported none.",
+    `A higher value is a place to look, not proof of inefficiency. ${AGENT_TOKEN_CLASS_NOTE}`);
+}
+
+/** The run view's agent section. @param {RunSnapshot} snapshot @param {DashboardApplication} application */
+function renderAgentAnalytics(snapshot, application) {
   const section = panel("Agent analytics", "agents");
-  const rows = projection.agents;
-  if (rows.length === 0) {
-    section.append(element("p", "This run has no recorded agent group.", "empty-state"));
-    return section;
-  }
-  section.append(element("p", AGENT_TOKEN_CLASS_NOTE, "source-note"));
+  const parts = agentTableParts(snapshot, application);
+  const note = element("div", null, "section-note");
+  const line = element("span");
+  line.append(parts.modelLine);
+  note.append(agentInfo(), line);
+  section.append(note, parts.table);
+  return section;
+}
 
-  // A value identical on every projected row is a constant, not a column. It is
-  // decided against the rows this run actually recorded, so a column that
-  // varies in another run still appears there.
-  const model = constantColumn(rows, (row) => row.modelLabel);
-  const trend = constantColumn(rows, (row) => row.trend);
-  const classes = projection.tokens.classes;
-  const coverage = fullCoverageStatement(rows.flatMap((row) => row.tokens.classes));
-  if (model.constant) {
-    section.append(element("p", collapsedColumnStatement("Model", model.value, model.rowCount) +
-      " The authoritative projection binds no model to an agent row.", "source-note"));
-  }
-  if (trend.constant) {
-    section.append(element("p", collapsedColumnStatement("Trend", TREND_UNAVAILABLE_LABEL, trend.rowCount) +
-      " No per-agent historical series exists.", "source-note"));
-  }
-  if (coverage !== null) section.append(element("p", coverage, "source-note"));
+/** The Models view's agent region. @param {RunSnapshot} snapshot @param {DashboardApplication} application @param {string} label */
+function renderAgentTable(snapshot, application, label) {
+  const parts = agentTableParts(snapshot, application);
+  const section = region("Agents", { count: String(parts.rows.length), info: agentInfo(), sub: parts.modelLine });
+  section.dataset.control = `agents:${label}`;
+  section.append(parts.table);
+  return section;
+}
 
-  /** @type {string[]} */
-  const headers = ["Agent"];
-  if (!model.constant) headers.push("Model");
-  headers.push("Executions", ...classes.map((entry) => `${entry.label} tokens`),
-    "Known cost", "Findings generated");
-  if (!trend.constant) headers.push("Trend");
+/**
+ * Where one run's cost, tokens, and time went, from `stageUsage`. The three
+ * facts are plain maxima of recorded values, not judgements that a stage is
+ * abnormal.
+ * @param {RunSnapshot} snapshot @param {DashboardApplication} application @param {string} label
+ */
+function renderStageUsage(snapshot, application, label) {
+  const usage = stageUsage(snapshot);
+  const section = region("Where cost, tokens, and time went", {
+    count: label,
+    info: metricInfoButton("Stage usage",
+      "Shares are of this run's known cost and known tokens. Known cost is what agent rows reported, not a complete bill.",
+      "Highest, most, and longest are plain rankings of recorded values, not judgements that a stage is abnormal."),
+  });
+  const facts = element("div", null, "usage-facts");
+  /** @param {string} name @param {string} kind @param {Node | string} value @param {string} note */
+  const fact = (name, kind, value, note) => {
+    const node = element("div", null, "usage-fact");
+    const amount = element("span", null, "usage-value");
+    amount.append(value);
+    node.append(element("span", name, "eyebrow"), element("span", readableIntent(kind), "usage-stage"), amount, element("span", note, "usage-note"));
+    facts.append(node);
+  };
+  const { cost, tokens, duration: longest } = usage.highest;
+  if (cost !== null) fact("Highest cost", cost.kind, moneyNode(cost.knownUsd), `${shareText(cost.share)} of known cost`);
+  if (tokens !== null && tokens.tokens !== null) fact("Most tokens", tokens.kind, abbreviated(tokens.tokens), `${shareText(tokens.tokenShare)} of tokens`);
+  if (longest !== null) fact("Longest running", longest.kind, duration(longest.durationMs), "from stage creation to end");
+  if (facts.childElementCount > 0) section.append(facts);
 
-  section.append(dataTable(
-    "Recorded executions, token coverage, cost coverage, and attributed reports for every agent group",
-    headers,
-    rows.map((row) => {
-      /** @type {(Node | string)[]} */
-      const cells = [row.agent];
-      if (!model.constant) cells.push(row.modelLabel);
-      cells.push(String(row.executions));
-      for (let index = 0; index < classes.length; index += 1) cells.push(tokenCell(row.tokens.classes[index]));
-      const costQualifier = coverageQualifier({ reportedRows: row.costReportedRows, unreportedRows: row.costUnreportedRows });
-      const cost = element("span");
-      cost.append(moneyNode(row.knownUsd));
-      if (costQualifier !== null) cost.append(element("span", ` (${costQualifier})`));
-      if (row.recordedFailedAttempts > 0) {
-        cost.append(element("span", ` (${row.recordedFailedAttempts} recorded failed attempts)`));
-      }
-      cells.push(cost, String(row.findingsGenerated));
-      if (!trend.constant) cells.push(TREND_UNAVAILABLE_LABEL);
-      return cells;
-    }),
-  ));
+  const maxCost = Math.max(0, ...usage.stages.map((stage) => stage.knownUsd ?? 0));
+  if (usage.stages.length > 0) {
+    /** @type {TableColumn<UsageStage>[]} */
+    const columns = [
+      { label: "Stage", className: "nowrap", cell: (stage) => readableIntent(stage.kind) },
+      { label: "Share of known cost", className: "usage-bar", cell: (stage) => meterBar(maxCost === 0 ? 0 : (stage.knownUsd ?? 0) / maxCost, stage === cost) },
+      { label: "Known cost", numeric: true, cell: (stage) => moneyNode(stage.knownUsd) },
+      { label: "Share", numeric: true, className: "muted", cell: (stage) => shareText(stage.share) },
+      {
+        label: "Tokens", numeric: true, cell: (stage) => stage.tokens === null ? element("span", "Unavailable", "unavailable") : abbreviated(stage.tokens),
+        title: (stage) => stage.tokens === null ? "No row reported a token class" : `${exactCount(stage.tokens)} tokens`,
+      },
+    ];
+    const table = sortableTable({ caption: "Stages with agent runs, highest known cost first", key: "stage-usage", rows: usage.stages, columns, application });
+    table.firstElementChild?.classList.add("usage-table");
+    section.append(table);
+  }
+  if (usage.idle.length > 0) {
+    const idle = element("p", null, "usage-idle");
+    idle.append(badge("No agent runs", "neutral"));
+    for (const stage of usage.idle) {
+      const item = element("span");
+      item.append(element("strong", readableIntent(stage.kind)), ` · ${stage.reason}`);
+      idle.append(item);
+    }
+    section.append(idle);
+  }
+
+  const composition = element("div", null, "usage-composition");
+  const bar = svg("svg", {
+    class: "composition-bar", viewBox: "0 0 100 8", preserveAspectRatio: "none", role: "img",
+    "aria-label": usage.composition.map((entry) => `${entry.label.toLowerCase()} ${shareText(entry.share)}`).join(", "),
+  });
+  let x = 0;
+  for (const entry of usage.composition) {
+    const width = (entry.share ?? 0) * 100;
+    if (width > 0) {
+      bar.append(svg("rect", {
+        class: TOKEN_SERIES[entry.key] ?? "series-1", x: x.toFixed(2), y: "0", width: Math.max(width - 0.4, 0.2).toFixed(2), height: "8",
+      }));
+    }
+    x += width;
+  }
+  const keys = element("ul", null, "legend composition-legend");
+  for (const entry of usage.composition) {
+    const item = element("li", null, TOKEN_SERIES[entry.key] ?? "series-1");
+    item.append(element("span", null, "swatch"), element("span", entry.label.toLowerCase(), "legend-label"),
+      element("span", entry.known === null ? "Unavailable" : abbreviated(entry.known), "num"), element("span", shareText(entry.share), "muted"));
+    keys.append(item);
+  }
+  composition.append(element("span", "Token composition", "eyebrow"), bar, keys);
+  section.append(composition);
+
+  const durations = new Map(stageLedger(snapshot).segments.map((segment) => [segment.stageId, segment.durationMs]));
+  const groups = new Map(snapshot.cost.byStage.map((group) => [group.stageId, group]));
+  /** @param {RunSnapshot["stages"][number]} stage @param {"input" | "output" | "cacheRead" | "cacheWrite"} key */
+  const tokenCell = (stage, key) => {
+    const group = groups.get(stage.id);
+    const known = group === undefined || group.agentRows === 0 ? null : group.tokens[key].known;
+    return known === null ? element("span", "Unavailable", "muted") : exactCount(known);
+  };
+  /** @type {TableColumn<RunSnapshot["stages"][number]>[]} */
+  const rawColumns = [
+    { label: "Stage", className: "nowrap", cell: (stage) => readableIntent(stage.kind) },
+    {
+      label: "Known cost", numeric: true, cell: (stage) => {
+        const group = groups.get(stage.id);
+        return group === undefined || group.agentRows === 0 ? element("span", "None", "muted") : moneyNode(group.costReportedRows === 0 ? null : group.knownUsd);
+      },
+    },
+    { label: "Input", numeric: true, cell: (stage) => tokenCell(stage, "input") },
+    { label: "Output", numeric: true, cell: (stage) => tokenCell(stage, "output") },
+    { label: "Cache read", numeric: true, cell: (stage) => tokenCell(stage, "cacheRead") },
+    { label: "Cache write", numeric: true, cell: (stage) => tokenCell(stage, "cacheWrite") },
+    {
+      label: "Agent runs", numeric: true, cell: (stage) => {
+        const rows = groups.get(stage.id)?.agentRows ?? 0;
+        return rows === 0 ? badge("None", "neutral") : String(rows);
+      },
+    },
+    { label: "Duration", numeric: true, className: "muted", cell: (stage) => duration(durations.get(stage.id) ?? null) },
+  ];
+  const raw = element("details", null, "history");
+  const summary = element("summary", "Token classes and agent runs by stage ");
+  summary.append(element("span", "· recorded order", "num"));
+  raw.append(summary, sortableTable({ caption: "Token classes and agent runs for every recorded stage", key: "stage-raw", rows: snapshot.stages, columns: rawColumns, application }));
+  section.append(raw);
   return section;
 }
 
@@ -2156,59 +2624,67 @@ function listOrState(parsed, absent) {
 }
 
 /**
- * One canonical finding as a card. The card body carries only what triage
- * needs; every audit field stays in the per-card disclosure, unaltered.
- * @param {ReturnType<typeof snapshotProjection>["findingCards"][number]} card
- * @param {readonly string[] | null} severities
- * @param {boolean} showFinalPanel
- * @param {DashboardApplication} application
+ * The finding table's columns. Report subjects and every audit field stay in
+ * the drawer, unaltered; the row carries only what triage needs, and the
+ * status column is the recorded status from `findingStatus`.
+ * @param {DashboardApplication} application @param {boolean} withRun
+ * @returns {TableColumn<FindingRow>[]}
  */
-function findingCardNode(card, severities, showFinalPanel, application) {
-  const severity = cardSeverity(card, severities);
-  const tone = severity.available ? severityTone(severity.severity ?? "") : "neutral";
-  // The same tone mapping that colours badges and timeline markers colours the
-  // card edge, so one state never reads as two different colours.
-  const item = element("li", null, `finding-card tone-${tone}`);
-  const head = element("div", null, "finding-head");
-  head.append(badge(severity.available ? severity.severity ?? "" : "Severity unranked", tone));
-  head.append(element("h3", `Finding ${card.id}: ${card.title}`));
-  item.append(head);
-
-  /** @type {[string, Node | string][]} */
-  const facts = [
-    ["Recorded intent key", card.intentKey],
-    ["Location", card.location],
-    ["Stage and round", `${card.stageId}, round ${card.round}`],
-    ["Disposition", card.decision === null ? "Open: no decision is recorded." : card.decision.disposition],
+function findingColumns(application, withRun) {
+  /** @type {TableColumn<FindingRow>[]} */
+  const columns = [
+    {
+      label: "Severity",
+      cell: (row) => row.severity.available
+        ? badge(row.severity.severity ?? "", severityTone(row.severity.severity ?? ""), "severity")
+        : badge("Unranked", "neutral", "severity"),
+    },
+    {
+      label: "Finding",
+      cell: (row) => {
+        const link = /** @type {HTMLButtonElement} */ (element("button", null, "row-link"));
+        link.type = "button";
+        link.dataset.control = `finding:${row.repositoryId}:${row.runId}:${row.card.id}`;
+        link.append(`${row.card.title} `, element("span", `#${row.card.id}`, "num"));
+        link.addEventListener("click", () => openFindingDrawer(application, row, link));
+        return link;
+      },
+    },
+    {
+      label: "Location", className: "mono muted",
+      cell: (row) => {
+        const location = element("span", row.card.location, "clamp-2");
+        location.title = row.card.location;
+        return location;
+      },
+    },
   ];
-  if (showFinalPanel) {
-    facts.push(["Final-panel blocking", card.finalPanelBlocking === true ? "Yes" : "No"]);
+  if (withRun) {
+    columns.push({
+      label: "Run", className: "muted nowrap",
+      cell: (row) => fragment(`${row.runLabel} `, element("span", `· ${pathTail(row.path)}`, "mono")),
+      title: (row) => row.path,
+    });
   }
-  item.append(definitionList(facts, "definitions compact"));
+  columns.push(
+    { label: "Stage", className: "muted nowrap", cell: (row) => `${readableIntent(row.stageKind)} · r${row.card.round}` },
+    { label: "Status", cell: (row) => badge(FINDING_STATUS[row.status].label, FINDING_STATUS[row.status].tone) },
+  );
+  return columns;
+}
 
-  // Report subject text is the reviewer's own recorded words. It stays
-  // verbatim and untruncated at card level; nothing here shortens it.
-  const reports = element("div", null, "subsection");
-  if (card.reports.length === 0) {
-    reports.append(element("p", "No recorded report.", "empty-state"));
-  } else {
-    const reportList = element("ul", null, "report-list");
-    for (const report of card.reports) {
-      const reportItem = element("li", null, "report");
-      reportItem.append(badge(report.severity, severityTone(report.severity)));
-      reportItem.append(element("p", report.subject, "report-subject"));
-      reportItem.append(element("p",
-        `${text(report.reviewerId, "Reviewer not recorded")} · agent run ${report.agentRunId} · ${report.classification}`,
-        "source-note"));
-      reportList.append(reportItem);
-    }
-    reports.append(reportList);
-  }
-  item.append(reports);
-
-  item.append(disclosure(`Recorded decision evidence for finding ${card.id}`,
-    decisionEvidence(card, application)));
-  return item;
+/**
+ * @param {FindingRow[]} rows @param {string} caption @param {string} key
+ * @param {DashboardApplication} application @param {boolean} withRun
+ */
+function findingTable(rows, caption, key, application, withRun) {
+  return sortableTable({
+    caption, key, rows, columns: findingColumns(application, withRun), application,
+    rowSetup: (tr, row) => {
+      tr.dataset.status = row.status;
+      if (!FINDING_STATUS[row.status].active) tr.className = "is-quiet";
+    },
+  });
 }
 
 /**
@@ -2290,59 +2766,101 @@ function decisionEvidence(card, application) {
   return block;
 }
 
-/** @param {ReturnType<typeof snapshotProjection>} projection @param {DashboardApplication} application */
-function renderFindings(projection, application) {
-  const section = panel("Findings", "findings");
-  const count = projection.findingCards.length;
-  if (count === 0) {
-    section.append(element("p", "This run has no canonical finding.", "empty-state"));
-    return section;
-  }
-  section.append(element("p",
-    `${count} canonical ${count === 1 ? "finding" : "findings"}. Every immutable report keeps its own reviewer, severity, classification, and subject; the dashboard synthesizes no finding-level severity or disposition.`,
-    "source-note"));
-  section.append(element("p", FINDING_ORDER_STATEMENT, "source-note"));
+/**
+ * The run's findings: active findings in one table with a "Blocking only"
+ * toggle, and addressed, earlier-round, and rejected findings in a collapsed
+ * history. Within a status, the recorded triage order is kept.
+ * @param {ReturnType<typeof snapshotProjection>} projection @param {DashboardApplication} application
+ * @param {RunContext} context
+ */
+function renderFindings(projection, application, context) {
   const severities = severityOrder(projection.governance.configuration);
   const ordered = orderFindings(projection.findingCards, severities);
   const finalPanel = finalPanelBlockingSummary(ordered);
-  if (finalPanel.statement !== null) section.append(element("p", finalPanel.statement, "source-note"));
-  const shown = new Set(finalPanel.shown);
-  const list = element("ul", null, "finding-list");
-  for (const card of ordered) {
-    list.append(findingCardNode(card, severities, shown.has(card), application));
+  const kinds = new Map(projection.stages.map((stage) => [stage.id, stage.kind]));
+  const runLabel = `${projection.overview.run.slug} #${projection.overview.run.id}`;
+  /** @type {FindingRow[]} */
+  const rows = ordered.map((card) => {
+    const stageKind = kinds.get(card.stageId) ?? "";
+    return {
+      repositoryId: context.repositoryId, runId: projection.overview.run.id, runLabel, path: context.path,
+      card, status: context.statuses.get(card.id) ?? findingStatus(card, stageKind), stageKind,
+      severity: cardSeverity(card, severities),
+    };
+  }).sort((left, right) => FINDING_STATUS[left.status].rank - FINDING_STATUS[right.status].rank);
+  const active = rows.filter((row) => FINDING_STATUS[row.status].active);
+  const history = rows.filter((row) => !FINDING_STATUS[row.status].active);
+  const blocking = rows.filter((row) => row.status === "blocking").length;
+  /** @type {HTMLButtonElement | null} */
+  let toggle = null;
+  if (blocking > 0) {
+    toggle = /** @type {HTMLButtonElement} */ (element("button", "Blocking only", "chip"));
+    toggle.type = "button";
+    toggle.dataset.control = "blocking-only";
+    toggle.setAttribute("aria-pressed", String(application.blockingOnly));
+    toggle.append(element("span", String(blocking), "num"));
+    toggle.addEventListener("click", () => { application.blockingOnly = !application.blockingOnly; render(application); });
   }
-  section.append(list);
+  const section = region("Findings", {
+    count: `${active.length} active · ${rows.length} recorded`,
+    info: metricInfoButton("Finding order", FINDING_ORDER_STATEMENT, finalPanel.statement ?? ""),
+    end: toggle,
+    sub: "Active findings are listed; addressed and earlier-round findings are in history.",
+  });
+  section.id = "run-findings";
+  section.tabIndex = -1;
+  section.dataset.control = "run-findings";
+  if (rows.length === 0) {
+    section.append(element("p", "This run has no canonical finding.", "att-empty"));
+    return section;
+  }
+  const shown = application.blockingOnly && blocking > 0 ? active.filter((row) => row.status === "blocking") : active;
+  section.append(shown.length === 0
+    ? element("p", "No active findings.", "att-empty")
+    : findingTable(shown, `Active findings for ${runLabel}`, "run-findings", application, false));
+  if (history.length > 0) {
+    /** @type {Map<FindingStatus, number>} */
+    const counts = new Map();
+    for (const row of history) counts.set(row.status, (counts.get(row.status) ?? 0) + 1);
+    const details = element("details", null, "history");
+    const summary = element("summary", "History ");
+    summary.append(element("span", `· ${[...counts.entries()].map(([status, count]) => `${count} ${FINDING_STATUS[status].label.toLowerCase()}`).join(" · ")}`, "num"));
+    details.append(summary, findingTable(history, `Finding history for ${runLabel}`, "run-finding-history", application, false));
+    section.append(details);
+  }
   return section;
 }
 
 /**
+ * Copy-only commands for the selected run. Copying places text on the
+ * clipboard; the dashboard never executes a command, opens a writer, or
+ * collects consent.
  * @param {ReturnType<typeof snapshotProjection>} projection
  * @param {DashboardApplication} application
- * @param {ReturnType<typeof repositoryIdentity>} identity
  * @param {number} runId
  */
-function renderGovernance(projection, application, identity, runId) {
-  const section = panel("Governed actions", "governance");
+function renderCommands(projection, application, runId) {
   const shellLabel = application.platform === "win32" ? "PowerShell" : "POSIX shell";
-  // The repository and the shell are constant for the whole region, so they are
-  // stated once rather than repeated on every tile.
-  const scope = element("p", null, "source-note");
-  scope.append(element("span", `Copy-only ${shellLabel} commands for run ${runId} in `));
-  scope.append(element("strong", identity.display));
-  scope.append(element("span", " "));
-  scope.append(identityNode({ available: true, display: identity.canonicalPath, full: identity.canonicalPath, truncated: false },
-    "repository path", application));
-  scope.append(element("span", ". Copying places text on the clipboard; the dashboard never executes a command, opens a writer, or collects consent."));
-  section.append(scope);
-  const tiles = element("ul", null, "command-tiles");
-  for (const command of projection.governance.commands) {
-    const tile = element("li", null, `command-tile ${command.eligible ? "eligible" : "ineligible"}`);
-    tile.append(element("h3", command.kind));
-    tile.append(badge(command.eligible ? "Eligible" : "Not eligible", command.eligible ? "success" : "neutral"));
+  const commands = projection.governance.commands;
+  const section = region("Available commands", {
+    count: String(commands.length),
+    sub: `Copy-only ${shellLabel}. Run a command outside this read-only dashboard.`,
+  });
+  section.id = "commands";
+  const list = element("ul", null, "actions-list");
+  for (const command of commands) {
+    const presentation = COMMAND_PRESENTATION[command.kind]
+      ?? { name: command.title ?? readableIntent(command.kind), description: command.reason ?? "A recorded operator action." };
+    const item = element("li", null, "action-row");
+    const description = element("div");
+    description.append(element("h4", presentation.name), element("p", presentation.description));
+    const controls = element("div", null, "action-controls");
+    const copy = copyControl("Copy command", command.text, `${presentation.name} command`, application);
+    copy.disabled = !command.eligible;
+    controls.append(badge(command.eligible ? "Eligible" : "Not eligible", command.eligible ? "success" : "neutral"), copy);
     /** @type {[string, Node | string][]} */
     const entries = [];
-    // A repository-wide command taking no run is a recorded fact about scope,
-    // not a repetition of the region's own heading.
+    // A repository-wide command taking no run is a recorded fact about scope.
     if (command.scope === "repository") {
       entries.push(["Run context", `Run ${runId} is selected; this command is repository-wide and takes no run.`]);
     }
@@ -2351,20 +2869,19 @@ function renderGovernance(projection, application, identity, runId) {
     if (command.title !== null) entries.push(["Title", command.title]);
     if (command.route !== null) entries.push(["Route", command.route]);
     if (command.evidenceRef !== null) entries.push(["Evidence reference", command.evidenceRef]);
-    if (entries.length > 0) tile.append(definitionList(entries, "definitions compact"));
-    tile.append(element("code", command.text, "command-text"));
-    const copy = copyControl(`Copy ${command.kind} command`, command.text, `${command.kind} command`, application);
-    copy.disabled = !command.eligible;
-    tile.append(copy);
-    tiles.append(tile);
+    const body = element("div");
+    body.append(element("code", command.text, "command-text"));
+    if (entries.length > 0) body.append(definitionList(entries, "definitions compact"));
+    item.append(description, controls, disclosure("View command", body));
+    list.append(item);
   }
-  section.append(tiles);
+  section.append(list);
   return section;
 }
 
 /** @param {ReturnType<typeof snapshotProjection>} projection @param {DashboardApplication} application */
 function renderConfiguration(projection, application) {
-  const section = panel("Frozen configuration and approval", "configuration");
+  const section = panel("Configuration and approvals", "configuration");
   const configuration = projection.governance.configuration;
   section.append(definitionList([
     ["System name", text(configuration.systemName, "Not recorded")],
@@ -2552,7 +3069,7 @@ function renderDelivery(projection, application) {
 /** @param {ReturnType<typeof snapshotProjection>} projection */
 function renderEvidence(projection) {
   const section = panel("Evidence", "evidence");
-  section.append(element("p", "Recorded references and their observed availability. The dashboard never links to, serves, or renders evidence contents.", "source-note"));
+  section.append(sectionNote("Evidence", "Recorded references and their observed availability. The dashboard never links to, serves, or renders evidence contents."));
   if (projection.evidence.length === 0) {
     section.append(element("p", "This run recorded no evidence reference.", "empty-state"));
     return section;
@@ -2570,7 +3087,7 @@ function renderEvidence(projection) {
 }
 
 /* ------------------------------------------------------------------ *
- * Application state and refresh orchestration
+ * Application state and views
  * ------------------------------------------------------------------ */
 
 /** @typedef {{
@@ -2582,32 +3099,46 @@ function renderEvidence(projection) {
  * currentTab: string,
  * limit: number,
  * repositoryFilter: string,
- * statusFilter: string,
- * phaseFilter: string,
- * search: string,
+ * runFilter: string,
+ * recentFilter: string,
+ * attentionFilter: string,
+ * findingStatusFilter: string,
+ * findingSeverityFilter: string,
+ * blockingOnly: boolean,
+ * sorts: Map<string, { column: string, direction: SortDirection }>,
  * sessionExpired: boolean,
  * refreshGeneration: number,
  * inFlight: Set<string>,
+ * autoRefresh: boolean,
+ * refreshing: number,
+ * refreshTimer: ReturnType<typeof setTimeout> | null,
+ * justUpdated: Set<string>,
  * platform: string,
  * main: HTMLElement,
  * live: HTMLElement
  * }} DashboardApplication */
 
-/** @param {DashboardApplication} application */
+/**
+ * Rebuild the visible view. A focused control that carries a `data-control`
+ * key keeps focus across the rebuild, so a chip or sort heading can be used
+ * repeatedly from the keyboard.
+ * @param {DashboardApplication} application
+ */
 function render(application) {
-  const title = document.querySelector("h1");
-  if (title !== null) title.textContent = "Governed Delivery Dashboard";
   if (application.sessionExpired) {
     application.main.setAttribute("aria-busy", "false");
     showSessionExpired(application.main, "The server rejected this tab's bearer token.");
+    renderChrome(application);
     return;
   }
+  const active = document.activeElement;
+  const focusKey = active instanceof HTMLElement && application.main.contains(active) ? active.dataset.control ?? null : null;
   application.main.replaceChildren();
 
   if (application.currentTab === "overview") {
     application.main.append(renderOverviewTab(application));
   } else if (application.currentTab === "runs") {
-    renderRunsTab(application);
+    application.main.append(renderRunsTab(application));
   } else if (application.currentTab === "findings") {
     application.main.append(renderFindingsTab(application));
   } else if (application.currentTab === "governance") {
@@ -2620,341 +3151,526 @@ function render(application) {
     application.main.append(renderOverviewTab(application));
   }
 
+  if (focusKey !== null) {
+    for (const node of application.main.querySelectorAll("[data-control]")) {
+      if (node instanceof HTMLElement && node.dataset.control === focusKey) {
+        node.focus();
+        break;
+      }
+    }
+  }
   application.main.setAttribute("aria-busy", "false");
+  renderChrome(application);
 }
 
 /**
- * Render the dedicated Runs tab view (repository list and selected run inspection).
+ * The header's data status, freshness, and tab counts. The status pill covers
+ * every configured repository, because scoping is presentation only; the tab
+ * counts follow the scope.
  * @param {DashboardApplication} application
  */
+function renderChrome(application) {
+  const data = scopeData(application);
+  const loaded = [...application.repositories.values()].some((state) => state.runs.envelope !== null);
+  const runs = document.querySelector('[data-tab-count="runs"]');
+  if (runs instanceof HTMLElement) {
+    runs.textContent = String(data.entries.length);
+    runs.hidden = !loaded;
+  }
+  const attention = document.querySelector('[data-tab-count="attention"]');
+  if (attention instanceof HTMLElement) {
+    attention.textContent = String(data.counts.requireAttention);
+    attention.hidden = !loaded;
+    attention.classList.toggle("tone-danger", data.counts.requireAttention > 0);
+  }
+  const everything = portfolioProjection(repositoryViews({ repositories: application.repositories }));
+  const coverage = everything.coverage;
+  const stale = coverage.stale;
+  const cadence = `Auto-refresh every ${AUTO_REFRESH_INTERVAL_MS / 1000} s while this tab is visible`;
+  /** @type {[string, string, string]} */
+  const [label, tone, title] = application.sessionExpired
+    ? ["Session expired", "danger", "The launch token was refused; reopen the URL bw dashboard prints."]
+    : stale > 0
+      ? [`${plural(stale, "snapshot")} stale`, "warning", `${plural(stale, "snapshot")} failed to refresh; the last values stay, labelled stale.`]
+      : !application.autoRefresh || document.visibilityState !== "visible"
+        ? ["Auto-refresh paused", "neutral", "Refresh reloads on demand."]
+        : loaded
+          ? ["Data current", "success", `${coverage.fresh} of ${coverage.loadedRuns} snapshots current across all configured repositories. ${cadence}.`]
+          : ["Loading", "neutral", "The first observation has not completed."];
+  const pill = document.querySelector("#data-status");
+  if (pill instanceof HTMLElement) {
+    pill.className = `status-pill tone-${tone}`;
+    pill.title = title;
+    const pillLabel = pill.querySelector(".pill-label");
+    if (pillLabel !== null) pillLabel.textContent = label;
+  }
+  const updated = document.querySelector("#last-updated");
+  if (updated instanceof HTMLTimeElement && data.observedAt !== null) {
+    const presentation = relativeTimePresentation(data.observedAt, null);
+    updated.dateTime = data.observedAt;
+    updated.title = presentation.exact;
+    updated.textContent = new Date(data.observedAt).toLocaleTimeString("en-US", { hour12: false });
+  }
+  document.querySelector("#refresh")?.classList.toggle("is-refreshing", application.refreshing > 0);
+  const cadenceNode = document.querySelector("#refresh-cadence");
+  if (cadenceNode !== null) cadenceNode.textContent = application.autoRefresh ? cadence : "Auto-refresh paused · Refresh reloads on demand";
+}
+
+/**
+ * The run the run-scoped views show: the selection, or else the most recent
+ * loaded run in scope.
+ * @param {DashboardApplication} application @param {ScopeEntry[]} entries
+ */
+function selectedEntry(application, entries) {
+  if (application.selectedRepositoryId !== null && application.selectedRunId !== null) {
+    return { repositoryId: application.selectedRepositoryId, runId: application.selectedRunId };
+  }
+  const first = entries[0];
+  return first === undefined ? null : { repositoryId: first.repositoryId, runId: first.run.id };
+}
+
+/** The Runs page cards, scoped to the header selection. @param {ScopeData} data @param {DashboardApplication} application */
+function renderRunsCards(data, application) {
+  const { portfolio, counts } = data;
+  const cards = element("div", null, "cards is-six");
+  cards.append(statusCard({
+    label: "Runs", value: String(portfolio.runs),
+    breakdown: application.repositoryFilter === "" ? `from ${plural(application.repositories.size, "repository", "repositories")}` : "in this repository",
+  }));
+  cards.append(statusCard({
+    label: "Blocked", value: toned(portfolio.blockedRuns, "danger", String(portfolio.blockedRuns)),
+    breakdown: `of ${portfolio.runs} loaded`,
+  }));
+  cards.append(statusCard({
+    label: "Findings requiring attention", value: snapshotValue(data, () => String(counts.requireAttention)),
+    breakdown: fragment(toned(counts.blocking, "danger", `${counts.blocking} blocking`), " · ", toned(counts.open, "warning", `${counts.open} open`)),
+  }));
+  cards.append(usagePair(tokensCard(portfolio.tokens),
+    costCard({ knownUsd: portfolio.cost.knownUsd, reportedRows: portfolio.cost.reportedRows, agentRows: portfolio.cost.agentRows })));
+  cards.append(statusCard({
+    label: "Audit status", value: "Not verified", textValue: true, breakdown: "in this view · verify-audit per repository",
+  }));
+  return cards;
+}
+
+/**
+ * The Runs view: page cards, repository notices, the run table with its
+ * quick filters and per-repository limit, and the selected run.
+ * @param {DashboardApplication} application
+ * @returns {HTMLElement}
+ */
 export function renderRunsTab(application) {
-  renderKpiBar(application.main, portfolioProjection(repositoryViews(application)));
-
-  const portfolio = panel("Repository portfolio", "runs");
-  portfolio.append(element("p", "Every configured repository stays visible. One repository's refusal never suppresses another.", "source-note"));
-  const filterRepoId = application.selectedRepositoryId || application.repositoryFilter || "";
+  const data = scopeData(application);
+  const container = element("div", null, "runs-view");
+  container.append(viewHead("Runs", scopeLabel(application, data)), renderRunsCards(data, application));
   for (const repositoryState of application.repositories.values()) {
-    if (filterRepoId !== "" &&
-        repositoryState.repository.id !== filterRepoId) continue;
-    renderRepository(portfolio, repositoryState, application);
+    if (application.repositoryFilter !== "" && repositoryState.repository.id !== application.repositoryFilter) continue;
+    renderRepositoryNotice(container, repositoryState, application);
   }
-  application.main.append(portfolio);
 
-  const repositoryId = application.selectedRepositoryId;
-  const runId = application.selectedRunId;
-  if (repositoryId === null || runId === null) {
-    application.main.setAttribute("aria-busy", "false");
-    return;
-  }
+  const statuses = entryStatuses(data.entries);
+  const count = (/** @type {string} */ filter) => filterEntries(data.entries, filter, statuses).length;
+  const tableRegion = element("section", null, "region");
+  tableRegion.setAttribute("aria-label", "Loaded runs");
+  const toolbar = element("div", null, "toolbar");
+  const limitField = element("span", null, "end");
+  const limitLabel = /** @type {HTMLLabelElement} */ (element("label", "Per repository", "field"));
+  limitLabel.htmlFor = "run-limit";
+  const limit = /** @type {HTMLInputElement} */ (element("input", null, "input num run-limit"));
+  limit.id = "run-limit";
+  limit.type = "number";
+  limit.min = "1";
+  limit.max = "100";
+  limit.value = String(application.limit);
+  limit.dataset.control = "run-limit";
+  limit.addEventListener("change", () => {
+    try {
+      application.limit = validatedLimit(limit.value);
+      void trackedRefresh(application, () => refreshAll(application));
+    } catch (error) {
+      application.live.textContent = error instanceof Error ? error.message : String(error);
+      limit.value = String(application.limit);
+    }
+  });
+  limitField.append(limitLabel, limit);
+  toolbar.append(chipGroup("Quick filters", "runs", [
+    { value: "", label: "All", count: data.entries.length },
+    { value: "blocked", label: "Blocked", count: count("blocked") },
+    { value: "completed", label: "Completed", count: count("completed") },
+    { value: "has-blocking", label: "Has blocking findings", count: count("has-blocking") },
+  ], application.runFilter, (value) => { application.runFilter = value; render(application); }), limitField);
+  tableRegion.append(toolbar);
+  const selected = selectedEntry(application, data.entries);
+  const shown = filterEntries(data.entries, application.runFilter, statuses);
+  if (data.entries.length === 0) tableRegion.append(element("p", "No run is loaded in this scope.", "att-empty"));
+  else if (shown.length === 0) tableRegion.append(element("p", "No loaded run matches this filter.", "att-empty"));
+  else tableRegion.append(runTableNode(shown, statuses, application, "runs", selected, data.observedAt));
+  tableRegion.append(element("div", data.portfolio.limitedScope
+    ? `Latest ${application.limit} per repository · more runs exist beyond this limit; the read route does not report how many`
+    : `Latest ${application.limit} per repository · every run within the limit is shown`, "region-foot"));
+  container.append(tableRegion);
+
+  if (selected !== null) container.append(renderRunView(application, selected.repositoryId, selected.runId));
+  return container;
+}
+
+/**
+ * One run: the header region, findings, commands, and the collapsed sections.
+ * @param {DashboardApplication} application @param {string} repositoryId @param {number} runId
+ */
+function renderRunView(application, repositoryId, runId) {
+  const container = element("div");
+  container.dataset.runView = `${repositoryId}:${runId}`;
   const selected = application.repositories.get(repositoryId);
   if (selected === undefined) {
-    application.main.append(callout("The selected repository is not configured.", "danger"));
-    application.main.setAttribute("aria-busy", "false");
-    return;
+    container.append(callout("The selected repository is not configured.", "danger"));
+    return container;
   }
   const slot = selected.snapshots.get(runId);
   const status = slot === undefined ? "" : resourceStatus(slot.resource);
   if (slot !== undefined && status !== "") {
-    application.main.append(callout(status, slot.resource.stale ? "warning" : "danger"));
+    container.append(callout(status, slot.resource.stale ? "warning" : "danger"));
   }
   const snapshot = slot === undefined ? null : slotSnapshot(slot);
   if (snapshot === null) {
-    if (slot?.loading === true) application.main.append(element("p", `Loading run ${runId}.`, "empty-state"));
-    else if (status === "") application.main.append(element("p", `No snapshot has been observed for run ${runId}.`, "empty-state"));
-    application.main.setAttribute("aria-busy", "false");
-    return;
+    if (slot?.loading === true) container.append(element("p", `Loading run ${runId}.`, "empty-state"));
+    else if (status === "") container.append(element("p", `No snapshot has been observed for run ${runId}.`, "empty-state"));
+    return container;
   }
-  const projection = snapshotProjection(snapshot, application.inventory?.cliPath ?? "", application.platform,
-    slot?.resource.envelope?.observedAt ?? null);
-  const title = document.querySelector("h1");
-  if (title !== null) title.textContent = projection.systemName;
+  const observedAt = slot?.resource.envelope?.observedAt ?? null;
+  const projection = snapshotProjection(snapshot, application.inventory?.cliPath ?? "", application.platform, observedAt);
   const summary = runExecutiveSummary(snapshot, {
     repositoryPath: selected.repository.path,
     runs: runSummaries(selected.runs),
-    observedAt: slot?.resource.envelope?.observedAt ?? null,
+    observedAt,
   });
+  /** @type {RunContext} */
+  const context = { snapshot, statuses: findingStatuses(snapshot), observedAt, repositoryId, path: selected.repository.path };
   const staleNote = slot !== undefined && slot.resource.stale && slot.resource.envelope !== null
     ? `Stale snapshot from ${slot.resource.envelope.observedAt}`
     : "";
   const delivery = projection.delivery;
-  // Each collapsed line states how much it hides: cost groups for the cost
-  // section, recorded proposals for the configuration section, and every
-  // recorded delivery artifact path for the delivery section.
-  const costGroups = projection.charts.stages.length + projection.charts.agents.length;
+  // Each collapsed line states how much it hides.
   const deliveryPaths = delivery.changedPaths.length + delivery.declaredPaths.length
     + delivery.deliveredPaths.length + delivery.missingPaths.length;
-  application.main.append(
-    renderExecutiveSummary(summary, projection, application),
-    renderFindings(projection, application),
-    collapsibleSection(projection.governance.commands.length, staleNote,
-      () => renderGovernance(projection, application, summary.repository, runId)),
-    collapsibleSection(costGroups, staleNote, () => renderCostAndTokens(projection)),
-    collapsibleSection(projection.stageViews.length, staleNote, () => renderTimeline(projection)),
-    collapsibleSection(projection.activityItems.length, staleNote, () => renderActivity(projection)),
-    collapsibleSection(projection.agents.length, staleNote, () => renderAgentTable(projection)),
-    collapsibleSection(projection.governance.proposals.length, staleNote,
-      () => renderConfiguration(projection, application)),
-    collapsibleSection(deliveryPaths, staleNote, () => renderDelivery(projection, application)),
-    collapsibleSection(projection.evidence.length, staleNote, () => renderEvidence(projection)),
+  container.append(
+    renderExecutiveSummary(summary, projection, application, context),
+    renderFindings(projection, application, context),
+    renderCommands(projection, application, runId),
+    collapsibleSection(plural(projection.charts.stages.length, "stage"), staleNote, () => renderCostAndTokens(projection),
+      fragment(moneyNode(summary.cost.available ? projection.cost.knownUsd : null), " known")),
+    collapsibleSection(plural(projection.stageViews.length, "stage"), staleNote, () => renderTimeline(projection), "recorded order"),
+    collapsibleSection(plural(projection.activityItems.length, "event"), staleNote, () => renderActivity(projection), "latest first"),
+    collapsibleSection(plural(snapshot.cost.byAgent.length, "agent"), staleNote, () => renderAgentAnalytics(snapshot, application),
+      plural(projection.cost.agentRows, "execution")),
+    collapsibleSection(plural(projection.governance.proposals.length, "proposal"), staleNote,
+      () => renderConfiguration(projection, application), badge("Frozen at run start", "neutral")),
+    collapsibleSection(plural(deliveryPaths, "path"), staleNote, () => renderDelivery(projection, application),
+      deliveryPaths === 0 ? "no delivery recorded" : "declared and delivered"),
+    collapsibleSection(plural(projection.evidence.length, "evidence reference"), staleNote, () => renderEvidence(projection)),
   );
-  application.main.setAttribute("aria-busy", "false");
+  return container;
 }
 
-/** @param {DashboardApplication} application */
-function resolveTargetSnapshot(application) {
-  let targetRepoId = application.selectedRepositoryId || application.repositoryFilter || null;
-  let targetRunId = application.selectedRunId;
-  /** @type {RunSnapshot | null} */
-  let targetSnapshot = null;
-  /** @type {RepositoryState | null} */
-  let targetRepoState = null;
-
-  if (targetRepoId && targetRunId) {
-    const repo = application.repositories.get(targetRepoId);
-    if (repo) {
-      targetRepoState = repo;
-      const slot = repo.snapshots.get(targetRunId);
-      targetSnapshot = slot ? slotSnapshot(slot) : null;
-    }
-  }
-
-  if (!targetSnapshot) {
-    for (const repoState of application.repositories.values()) {
-      if (targetRepoId !== null && repoState.repository.id !== targetRepoId) continue;
-      for (const [runId, slot] of repoState.snapshots.entries()) {
-        const snap = slotSnapshot(slot);
-        if (snap) {
-          targetSnapshot = snap;
-          targetRepoId = repoState.repository.id;
-          targetRunId = runId;
-          targetRepoState = repoState;
-          break;
-        }
-      }
-      if (targetSnapshot) break;
-    }
-  }
-
-  return { targetSnapshot, targetRepoId, targetRunId, targetRepoState };
-}
+/** @type {string[]} */
+const SEVERITY_CHIPS = ["critical", "high", "medium", "low"];
 
 /**
- * Render the dedicated Findings tab view.
+ * The Findings view: status and severity chips over one table. Status comes
+ * from `findingStatus` and severity from `cardSeverity`, never from the first
+ * report's own severity.
  * @param {DashboardApplication} application
  * @returns {HTMLElement}
  */
 export function renderFindingsTab(application) {
-  const container = element("div", null, "findings-tab-view");
-  const panelEl = panel("Findings Triage", "findings-triage", "findings-triage-panel");
-
-  const views = repositoryViews(application);
-  /** @type {{ repositoryId: string, runId: number, card: ReturnType<typeof findingCard> }[]} */
-  const allCards = [];
-
-  for (const v of views) {
-    for (const slot of v.snapshots) {
-      if (slot.snapshot !== null) {
-        for (const finding of slot.snapshot.evidence.findings) {
-          const card = findingCard(finding);
-          allCards.push({ repositoryId: v.repositoryId, runId: slot.runId, card });
-        }
-      }
-    }
+  const data = scopeData(application);
+  const rows = data.entries.flatMap((entry) =>
+    entry.snapshot === null ? [] : snapshotFindingRows(entry.repositoryId, entry.path, entry.snapshot)).sort(compareFindingRows);
+  const counts = data.counts;
+  /** @type {Map<string, number>} */
+  const bySeverity = new Map();
+  for (const row of rows) {
+    const key = row.severity.available ? row.severity.severity ?? "unranked" : "unranked";
+    bySeverity.set(key, (bySeverity.get(key) ?? 0) + 1);
   }
+  const severities = [...SEVERITY_CHIPS, ...[...bySeverity.keys()].filter((key) => !SEVERITY_CHIPS.includes(key) && key !== "unranked").sort()];
+  if (bySeverity.has("unranked")) severities.push("unranked");
 
-  const filterRepoId = application.selectedRepositoryId || application.repositoryFilter || "";
-  const meta = element("div", null, "findings-tab-meta");
-  const scopeMsg = filterRepoId !== ""
-    ? `${allCards.length} total findings recorded for repository ${filterRepoId}.`
-    : `${allCards.length} total findings recorded across loaded repositories.`;
-  meta.append(element("p", `${scopeMsg} Every finding retains its recorded location, reviewer reports, and disposition.`, "source-note"));
-  panelEl.append(meta);
-
-  if (allCards.length === 0) {
-    const emptyMsg = filterRepoId !== ""
-      ? `No findings have been recorded for repository ${filterRepoId}.`
-      : "No findings have been recorded across the loaded repositories.";
-    panelEl.append(element("p", emptyMsg, "empty-state"));
-    container.append(panelEl);
-    return container;
-  }
-
-  const filterBar = element("div", null, "findings-filter-bar");
-  const sevFilter = /** @type {HTMLSelectElement} */ (element("select", null, "findings-severity-select"));
-  sevFilter.append(
-    element("option", "All severities"),
-    element("option", "Critical"),
-    element("option", "High"),
-    element("option", "Medium"),
-    element("option", "Low"),
-  );
-  filterBar.append(element("label", "Filter severity: "), sevFilter);
-  panelEl.append(filterBar);
-
-  const list = element("div", null, "findings-tab-list");
-
-  /** @param {string} filterVal */
-  function updateList(filterVal) {
-    list.replaceChildren();
-    const filtered = allCards.filter(({ card }) => {
-      if (filterVal === "All severities" || filterVal === "") return true;
-      const primarySev = card.reports[0]?.severity.toLowerCase() ?? "";
-      return primarySev === filterVal.toLowerCase();
-    });
-
-    if (filtered.length === 0) {
-      list.append(element("p", "No findings match the selected severity filter.", "empty-state"));
-      return;
-    }
-
-    for (const { repositoryId, runId, card } of filtered) {
-      const article = element("article", null, "finding-card");
-      article.setAttribute("tabindex", "0");
-      article.setAttribute("role", "button");
-      article.setAttribute("aria-label", `Finding ${card.id}: ${card.title}`);
-
-      const header = element("div", null, "finding-card-header");
-      const sev = card.reports[0]?.severity ?? "neutral";
-      const sevBadge = element("span", sev.toUpperCase(), `badge tone-${severityTone(sev)}`);
-      const title = element("h3", card.title, "finding-title");
-      header.append(sevBadge, title);
-
-      const body = element("div", null, "finding-card-body");
-      const location = element("p", `Location: ${card.location}`, "finding-location");
-      const scope = element("span", `${repositoryId} · Run #${runId} · Stage ${card.stageId}`, "finding-scope-tag");
-      const disp = element("p", card.decision === null ? "Open: no decision recorded" : `Disposition: ${card.decision.disposition}`, "finding-disp");
-      body.append(location, scope, disp);
-
-      const actionRow = element("div", null, "finding-card-actions");
-      const inspectBtn = /** @type {HTMLButtonElement} */ (element("button", "Inspect details →", "btn-action-sm"));
-      inspectBtn.type = "button";
-      inspectBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        openDrawer(`Finding ${card.id}`, "Finding Details", () => buildFindingDetailDrawer(card, application), application, inspectBtn);
-      });
-      actionRow.append(inspectBtn);
-
-      article.append(header, body, actionRow);
-      article.addEventListener("click", () => {
-        openDrawer(`Finding ${card.id}`, "Finding Details", () => buildFindingDetailDrawer(card, application), application, article);
-      });
-      article.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          article.click();
-        }
-      });
-
-      list.append(article);
-    }
-  }
-
-  sevFilter.addEventListener("change", () => {
-    updateList(sevFilter.value);
+  const container = element("div", null, "findings-view");
+  const label = scopeLabel(application, data);
+  label.append(" · ", element("strong", plural(rows.length, "finding")));
+  container.append(viewHead("Findings", label));
+  const section = element("section", null, "region");
+  section.setAttribute("aria-label", "Findings in scope");
+  const toolbar = element("div", null, "toolbar");
+  const statusFilter = application.findingStatusFilter;
+  const severityFilter = application.findingSeverityFilter;
+  const severityChips = element("span", null, "end");
+  severityChips.append(chipGroup("Severity", "finding-severity", [
+    { value: "", label: "Any severity" },
+    ...severities.map((key) => ({ value: key, label: readableIntent(key), count: bySeverity.get(key) ?? 0 })),
+  ], severityFilter, (value) => { application.findingSeverityFilter = value; render(application); }));
+  toolbar.append(chipGroup("Status", "finding-status", [
+    { value: "", label: "All", count: rows.length },
+    { value: "attention", label: "Require attention", count: counts.requireAttention },
+    ...(/** @type {FindingStatus[]} */ (["blocking", "open", "non_blocking", "earlier_round", "addressed", "rejected"]))
+      .map((key) => ({ value: key, label: FINDING_STATUS[key].label, count: counts[key] })),
+  ], statusFilter, (value) => { application.findingStatusFilter = value; render(application); }), severityChips);
+  section.append(toolbar);
+  const shown = rows.filter((row) => {
+    const statusMatch = statusFilter === "" ||
+      (statusFilter === "attention" ? row.status === "blocking" || row.status === "open" : row.status === statusFilter);
+    const severity = row.severity.available ? row.severity.severity ?? "unranked" : "unranked";
+    return statusMatch && (severityFilter === "" || severity === severityFilter);
   });
-
-  updateList("All severities");
-  panelEl.append(list);
-  container.append(panelEl);
+  if (rows.length === 0) {
+    section.append(element("p", data.snapshots.length === 0 && data.entries.length > 0
+      ? "No loaded snapshot has been observed yet." : "No finding is recorded in this scope.", "att-empty"));
+  } else if (shown.length === 0) {
+    section.append(element("p", "No finding matches these filters.", "att-empty"));
+  } else {
+    section.append(findingTable(shown, "Findings in scope", "findings", application, true));
+  }
+  const foot = element("div", null, "region-foot");
+  foot.append(element("span", `Showing ${shown.length} of ${rows.length}`));
+  section.append(foot);
+  container.append(section);
   return container;
 }
 
 /**
- * Render the dedicated Governance tab view.
+ * The run picker the run-scoped views share. It lists the scope's loaded runs
+ * and names each by slug and path tail, never by repository identifier.
+ * @param {DashboardApplication} application @param {ScopeEntry[]} entries
+ * @param {{ repositoryId: string, runId: number } | null} selected @param {string} id
+ */
+function runPicker(application, entries, selected, id) {
+  const wrapper = element("span", null, "view-actions");
+  const label = /** @type {HTMLLabelElement} */ (element("label", "Run", "scope-label"));
+  label.htmlFor = id;
+  const select = /** @type {HTMLSelectElement} */ (element("select", null, "input"));
+  select.id = id;
+  select.dataset.runPicker = "";
+  select.dataset.control = id;
+  const options = entries.map((entry) => ({ repositoryId: entry.repositoryId, runId: entry.run.id, label: `${entry.run.slug} #${entry.run.id} · ${pathTail(entry.path)}` }));
+  if (selected !== null && !options.some((option) => option.repositoryId === selected.repositoryId && option.runId === selected.runId)) {
+    const state = application.repositories.get(selected.repositoryId);
+    options.unshift({ ...selected, label: `Run #${selected.runId} · ${pathTail(state?.repository.path ?? "")}` });
+  }
+  for (const option of options) {
+    const node = /** @type {HTMLOptionElement} */ (element("option", option.label));
+    node.value = `${option.repositoryId}|${option.runId}`;
+    node.selected = selected !== null && selected.repositoryId === option.repositoryId && selected.runId === option.runId;
+    select.append(node);
+  }
+  select.disabled = options.length === 0;
+  select.addEventListener("change", () => {
+    const [repositoryId, runText] = select.value.split("|");
+    if (repositoryId !== undefined && runText !== undefined) selectRun(application, repositoryId, Number(runText));
+  });
+  wrapper.append(label, select);
+  return wrapper;
+}
+
+/**
+ * The snapshot a run-scoped view reads, or the reason it has none.
+ * @param {DashboardApplication} application @param {{ repositoryId: string, runId: number } | null} selected
+ */
+function runTarget(application, selected) {
+  if (selected === null) return { snapshot: null, message: "No run is loaded in this scope.", state: undefined, observedAt: null };
+  const state = application.repositories.get(selected.repositoryId);
+  const slot = state?.snapshots.get(selected.runId);
+  const snapshot = slot === undefined ? null : slotSnapshot(slot);
+  const status = slot === undefined ? "" : resourceStatus(slot.resource);
+  const message = snapshot !== null ? "" : slot?.loading === true ? `Loading run ${selected.runId}.`
+    : status !== "" ? status : `No snapshot has been observed for run ${selected.runId}.`;
+  return { snapshot, message, state, observedAt: slot?.resource.envelope?.observedAt ?? null };
+}
+
+/**
+ * The Governance view: a categorical status, the policy checks, the
+ * auditability timeline, and the frozen configuration. No score is computed.
  * @param {DashboardApplication} application
  * @returns {HTMLElement}
  */
 export function renderGovernanceTab(application) {
-  const container = element("div", null, "governance-tab-view");
-  const { targetSnapshot, targetRepoId, targetRunId, targetRepoState } = resolveTargetSnapshot(application);
-  if (!targetSnapshot || targetRepoId === null || targetRunId === null || !targetRepoState) {
-    const emptyPanel = panel("Governance & Control Center", "governance", "governance-empty-panel");
-    const repoMsg = targetRepoId ? `for repository ${targetRepoId}` : "across loaded repositories";
-    emptyPanel.append(element("p", `No run selected ${repoMsg}. Select a run from the Runs tab to view its governed actions, approval records, proposals, and policies.`, "empty-state"));
-    container.append(emptyPanel);
+  const data = scopeData(application);
+  const selected = selectedEntry(application, data.entries);
+  const container = element("div", null, "governance-view");
+  container.append(viewHead("Governance", runPicker(application, data.entries, selected, "governance-picker")));
+  const target = runTarget(application, selected);
+  const snapshot = target.snapshot;
+  if (snapshot === null || target.state === undefined) {
+    container.append(element("p", target.message, "empty-state"));
     return container;
   }
-  const slot = targetRepoState.snapshots.get(targetRunId);
-  const projection = snapshotProjection(targetSnapshot, application.inventory?.cliPath ?? "", application.platform,
-    slot?.resource.envelope?.observedAt ?? null);
-  const summary = runExecutiveSummary(targetSnapshot, {
-    repositoryPath: targetRepoState.repository.path,
-    runs: runSummaries(targetRepoState.runs),
-    observedAt: slot?.resource.envelope?.observedAt ?? null,
+  const projection = snapshotProjection(snapshot, application.inventory?.cliPath ?? "", application.platform, target.observedAt);
+  const statuses = findingStatuses(snapshot);
+  const segments = stageLedger(snapshot).segments;
+  const gates = segments.filter((segment) => segment.gateResult !== null);
+  const passed = gates.filter((segment) => segment.gateResult === "pass").length;
+  const stopped = segments.findLast((segment) => segment.result === "blocked") ?? null;
+  const [verdict, tone, short] = stopped !== null ? ["Blocked at a governed gate", "danger", "Blocked"]
+    : snapshot.run.status === "completed" ? ["All recorded gates passed", "success", "Passed"]
+      : ["No recorded gate has blocked", "active", "In progress"];
+  const status = region("Governance status", {
+    info: metricInfoButton("Governance status",
+      "A category derived from recorded gate results. No score is computed: there is no scoring model, and missing evidence stays Not evaluated rather than counting as a pass."),
   });
+  const line = element("div", null, "summary-line");
+  line.append(badge(short, tone), element("span", verdict, "verdict"),
+    element("span", `${passed} of ${plural(gates.length, "recorded stage gate")} passed${stopped === null ? "" : ` · stopped at ${stageLower(stopped.kind)}`}`, "muted"));
+  const checks = element("ol", null, "checks");
+  for (const check of governanceChecks(snapshot, statuses, target.observedAt)) {
+    const item = element("li", null, "check");
+    const [resultLabel, resultTone] = CHECK_RESULT[check.result];
+    const result = element("span");
+    result.append(badge(resultLabel, resultTone));
+    item.append(element("span", check.label, "check-name"), result, element("span", check.evidence, "check-evidence"));
+    checks.append(item);
+  }
+  status.append(line, checks);
 
-  const header = element("div", null, "tab-scope-header");
-  header.append(element("span", `Inspecting Governance: ${targetRepoId} / Run #${targetRunId}`, "pipeline-target-badge"));
-  container.append(header);
-
-  container.append(
-    renderGovernance(projection, application, summary.repository, targetRunId),
-    renderConfiguration(projection, application),
-  );
+  const groups = new Map(snapshot.cost.byStage.map((group) => [group.stageId, group]));
+  const durations = new Map(segments.map((segment) => [segment.stageId, segment.durationMs]));
+  const models = projection.governance.configuration.modelMap ?? {};
+  const timeline = region("Auditability timeline", {
+    count: plural(snapshot.stages.length, "stage"),
+    sub: "Recorded order. Start is the stage-creation audit time when no start is recorded; the model is the frozen configuration's, per stage.",
+  });
+  /** @type {TableColumn<RunSnapshot["stages"][number]>[]} */
+  const columns = [
+    { label: "#", numeric: true, className: "muted", cell: (stage) => String(stage.id) },
+    { label: "Stage", cell: (stage) => readableIntent(stage.kind) },
+    {
+      label: "Result",
+      cell: (stage) => badge(stage.gateResult ?? stage.status,
+        stage.gateResult === "block" ? "danger" : stage.gateResult === "pass" ? "success" : stage.status === "in_progress" ? "active" : "neutral"),
+    },
+    { label: "Started", className: "mono muted nowrap", cell: (stage) => shortTimeNode(stage.startedAt ?? stage.startEvidence.at) },
+    { label: "Duration", numeric: true, cell: (stage) => duration(durations.get(stage.id) ?? null) },
+    {
+      label: "Agent runs", numeric: true,
+      cell: (stage) => {
+        const rows = groups.get(stage.id)?.agentRows ?? 0;
+        return rows === 0 ? element("span", "none", "muted") : String(rows);
+      },
+    },
+    { label: "Configured model", className: "mono muted", cell: (stage) => models[stage.kind] ?? "Not configured" },
+  ];
+  timeline.append(sortableTable({ caption: "Recorded stages with result, start, duration, agent runs, and configured model", key: "governance-timeline", rows: snapshot.stages, columns, application }));
+  container.append(status, timeline,
+    collapsibleSection(plural(projection.governance.proposals.length, "proposal"), "",
+      () => renderConfiguration(projection, application), badge("Frozen at run start", "neutral")),
+    element("p", `Known cost for this run is ${usdPresentation(snapshot.cost.costReportedRows === 0 ? null : snapshot.cost.knownUsd).display}; cost detail is under Models & agents.`, "note-line"));
   return container;
 }
 
 /**
- * Render the dedicated Models & Agents tab view.
+ * The run as a one-repository view, for the scope-sized projections.
+ * @param {DashboardApplication} application @param {string} repositoryId @param {RunSnapshot} snapshot
+ * @returns {ReturnType<typeof repositoryViews>}
+ */
+function singleRunView(application, repositoryId, snapshot) {
+  const state = application.repositories.get(repositoryId);
+  const slot = state?.snapshots.get(snapshot.run.id);
+  const summary = runSummaries(state?.runs ?? emptyResourceState()).find((run) => run.id === snapshot.run.id) ?? {
+    id: snapshot.run.id, project: snapshot.run.project, featureId: snapshot.run.featureId, slug: snapshot.run.slug,
+    status: snapshot.run.status, phase: snapshot.phase, lastRecordedAt: snapshot.activity.lastRecordedAt,
+  };
+  return [{
+    repositoryId, path: state?.repository.path ?? "", available: true, runs: [summary], limit: null, hasMore: false,
+    snapshots: [{ runId: snapshot.run.id, snapshot, stale: slot?.resource.stale ?? false, loading: false }],
+  }];
+}
+
+/**
+ * The Models & agents view: scoped hero cards, telemetry coverage, where cost,
+ * tokens, and time went, and the agents table.
  * @param {DashboardApplication} application
  * @returns {HTMLElement}
  */
 export function renderModelsTab(application) {
-  const container = element("div", null, "models-tab-view");
-  const { targetSnapshot, targetRepoId, targetRunId, targetRepoState } = resolveTargetSnapshot(application);
-  if (!targetSnapshot || targetRepoId === null || targetRunId === null || !targetRepoState) {
-    const emptyPanel = panel("Models & Agent Utilization", "models", "models-empty-panel");
-    const repoMsg = targetRepoId ? `for repository ${targetRepoId}` : "across loaded repositories";
-    emptyPanel.append(element("p", `No run selected ${repoMsg}. Select a run from the Runs tab to inspect its model telemetry and token utilization.`, "empty-state"));
-    container.append(emptyPanel);
+  const data = scopeData(application);
+  const selected = selectedEntry(application, data.entries);
+  const container = element("div", null, "models-view");
+  container.append(viewHead("Models & agents", runPicker(application, data.entries, selected, "models-picker")));
+  const target = runTarget(application, selected);
+  const snapshot = target.snapshot;
+  if (snapshot === null || selected === null) {
+    container.append(element("p", target.message, "empty-state"));
     return container;
   }
-  const slot = targetRepoState.snapshots.get(targetRunId);
-  const projection = snapshotProjection(targetSnapshot, application.inventory?.cliPath ?? "", application.platform,
-    slot?.resource.envelope?.observedAt ?? null);
-
-  const header = element("div", null, "tab-scope-header");
-  header.append(element("span", `Inspecting Models & Telemetry: ${targetRepoId} / Run #${targetRunId}`, "pipeline-target-badge"));
-  container.append(header);
-
-  container.append(
-    renderCostAndTokens(projection),
-    renderAgentTable(projection),
+  const name = `${snapshot.run.slug} #${snapshot.run.id}`;
+  const { rows } = agentRows(snapshot);
+  /** @type {Map<string, number>} */
+  const roles = new Map();
+  for (const row of rows) for (const role of row.roles) roles.set(role, (roles.get(role) ?? 0) + 1);
+  const cards = element("div", null, "cards is-four");
+  const views = singleRunView(application, selected.repositoryId, snapshot);
+  const portfolio = portfolioProjection(views);
+  cards.append(
+    statusCard({
+      label: `Agents · ${name}`, value: String(rows.length),
+      breakdown: roles.size === 0 ? "no recorded role" : [...roles.entries()].map(([role, count]) => plural(count, role)).join(" · "),
+    }),
+    statusCard({ label: `Executions · ${name}`, value: String(snapshot.cost.agentRows), breakdown: "recorded agent rows" }),
+    usagePair(tokensCard(portfolio.tokens, `Tokens · ${name}`),
+      costCard({ knownUsd: portfolio.cost.knownUsd, reportedRows: portfolio.cost.reportedRows, agentRows: portfolio.cost.agentRows }, `Known cost · ${name}`)),
   );
+  const coverage = region("Telemetry coverage", { count: name });
+  coverage.append(coverageStrip(views));
+  container.append(cards, coverage, renderStageUsage(snapshot, application, name), renderAgentTable(snapshot, application, name));
   return container;
 }
 
 /**
- * Render the dedicated Audit tab view.
+ * The Audit view: the audit status this read-only view can state, the full
+ * ledger, recorded limitations, and evidence references.
  * @param {DashboardApplication} application
  * @returns {HTMLElement}
  */
 export function renderAuditTab(application) {
-  const container = element("div", null, "audit-tab-view");
-  const { targetSnapshot, targetRepoId, targetRunId, targetRepoState } = resolveTargetSnapshot(application);
-  if (!targetSnapshot || targetRepoId === null || targetRunId === null || !targetRepoState) {
-    const emptyPanel = panel("Audit Trail & Evidence", "audit", "audit-empty-panel");
-    const repoMsg = targetRepoId ? `for repository ${targetRepoId}` : "across loaded repositories";
-    emptyPanel.append(element("p", `No run selected ${repoMsg}. Select a run from the Runs tab to inspect its audit trail and evidence records.`, "empty-state"));
-    container.append(emptyPanel);
+  const data = scopeData(application);
+  const selected = selectedEntry(application, data.entries);
+  const container = element("div", null, "audit-view");
+  container.append(viewHead("Audit", runPicker(application, data.entries, selected, "audit-picker")));
+  const target = runTarget(application, selected);
+  const snapshot = target.snapshot;
+  if (snapshot === null) {
+    container.append(element("p", target.message, "empty-state"));
     return container;
   }
-  const slot = targetRepoState.snapshots.get(targetRunId);
-  const projection = snapshotProjection(targetSnapshot, application.inventory?.cliPath ?? "", application.platform,
-    slot?.resource.envelope?.observedAt ?? null);
-
-  const header = element("div", null, "tab-scope-header");
-  header.append(element("span", `Inspecting Audit: ${targetRepoId} / Run #${targetRunId}`, "pipeline-target-badge"));
-  container.append(header);
-
-  container.append(
-    renderTimeline(projection),
-    renderActivity(projection),
-    renderDelivery(projection, application),
-    renderEvidence(projection),
-  );
+  const projection = snapshotProjection(snapshot, application.inventory?.cliPath ?? "", application.platform, target.observedAt);
+  const status = region("Audit status");
+  const line = element("div", null, "summary-line");
+  line.append(badge("Not verified in this view", "neutral"),
+    element("span", "This dashboard reads the record; only verify-audit recomputes the audit chain.", "muted"));
+  const verify = projection.governance.commands.find((command) => command.kind === "verify-audit") ?? null;
+  if (verify !== null) {
+    const actions = element("span", null, "view-actions");
+    actions.append(copyControl("Copy verify-audit command", verify.text, "verify-audit command", application));
+    line.append(actions);
+  }
+  status.append(line);
+  const ledger = region("Workflow timeline", { count: plural(snapshot.stages.length, "stage") });
+  ledger.append(stageLedgerNode(snapshot, true, false));
+  const limitations = region("Recorded limitations", { count: String(snapshot.limitations.length) });
+  if (snapshot.limitations.length === 0) {
+    limitations.append(element("p", "No recorded limitations.", "att-empty"));
+  } else {
+    const list = element("ul", null, "region-body limitation-list");
+    for (const limitation of snapshot.limitations) list.append(element("li", limitation, "muted"));
+    limitations.append(list);
+  }
+  container.append(status, ledger, limitations,
+    collapsibleSection(plural(projection.evidence.length, "evidence reference"), "", () => renderEvidence(projection)));
   return container;
 }
+
+/* ------------------------------------------------------------------ *
+ * Refresh orchestration
+ * ------------------------------------------------------------------ */
 
 /**
  * @param {DashboardApplication} application @param {RepositoryState} repository
@@ -3022,8 +3738,8 @@ async function refreshSelected(application) {
 
 /**
  * One explicit refresh reloads every run list and then every in-window
- * snapshot through the existing status route. No timer, poll, socket, mutation
- * method, or server-side cache is involved.
+ * snapshot through the existing status route. No socket, mutation method, or
+ * server-side cache is involved; the only timer is `scheduleAutoRefresh`.
  * @param {DashboardApplication} application
  */
 async function refreshAll(application) {
@@ -3067,25 +3783,185 @@ async function refreshAll(application) {
   if (!covered) await refreshSelected(application);
 }
 
-/** @param {DashboardApplication} application @param {string} repositoryId @param {number} runId */
+/**
+ * What a re-render would change, per repository and per held snapshot: the
+ * run-list outcome, and each snapshot's staleness, writer status, latest
+ * activity, and stage results.
+ * @param {DashboardApplication} application
+ */
+function observationSignatures(application) {
+  /** @type {Map<string, string>} */
+  const signatures = new Map();
+  for (const [repositoryId, state] of application.repositories) {
+    signatures.set(repositoryId, `${state.runs.errorCode ?? "ok"}|${state.runs.stale}`);
+    for (const [runId, slot] of state.snapshots) {
+      const snapshot = slotSnapshot(slot);
+      signatures.set(`${repositoryId}:${runId}`, snapshot === null
+        ? `absent|${slot.resource.errorCode ?? "none"}`
+        : [slot.resource.stale, snapshot.writer.status, snapshot.activity.lastRecordedAt,
+          snapshot.stages.map((stage) => `${stage.id}:${stage.status}:${stage.gateResult ?? "none"}`).join(",")].join("|"));
+    }
+  }
+  return signatures;
+}
+
+/**
+ * One auto-refresh tick (ARCHITECTURE.md section 23, 2026-09-24): re-read every
+ * run list, then only the snapshots `autoRefreshPlan` names. The runs that
+ * changed are highlighted in the render that follows, and only in that one.
+ * When nothing changed, only the header is refreshed, so an open disclosure
+ * is not collapsed every interval.
+ * @param {DashboardApplication} application
+ */
+async function refreshChanged(application) {
+  const generation = ++application.refreshGeneration;
+  const requestedLimit = application.limit;
+  const previous = repositoryViews({ repositories: application.repositories });
+  const before = observationSignatures(application);
+  await Promise.all([...application.repositories.values()]
+    .map((repository) => refreshRuns(application, repository, generation, requestedLimit)));
+  if (generation !== application.refreshGeneration || requestedLimit !== application.limit) return;
+  if (application.sessionExpired) {
+    render(application);
+    return;
+  }
+  /** @type {Promise<void>[]} */
+  const pending = [];
+  for (const repository of application.repositories.values()) {
+    const held = [...repository.snapshots.entries()].map(([runId, slot]) => ({
+      runId, snapshot: slotSnapshot(slot), stale: slot.resource.stale, loading: slot.loading,
+    }));
+    for (const runId of autoRefreshPlan(held, runSummaries(repository.runs))) {
+      pending.push(refreshSlot(application, repository, runId, generation));
+    }
+  }
+  await Promise.all(pending);
+  if (generation !== application.refreshGeneration) return;
+  const changed = changedRuns(previous, repositoryViews({ repositories: application.repositories }));
+  const after = observationSignatures(application);
+  const differs = changed.length > 0 || before.size !== after.size ||
+    [...after].some(([key, signature]) => before.get(key) !== signature);
+  if (!differs) {
+    renderChrome(application);
+    return;
+  }
+  application.justUpdated = new Set(changed);
+  render(application);
+  application.justUpdated = new Set();
+}
+
+/**
+ * Arm the single auto-refresh timer, replacing any armed one. It stays unarmed
+ * while the operator's toggle is off, the page is hidden, the session has
+ * expired, or a refresh is outstanding; `trackedRefresh` re-arms it once the
+ * outstanding refresh settles, so two reads never overlap.
+ * @param {DashboardApplication} application
+ */
+function scheduleAutoRefresh(application) {
+  if (application.refreshTimer !== null) clearTimeout(application.refreshTimer);
+  application.refreshTimer = null;
+  if (!application.autoRefresh || application.sessionExpired || application.refreshing > 0 ||
+      document.visibilityState !== "visible") return;
+  application.refreshTimer = setTimeout(() => {
+    application.refreshTimer = null;
+    void trackedRefresh(application, () => refreshChanged(application));
+  }, AUTO_REFRESH_INTERVAL_MS);
+}
+
+/**
+ * Run one refresh with the timer disarmed, then re-arm it after the refresh
+ * settles, whether it succeeded, was superseded, or expired the session. The
+ * header shows the request in flight for exactly that span.
+ * @param {DashboardApplication} application @param {() => Promise<void>} work
+ */
+async function trackedRefresh(application, work) {
+  application.refreshing += 1;
+  if (application.refreshTimer !== null) clearTimeout(application.refreshTimer);
+  application.refreshTimer = null;
+  renderChrome(application);
+  try {
+    await work();
+  } finally {
+    application.refreshing -= 1;
+    renderChrome(application);
+    scheduleAutoRefresh(application);
+  }
+}
+
+/**
+ * The route for the current state: a selected run names its repository and
+ * run; otherwise the route carries the header scope.
+ * @param {DashboardApplication} application
+ */
+function routeFor(application) {
+  return application.selectedRunId === null
+    ? routeHash(application.repositoryFilter === "" ? null : application.repositoryFilter, null, application.currentTab)
+    : routeHash(application.selectedRepositoryId, application.selectedRunId, application.currentTab);
+}
+
+/**
+ * Apply a parsed route. A route without a run is a scope; a route with a run
+ * is a selection viewed across all repositories.
+ * @param {DashboardApplication} application @param {ReturnType<typeof parseRoute>} route
+ */
+function applyRoute(application, route) {
+  application.currentTab = route.tab;
+  if (route.runId === null || route.repositoryId === null) {
+    application.repositoryFilter = route.repositoryId !== null && application.repositories.has(route.repositoryId) ? route.repositoryId : "";
+    application.selectedRepositoryId = null;
+    application.selectedRunId = null;
+  } else {
+    application.repositoryFilter = "";
+    application.selectedRepositoryId = route.repositoryId;
+    application.selectedRunId = route.runId;
+  }
+}
+
+/**
+ * Select one run. Selecting a run outside the header scope returns the scope
+ * to all repositories rather than hiding the run.
+ * @param {DashboardApplication} application @param {string} repositoryId @param {number} runId
+ */
 function selectRun(application, repositoryId, runId) {
+  if (application.repositoryFilter !== "" && application.repositoryFilter !== repositoryId) {
+    application.repositoryFilter = "";
+    const filterEl = document.querySelector("#repository-filter");
+    if (filterEl instanceof HTMLSelectElement) filterEl.value = "";
+  }
   application.selectedRepositoryId = repositoryId;
-  application.repositoryFilter = repositoryId;
-  const filterEl = document.querySelector("#repository-filter");
-  if (filterEl instanceof HTMLSelectElement) filterEl.value = repositoryId;
   application.selectedRunId = runId;
-  history.replaceState(null, "", routeHash(repositoryId, runId, application.currentTab));
+  history.replaceState(null, "", routeFor(application));
   render(application);
   void refreshSelected(application);
 }
 
+/** Bring one run-view region into view and give it focus. @param {string} id */
+function focusRunSection(id) {
+  const target = document.getElementById(id);
+  if (target === null) return;
+  target.scrollIntoView({ block: "start" });
+  target.focus({ preventScroll: true });
+}
+
+/**
+ * Open a run in the Runs view, optionally at its findings.
+ * @param {DashboardApplication} application @param {string} repositoryId @param {number} runId
+ * @param {boolean} [atFindings]
+ */
+function openRun(application, repositoryId, runId, atFindings = false) {
+  application.currentTab = "runs";
+  updateTabUI("runs");
+  selectRun(application, repositoryId, runId);
+  focusRunSection(atFindings ? "run-findings" : "run-summary");
+}
+
 /** @param {string} tab */
 export function updateTabUI(tab) {
-  const tabButtons = document.querySelectorAll('.primary-nav button[role="tab"]');
+  const tabButtons = document.querySelectorAll('.tabs-nav button[role="tab"]');
   for (const btn of tabButtons) {
     const isSelected = btn.getAttribute("data-tab") === tab;
     btn.setAttribute("aria-selected", isSelected ? "true" : "false");
-    btn.classList.toggle("active", isSelected);
+    if (btn instanceof HTMLElement) btn.tabIndex = isSelected ? 0 : -1;
   }
 }
 
@@ -3093,9 +3969,99 @@ export function updateTabUI(tab) {
 export function switchTab(application, tab) {
   if (!ALLOWED_TABS.includes(tab)) return;
   application.currentTab = tab;
-  history.replaceState(null, "", routeHash(application.selectedRepositoryId, application.selectedRunId, tab));
+  history.replaceState(null, "", routeFor(application));
   updateTabUI(tab);
   render(application);
+}
+
+/** @param {HTMLInputElement} input @param {HTMLElement} results */
+function closeSearch(input, results) {
+  results.hidden = true;
+  input.setAttribute("aria-expanded", "false");
+  input.removeAttribute("aria-activedescendant");
+}
+
+/**
+ * Unified search over the scope's loaded runs, findings, and agents, grouped
+ * and at most six per group. Returns each option's activation, in order.
+ * @param {DashboardApplication} application @param {HTMLInputElement} input @param {HTMLElement} results
+ * @returns {(() => void)[]}
+ */
+function renderSearch(application, input, results) {
+  results.replaceChildren();
+  input.removeAttribute("aria-activedescendant");
+  const query = input.value.trim();
+  if (query === "") {
+    closeSearch(input, results);
+    return [];
+  }
+  const views = scopeViews(application);
+  const matches = searchMatches(searchIndex(views), query);
+  const tails = new Map(views.map((view) => [view.repositoryId, pathTail(view.path)]));
+  /** @type {(() => void)[]} */
+  const activations = [];
+  /** @param {string} name @param {{ label: string, meta: string, activate: () => void }[]} entries */
+  const group = (name, entries) => {
+    if (entries.length === 0) return;
+    const head = element("div", name, "search-group");
+    head.setAttribute("role", "presentation");
+    results.append(head);
+    for (const entry of entries.slice(0, 6)) {
+      const option = element("div", null, "search-option");
+      option.id = `search-option-${activations.length}`;
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", "false");
+      option.append(element("span", entry.label, "label"), element("span", entry.meta, "meta"));
+      const activate = () => {
+        closeSearch(input, results);
+        entry.activate();
+      };
+      option.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        activate();
+      });
+      activations.push(activate);
+      results.append(option);
+    }
+  };
+  group("Runs", matches.runs.map((run) => ({
+    label: `${run.label} #${run.runId}`, meta: `${tails.get(run.repositoryId) ?? ""} · ${run.detail}`,
+    activate: () => openRun(application, run.repositoryId, run.runId),
+  })));
+  group("Findings", matches.findings.map((finding) => ({
+    label: `${finding.label} #${finding.findingId}`, meta: `run #${finding.runId} · ${finding.detail}`,
+    activate: () => openFindingById(application, finding.repositoryId, finding.runId, finding.findingId, input),
+  })));
+  group("Agents", matches.agents.map((agent) => ({
+    label: agent.label, meta: `${agent.detail || "no recorded role"} · run #${agent.runId} · ${tails.get(agent.repositoryId) ?? ""}`,
+    activate: () => {
+      application.currentTab = "models";
+      updateTabUI("models");
+      selectRun(application, agent.repositoryId, agent.runId);
+      application.main.focus();
+    },
+  })));
+  if (activations.length === 0) {
+    results.append(element("div", application.repositoryFilter === ""
+      ? "Nothing in the loaded runs matches." : "Nothing in this repository matches.", "search-empty"));
+  }
+  results.hidden = false;
+  input.setAttribute("aria-expanded", "true");
+  return activations;
+}
+
+/**
+ * Set the theme and keep the browser chrome colour in step with it.
+ * @param {"light" | "dark"} theme @param {HTMLButtonElement} button
+ */
+function applyTheme(theme, button) {
+  document.documentElement.dataset.theme = theme;
+  const next = theme === "dark" ? "light" : "dark";
+  button.setAttribute("aria-label", `Switch to ${next} theme`);
+  button.title = `Switch to ${next} theme`;
+  for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
+    meta.setAttribute("content", theme === "dark" ? "#121316" : "#ffffff");
+  }
 }
 
 async function startBrowserApplication() {
@@ -3133,7 +4099,6 @@ async function startBrowserApplication() {
     return;
   }
   const inventory = /** @type {RepositoryInventory} */ (await inventoryResponse.json());
-  const route = parseRoute(window.location.hash);
   /** @type {DashboardApplication} */
   const application = {
     token,
@@ -3144,24 +4109,33 @@ async function startBrowserApplication() {
       runsRequestId: 0,
       snapshots: new Map(),
     }])),
-    selectedRepositoryId: route.repositoryId,
-    selectedRunId: route.runId,
-    currentTab: route.tab,
+    selectedRepositoryId: null,
+    selectedRunId: null,
+    currentTab: "overview",
     limit: 20,
-    repositoryFilter: route.repositoryId ?? "",
-    statusFilter: "",
-    phaseFilter: "",
-    search: "",
+    repositoryFilter: "",
+    runFilter: "",
+    recentFilter: "",
+    attentionFilter: "",
+    findingStatusFilter: "",
+    findingSeverityFilter: "",
+    blockingOnly: false,
+    sorts: new Map(),
     sessionExpired: false,
     refreshGeneration: 0,
     inFlight: new Set(),
+    autoRefresh: true,
+    refreshing: 0,
+    refreshTimer: null,
+    justUpdated: new Set(),
     platform: navigator.userAgent.includes("Windows") ? "win32" : "posix",
     main,
     live,
   };
+  applyRoute(application, parseRoute(window.location.hash));
   updateTabUI(application.currentTab);
 
-  const tabButtons = Array.from(document.querySelectorAll('.primary-nav button[role="tab"]'));
+  const tabButtons = Array.from(document.querySelectorAll('.tabs-nav button[role="tab"]'));
   tabButtons.forEach((btn, index) => {
     btn.addEventListener("click", () => {
       const tab = btn.getAttribute("data-tab");
@@ -3185,11 +4159,11 @@ async function startBrowserApplication() {
     });
   });
 
-  const shortcutsTrigger = document.querySelector("#shortcuts-trigger");
+  const helpTrigger = document.querySelector("#help-trigger");
   const shortcutsDialog = document.querySelector("#shortcuts-dialog");
   const shortcutsClose = document.querySelector("#shortcuts-close");
-  if (shortcutsTrigger instanceof HTMLButtonElement && shortcutsDialog instanceof HTMLDialogElement) {
-    shortcutsTrigger.addEventListener("click", () => {
+  if (helpTrigger instanceof HTMLButtonElement && shortcutsDialog instanceof HTMLDialogElement) {
+    helpTrigger.addEventListener("click", () => {
       shortcutsDialog.showModal();
     });
   }
@@ -3200,65 +4174,96 @@ async function startBrowserApplication() {
   }
 
   const repositoryFilter = document.querySelector("#repository-filter");
-  const limit = document.querySelector("#run-limit");
-  const status = document.querySelector("#status-filter");
-  const phase = document.querySelector("#phase-filter");
   const search = document.querySelector("#run-search");
+  const results = document.querySelector("#search-results");
   const refresh = document.querySelector("#refresh");
   const theme = document.querySelector("#theme");
   const shortcuts = document.querySelector("#shortcuts-enabled");
   if (repositoryFilter instanceof HTMLSelectElement) {
+    const all = repositoryFilter.options[0];
+    if (all !== undefined) all.textContent = `All repositories (${inventory.repositories.length})`;
     for (const repository of inventory.repositories) {
       const option = document.createElement("option");
       option.value = repository.id;
-      option.textContent = repository.path;
+      option.textContent = pathTail(repository.path);
+      option.title = repository.path;
       repositoryFilter.append(option);
     }
-    if (application.selectedRepositoryId) {
-      repositoryFilter.value = application.selectedRepositoryId;
-    }
+    repositoryFilter.value = application.repositoryFilter;
     repositoryFilter.addEventListener("change", () => {
       application.repositoryFilter = repositoryFilter.value;
-      application.selectedRepositoryId = repositoryFilter.value || null;
-      if (application.selectedRepositoryId !== null) {
-        const repo = application.repositories.get(application.selectedRepositoryId);
-        if (!repo || (application.selectedRunId !== null && !repo.snapshots.has(application.selectedRunId))) {
-          application.selectedRunId = null;
-        }
+      if (application.repositoryFilter !== "" && application.selectedRepositoryId !== application.repositoryFilter) {
+        application.selectedRepositoryId = null;
+        application.selectedRunId = null;
       }
-      history.replaceState(null, "", routeHash(application.selectedRepositoryId, application.selectedRunId, application.currentTab));
+      history.replaceState(null, "", routeFor(application));
       render(application);
     });
   }
-  if (limit instanceof HTMLInputElement) limit.addEventListener("change", () => {
-    try {
-      application.limit = validatedLimit(limit.value);
-      void refreshAll(application);
-    } catch (error) {
-      live.textContent = error instanceof Error ? error.message : String(error);
-      limit.value = String(application.limit);
-    }
+  if (search instanceof HTMLInputElement && results instanceof HTMLElement) {
+    /** @type {(() => void)[]} */
+    let activations = [];
+    let active = -1;
+    /** @param {number} index */
+    const highlight = (index) => {
+      const options = results.querySelectorAll(".search-option");
+      options.forEach((option, position) => option.setAttribute("aria-selected", String(position === index)));
+      active = index;
+      const current = options[index];
+      if (current !== undefined) {
+        search.setAttribute("aria-activedescendant", current.id);
+        current.scrollIntoView({ block: "nearest" });
+      }
+    };
+    search.addEventListener("input", () => {
+      activations = renderSearch(application, search, results);
+      active = -1;
+    });
+    search.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown" && activations.length > 0) {
+        event.preventDefault();
+        highlight((active + 1) % activations.length);
+      } else if (event.key === "ArrowUp" && activations.length > 0) {
+        event.preventDefault();
+        highlight((active - 1 + activations.length) % activations.length);
+      } else if (event.key === "Enter" && active >= 0) {
+        event.preventDefault();
+        activations[active]?.();
+      } else if (event.key === "Escape") {
+        closeSearch(search, results);
+      }
+    });
+    search.addEventListener("blur", () => closeSearch(search, results));
+  }
+  if (refresh instanceof HTMLButtonElement) {
+    refresh.addEventListener("click", () => void trackedRefresh(application, () => refreshAll(application)));
+  }
+  const autoRefresh = document.querySelector("#auto-refresh");
+  if (autoRefresh instanceof HTMLButtonElement) {
+    autoRefresh.setAttribute("aria-pressed", String(application.autoRefresh));
+    autoRefresh.addEventListener("click", () => {
+      application.autoRefresh = !application.autoRefresh;
+      autoRefresh.setAttribute("aria-pressed", String(application.autoRefresh));
+      live.textContent = application.autoRefresh
+        ? `Auto-refresh on: every ${AUTO_REFRESH_INTERVAL_MS / 1000} seconds while this page is visible.`
+        : "Auto-refresh off. Refresh reloads on demand.";
+      scheduleAutoRefresh(application);
+      renderChrome(application);
+    });
+  }
+  document.addEventListener("visibilitychange", () => {
+    scheduleAutoRefresh(application);
+    renderChrome(application);
   });
-  if (status instanceof HTMLSelectElement) status.addEventListener("change", () => {
-    application.statusFilter = status.value;
-    render(application);
-  });
-  if (phase instanceof HTMLSelectElement) phase.addEventListener("change", () => {
-    application.phaseFilter = phase.value;
-    render(application);
-  });
-  if (search instanceof HTMLInputElement) search.addEventListener("input", () => {
-    application.search = search.value;
-    render(application);
-  });
-  if (refresh instanceof HTMLButtonElement) refresh.addEventListener("click", () => void refreshAll(application));
-  if (theme instanceof HTMLSelectElement) {
-    const saved = sessionStorage.getItem(THEME_KEY) ?? "system";
-    theme.value = saved;
-    document.documentElement.dataset.theme = saved;
-    theme.addEventListener("change", () => {
-      sessionStorage.setItem(THEME_KEY, theme.value);
-      document.documentElement.dataset.theme = theme.value;
+  if (theme instanceof HTMLButtonElement) {
+    const saved = sessionStorage.getItem(THEME_KEY);
+    if (saved === "light" || saved === "dark") applyTheme(saved, theme);
+    theme.addEventListener("click", () => {
+      const current = document.documentElement.dataset.theme
+        ?? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      const next = current === "dark" ? "light" : "dark";
+      sessionStorage.setItem(THEME_KEY, next);
+      applyTheme(next, theme);
     });
   }
   if (shortcuts instanceof HTMLInputElement) {
@@ -3269,32 +4274,42 @@ async function startBrowserApplication() {
   }
   let pendingG = false;
   document.addEventListener("keydown", (event) => {
+    if (shortcutsDialog instanceof HTMLDialogElement && shortcutsDialog.open) return;
+    if (document.body.classList.contains("modal-open")) return;
     const disabled = shortcuts instanceof HTMLInputElement && !shortcuts.checked;
-    const first = event.key === "/" ? "/" : pendingG ? "g" : event.key;
+    const editable = isEditableTarget(event.target);
+    const first = pendingG ? "g" : event.key;
     const second = pendingG ? event.key.toLowerCase() : null;
-    const destination = shortcutDestination(first, second, isEditableTarget(event.target), disabled);
-    pendingG = !disabled && !isEditableTarget(event.target) && event.key.toLowerCase() === "g";
+    const destination = shortcutDestination(first, second, editable, disabled);
+    pendingG = !pendingG && !disabled && !editable && event.key.toLowerCase() === "g";
     if (destination === null) return;
     pendingG = false;
     event.preventDefault();
-    document.getElementById(destination)?.focus();
+    if (destination === "shortcuts") {
+      if (shortcutsDialog instanceof HTMLDialogElement) shortcutsDialog.showModal();
+      return;
+    }
+    if (destination === "run-search") {
+      if (search instanceof HTMLInputElement) search.focus();
+      return;
+    }
+    switchTab(application, destination);
+    main.focus();
   });
   window.addEventListener("hashchange", () => {
     const next = parseRoute(window.location.hash);
-    application.selectedRepositoryId = next.repositoryId;
-    application.repositoryFilter = next.repositoryId ?? "";
+    applyRoute(application, next);
     if (repositoryFilter instanceof HTMLSelectElement) {
       repositoryFilter.value = application.repositoryFilter;
     }
-    application.selectedRunId = next.runId;
-    application.currentTab = next.tab;
-    updateTabUI(next.tab);
+    updateTabUI(application.currentTab);
     render(application);
-    if (next.repositoryId !== null && next.runId !== null && application.repositories.has(next.repositoryId)) {
+    if (application.selectedRepositoryId !== null && application.selectedRunId !== null &&
+        application.repositories.has(application.selectedRepositoryId)) {
       void refreshSelected(application);
     }
   });
-  await refreshAll(application);
+  await trackedRefresh(application, () => refreshAll(application));
 }
 
 if (typeof document !== "undefined") void startBrowserApplication();

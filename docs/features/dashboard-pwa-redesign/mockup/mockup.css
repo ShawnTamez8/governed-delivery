@@ -438,7 +438,7 @@ kbd {
   bottom: -1px;
   height: 2px;
   border-radius: 2px 2px 0 0;
-  background: var(--accent);
+  background: var(--primary);
 }
 .tab-count {
   min-width: 20px;
@@ -1249,6 +1249,14 @@ body.modal-open { overflow: hidden; }
 @keyframes skeleton { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
 @keyframes updated { from { background-color: var(--accent-wash); } to { background-color: transparent; } }
 
+/* Specimens (mockup-only review page for states the recorded runs cannot show). */
+.specimens > .region { margin-top: 0; }
+.specimens { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr)); gap: var(--space-3); }
+.specimen-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: 10px var(--space-4); border-bottom: 1px solid var(--border); }
+.specimen-row:last-child { border-bottom: 0; }
+.specimen-row .muted { font-size: var(--text-xs); }
+.specimen-row .skeleton { width: 10rem; }
+
 /* ------------------------------------------------------------------ *
  * Series (categorical, never state)
  * ------------------------------------------------------------------ */
@@ -1319,113 +1327,6 @@ body.modal-open { overflow: hidden; }
 .composition-legend li { display: inline-flex; align-items: center; gap: 6px; }
 .composition-legend .legend-label { color: var(--muted); }
 .composition-legend .num { color: var(--text); }
-
-/* ------------------------------------------------------------------ *
- * Recorded run detail: the sections behind the run view's disclosures
- * ------------------------------------------------------------------ */
-
-.brand-text { font-size: inherit; font-weight: inherit; }
-#live-status { top: 0; left: 0; }
-.map-cell.is-other { background: transparent; box-shadow: inset 0 0 0 1px var(--neutral); }
-.section > summary h2 { font-size: var(--text-sm); font-weight: 600; }
-[data-run-view] > * + * { margin-top: var(--space-3); }
-.ledger-skeleton { width: 7rem; height: 6px; }
-
-.panel {
-  min-width: 0;
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--panel);
-}
-.panel.collapsible { padding: 0; border: 0; background: transparent; }
-.panel > h2, .panel h3 { font-size: var(--text-sm); font-weight: 600; }
-.panel > h2 { margin-bottom: var(--space-2); }
-.panel h4, .panel h5 { margin: var(--space-2) 0 4px; color: var(--muted); font-size: var(--text-xs); font-weight: 600; }
-.panel + .panel, .region + .panel, .panel + .region { margin-top: var(--space-3); }
-.section-body > .panel { padding: 0; border: 0; }
-
-.section-note { display: flex; align-items: center; gap: 6px; margin-bottom: var(--space-2); color: var(--muted); font-size: var(--text-xs); }
-.section-stale { display: inline-flex; align-items: center; gap: 4px; color: var(--warning); font-size: var(--text-xs); }
-.subsection { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
-.source-note { margin-top: 6px; color: var(--muted); font-size: var(--text-xs); }
-.empty-state { color: var(--muted); font-size: var(--text-sm); }
-.unavailable { color: var(--muted); font-style: italic; }
-
-.callout {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin: var(--space-2) 0;
-  padding: 8px 10px;
-  border: 1px solid currentcolor;
-  border-left-width: 3px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
-  font-size: var(--text-sm);
-}
-.callout > span { color: var(--text); }
-
-.definitions.compact { margin: 6px 0; }
-.value-list, .reason-list, .report-list, .proposal-list, .activity-feed, .timeline { margin: 6px 0 0; }
-.value-list li, .reason-list li { font-size: var(--text-sm); overflow-wrap: anywhere; }
-.value-list li + li, .reason-list li + li { margin-top: 2px; }
-.limitation { display: flex; align-items: flex-start; gap: 6px; font-size: var(--text-sm); }
-.limitation .icon { margin-top: 2px; color: var(--warning); }
-
-.proposal, .verification, .activity-item {
-  padding: 10px var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
-}
-.proposal + .proposal, .verification + .verification, .activity-item + .activity-item { margin-top: var(--space-2); }
-.activity-event { font-size: var(--text-sm); font-weight: 600; }
-
-.timeline-scroll { overflow-x: auto; }
-.timeline-item {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 2px var(--space-3);
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
-}
-.timeline-item:last-child { border-bottom: 0; }
-.timeline-item > details { grid-column: 2 / -1; }
-.timeline-marker {
-  display: inline-grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border: 1px solid currentcolor;
-  border-radius: var(--radius-pill);
-}
-.timeline-title { color: var(--text); font-size: var(--text-sm); font-weight: 600; }
-
-.identity, .money, .timestamp { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
-.identity-display { font-family: var(--font-data); font-size: var(--text-xs); }
-.money-display, .count-display { font-variant-numeric: tabular-nums; }
-
-.table caption:not(.visually-hidden) { padding: 6px var(--space-3); color: var(--muted); font-size: var(--text-xs); }
-.panel .table-scroll { margin-top: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-md); }
-
-.chart { display: block; width: 100%; max-width: 100%; margin: var(--space-2) 0; }
-.bar-chart { height: 8rem; }
-.line-chart { height: 10rem; }
-.donut-chart { width: 10rem; height: 10rem; margin-inline: auto; }
-.donut-track { stroke: var(--border); }
-.bar, .legend-swatch rect, .token-point { fill: currentcolor; }
-.donut-segment, .token-line { stroke: currentcolor; }
-.legend-item { display: inline-flex; align-items: center; gap: 6px; overflow-wrap: anywhere; }
-.legend-swatch { flex: none; }
-
-@media (forced-colors: active) {
-  .panel, .callout, .proposal, .verification, .activity-item, .timeline-marker { border-color: CanvasText; }
-  .map-cell.is-other { background: Canvas; box-shadow: inset 0 0 0 1px CanvasText; }
-  .bar, .legend-swatch rect, .token-point { fill: CanvasText; }
-  .donut-segment, .donut-track, .token-line { stroke: CanvasText; }
-}
 
 /* ------------------------------------------------------------------ *
  * Responsive

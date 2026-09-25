@@ -11,19 +11,26 @@ import {
   shortcutDestination, validatedLimit,
 } from "../src/dashboard/app.js";
 import {
-  AGENT_MODEL_UNAVAILABLE, AGENT_TOKEN_CLASS_NOTE, AVERAGE_EXECUTION_UNAVAILABLE_REASON,
+  AGENT_TOKEN_CLASS_NOTE,
   FINDING_ORDER_STATEMENT, IDENTITY_FRAGMENT_LENGTH,
   MALFORMED_LIST_REASON,
   MALFORMED_NORMATIVE_REASON, TOKEN_CLASSES, TREND_UNAVAILABLE, TREND_UNAVAILABLE_LABEL, activityItems, agentAnalytics,
   artifactChange, approvalWindow, cardSeverity,
-  collapsedColumnStatement, commandCenterKpis, commandText, constantColumn, costChartSeries, coverageQualifier,
-  dataQualitySummary, deliveryPipelineStages, finalPanelBlockingSummary, findingCard,
-  forbiddenFieldStatement, fullCoverageStatement, governanceHealthSummary, governedDeliveriesRows,
-  identityPresentation, latestTimestamp, modelAssignmentsSummary, needsAttentionQueue, orderFindings,
-  portfolioProjection, portfolioStatusBanner, repositoryIdentity, runExecutiveSummary, severityOrder, snapshotProjection,
+  collapsedColumnStatement, commandText, constantColumn, costChartSeries, coverageQualifier,
+  finalPanelBlockingSummary, findingCard,
+  forbiddenFieldStatement, fullCoverageStatement,
+  identityPresentation, latestTimestamp, needsAttentionQueue, orderFindings,
+  portfolioProjection, repositoryIdentity, runExecutiveSummary, severityOrder, snapshotProjection,
   snapshotState, stagePresentation, statusPresentation, timestampPresentation, tokenTotal,
   usdPresentation,
+  BLOCKING_DECISIONS, agentRows, findingStatus, findingStatusCounts, findingStatuses, governanceChecks,
+  relativeTimePresentation, runOutcome, searchIndex, searchMatches, stageLedger, stageMap, stageUsage,
+  telemetryCoverage, autoRefreshPlan, changedRuns, liveness,
 } from "../src/dashboard/dashboard-model.js";
+import { appendAudit } from "../src/audit.ts";
+import { acquireLock } from "../src/lock.ts";
+import { lockDir } from "../src/paths.ts";
+import { BLOCKING_DISPOSITIONS } from "../src/plan-gate.ts";
 import { readRunsResult, readStatusResult } from "../src/operator-read.ts";
 import { openStore } from "../src/store.ts";
 import type { OperatorResult } from "../src/operator-output.ts";
@@ -290,8 +297,7 @@ test("portfolio views cover the loaded window and exclude a retained out-of-wind
   assert.equal(projection.findings.value, null, "no snapshot contributed, so findings are unavailable, not zero");
   assert.equal(projection.cost.knownUsd, null);
   assert.equal(projection.tokens.known, null);
-  assert.equal(projection.averageExecution.value, null);
-  assert.equal(projection.averageExecution.reason, AVERAGE_EXECUTION_UNAVAILABLE_REASON);
+  assert.deepEqual(projection.averageExecution, { value: null, rows: 0 }, "no snapshot contributed a recorded duration");
   assert.equal(projection.trend, TREND_UNAVAILABLE);
 
   const empty = portfolioProjection([]);
@@ -300,7 +306,7 @@ test("portfolio views cover the loaded window and exclude a retained out-of-wind
   assert.equal(empty.findings.value, null);
 });
 
-test("command center projections derive portfolio banner, 6-card KPIs, exception queue, 8-stage pipeline, and enterprise rows", () => {
+test("portfolio and attention projections over a seeded partial run", () => {
   const parent = workspace();
   try {
     const root = repository(parent);
@@ -323,38 +329,12 @@ test("command center projections derive portfolio banner, 6-card KPIs, exception
     const portfolio = portfolioProjection([repoView]);
     assert.equal(portfolio.runs, 1);
     assert.equal(portfolio.findings.value, 1);
+    // seedPartialRun records three agent rows with durations 900, 700, and 100 ms.
+    assert.deepEqual(portfolio.averageExecution, { value: (900 + 700 + 100) / 3, rows: 3 });
 
-    // 1. Portfolio Status Banner
-    const banner = portfolioStatusBanner(portfolio, [summary], [snapshot]);
-    assert.equal(banner.status, "at_risk", "1 open finding makes portfolio at risk");
-    assert.equal(banner.tone, "warning");
-    assert.match(banner.summary, /1 open finding requires review/);
-    assert.ok(banner.actions.some((a) => a.targetTab === "findings"));
-
-    // 2. 6-card Horizontal KPI Strip
-    const kpis = commandCenterKpis(portfolio, [summary], [snapshot]);
-    assert.equal(kpis.length, 6, "commandCenterKpis derives exactly 6 cards");
-    const [pHealth, rReady, bDeliveries, oFindings, gCoverage, dSuccess] = kpis;
-    assert.equal(pHealth?.id, "portfolio-health");
-    assert.equal(pHealth?.value, "At Risk");
-    assert.equal(rReady?.id, "release-ready");
-    assert.equal(rReady?.value, 0);
-    assert.equal(bDeliveries?.id, "blocked-deliveries");
-    assert.equal(bDeliveries?.value, 0);
-    assert.equal(oFindings?.id, "open-findings");
-    assert.equal(oFindings?.value, 1);
-    assert.equal(gCoverage?.id, "governance-coverage");
-    assert.equal(gCoverage?.value, "100%");
-    assert.equal(dSuccess?.id, "delivery-success");
-    assert.equal(dSuccess?.value, "Unavailable");
-
-    // 3. Needs Attention Queue
-    const queue = needsAttentionQueue([repoView]);
-    assert.ok(queue.length >= 1);
-    const findingItem = queue.find((item) => item.type === "governance");
-    assert.ok(findingItem !== undefined);
-    assert.equal(findingItem?.severity, "high");
-    assert.equal(findingItem?.runId, snapshot.run.id);
+    // The seeded high finding records an addressed
+    // disposition, so it is resolved, not attention; the run is in progress.
+    assert.deepEqual(needsAttentionQueue([repoView]), { runs: [], findings: [] });
 
     const repoViewWithStale = {
       ...repoView,
@@ -367,57 +347,9 @@ test("command center projections derive portfolio banner, 6-card KPIs, exception
         { ...summary, id: 999, status: "in_progress" },
       ],
     };
-    const multiQueue = needsAttentionQueue([repoViewWithStale]);
-    assert.equal(multiQueue.length, 2);
-    assert.equal(multiQueue[0]?.severity, "high", "high severity outranks low severity stale item");
-    assert.equal(multiQueue[1]?.severity, "low");
+    // A stale snapshot is the data status pill's concern, not an attention item.
+    assert.deepEqual(needsAttentionQueue([repoViewWithStale]), { runs: [], findings: [] });
 
-    // 4. Delivery Pipeline Stages
-    const stages = deliveryPipelineStages(snapshot);
-    assert.equal(stages.length, 8, "deliveryPipelineStages maps to 8 standard stages");
-    const specStage = stages.find((s) => s.id === "specification");
-    assert.equal(specStage?.status, "complete");
-    assert.equal(specStage?.symbol, "check");
-    const planStage = stages.find((s) => s.id === "planning");
-    assert.equal(planStage?.status, "waiting");
-    const implStage = stages.find((s) => s.id === "implementation");
-    assert.equal(implStage?.status, "not_started");
-
-    const blockedSnapshot = {
-      ...snapshot,
-      stages: [
-        ...snapshot.stages,
-        { id: 4, runId: snapshot.run.id, kind: "verification", status: "passed", gateResult: "block", startedAt: "", completedAt: "" },
-      ],
-    };
-    const blockedStages = deliveryPipelineStages(blockedSnapshot as unknown as RunSnapshot);
-    const testStage = blockedStages.find((s) => s.id === "testing");
-    assert.equal(testStage?.status, "failed", "blocked gate results in failed stage status");
-    assert.equal(testStage?.tone, "danger");
-
-    // 5. Governance Health Summary
-    const govHealth = governanceHealthSummary(snapshot);
-    assert.equal(govHealth.controlsTotal, 1);
-    assert.equal(govHealth.controlsPassed, 1);
-    assert.equal(govHealth.findingsBySeverity.high, 1);
-    assert.equal(govHealth.auditIntegrity, "verified");
-
-    // 6. Model Assignments Summary
-    const modelMap = modelAssignmentsSummary(snapshot);
-    assert.equal(modelMap.effortLevel, "Not reported in configuration");
-
-    // 7. Data Quality Summary
-    const dataQual = dataQualitySummary(portfolio, [snapshot]);
-    assert.equal(dataQual.freshCount, 1);
-    assert.equal(dataQual.missingExecutionDuration, 1);
-    assert.equal(dataQual.historicalTrend, TREND_UNAVAILABLE_LABEL);
-
-    // 8. Governed Deliveries Rows
-    const rows = governedDeliveriesRows([repoView]);
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0]?.runId, snapshot.run.id);
-    assert.equal(rows[0]?.findingsCount, 1);
-    assert.equal(rows[0]?.currentStage, "Plan");
   } finally {
     rmSync(parent, { recursive: true, force: true });
   }
@@ -485,9 +417,11 @@ test("run analytics report recorded coverage and refuse to invent an unreported 
 
     const agents = agentAnalytics(snapshot);
     assert.deepEqual(agents.map((entry) => entry.agent), snapshot.cost.byAgent.map((group) => group.agent));
+    // seedPartialRun records test-model on every row that reported a model; the
+    // reviewer's second row reported none, which leaves its one recorded model.
     for (const agent of agents) {
-      assert.equal(agent.model, null);
-      assert.equal(agent.modelLabel, AGENT_MODEL_UNAVAILABLE);
+      assert.equal(agent.model, "test-model");
+      assert.equal(agent.modelLabel, "test-model");
       assert.equal(agent.trend, TREND_UNAVAILABLE);
       const group = snapshot.cost.byAgent.find((entry) => entry.agent === agent.agent);
       assert.equal(agent.executions, group?.agentRows);
@@ -816,11 +750,10 @@ test("constant columns collapse per render and coverage qualifiers appear only w
       { constant: false, value: null, rowCount: 0 },
       "no rows is an empty collection, not a constant column");
 
-    // A statement about the current projection, not about the collapse rule:
-    // agentAnalytics binds no model, so this column is constant in every run.
-    // It should fail loudly if the deferred RunSnapshot extension ever lands.
+    // Every row this run recorded reported the same effective model, so the
+    // model column collapses here to the recorded identifier, verbatim.
     assert.deepEqual(constantColumn(unevenAgents, (row) => row.modelLabel),
-      { constant: true, value: AGENT_MODEL_UNAVAILABLE, rowCount: 2 });
+      { constant: true, value: "test-model", rowCount: 2 });
 
     // Coverage qualifiers attach only where a contributing row reported nothing.
     const fullyReported = unevenAgents.flatMap((row) => row.tokens.classes);
@@ -1433,8 +1366,9 @@ test("static assets keep the approved accessible boundary and omit unauthorized 
     assert.match(grid, /minmax\(min\(\d+(\.\d+)?rem, 100%\), 1fr\)/, grid);
   }
 
-  // The read-only boundary: no mutating method, no push transport, no timer,
-  // and no markup parsed from a projected value.
+  // The read-only boundary: no mutating method, no push transport, no
+  // interval timer, and no markup parsed from a projected value. The single
+  // bounded auto-refresh timer is pinned by its own test.
   assert.doesNotMatch(script, /\bWebSocket\b|\bEventSource\b|\bsetInterval\b|innerHTML|outerHTML|insertAdjacentHTML/);
   assert.doesNotMatch(script, /fetch\([^)]*\{[^}]*method\s*:/s);
   assert.doesNotMatch(model, /\bdocument\.|\bwindow\.|\bfetch\(|\bXMLHttpRequest\b|\blocalStorage\b|\bsessionStorage\b/);
@@ -1667,6 +1601,439 @@ test("repository selection scopes overview metrics, runs, and tab views", () => 
   assert.match(script, /const filterRepoId = application\.selectedRepositoryId \|\| application\.repositoryFilter \|\| "";/);
   assert.match(script, /if \(filterRepoId !== "" &&\s*repositoryState\.repository\.id !== filterRepoId\) continue;/);
   assert.match(script, /if \(targetRepoId !== null && repoState\.repository\.id !== targetRepoId\) continue;/);
+});
+
+/** One loaded run as the repository view the dashboard assembles from the read routes. */
+function viewOf(root: string, snapshot: RunSnapshot, repositoryId = "repo-1") {
+  return {
+    repositoryId, path: root, available: true, limit: 20, hasMore: false,
+    runs: [{
+      id: snapshot.run.id, project: snapshot.run.project, featureId: snapshot.run.featureId,
+      slug: snapshot.run.slug, status: snapshot.run.status, phase: snapshot.phase,
+      lastRecordedAt: snapshot.activity.lastRecordedAt,
+    }],
+    snapshots: [{ runId: snapshot.run.id, snapshot, stale: false, loading: false }],
+  };
+}
+
+/**
+ * A blocked run recording one finding per status the stored vocabulary can
+ * produce: a document review with every disposition plus one undecided
+ * finding, and a two-round code review. The last audit event is a gate event
+ * whose summary names round 1, deliberately disagreeing with the recorded
+ * findings, so a projection that parsed event prose would be caught.
+ */
+function seedDecidedRun(root: string, parent: string, slug: string) {
+  const runId = newRun(root, parent, slug);
+  const configured = readStatusResult(root, parent, runId);
+  assert.equal(configured.outcome, "ok");
+  const severities = severityOrder((configured.result as RunSnapshot).configuration);
+  assert.ok(severities !== null && severities.length >= 2, "the run froze a severity order to rank against");
+  const lowest = severities[0]!;
+  const highest = severities[severities.length - 1]!;
+  const store = openStore(root);
+  const agentRow = (stageId: number, agent: string) => store.insertAgentRun({
+    stageId, agent, role: "reviewer", executor: "claude_code",
+    requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+    tokensIn: 10, tokensOut: 5, cacheRead: 1, cacheWrite: 1, cost: 0.1,
+    durationMs: 100, inputHash: `in-${agent}`, outputHash: `out-${agent}`, rawOutputRef: `raw/${agent}.json`,
+    independence: "configured_standalone",
+  });
+  const ids: Record<string, number> = {};
+  const finding = (stageId: number, round: number, intent: string, severity: string, agentRunId: number) => {
+    const row = store.upsertCanonicalFinding(stageId, round, intent, `plan.md:${intent}`);
+    store.insertFindingReport({ findingId: row.id, agentRunId, severity,
+      classification: "current_artifact", subject: `recorded ${intent}` });
+    ids[intent] = row.id;
+    return row.id;
+  };
+  const spec = store.insertStage(runId, "spec", null);
+  store.completeStage(spec.id, "spec.md", "pass");
+  const review = store.insertStage(runId, "spec_review", spec.id);
+  const reviewer = agentRow(review.id, "zulu-reviewer");
+  const decide = (findingId: number, disposition: string, fields: object = {}) => store.insertFindingDecision({
+    findingId, agentRunId: reviewer.id, disposition, rationale: `recorded ${disposition}`, changedLocations: [],
+    grounding: null, normativeChanges: null, artifactHashBefore: "a".repeat(64), artifactHashAfter: "a".repeat(64),
+    ...fields,
+  });
+  decide(finding(review.id, 1, "addressed", lowest, reviewer.id), "addressed", {
+    normativeChanges: [{ artifactLocation: "plan.md:1", artifactText: "Recorded change.",
+      grounding: { source: "design", location: "design.md:1", excerpt: "Recorded requirement." } }],
+    artifactHashAfter: "b".repeat(64),
+  });
+  decide(finding(review.id, 1, "rejected", lowest, reviewer.id), "rejected_with_rationale", {
+    grounding: { source: "design", location: "design.md:2", excerpt: "Recorded requirement." },
+  });
+  finding(review.id, 1, "open", highest, reviewer.id);
+  decide(finding(review.id, 1, "cannot-determine", lowest, reviewer.id), "cannot_determine");
+  decide(finding(review.id, 1, "upstream-blocking", lowest, reviewer.id), "upstream_blocking");
+  decide(finding(review.id, 1, "upstream-follow-up", lowest, reviewer.id), "upstream_follow_up");
+  store.completeStage(review.id, "spec.md", "pass");
+  const code = store.insertStage(runId, "code_review", review.id);
+  const panel = agentRow(code.id, "correctness-reviewer");
+  finding(code.id, 1, "earlier-round", highest, panel.id);
+  finding(code.id, 2, "final-blocking", highest, panel.id);
+  finding(code.id, 2, "final-clear", lowest, panel.id);
+  store.completeStage(code.id, "code-review.json", "block");
+  store.setRunStatus(runId, "blocked");
+  appendAudit(store, { runId, stageId: code.id, actor: "system", actorType: "cli", action: "code_review.gate.block",
+    summary: `round=1/2; commit=${"c".repeat(40)}; findings=1; blocking=1; threshold=${highest}` });
+  store.close();
+  const envelope = readStatusResult(root, parent, runId);
+  assert.equal(envelope.outcome, "ok");
+  const recorded = envelope.result as RunSnapshot;
+  // finalPanelBlocking is projected only by a matched final code-review panel,
+  // so reach it by spreading store-read records, as the ordering test does.
+  const snapshot = { ...recorded, evidence: { ...recorded.evidence, findings: recorded.evidence.findings.map((f) =>
+    f.id === ids["final-blocking"] ? { ...f, finalPanelBlocking: true }
+      : f.id === ids["final-clear"] ? { ...f, finalPanelBlocking: false } : f) } };
+  return { snapshot, ids, observedAt: envelope.observedAt };
+}
+
+function readSnapshot(root: string, parent: string, runId: number): RunSnapshot {
+  const envelope = readStatusResult(root, parent, runId);
+  assert.equal(envelope.outcome, "ok");
+  return envelope.result as RunSnapshot;
+}
+
+test("stage ledger and stage map follow recorded stages in recorded order", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const partial = seedPartialRun(root, parent, "ledger-partial");
+    const blockedId = newRun(root, parent, "ledger-blocked");
+    const completedId = newRun(root, parent, "ledger-completed");
+    const store = openStore(root);
+    store.setStageStatus(partial.stages[1]!.id, "in_progress");
+    const spec = store.insertStage(blockedId, "spec", null);
+    appendAudit(store, { runId: blockedId, stageId: spec.id, actor: "system", actorType: "cli",
+      action: "spec.stage.create", summary: "created the specification stage" });
+    store.completeStage(spec.id, "spec.md", "pass");
+    const review = store.insertStage(blockedId, "spec_review", spec.id);
+    store.completeStage(review.id, "spec.md", "block");
+    store.setRunStatus(blockedId, "blocked");
+    const done = store.insertStage(completedId, "spec", null);
+    store.completeStage(done.id, "spec.md", "pass");
+    store.setRunStatus(completedId, "completed");
+    store.close();
+    const snapshots = [partial.run.id, blockedId, completedId].map((id) => readSnapshot(root, parent, id));
+
+    const ledgers = snapshots.map((snapshot) => stageLedger(snapshot));
+    snapshots.forEach((snapshot, index) => assert.deepEqual(
+      ledgers[index]!.segments.map((s) => [s.stageId, s.kind]), snapshot.stages.map((s) => [s.id, s.kind]),
+      "segments are the recorded stages in recorded order"));
+    assert.deepEqual(ledgers.map((l) => l.segments.map((s) => s.result)), [["passed", "open"], ["passed", "blocked"], ["passed"]]);
+    assert.deepEqual(ledgers.map((l) => l.terminal), ["in_progress", "stopped", "completed"]);
+    const timed = snapshots[1]!.stages[0]!;
+    assert.ok(timed.startEvidence.at !== null && timed.endedAt !== null);
+    assert.equal(ledgers[1]!.segments[0]!.durationMs, Date.parse(timed.endedAt) - Date.parse(timed.startEvidence.at));
+    assert.equal(ledgers[1]!.segments[1]!.durationMs, null, "no recorded start, so no duration");
+
+    // Columns follow each kind's minimum recorded ordinal; plan and spec_review
+    // tie at ordinal 1 here, and the tie falls back to the kind name.
+    const map = stageMap(snapshots);
+    assert.deepEqual(map.columns.map((c) => c.kind), ["spec", "plan", "spec_review"]);
+    assert.deepEqual(map.rows.map((r) => r.cells), [
+      ["passed", "open", "not_reached"], ["passed", "not_reached", "blocked"], ["passed", "not_reached", "not_reached"]]);
+    assert.deepEqual(map.columns.map((c) => [c.reached, c.stopped, c.completed]), [[3, 0, 1], [1, 0, 0], [1, 1, 0]]);
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("finding status comes from recorded dispositions and final-panel results, never from absence alone", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const { snapshot, ids } = seedDecidedRun(root, parent, "statuses");
+    assert.deepEqual(BLOCKING_DECISIONS, BLOCKING_DISPOSITIONS, "the dashboard's copy is the document gate's own list");
+    const kinds = new Map(snapshot.stages.map((s) => [s.id, s.kind]));
+    const status = Object.fromEntries(Object.entries(ids).map(([intent, id]) => {
+      const recorded = snapshot.evidence.findings.find((f) => f.id === id)!;
+      return [intent, findingStatus(findingCard(recorded), kinds.get(recorded.stageId)!)];
+    }));
+    assert.deepEqual(status, {
+      addressed: "addressed", rejected: "rejected", open: "open",
+      "cannot-determine": "blocking", "upstream-blocking": "blocking", "upstream-follow-up": "non_blocking",
+      "earlier-round": "earlier_round", "final-blocking": "blocking", "final-clear": "non_blocking",
+    });
+    assert.deepEqual(findingStatusCounts([snapshot]), {
+      addressed: 1, rejected: 1, open: 1, blocking: 3, non_blocking: 2, earlier_round: 1,
+      total: snapshot.evidence.findings.length, requireAttention: 4,
+    });
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("the attention queue holds blocked runs, then blocking and open findings only", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const { snapshot, ids } = seedDecidedRun(root, parent, "attention");
+    const queue = needsAttentionQueue([viewOf(root, snapshot)]);
+    assert.deepEqual(queue.runs.map((r) => [r.runId, r.stageKind]), [[snapshot.run.id, "code_review"]]);
+    // Blocking before open; within a status, the higher recorded severity, then the identifier.
+    assert.deepEqual(queue.findings.map((f) => [f.findingId, f.status]), [
+      [ids["final-blocking"], "blocking"], [ids["cannot-determine"], "blocking"],
+      [ids["upstream-blocking"], "blocking"], [ids.open, "open"],
+    ]);
+    assert.ok(queue.findings.every((f) => f.runId === snapshot.run.id && f.repositoryId === "repo-1"));
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("run outcome and governance checks derive from recorded fields, not event prose", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const { snapshot, observedAt } = seedDecidedRun(root, parent, "outcome");
+    const review = snapshot.configuration.codeReview;
+    assert.ok(review !== null, "the run froze a code-review profile");
+    assert.equal(review.maxRounds, 2, "the frozen profile allows two panel executions");
+    assert.match(snapshot.activity.lastEvent!.summary, /^round=1\//, "the recorded event disagrees with the findings");
+    const statuses = findingStatuses(snapshot);
+    const outcome = runOutcome(snapshot, statuses);
+    assert.equal(outcome.headline, "Run blocked at code review");
+    assert.equal(outcome.round, 2);
+    assert.equal(outcome.maxRounds, review.maxRounds);
+    assert.match(outcome.sentence, new RegExp(`round 2 of ${review.maxRounds}\\)`));
+    assert.match(outcome.sentence, new RegExp(`the ${review.blockingSeverity} blocking threshold`));
+    assert.equal(outcome.eligible, snapshot.workflowAction.eligible);
+
+    const checks = Object.fromEntries(governanceChecks(snapshot, statuses, observedAt).map((c) => [c.id, c.result]));
+    assert.deepEqual(checks, {
+      spec_review: "passed", plan_review: "not_reached", approval: "not_reached", verification: "not_reached",
+      code_review: "blocked", delivery_check: "not_reached", required_specialists: "not_evaluated",
+      audit_chain: "not_verified",
+    });
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("telemetry coverage and agent rows state what agent rows reported", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    // seedPartialRun records three agent rows: one reports cost, one reports no effective model.
+    const partial = seedPartialRun(root, parent, "coverage");
+    const coverage = telemetryCoverage([viewOf(root, partial)]);
+    assert.deepEqual(coverage.snapshots, { current: 1, total: 1 });
+    assert.deepEqual(coverage.cost, { reported: 1, total: 3 });
+    assert.deepEqual(coverage.model, { reported: 2, total: 3 });
+    assert.deepEqual(coverage.duration, { reported: 3, total: 3 });
+    assert.equal(coverage.history, "not_collected");
+    assert.equal(agentRows(partial).uniformModel, null, "a row with no effective model shows the Model column");
+
+    const runId = newRun(root, parent, "uniform");
+    let store = openStore(root);
+    const spec = store.insertStage(runId, "spec", null);
+    const row = (agent: string, requestedModel: string, cost: number, durationMs: number) => store.insertAgentRun({
+      stageId: spec.id, agent, role: "author", executor: "claude_code", requestedModel, effectiveModel: "test-model",
+      fallback: null, tokensIn: 10, tokensOut: 5, cacheRead: 1, cacheWrite: 1, cost, durationMs,
+      inputHash: `in-${agent}-${cost}`, outputHash: `out-${agent}-${cost}`, rawOutputRef: `raw/${agent}.json`,
+      independence: "configured_standalone",
+    });
+    const recorded = [row("alpha-author", "test-model", 0.3, 900), row("alpha-author", "test-model", 0.1, 300),
+      row("zulu-reviewer", "test-model", 0.2, 200)];
+    store.close();
+    const uniform = agentRows(readSnapshot(root, parent, runId));
+    assert.equal(uniform.uniformModel, "test-model");
+    const author = uniform.rows.find((r) => r.agent === "alpha-author")!;
+    const authorRows = recorded.filter((r) => r.agent === "alpha-author");
+    const authorCost = authorRows.reduce((sum, r) => sum + r.cost!, 0);
+    assert.equal(author.executions, authorRows.length);
+    assert.equal(author.costPerExecution, authorCost / authorRows.length);
+    assert.equal(author.averageDurationMs, authorRows.reduce((sum, r) => sum + r.duration_ms, 0) / authorRows.length);
+    assert.ok(Math.abs(uniform.rows.reduce((sum, r) => sum + (r.share ?? 0), 0) - 1) < 1e-9);
+
+    store = openStore(root);
+    row("zulu-reviewer", "other-model", 0.05, 50);
+    store.close();
+    assert.equal(agentRows(readSnapshot(root, parent, runId)).uniformModel, null,
+      "a requested model that differs from the effective one shows the Model column");
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("stage usage ranks stages by known cost and names each stage that ran no agent", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const runId = newRun(root, parent, "usage");
+    const store = openStore(root);
+    const row = (stageId: number, agent: string, cost: number, tokensOut: number) => store.insertAgentRun({
+      stageId, agent, role: "author", executor: "claude_code", requestedModel: "test-model", effectiveModel: "test-model",
+      fallback: null, tokensIn: 10, tokensOut, cacheRead: 1, cacheWrite: 1, cost, durationMs: 100,
+      inputHash: `in-${agent}`, outputHash: `out-${agent}`, rawOutputRef: `raw/${agent}.json`,
+      independence: "configured_standalone",
+    });
+    const spec = store.insertStage(runId, "spec", null);
+    row(spec.id, "spec-author", 0.25, 40);
+    store.completeStage(spec.id, "spec.md", "pass");
+    const plan = store.insertStage(runId, "plan", spec.id);
+    row(plan.id, "plan-author", 0.5, 400);
+    store.completeStage(plan.id, "plan.md", "pass");
+    const verification = store.insertStage(runId, "verification", plan.id);
+    // The verification record's shape is the one operator-state projects.
+    const command = (name: string) => ({ name, argv: ["node", "--version"], exitCode: 0, timedOut: false, spawnError: null,
+      killError: null, outputOverflow: false, durationMs: 5, evidenceRef: `${name}.log`, blockedBecause: null });
+    writeFileSync(join(root, "verification.json"), `${JSON.stringify({ outcome: "pass", blockingCommand: null,
+      verifiedCommit: null, commands: [command("node"), command("npm")] })}\n`);
+    store.completeStage(verification.id, "verification.json", "pass");
+    store.close();
+    const snapshot = readSnapshot(root, parent, runId);
+    assert.equal(snapshot.delivery.verification.find((v) => v.stageId === verification.id)?.commands.length, 2);
+
+    const usage = stageUsage(snapshot);
+    assert.deepEqual(usage.stages.map((s) => s.kind), ["plan", "spec"]);
+    assert.ok(Math.abs(usage.stages.reduce((sum, s) => sum + (s.share ?? 0), 0) - 1) < 1e-9, "shares of known cost total one");
+    assert.equal(usage.highest.cost?.kind, "plan");
+    assert.equal(usage.highest.tokens?.kind, "plan");
+    assert.deepEqual(usage.idle.map((s) => [s.kind, s.reason]), [["verification", "2 frozen commands passed"]]);
+    assert.deepEqual(usage.composition.map((c) => c.key), TOKEN_CLASSES.map((c) => c.key));
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("relative time keeps the exact time and zone, and search matches runs, findings, and agents", () => {
+  const observedAt = "2026-09-24T08:15:57.684Z";
+  const at = (seconds: number) => new Date(Date.parse(observedAt) - seconds * 1000).toISOString();
+  assert.equal(relativeTimePresentation(at(30), observedAt, "UTC").relative, "30s ago");
+  assert.equal(relativeTimePresentation(at(5 * 60), observedAt, "UTC").relative, "5 min ago");
+  assert.equal(relativeTimePresentation(at(2 * 3600), observedAt, "UTC").relative, "2 h ago");
+  assert.equal(relativeTimePresentation(at(3 * 86_400), observedAt, "UTC").relative, "3 days ago");
+  assert.equal(relativeTimePresentation(at(86_400), observedAt, "UTC").relative, "1 day ago");
+  const exact = relativeTimePresentation(at(3 * 86_400), observedAt, "UTC");
+  assert.equal(exact.utc, at(3 * 86_400), "the recorded timestamp is retained");
+  assert.match(exact.exact, /UTC/);
+  assert.equal(relativeTimePresentation("not a timestamp", observedAt).available, false);
+
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const { snapshot, ids } = seedDecidedRun(root, parent, "search-target");
+    const index = searchIndex([viewOf(root, snapshot)]);
+    const byLocation = searchMatches(index, "plan.md:final-blocking");
+    assert.deepEqual(byLocation.findings.map((f) => f.findingId), [ids["final-blocking"]]);
+    assert.deepEqual(byLocation.runs, []);
+    assert.deepEqual(searchMatches(index, "search-target").runs.map((r) => r.runId), [snapshot.run.id]);
+    assert.deepEqual(searchMatches(index, "correctness").agents.map((a) => a.agent), ["correctness-reviewer"]);
+    assert.deepEqual(searchMatches(index, "  "), { runs: [], findings: [], agents: [] });
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("liveness requires an in-progress run, an open stage, a live writer lock, and a fresh observation", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const runId = newRun(root, parent, "liveness");
+    const store = openStore(root);
+    const stage = store.insertStage(runId, "spec", null);
+    store.setStageStatus(stage.id, "in_progress");
+    store.close();
+    const interval = 15_000;
+    const observe = () => {
+      const envelope = readStatusResult(root, parent, runId);
+      assert.equal(envelope.outcome, "ok");
+      return { snapshot: envelope.result as RunSnapshot, observedAt: envelope.observedAt };
+    };
+
+    const release = acquireLock(root);
+    try {
+      const held = observe();
+      assert.equal(held.snapshot.writer.status, "live");
+      const at = Date.parse(held.observedAt!);
+      assert.equal(liveness(held.snapshot, held.observedAt, at + 1000, interval), "live");
+      assert.equal(liveness(held.snapshot, held.observedAt, at + 2 * interval, interval), "no_live_writer",
+        "an observation two intervals old is not evidence that the writer is live now");
+      const noOpenStage = { ...held.snapshot, stages: held.snapshot.stages.map((s) => ({ ...s, status: "passed" })) };
+      assert.equal(liveness(noOpenStage, held.observedAt, at + 1000, interval), "no_live_writer");
+    } finally {
+      release();
+    }
+
+    const absent = observe();
+    assert.equal(absent.snapshot.writer.status, "absent");
+    assert.equal(liveness(absent.snapshot, absent.observedAt, Date.parse(absent.observedAt!), interval), "no_live_writer");
+
+    const exited = spawnSync(process.execPath, ["-e", ""]);
+    assert.equal(exited.status, 0);
+    mkdirSync(lockDir(root), { recursive: true });
+    writeFileSync(join(lockDir(root), "lock"), `pid=${exited.pid}\ntoken=exited\ncreated_at=${absent.observedAt}\n`);
+    const dead = observe();
+    assert.equal(dead.snapshot.writer.status, "dead");
+    assert.equal(liveness(dead.snapshot, dead.observedAt, Date.parse(dead.observedAt!), interval), "no_live_writer");
+
+    writeFileSync(join(lockDir(root), "lock"), "not a lock record\n");
+    const unreadable = observe();
+    assert.equal(unreadable.snapshot.writer.status, "unreadable");
+    assert.equal(liveness(unreadable.snapshot, unreadable.observedAt, Date.parse(unreadable.observedAt!), interval), "lock_unreadable");
+    rmSync(join(lockDir(root), "lock"));
+
+    const completed = openStore(root);
+    completed.setRunStatus(runId, "completed");
+    completed.close();
+    const done = observe();
+    assert.equal(liveness(done.snapshot, done.observedAt, Date.parse(done.observedAt!), interval), "not_in_progress");
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("the auto-refresh scheduler is the only timer, pauses while hidden, and has an operator toggle", () => {
+  const script = readFileSync(resolve("src", "dashboard", "app.js"), "utf8").replace(/\r\n/g, "\n");
+  const html = readFileSync(resolve("src", "dashboard", "index.html"), "utf8");
+  assert.doesNotMatch(script, /\bsetInterval\b/);
+  assert.equal((script.match(/\bsetTimeout\(/g) ?? []).length, 1, "exactly one timer in the dashboard script");
+  const start = script.indexOf("function scheduleAutoRefresh(");
+  assert.ok(start > 0, "the scheduler exists");
+  const end = script.indexOf("\n}\n", start);
+  assert.match(script.slice(start, end), /\bsetTimeout\(/, "the one timer is armed by scheduleAutoRefresh");
+  assert.match(script, /addEventListener\("visibilitychange", /);
+  assert.match(script.slice(start, end), /document\.visibilityState !== "visible"/, "a hidden page never arms the timer");
+  assert.match(script.slice(start, end), /application\.sessionExpired/, "an expired session never arms the timer");
+  assert.match(html, /<button id="auto-refresh" type="button"[^>]*aria-pressed="true"/);
+});
+
+test("auto-refresh plan re-fetches only changed, in-progress, stale, or absent snapshots, and changed runs name them", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const ids = ["unchanged", "changed", "active", "stale", "absent"].map((slug) => newRun(root, parent, slug));
+    const [unchanged, changed, active, stale, absent] = ids as [number, number, number, number, number];
+    const store = openStore(root);
+    for (const id of [unchanged, changed, stale, absent]) store.setRunStatus(id, "completed");
+    store.close();
+    const list = () => {
+      const envelope = readRunsResult(root, parent, 20);
+      assert.equal(envelope.outcome, "ok");
+      return (envelope.result as { runs: { id: number, project: string, featureId: string, slug: string, status: string, phase: string, lastRecordedAt: string }[] }).runs;
+    };
+    const before = list();
+    const held = [unchanged, changed, active, stale].map((id) => ({
+      runId: id, snapshot: readSnapshot(root, parent, id), stale: id === stale, loading: false,
+    }));
+    const recorder = openStore(root);
+    appendAudit(recorder, { runId: changed, stageId: null, actor: "system", actorType: "cli",
+      action: "profile.freeze.failed", summary: "a recorded change after the held snapshot" });
+    recorder.close();
+    const after = list();
+
+    assert.deepEqual(autoRefreshPlan(held, after).sort((a, b) => a - b), [changed, active, stale, absent].sort((a, b) => a - b));
+    const view = (runs: typeof before) => ({ repositoryId: "repo-1", path: root, available: true, runs,
+      limit: 20, hasMore: false, snapshots: [] });
+    assert.deepEqual(changedRuns([view(before)], [view(after)]), [`repo-1:${changed}`]);
+    assert.deepEqual(changedRuns(null, [view(after)]), [], "the first observation highlights nothing");
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
 });
 
 

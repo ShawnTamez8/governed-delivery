@@ -72,14 +72,26 @@ fabricated telemetry remain unauthorized. **No paid execution is authorized.**
 No current dollar range exists for a three-reviewer chain; observed chains have
 cost $1.39–$3.59.
 
-**Running state:** Nothing started by the 2026-09-24 session. The 2026-09-15
+**Active work (2026-09-24, uncommitted):** branch `dashboard-ux-redesign`, from
+`1b42825`. This is the dashboard PWA redesign in
+`docs/features/dashboard-pwa-redesign/plan.md`. The operator approved mockup
+revision 2. Task 2 is done: `RunSnapshot.cost.byAgent` now carries roles,
+requested and effective models, unreported-model rows, and summed duration.
+Task 3, the dashboard-model projections, is done. Task 4 is also done: the
+ARCHITECTURE section 23 "Dashboard live observation — 2026-09-24" decision and
+the 15-second visible-only auto-refresh with its toggle. Task 5, the renderer
+replacement from the mockup, is done: typecheck is clean, and the live views match
+the mockup's values. Task 6, rewriting the five structure-pinning tests that now
+fail in `test/dashboard-ui.test.ts`, is next. The task record is
+`.claude/sessions/2026-09-24-dashboard-pwa-redesign.md`.
+
+**Running state:** No dashboard or run process is started. The 2026-09-15
 dashboard on port 61419 is not listening (probed 2026-09-24).
 
 **Open/deferred:**
 - Pushing `guided-project-bootstrap` — not requested.
 - Manual browser evaluation of the dashboard across themes and viewports.
-- The `RunSnapshot` agent-field projection keeps model, harness and duration
-  rendering as unavailable.
+- `RunSnapshot.cost.byAgent` still projects no harness (executor) field.
 - Production interactive guided mode is proved only as two composed checks,
   because redirected stdin is refused by design.
 - Whether a paid chain should exercise the three-lens concurrent panel, and at
@@ -117,7 +129,7 @@ Durable project facts belong here, regardless of whether a host also caches them
 - Windows `TEMP=...\AppData\Local\Temp\1` with `DeleteTempDirsOnExit=1` deletes default driver targets at logoff; four stores were lost by 2026-09-10. Use a fresh child of `C:\Users\tamezs\buildWorks_test_repos` and extract load-bearing responses into `test/fixtures/recorded/` immediately.
 - `| tail -N` buffered paid output; redirect logs and inspect state. A timed-out wait can leave the chain running; never relaunch blindly.
 - The driver signs Buffer bytes over stdin without a shell; PowerShell `cmd /c` redirection is approval transport, not a launch fix.
-- `agent_runs` persists model, harness and duration fields, but `RunSnapshot.cost.byAgent` keeps only agent plus cost; dashboard "unavailable" labels are a projection gap, not a data gap.
+- `agent_runs` persists model, harness and duration fields. Since 2026-09-24 (`dashboard-ux-redesign`), `RunSnapshot.cost.byAgent` also projects roles, requested and effective models, unreported-model rows, and summed `duration_ms`. Harness is still unprojected. `Unavailable` now means the row reported no effective model.
 - A hot journal made read-only SQLite return 776 without writes; readers never repair. Read-only Git needs `--no-optional-locks` and `-c diff.autoRefreshIndex=false`.
 - `envPassthrough` freezes names, not values or files. A doctor pass is not auth proof.
 

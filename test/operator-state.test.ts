@@ -153,6 +153,29 @@ test("run-scoped cost totals derive recorded telemetry before report fan-out and
   });
 });
 
+test("byAgent carries recorded roles, models and duration, and a failure-only actor reports none", () => {
+  withStore((store, root) => {
+    const run = store.insertRun("agents", "agents", "agents", "feature");
+    const stage = store.insertStage(run.id, "code_review", null);
+    const author = [
+      agent(store, stage.id, { agent: "implementer", role: "author" }),
+      agent(store, stage.id, { agent: "implementer", role: "author", effectiveModel: null }),
+    ];
+    const reviewer = agent(store, stage.id, { agent: "reviewer-one" });
+    appendAudit(store, { runId: run.id, stageId: stage.id, actor: "reviewer-two", actorType: "agent",
+      action: "agent.dispatch.failed", summary: "failed invocation without confirmed telemetry" });
+    const { byAgent } = readRunSnapshot(store, root, run.id).snapshot.cost;
+    assert.deepEqual(byAgent.map((a) => [a.agent, a.roles, a.requestedModels, a.effectiveModels,
+      a.effectiveModelUnreportedRows, a.durationMs, a.agentRows, a.recordedFailedAttempts]), [
+      ["implementer", [author[0]!.role], [author[0]!.requested_model], [author[0]!.effective_model],
+        1, author[0]!.duration_ms + author[1]!.duration_ms, 2, 0],
+      ["reviewer-one", [reviewer.role], [reviewer.requested_model], [reviewer.effective_model],
+        0, reviewer.duration_ms, 1, 0],
+      ["reviewer-two", [], [], [], 0, null, 0, 1],
+    ]);
+  });
+});
+
 test("recorded remediation-chain presentation preserves partial telemetry, immutable reports and checked commit evidence", () => {
   const chain = JSON.parse(readFileSync(new URL(
     "./fixtures/recorded/code-review-web-calculator-powershell-remediation-chain.json", import.meta.url), "utf8")) as {

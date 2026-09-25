@@ -2,107 +2,88 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Governed Delivery Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#121316">
+  <title>BuildWorks &mdash; Governed Delivery</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <a class="skip-link" href="#dashboard">Skip to dashboard</a>
-  <header class="app-header">
-    <div class="identity">
-      <div class="brand-row">
-        <span class="brand-badge">BUILDWORKS</span>
-        <span class="environment-badge">LOOPBACK ONLY</span>
+  <a class="skip-link" href="#dashboard">Skip to content</a>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 18 18" aria-hidden="true" focusable="false"><rect class="mark-seg" x="1" y="11" width="3.5" height="5" rx=".6"/><rect class="mark-seg" x="5.5" y="7" width="3.5" height="9" rx=".6"/><rect class="mark-seg" x="10" y="3" width="3.5" height="13" rx=".6"/><rect class="mark-end" x="14.6" y="12.6" width="2.6" height="2.8" rx=".4"/></svg>
+        <h1 class="brand-text"><span class="brand-name">BuildWorks</span><span class="brand-sub">Governed Delivery</span></h1>
       </div>
-      <h1>Governed Delivery Dashboard</h1>
-      <p class="environment">Local loopback projection &mdash; read-only. Every governed action stays a terminal command.</p>
-    </div>
-    <div class="header-controls">
-      <button id="shortcuts-trigger" type="button" class="btn-secondary" aria-haspopup="dialog" aria-expanded="false" aria-controls="shortcuts-dialog">Shortcuts</button>
-      <label for="theme">Theme</label>
-      <select id="theme">
-        <option value="system">System</option>
-        <option value="light">Light</option>
-        <option value="dark">Dark</option>
-      </select>
-      <button id="refresh" type="button">Refresh</button>
-    </div>
-  </header>
-  <nav class="primary-nav" aria-label="Primary Navigation">
-    <div class="tab-list" role="tablist">
-      <button role="tab" id="tab-overview" class="nav-tab active" aria-controls="dashboard" aria-selected="true" data-tab="overview">Overview</button>
-      <button role="tab" id="tab-runs" class="nav-tab" aria-controls="dashboard" aria-selected="false" data-tab="runs">Runs</button>
-      <button role="tab" id="tab-findings" class="nav-tab" aria-controls="dashboard" aria-selected="false" data-tab="findings">Findings</button>
-      <button role="tab" id="tab-governance" class="nav-tab" aria-controls="dashboard" aria-selected="false" data-tab="governance">Governance</button>
-      <button role="tab" id="tab-models" class="nav-tab" aria-controls="dashboard" aria-selected="false" data-tab="models">Models &amp; Agents</button>
-      <button role="tab" id="tab-audit" class="nav-tab" aria-controls="dashboard" aria-selected="false" data-tab="audit">Audit</button>
-    </div>
-  </nav>
-  <nav aria-label="Run filters" class="filter-bar">
-    <p class="filter-note">Filters change what is listed below. They never change the portfolio metrics, which always cover the whole loaded window.</p>
-    <div class="filter-grid">
-      <div class="field">
-        <label for="repository-filter">Repository</label>
-        <select id="repository-filter">
-          <option value="">All configured repositories</option>
-        </select>
+      <div class="bar-scope">
+        <label class="visually-hidden" for="repository-filter">Repository</label>
+        <select id="repository-filter" class="input"><option value="">All repositories</option></select>
+        <div class="search"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM20 20l-4-4"/></svg>
+          <input id="run-search" class="input" type="search" role="combobox" aria-expanded="false" aria-controls="search-results" aria-autocomplete="list" aria-label="Search loaded runs, findings, and agents" placeholder="Search runs, findings, agents&hellip;" autocomplete="off"><kbd>/</kbd>
+          <div class="search-results" id="search-results" role="listbox" aria-label="Search results" hidden></div>
+        </div>
       </div>
-      <div class="field">
-        <label for="run-limit">Run limit</label>
-        <input id="run-limit" type="number" min="1" max="100" value="20">
+      <div class="bar-actions">
+        <span class="status-pill tone-neutral" id="data-status"><span class="dot"></span><span class="pill-label">Loading</span></span>
+        <span class="updated">Last updated<time id="last-updated">&mdash;</time></span>
+        <span class="btn-group">
+          <button id="refresh" type="button" class="btn"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 7v5h-5M4 17v-5h5M6.3 8.5A7 7 0 0 1 18.5 9M17.7 15.5A7 7 0 0 1 5.5 15"/></svg><span class="btn-label">Refresh</span></button>
+          <button id="auto-refresh" type="button" class="btn" aria-pressed="true" title="Auto-refresh every 15 s while this tab is visible"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9 6v12M15 6v12"/></svg><span class="visually-hidden">Auto-refresh</span></button>
+        </span>
+        <button id="theme" type="button" class="icon-btn" aria-label="Switch theme" title="Switch theme"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z"/></svg></button>
+        <button id="help-trigger" type="button" class="btn" aria-haspopup="dialog" aria-controls="shortcuts-dialog" title="Help and keyboard shortcuts (?)"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6M12 17h.01"/></svg><span class="btn-label">Help</span></button>
       </div>
-      <div class="field">
-        <label for="status-filter">Persisted status</label>
-        <select id="status-filter">
-          <option value="">All</option>
-          <option value="in_progress">In progress</option>
-          <option value="blocked">Blocked</option>
-          <option value="completed">Completed</option>
-        </select>
+    </header>
+    <nav class="tabs-nav" aria-label="Views">
+      <div class="tabs" role="tablist">
+        <button role="tab" id="tab-overview" class="tab" aria-controls="dashboard" aria-selected="true" data-tab="overview">Overview</button>
+        <button role="tab" id="tab-runs" class="tab" aria-controls="dashboard" aria-selected="false" data-tab="runs" tabindex="-1">Runs<span class="tab-count num" data-tab-count="runs" hidden></span></button>
+        <button role="tab" id="tab-findings" class="tab" aria-controls="dashboard" aria-selected="false" data-tab="findings" tabindex="-1">Findings<span class="tab-count num" data-tab-count="attention" hidden></span><span class="visually-hidden"> require attention</span></button>
+        <button role="tab" id="tab-governance" class="tab" aria-controls="dashboard" aria-selected="false" data-tab="governance" tabindex="-1">Governance</button>
+        <button role="tab" id="tab-models" class="tab" aria-controls="dashboard" aria-selected="false" data-tab="models" tabindex="-1">Models &amp; agents</button>
+        <button role="tab" id="tab-audit" class="tab" aria-controls="dashboard" aria-selected="false" data-tab="audit" tabindex="-1">Audit</button>
       </div>
-      <div class="field">
-        <label for="phase-filter">Derived phase</label>
-        <select id="phase-filter">
-          <option value="">All</option>
-          <option value="ready">Ready</option>
-          <option value="awaiting_approval">Awaiting approval</option>
-          <option value="blocked">Blocked</option>
-          <option value="completed">Completed</option>
-          <option value="interrupted_or_inconsistent">Interrupted or inconsistent</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="run-search">Search runs</label>
-        <input id="run-search" type="search" placeholder="Run, project, feature, or slug">
-      </div>
-    </div>
-  </nav>
-  <dialog id="shortcuts-dialog" class="shortcuts-dialog" aria-labelledby="shortcut-heading">
-    <div class="shortcuts-dialog-content">
-      <h2 id="shortcut-heading">Keyboard shortcuts</h2>
-      <p><kbd>/</kbd> Search, <kbd>g r</kbd> Runs, <kbd>g f</kbd> Findings, <kbd>g a</kbd> Governance, <kbd>g o</kbd> Overview.</p>
-      <label><input id="shortcuts-enabled" type="checkbox" checked> Enable shortcuts for this tab</label>
-      <button id="shortcuts-close" type="button" class="btn-secondary">Close</button>
-    </div>
-  </dialog>
-  <aside id="drawer" class="drawer-container" aria-hidden="true" role="dialog" aria-modal="true" aria-label="Details Drawer">
+    </nav>
+    <main id="dashboard" tabindex="-1" aria-busy="true">
+      <p class="muted">Loading dashboard&hellip;</p>
+    </main>
+    <footer class="statusline">
+      <span class="sl-long">Read-only projection &middot; loopback only &middot; governed actions run as terminal commands</span><span class="sl-short">Read-only &middot; loopback &middot; actions are terminal commands</span>
+      <span class="end"><span id="refresh-cadence">Auto-refresh every 15 s while this tab is visible</span></span>
+    </footer>
+  </div>
+  <p id="live-status" class="visually-hidden" role="status" aria-live="polite"></p>
+
+  <aside id="drawer" class="drawer-container" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
     <div class="drawer-backdrop" id="drawer-backdrop"></div>
     <div class="drawer-panel" id="drawer-panel" tabindex="-1">
-      <div class="drawer-header" id="drawer-header">
-        <div class="drawer-title-group">
-          <span class="drawer-category" id="drawer-category"></span>
-          <h2 class="drawer-title" id="drawer-title">Details</h2>
-        </div>
-        <button type="button" class="drawer-close" id="drawer-close" aria-label="Close details drawer">&times;</button>
+      <div class="drawer-header">
+        <div class="drawer-title-group"><span class="eyebrow" id="drawer-category"></span><h2 class="drawer-title" id="drawer-title">Details</h2></div>
+        <button type="button" class="icon-btn drawer-close" id="drawer-close" aria-label="Close details drawer"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </div>
       <div class="drawer-body" id="drawer-body"></div>
     </div>
   </aside>
-  <p id="live-status" class="visually-hidden" role="status" aria-live="polite"></p>
-  <main id="dashboard" tabindex="-1" aria-busy="true">
-    <p>Loading dashboard...</p>
-  </main>
-  <footer>Read-only local projection. Nothing here executes, approves, signs, publishes, or writes. Governed actions remain terminal commands.</footer>
+
+  <dialog id="shortcuts-dialog" class="shortcuts-dialog" aria-labelledby="shortcut-heading">
+    <div class="shortcuts-dialog-content">
+      <h2 id="shortcut-heading" class="view-title">Help and keyboard shortcuts</h2>
+      <p class="muted">This dashboard reads the run record and never changes it. Governed actions are copy-only commands you run in a terminal.</p>
+      <dl class="shortcut-list">
+        <dt><kbd>/</kbd></dt><dd>Search runs, findings, and agents</dd>
+        <dt><kbd>g</kbd> <kbd>o</kbd></dt><dd>Overview</dd>
+        <dt><kbd>g</kbd> <kbd>r</kbd></dt><dd>Runs</dd>
+        <dt><kbd>g</kbd> <kbd>f</kbd></dt><dd>Findings</dd>
+        <dt><kbd>g</kbd> <kbd>a</kbd></dt><dd>Governance</dd>
+        <dt><kbd>?</kbd></dt><dd>This dialog</dd>
+        <dt><kbd>Esc</kbd></dt><dd>Close the drawer, dialog, or search results</dd>
+      </dl>
+      <div class="dialog-foot"><label class="field"><input id="shortcuts-enabled" type="checkbox" checked> Enable shortcuts for this tab</label><button id="shortcuts-close" type="button" class="btn">Close</button></div>
+    </div>
+  </dialog>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

@@ -1315,6 +1315,34 @@ interactive mutation. The reason for the narrow boundary is to build reusable
 operator presentation over the current source of truth without pre-authorizing
 the command, security, and concurrency contracts required to replace the CLI.
 
+**Dashboard live observation — 2026-09-24.** The operator authorized bounded,
+read-only polling in the dashboard browser. The browser may re-read the same
+authenticated GET routes on a `setTimeout` chain of 15 seconds, but only while
+the page is visible, the operator's auto-refresh toggle is on, and no earlier
+request is outstanding. The next read is armed only after the previous one
+settles.
+
+What each tick re-reads:
+- every configured repository's run list;
+- the held snapshots whose run-list summary changed, whose run is in progress,
+  or whose envelope is stale or absent.
+
+This adds no push channel, WebSocket, server timer, route, or persisted state,
+and the host is unchanged.
+
+The only liveness claim comes from the repository writer lock. A run is shown
+live only when four conditions hold:
+- it is in progress;
+- it has an open stage;
+- the lock was observed live;
+- that observation is less than two intervals old.
+
+The lock names a process in the repository, not a run or an agent. The
+interval is a presentation constant, not run configuration. The reason for
+the decision: an operator watching a run needs current recorded state without
+a manual refresh, and a bounded re-read of the existing read boundary provides
+that without a new transport or a new authority.
+
 **Guided bootstrap authorization — 2026-09-13.** The operator authorized one
 checkout-linked `buildworks` alias and one concrete `static-web` initializer
 under the existing CLI mutation authority. The guided path may initialize an

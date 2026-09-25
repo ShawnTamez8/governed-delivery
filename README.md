@@ -396,8 +396,16 @@ reload works in that tab, but a token-free URL opened in another tab does not.
 Return to the terminal's original URL if the session is unavailable. The token
 does not rotate, survive process exit, or authorize any CLI operation.
 
-Refresh is explicit: there is no polling, push, or WebSocket connection. Choose
-a run-list limit from 1 through 100. Each repository is read independently
+Refresh reloads on demand. There is no push or WebSocket connection.
+
+Auto-refresh is on by default and can be turned off with its toggle. It is the
+one bounded read loop in the dashboard. Every 15 seconds, while the page is
+visible and no earlier read is outstanding, it re-reads:
+- each repository's run list;
+- the held snapshots whose summary changed, whose run is in progress, or whose
+  envelope is stale or absent.
+
+Choose a run-list limit from 1 through 100. Each repository is read independently
 through the same exact-current `runs` and `status` services as the CLI. A
 successful prior value remains visibly stale, with its original envelope
 `observedAt`, when a later read refuses or transport fails; the new code and

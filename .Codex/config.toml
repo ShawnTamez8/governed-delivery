@@ -1,0 +1,8 @@
+[mcp_servers.snitch]
+command = "node"
+args = [
+    'C:\Repositories\AI.Tools\TheSnitch\dist\cli.js',
+    "mcp",
+    "--repo",
+    'C:\Repositories\AI.Tools\governed-delivery',
+]
