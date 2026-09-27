@@ -555,12 +555,19 @@ function renderFindingsBlock(findings: ReconciliationFindingInput[]): string {
  * `exampleDecisions` is rendered from the round's own findings — an example
  * `"findingId": 1` in a round whose canonical ids do not include 1 is a value
  * the validator is guaranteed to refuse, which is the same defect the panel
- * size example carried until Task 5 fixed it. One structural entry is
- * advertised per canonical finding: an array showing only the first id in a
- * multi-finding round would be an incomplete envelope the validator refuses
- * for every omitted id, and the model copies the array it is shown. A round
- * with no findings advertises an empty decisions list, which is the only
- * envelope that validates against zero canonical ids.
+ * size example carried until Task 5 fixed it. One entry is advertised per
+ * canonical finding: an array showing only the first id in a multi-finding
+ * round would be an incomplete envelope the validator refuses for every
+ * omitted id, and the model copies the array it is shown. A round with no
+ * findings advertises an empty decisions list, which is the only envelope
+ * that validates against zero canonical ids.
+ *
+ * The envelope proves id completeness; the shape block closing the contract
+ * proves per-disposition validity. Each disposition has one complete shape,
+ * and each validates once its placeholders are filled (hazard 3's second
+ * sentence). Two paid runs on 2026-09-26 blocked on upstream decisions, one
+ * missing `changedLocations` and one missing `proposal`, while the prompt
+ * advertised only an addressed-like entry.
  */
 function reconciliationDecisionContract(
   sourceName: string,
@@ -580,7 +587,9 @@ more and no fewer. Each decision has:
 - changedLocations: the locations in the revised artifact you changed to
   answer this finding (section headings, task lines, or artifact paths).
   When a changed location is an acceptance criterion or coverage entry, cite its AC ID.
-  Empty when you change nothing, as for cannot_determine.
+  changedLocations is required on every decision, whatever its disposition.
+  When you change nothing, send an empty array, "changedLocations": [], and never omit the field.
+  An upstream_follow_up, upstream_blocking, or cannot_determine decision usually changes nothing and still sends it.
 
 For disposition rejected_with_rationale you must also supply:
 - grounding: {"source": "${sourceName}", "location": "<heading in the ${sourceName} document>", "excerpt": "<that document's exact words>"}
@@ -619,28 +628,40 @@ For disposition upstream_follow_up or upstream_blocking you must also supply:
 - proposal: {"title": "...", "problem": "...", "whyUpstream": "..."}
   A concern whose cause is the ${sourceName} document goes upstream. The
   system derives the impact from your disposition: upstream_blocking blocks the run, upstream_follow_up does not. Do not return an impact field.
+  The proposal is required even when your revised artifact, its summary, or an out-of-scope note already describes the same open decision: prose in the document is not a proposal candidate, and a decision without its proposal object blocks the run.
 
 grounding is allowed only on rejected_with_rationale; normativeChanges is
 allowed only on addressed; proposal is allowed only on upstream_follow_up and
 upstream_blocking. Return none of those fields on any other disposition, and
 return no field at all that your disposition does not list.
 
-cannot_determine carries none of grounding, normativeChanges, or proposal.`;
+cannot_determine carries none of grounding, normativeChanges, or proposal.
+
+Each decision takes exactly one of these complete shapes. Replace every <...> placeholder; <id> is the id of the finding the decision answers:
+- addressed: {"findingId": <id>, "disposition": "addressed", "rationale": "<why>", "changedLocations": ["<location you changed>"], "normativeChanges": [{"artifactLocation": "<the section heading>", "artifactText": "<the exact text of the added or removed node>", "grounding": {"source": "${sourceName}", "location": "<heading in the ${sourceName} document>", "excerpt": "<that document's exact words>"}}]}
+- rejected_with_rationale: {"findingId": <id>, "disposition": "rejected_with_rationale", "rationale": "<why>", "changedLocations": [], "grounding": {"source": "${sourceName}", "location": "<heading in the ${sourceName} document>", "excerpt": "<that document's exact words>"}}
+- upstream_follow_up: {"findingId": <id>, "disposition": "upstream_follow_up", "rationale": "<why>", "changedLocations": [], "proposal": {"title": "<title>", "problem": "<problem>", "whyUpstream": "<why upstream>"}}
+- upstream_blocking: {"findingId": <id>, "disposition": "upstream_blocking", "rationale": "<why>", "changedLocations": [], "proposal": {"title": "<title>", "problem": "<problem>", "whyUpstream": "<why upstream>"}}
+- cannot_determine: {"findingId": <id>, "disposition": "cannot_determine", "rationale": "<why>", "changedLocations": []}
+An addressed decision's normativeChanges holds one entry per normative node it adds or removes, as described above; send "normativeChanges": [] only when the change touches no normative node or another decision already claims it.`;
 }
 
 /**
  * The example decisions array both reconciliation prompts advertise: one
- * structural entry per canonical finding id of the round, or an empty array
- * when the round has none. The complete array is the only envelope a model
- * can copy that still validates — every id it names is one the validator
- * accepts, and no canonical id is omitted.
+ * entry per canonical finding id of the round, or an empty array when the
+ * round has none. The envelope carries id completeness only — every id it
+ * names is one the validator accepts, and no canonical id is omitted. Each
+ * entry points at the contract's shape block rather than showing fields of
+ * its own: a decision's required fields depend on its disposition, and one
+ * addressed-like skeleton advertised a shape no upstream decision can take
+ * (measured 2026-09-26, hazard 3).
  */
 function exampleDecisionsFor(findings: ReconciliationFindingInput[]): string {
   return findings.length > 0
     ? `[${findings
         .map(
           (finding) =>
-            `{"findingId": ${finding.findingId}, "disposition": "...", "rationale": "...", "changedLocations": ["..."]}`
+            `{"findingId": ${finding.findingId}, <the remaining fields of one shape listed below>}`
         )
         .join(", ")}]`
     : `[]`;

@@ -66,7 +66,10 @@ read.
    model. No RPC service, remote dashboard, or duplicated policy logic.
    Interactive dashboard mutation requires a later decision that defines
    command parity and retires or narrows the CLI mutation path rather than
-   allowing two authorities to drift.
+   allowing two authorities to drift. The 2026-09-26 decision in section 23 is
+   that decision for exactly one write: the dashboard may submit an approval
+   signature through the same core function and writer lock as `bw approve`.
+   Every other mutation remains CLI-only.
 3. **One schema per thing.** No unions, no version discriminators, no
    compatibility handling, and no version identifiers embedded in component
    names or contracts. A stable name plus a content hash is identity; nothing
@@ -1079,6 +1082,14 @@ default key and invokes no signer. An operator using the file signer must run it
 in an authority outside the BuildWorks host and return only the detached
 signature.
 
+Dashboard approval (section 23, 2026-09-26) signs in the operator's browser,
+which is the operator's authority, not the host's. The browser reads the key
+file only when the operator selects it, signs the canonical payload, and sends
+only the detached signature; the dashboard host never receives, stores, or
+reads the key. This does not change where the key file lives. A key kept under
+the same user profile that verification commands run as is still reachable in
+the way the previous paragraph describes, and that limitation stands.
+
 **Pass named environment variables, never the whole environment.** Inheriting
 the parent environment puts credentials and machine state into a model context
 and into any transcript it produces. This applies to verification commands as
@@ -1353,6 +1364,38 @@ signature, and resume only from the same proven boundaries. It does not
 authorize a packed or registry package, target-stack adapter framework,
 private-key store, signing service, GitHub operation, new stage, or second
 harness.
+
+**Dashboard approval — 2026-09-26.** The operator authorized one dashboard
+write: submitting an approval. The reason: an operator paused at approval
+saw only an AWAITING APPROVAL badge, with no way to read the specification
+being approved or to act on it without assistance.
+
+What the host serves, read-only:
+- the canonical approval payload;
+- the reviewed specification, checked against the hash that payload binds;
+- the non-secret key facts: the frozen fingerprint, the configured public key
+  path and its fingerprint.
+
+What the browser does: signs that payload with a key file the operator selects,
+then discards the key. The key is never sent to, stored by, or readable by the
+host.
+
+What the host accepts: only the expiry and the detached signature, over one
+authenticated `POST` route that also requires a matching `Origin`. It records
+the approval by taking the repository writer lock, checking that the schema is
+exactly current, opening the writer, and calling `approveRun`. That is the
+guided CLI's sequence, and `approveRun` is the same function `bw approve`
+calls.
+
+Command parity is therefore structural: one function, one lock, one audit
+trail, verified by a test that approves one run through each surface and
+compares their audit records. `bw approve` stays, because guided and headless
+operation need it. For this one action, this decision narrows the 2026-09-12
+clause that the browser never accepts signatures or opens a writer.
+
+It does not authorize collecting execution consent, resuming or rejecting a
+run, storing or generating keys, a signing service, or any other dashboard
+write.
 
 ## 24. Non-goals
 

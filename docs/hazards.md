@@ -175,6 +175,36 @@ is still free to demand its violation buys one round of delay, not a fix. That
 is why the plan review prompt now says which coverage concerns the document can
 express.
 
+**Measured, 2026-09-26, $1.2429162 and $2.141577.** Two consecutive paid
+`note-keeper` spec reconciliations answered upstream findings, and both were
+refused as structure errors. Run 2 sent each upstream decision with a complete
+`proposal` but no `changedLocations` field at all. Run 3 sent
+`"changedLocations": []` but no `proposal`, after describing the same open
+decisions in the revised specification's own summary and out-of-scope prose.
+Every other decision in both rounds was well formed, and each time the whole
+round was discarded and the run blocked at the `spec_review` gate. The cause
+was the prompt. A decision's required fields depend on its disposition, but the
+prompt advertised one `addressed`-like entry and said only that
+`changedLocations` was "Empty when you change nothing, as for
+cannot_determine". That reads as permission to leave the field out, and it
+never showed an upstream decision at all. The validator stayed strict. The
+contract now says `changedLocations` is required on every decision and `[]`
+when nothing changed. It says prose in the document is not a proposal
+candidate. It advertises one complete shape per disposition, and a prompt test
+fills each shape's placeholders and runs it through `validateReconciliation`.
+The addressed shape shows its common branch, one claimed node, because
+advertising `"normativeChanges": []` there would invite the inverse omission.
+The prose-only `[]` branch is stated in words, not shown as a shape.
+The retained responses are committed at
+`test/fixtures/recorded/spec-reconciliation-note-keeper-missing-changed-locations.json`
+and
+`test/fixtures/recorded/spec-reconciliation-note-keeper-missing-proposal.json`,
+and their replays pin that both are still refused. What this instance adds: an
+advertised example has to validate on each disposition the validator
+distinguishes, not only the common one, and an example of the rare branch
+teaches the rare branch. How often a live reconciler now
+complies has not been measured.
+
 ## 4. Fixtures and code agreeing while both are wrong
 
 A hand-written fixture that declares one thing and does another will pass

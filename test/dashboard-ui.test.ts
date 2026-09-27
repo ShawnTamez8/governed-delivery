@@ -25,8 +25,11 @@ import {
   usdPresentation,
   BLOCKING_DECISIONS, agentRows, findingStatus, findingStatusCounts, findingStatuses, governanceChecks,
   relativeTimePresentation, runOutcome, searchIndex, searchMatches, stageLedger, stageMap, stageUsage,
-  telemetryCoverage, autoRefreshPlan, changedRuns, liveness,
+  telemetryCoverage, autoRefreshPlan, changedRuns, liveness, WORKFLOW_STAGES, writerHoldsOpenStage,
+  approvalFallbackScript, runRest, signApprovalPayload,
 } from "../src/dashboard/dashboard-model.js";
+import { generateKeyPairSync, sign } from "node:crypto";
+import { approvalPayload, verifyApproval } from "../src/approval.ts";
 import { appendAudit } from "../src/audit.ts";
 import { acquireLock } from "../src/lock.ts";
 import { lockDir } from "../src/paths.ts";
@@ -334,7 +337,7 @@ test("portfolio and attention projections over a seeded partial run", () => {
 
     // The seeded high finding records an addressed
     // disposition, so it is resolved, not attention; the run is in progress.
-    assert.deepEqual(needsAttentionQueue([repoView]), { runs: [], findings: [] });
+    assert.deepEqual(needsAttentionQueue([repoView]), { runs: [], approvals: [], findings: [] });
 
     const repoViewWithStale = {
       ...repoView,
@@ -348,7 +351,7 @@ test("portfolio and attention projections over a seeded partial run", () => {
       ],
     };
     // A stale snapshot is the data status pill's concern, not an attention item.
-    assert.deepEqual(needsAttentionQueue([repoViewWithStale]), { runs: [], findings: [] });
+    assert.deepEqual(needsAttentionQueue([repoViewWithStale]), { runs: [], approvals: [], findings: [] });
 
   } finally {
     rmSync(parent, { recursive: true, force: true });
@@ -365,12 +368,29 @@ test("snapshot slot classification separates stale, pending, and unavailable evi
 });
 
 test("status and stage presentation report recorded state without promoting it", () => {
+  // Without a held snapshot there is no writer evidence, so a ready run keeps
+  // the persisted status; with one, a run resting at a boundary waits for the
+  // operator and says which action it waits for.
   assert.deepEqual(statusPresentation("in_progress", "ready"),
-    { label: "IN PROGRESS", tone: "active", source: "status" });
+    { label: "IN PROGRESS", tone: "success", source: "status" });
+  assert.deepEqual(statusPresentation("in_progress", "ready", false, "resume"),
+    { label: "READY TO RESUME", tone: "active", source: "phase" });
+  assert.deepEqual(statusPresentation("in_progress", "ready", false, "start"),
+    { label: "READY TO START", tone: "active", source: "phase" });
+  assert.deepEqual(statusPresentation("in_progress", "awaiting_approval", false, "resume"),
+    { label: "AWAITING APPROVAL", tone: "warning", source: "phase" }, "only the ready phase rests");
   assert.deepEqual(statusPresentation("in_progress", "awaiting_approval"),
     { label: "AWAITING APPROVAL", tone: "warning", source: "phase" });
   assert.deepEqual(statusPresentation("blocked", "interrupted_or_inconsistent"),
     { label: "ATTENTION REQUIRED", tone: "danger", source: "phase" });
+  // The core derives interrupted_or_inconsistent for every unfinished stage, so
+  // only a live writer separates executing work from a stage left behind.
+  assert.deepEqual(statusPresentation("in_progress", "interrupted_or_inconsistent", true),
+    { label: "IN PROGRESS", tone: "success", source: "writer" });
+  assert.deepEqual(statusPresentation("in_progress", "interrupted_or_inconsistent", false),
+    { label: "ATTENTION REQUIRED", tone: "danger", source: "phase" });
+  assert.deepEqual(statusPresentation("blocked", "interrupted_or_inconsistent", true),
+    { label: "ATTENTION REQUIRED", tone: "danger", source: "phase" }, "a live writer never softens a blocked run");
   assert.deepEqual(statusPresentation("completed", "completed"),
     { label: "COMPLETED", tone: "success", source: "status" });
   assert.deepEqual(statusPresentation("blocked", "blocked"),
@@ -1012,7 +1032,7 @@ test("the executive summary is derived from projected records, never from the el
     for (const entry of summary.nextAction.reasons) {
       assert.ok(recorded.has(entry.reason), "every reason shown is a recorded reason string");
     }
-    assert.deepEqual(summary.state, statusPresentation(snapshot.run.status, snapshot.phase));
+    assert.deepEqual(summary.state, statusPresentation(snapshot.run.status, snapshot.phase, writerHoldsOpenStage(snapshot), runRest(snapshot)));
     assert.equal(summary.run.project, snapshot.run.project);
 
     // A recorded blocking decision outranks a higher severity the panel did
@@ -1366,20 +1386,6 @@ test("static assets keep the approved accessible boundary and omit unauthorized 
     assert.match(grid, /minmax\(min\(\d+(\.\d+)?rem, 100%\), 1fr\)/, grid);
   }
 
-  // The read-only boundary: no mutating method, no push transport, no
-  // interval timer, and no markup parsed from a projected value. The single
-  // bounded auto-refresh timer is pinned by its own test.
-  assert.doesNotMatch(script, /\bWebSocket\b|\bEventSource\b|\bsetInterval\b|innerHTML|outerHTML|insertAdjacentHTML/);
-  assert.doesNotMatch(script, /fetch\([^)]*\{[^}]*method\s*:/s);
-  assert.doesNotMatch(model, /\bdocument\.|\bwindow\.|\bfetch\(|\bXMLHttpRequest\b|\blocalStorage\b|\bsessionStorage\b/);
-
-  // Presentation no longer falls back to serialized state, and the CSP forbids
-  // inline style, so no rule may be assigned from script.
-  assert.doesNotMatch(script, /JSON\.stringify/);
-  assert.doesNotMatch(script, /\bjsonSection\b/);
-  assert.doesNotMatch(script, /\.style\./);
-  assert.doesNotMatch(script, /setAttribute\(\s*["']style["']/);
-
   // The shell ships aria-busy="true"; the terminal-failure screen must clear
   // it, or a screen reader suppresses the message it just placed there.
   assert.match(html, /<main id="dashboard" tabindex="-1" aria-busy="true">/);
@@ -1476,6 +1482,45 @@ test("static assets keep the approved accessible boundary and omit unauthorized 
   assert.equal((appendBody.match(/collapsibleSection\(/g) ?? []).length, 8);
   assert.ok(!appendBody.includes("collapsibleSection(null,"),
     `every collapsed section states its count: ${appendBody}`);
+});
+
+test("the dashboard's only write is approval submission", () => {
+  const script = readFileSync(resolve("src", "dashboard", "app.js"), "utf8").replace(/\r\n/g, "\n");
+  const model = readFileSync(resolve("src", "dashboard", "dashboard-model.js"), "utf8").replace(/\r\n/g, "\n");
+
+  // The read-only boundary: no push transport, no interval timer, and no
+  // markup parsed from a projected value. The single bounded auto-refresh
+  // timer is pinned by its own test.
+  assert.doesNotMatch(script, /\bWebSocket\b|\bEventSource\b|\bsetInterval\b|innerHTML|outerHTML|insertAdjacentHTML/);
+  assert.doesNotMatch(model, /\bdocument\.|\bwindow\.|\bfetch\(|\bXMLHttpRequest\b|\blocalStorage\b|\bsessionStorage\b/);
+
+  // The one write (architecture section 23, 2026-09-26): a single request
+  // method in the whole script, a POST inside postApproval, whose body is the
+  // one serialization and names only the expiry and the detached signature.
+  const functionBody = (name: string) => {
+    const start = script.indexOf(`function ${name}(`);
+    assert.ok(start > 0, `${name} exists`);
+    return script.slice(start, script.indexOf("\n}\n", start));
+  };
+  const post = functionBody("postApproval");
+  assert.equal((script.match(/\bmethod\s*:/g) ?? []).length, 1, "exactly one request method in the dashboard script");
+  assert.match(post, /method: "POST"/);
+  assert.equal((script.match(/JSON\.stringify/g) ?? []).length, 1, "exactly one serialization in the dashboard script");
+  assert.match(post, /body: JSON\.stringify\(\{ expiresAt: body\.expiresAt, signature: body\.signature \}\)/);
+  // The key is used only where the operator chose it, and nothing in the
+  // approval handoff persists anything in the browser.
+  assert.equal((script.match(/signApprovalPayload\(/g) ?? []).length, 1);
+  assert.match(functionBody("approvalDrawerBody"), /approve\.addEventListener\("click"[^]*signApprovalPayload\(/);
+  const handoffStart = script.indexOf("Approval handoff (architecture section 23");
+  const handoffEnd = script.indexOf("Scope: the repository selection every view honours");
+  assert.ok(handoffStart > 0 && handoffEnd > handoffStart, "the approval handoff bounds a region");
+  assert.doesNotMatch(script.slice(handoffStart, handoffEnd), /localStorage|sessionStorage/);
+
+  // Presentation no longer falls back to serialized state, and the CSP forbids
+  // inline style, so no rule may be assigned from script.
+  assert.doesNotMatch(script, /\bjsonSection\b/);
+  assert.doesNotMatch(script, /\.style\./);
+  assert.doesNotMatch(script, /setAttribute\(\s*["']style["']/);
 });
 
 test("tab routing and primary navigation accessibility conform to design", () => {
@@ -1724,6 +1769,20 @@ test("stage ledger and stage map follow recorded stages in recorded order", () =
       "segments are the recorded stages in recorded order"));
     assert.deepEqual(ledgers.map((l) => l.segments.map((s) => s.result)), [["passed", "open"], ["passed", "blocked"], ["passed"]]);
     assert.deepEqual(ledgers.map((l) => l.terminal), ["in_progress", "stopped", "completed"]);
+
+    // The full ledger draws every workflow stage in workflow order. The
+    // dashboard's copy of the order is the one the core checks runs against.
+    const core = readFileSync(resolve("src", "operator-state.ts"), "utf8").match(/^(?:export )?const STAGES = (\[[^\]]*\]);\r?$/m);
+    assert.ok(core !== null, "operator-state declares its stage order on one line");
+    assert.deepEqual(WORKFLOW_STAGES, JSON.parse(core[1]!), "the dashboard's stage order is the core's own");
+    const unreached = (count: number) => Array<string>(count).fill("not_reached");
+    assert.deepEqual(ledgers.map((l) => l.steps.map((s) => s.result)), [
+      ["passed", "not_reached", "not_reached", "open", ...unreached(5)],
+      ["passed", "blocked", ...unreached(7)],
+      ["passed", ...unreached(8)],
+    ]);
+    assert.deepEqual(ledgers[0]!.steps.map((s) => s.kind), [...WORKFLOW_STAGES]);
+    assert.equal(ledgers[0]!.steps[3]!.segment?.stageId, partial.stages[1]!.id, "a reached step carries its recorded segment");
     const timed = snapshots[1]!.stages[0]!;
     assert.ok(timed.startEvidence.at !== null && timed.endedAt !== null);
     assert.equal(ledgers[1]!.segments[0]!.durationMs, Date.parse(timed.endedAt) - Date.parse(timed.startEvidence.at));
@@ -1779,9 +1838,124 @@ test("the attention queue holds blocked runs, then blocking and open findings on
       [ids["upstream-blocking"], "blocking"], [ids.open, "open"],
     ]);
     assert.ok(queue.findings.every((f) => f.runId === snapshot.run.id && f.repositoryId === "repo-1"));
+    assert.deepEqual(queue.approvals, [], "a blocked run is not awaiting approval");
   } finally {
     rmSync(parent, { recursive: true, force: true });
   }
+});
+
+test("a run paused at approval leads the attention queue as an approval entry", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const runId = newRun(root, parent, "awaiting");
+    const store = openStore(root);
+    const spec = store.insertStage(runId, "spec", null);
+    store.completeStage(spec.id, "spec.md", "pass");
+    const review = store.insertStage(runId, "spec_review", spec.id);
+    store.completeStage(review.id, "spec.md", "pass");
+    store.close();
+    const snapshot = readSnapshot(root, parent, runId);
+    assert.equal(snapshot.phase, "awaiting_approval", "the core derives the pause; the test does not assert it into being");
+    const queue = needsAttentionQueue([viewOf(root, snapshot)]);
+    assert.deepEqual(queue.approvals, [{
+      kind: "approval", id: `approval-repo-1-${runId}`, repositoryId: "repo-1", runId,
+      slug: "awaiting", project: "project", lastRecordedAt: snapshot.activity.lastRecordedAt,
+    }]);
+    assert.deepEqual(queue.runs, []);
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("a run resting at a boundary reads ready to start or resume, and a live writer keeps it in progress", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const fresh = readSnapshot(root, parent, newRun(root, parent, "never-started"));
+    const approvedId = newRun(root, parent, "approved");
+    const store = openStore(root);
+    let input: number | null = null;
+    for (const kind of ["spec", "spec_review", "awaiting_approval"]) {
+      const stage = store.insertStage(approvedId, kind, input);
+      store.completeStage(stage.id, "spec.md", "pass");
+      input = stage.id;
+    }
+    store.close();
+    const approved = readSnapshot(root, parent, approvedId);
+    // The core, not this test, derives both phases.
+    assert.equal(fresh.phase, "ready");
+    assert.equal(approved.phase, "ready");
+    assert.equal(approved.writer.status, "absent");
+
+    assert.equal(runRest(fresh), "start");
+    assert.equal(runRest(approved), "resume");
+    const summary = (snapshot: RunSnapshot) => runExecutiveSummary(snapshot, { repositoryPath: root, runs: [], observedAt: null });
+    assert.equal(summary(fresh).state.label, "READY TO START");
+    assert.equal(summary(approved).state.label, "READY TO RESUME");
+    assert.equal(runOutcome(approved, findingStatuses(approved)).headline, "Run ready to resume");
+
+    // run --yes passes through `ready` between groups while it holds the lock.
+    const release = acquireLock(root);
+    try {
+      const running = readSnapshot(root, parent, approvedId);
+      assert.equal(running.phase, "ready");
+      assert.equal(running.writer.status, "live");
+      assert.equal(runRest(running), null);
+      assert.equal(summary(running).state.label, "IN PROGRESS", "a live writer between groups is not resting");
+      assert.equal(runOutcome(running, findingStatuses(running)).headline, "Run in progress");
+    } finally {
+      release();
+    }
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("the browser signer produces the signature bw approve verifies, and refuses keys it cannot use", async () => {
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const pem = privateKey.export({ format: "pem", type: "pkcs8" }) as string;
+  const payload = approvalPayload({
+    featureId: "f-1", specHash: "a".repeat(64), startingCommit: "b".repeat(40), profileHash: "c".repeat(64),
+    risk: "low", scope: ["src"], expiresAt: "2026-09-27T01:14:05.000Z",
+  });
+  const signed = await signApprovalPayload(pem, payload);
+  assert.ok(signed.ok, signed.ok ? "" : signed.reason);
+  assert.deepEqual(verifyApproval(payload, signed.signature, publicKey), { ok: true });
+  assert.equal(signed.signature, sign(null, Buffer.from(payload, "utf8"), privateKey).toString("base64"),
+    "Ed25519 is deterministic, so the browser signature equals Node's over the same bytes");
+  const other = await signApprovalPayload(pem, `${payload}\n`);
+  assert.ok(other.ok);
+  assert.equal(verifyApproval(payload, other.signature, publicKey).ok, false, "a trailing newline is a different payload");
+
+  const refusal = async (key: string) => {
+    const result = await signApprovalPayload(key, payload);
+    assert.equal(result.ok, false);
+    return result.ok ? "" : result.reason;
+  };
+  assert.match(await refusal(publicKey.export({ format: "pem", type: "spki" }) as string), /public key/);
+  assert.match(await refusal(privateKey.export({ format: "pem", type: "pkcs8", cipher: "aes-256-cbc", passphrase: "x" }) as string),
+    /encrypted/);
+  const rsa = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ format: "pem", type: "pkcs8" }) as string;
+  assert.match(await refusal(rsa), /not an Ed25519 private key/);
+  assert.match(await refusal("not a key"), /not a single unencrypted PKCS#8 private key/);
+  assert.match(await refusal(`${pem}${pem}`), /not a single unencrypted PKCS#8 private key/);
+});
+
+test("the terminal fallback quotes every operator value and derives the signer beside the CLI", () => {
+  const script = approvalFallbackScript({
+    cliPath: "C:\\tool path\\src\\cli.ts", repositoryPath: "C:\\repo with spaces\\operator's",
+    runId: 5, expiresAt: "2026-09-27T01:14:05.000Z",
+  });
+  const lines = script.split("\n");
+  assert.ok(lines.includes("$BwCli   = 'C:\\tool path\\src\\cli.ts'"));
+  assert.ok(lines.includes("$Signer  = 'C:\\tool path\\scripts\\sign-approval.mjs'"));
+  assert.ok(lines.includes("$Target  = 'C:\\repo with spaces\\operator''s'"));
+  assert.ok(lines.includes("$RunId   = 5"));
+  assert.ok(lines.includes("$Expires = '2026-09-27T01:14:05.000Z'"));
+  assert.ok(lines.some((line) => line.startsWith("& node $BwCli approve --repo $Target --run $RunId --expires $Expires")));
+  const unknown = approvalFallbackScript({ cliPath: "C:\\elsewhere\\bw.exe", repositoryPath: "C:\\r", runId: 1, expiresAt: "x" });
+  assert.match(unknown, /^\$Signer {2}= '' {2}# set to/m, "no guessed signer path when the CLI is not in a checkout");
 });
 
 test("run outcome and governance checks derive from recorded fields, not event prose", () => {
@@ -1949,18 +2123,28 @@ test("liveness requires an in-progress run, an open stage, a live writer lock, a
     try {
       const held = observe();
       assert.equal(held.snapshot.writer.status, "live");
+      assert.equal(writerHoldsOpenStage(held.snapshot), true);
       const at = Date.parse(held.observedAt!);
       assert.equal(liveness(held.snapshot, held.observedAt, at + 1000, interval), "live");
       assert.equal(liveness(held.snapshot, held.observedAt, at + 2 * interval, interval), "no_live_writer",
         "an observation two intervals old is not evidence that the writer is live now");
       const noOpenStage = { ...held.snapshot, stages: held.snapshot.stages.map((s) => ({ ...s, status: "passed" })) };
       assert.equal(liveness(noOpenStage, held.observedAt, at + 1000, interval), "no_live_writer");
+      assert.equal(writerHoldsOpenStage(noOpenStage), false, "a live lock with no open stage is not work in progress");
+      // Spec, plan, and implementation stay at the store's default `pending`
+      // while they execute (note-keeper run 5, 2026-09-26: spec_review pending
+      // under a live lock), so pending is open work too.
+      const pendingStage = { ...held.snapshot, stages: held.snapshot.stages.map((s) => ({ ...s, status: "pending" })) };
+      assert.equal(liveness(pendingStage, held.observedAt, at + 1000, interval), "live");
+      assert.equal(writerHoldsOpenStage(pendingStage), true);
+      assert.equal(stageLedger(pendingStage).steps[0]!.result, "open", "the executing stage is the animated one");
     } finally {
       release();
     }
 
     const absent = observe();
     assert.equal(absent.snapshot.writer.status, "absent");
+    assert.equal(writerHoldsOpenStage(absent.snapshot), false, "an open stage with no writer is left behind, not running");
     assert.equal(liveness(absent.snapshot, absent.observedAt, Date.parse(absent.observedAt!), interval), "no_live_writer");
 
     const exited = spawnSync(process.execPath, ["-e", ""]);

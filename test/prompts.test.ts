@@ -181,6 +181,14 @@ const CONSTRAINT_STRINGS = [
   "artifactText",
   "whyUpstream",
   "Do not return an impact field",
+  // The per-disposition shapes. Measured 2026-09-26, $1.2429162 and
+  // $2.141577: two note-keeper reconciliations each dropped a field an
+  // upstream decision requires — changedLocations once, proposal once — while
+  // the prompt advertised only an addressed-like entry.
+  "changedLocations is required on every decision",
+  "never omit the field",
+  "prose in the document is not a proposal candidate",
+  "Each decision takes exactly one of these complete shapes",
   // Hazard 17's obligation on the author, and hazard 3's reason it must be
   // stated here: the removal claim is a constrained field the validator
   // enforces, so a prompt silent about it guarantees a blocked paid run.
@@ -676,6 +684,12 @@ test("the generated spec reconciliation prompt carries the decision contract and
     "artifactText",
     "whyUpstream",
     "Do not return an impact field",
+    // The per-disposition shapes, asserted per prompt: one builder renders
+    // both, and the measured blocks came from this one.
+    "changedLocations is required on every decision",
+    "never omit the field",
+    "prose in the document is not a proposal candidate",
+    "Each decision takes exactly one of these complete shapes",
     // The node form for this artifact kind, asserted per prompt because the
     // two prompts state different forms and one builder renders both.
     "an acceptance criterion's node text is `AC-001: <criterion text>`",
@@ -752,6 +766,11 @@ test("the generated plan reconciliation prompt carries the spec as governing inp
     "Copy each canonical AC ID",
     "cite its AC ID",
     "Do not return an impact field",
+    // The plan side's own copy of the per-disposition shapes.
+    "changedLocations is required on every decision",
+    "never omit the field",
+    "prose in the document is not a proposal candidate",
+    "Each decision takes exactly one of these complete shapes",
     // The plan side's own copy of the removal obligation and of the
     // single-claim rule, for the reason the conditional-field matrix is
     // asserted twice: one shared builder, and nothing structural notices a
@@ -821,10 +840,11 @@ test("every finding id a reconcile prompt advertises is one the validator accept
   // Hazard 3's second sentence, applied to the decision example: a fixed
   // example `"findingId": 1` in a round whose canonical ids do not include 1
   // is a value the validator is guaranteed to refuse — the same defect the
-  // panel-size example carried until Task 5. The advertised example is the
-  // round's complete envelope: one structural entry per canonical finding,
-  // so a copied array validates rather than failing for every omitted id.
-  // An empty round advertises the only envelope that validates against zero
+  // panel-size example carried until Task 5. The advertised envelope lists one
+  // entry per canonical finding, so a copied array names every id and omits
+  // none. This test proves id completeness only; the entries point at the
+  // per-disposition shapes, whose validity the shape test below proves. An
+  // empty round advertises the only envelope that validates against zero
   // canonical ids.
   const report = {
     reviewerId: "spec-reviewer-security",
@@ -855,6 +875,65 @@ test("every finding id a reconcile prompt advertises is one the validator accept
     buildPlanReconcilePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", "a".repeat(64), ["src/a.ts"], []),
   ]) {
     assert.ok(prompt.includes('"decisions": []'), "an empty round advertises an empty decisions list");
+  }
+});
+
+test("every decision shape a reconcile prompt advertises validates against validateReconciliation", () => {
+  // Hazard 3's second sentence, on every branch the validator distinguishes:
+  // a decision's required fields depend on its disposition. Measured
+  // 2026-09-26 — with one addressed-like entry advertised, two paid runs
+  // blocked on upstream decisions missing changedLocations and proposal
+  // (test/fixtures/recorded/spec-reconciliation-note-keeper-*.json). The
+  // shapes are read from the generated prompt, never restated here.
+  const cases = [
+    {
+      name: "spec",
+      governingSource: "design" as const,
+      governingText: "DESIGN-TEXT",
+      prompt: buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PAIR),
+    },
+    {
+      name: "plan",
+      governingSource: "specification" as const,
+      governingText: "SPEC-TEXT",
+      prompt: buildPlanReconcilePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", "a".repeat(64), ["src/a.ts"], PAIR),
+    },
+  ];
+  for (const { name, governingSource, governingText, prompt } of cases) {
+    const shapes = [
+      ...prompt.matchAll(
+        /^- (addressed|rejected_with_rationale|upstream_follow_up|upstream_blocking|cannot_determine): (\{.*\})$/gm
+      ),
+    ];
+    assert.deepEqual(
+      shapes.map((m) => m[1]).sort(),
+      ["addressed", "cannot_determine", "rejected_with_rationale", "upstream_blocking", "upstream_follow_up"],
+      `${name} prompt advertises exactly one shape per disposition`
+    );
+    for (const [, disposition, shape] of shapes) {
+      const decision = JSON.parse(shape!.replaceAll("<id>", "7").replace(/<[^>]*>/g, governingText));
+      // The label is what the author reads; the JSON is what it copies.
+      assert.equal(decision.disposition, disposition, `${name} ${disposition} shape carries another disposition`);
+      // The addressed shape advertises the common branch — a claimed node —
+      // so the revision it describes adds exactly the node it claims.
+      const claimed: string[] = (decision.normativeChanges ?? []).map(
+        (change: { artifactText: string }) => change.artifactText
+      );
+      if (disposition === "addressed") {
+        assert.equal(claimed.length, 1, `${name} addressed shape shows one complete normativeChanges entry`);
+      }
+      const result = validateReconciliation([decision], {
+        canonicalFindingIds: [7],
+        governingSource,
+        governingText,
+        beforeNormativeNodes: [],
+        afterNormativeNodes: claimed,
+      });
+      assert.ok(result.ok, `${name} ${disposition} shape: ${result.ok ? "" : result.reason}`);
+      assert.deepEqual(result.value.conversions, [], `${name} ${disposition} shape converts`);
+      assert.deepEqual(result.value.unclaimedNodes, []);
+      assert.deepEqual(result.value.unclaimedRemovals, []);
+    }
   }
 });
 

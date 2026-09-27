@@ -1,105 +1,88 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-24, resilience panel and parallel code review — committed at `6ed1991`)
+## Current state (2026-09-26, dashboard-approval and reconciliation-disposition-shapes done; four items awaiting an operator decision — verified at `319c9e4`)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
 system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
-**Working state (verified 2026-09-24 with `git log`):** Branch
-`guided-project-bootstrap`, HEAD `6ed1991`, not pushed. That commit holds the
-resilience/parallel layer, the `withRoot` test fix and these session records.
-`CLAUDE.md` and `AGENTS.md` are byte-identical.
+**Working state (verified 2026-09-26 with `git log`/`git status`):** Branch
+`dashboard-ux-redesign`, HEAD `319c9e4`, not pushed. `CLAUDE.md`/`AGENTS.md`
+are byte-identical. 16 modified plus 6 untracked paths sit uncommitted,
+spanning two independently-complete features and two pure documents:
 
-**Shipped at `6ed1991` — resilience panel and parallel code review:**
-`docs/features/resilience-parallel-code-review/plan.md` is `Implemented`.
-`2026-09-17-plan-review.md` is `reconciled`; `2026-09-17-code-review.md` is
-`reconciled` with one medium finding (missing deterministic-order, multi-failure
-and aggregate-cost regressions) accepted and fixed on 2026-09-18, each new guard
-break-tested. The change adds a third `code-findings` lens (resilience/state
-integrity), raises the default `CODE_REVIEW_PANEL_SIZE` to 3, launches reviewers
-within a panel concurrently, drains every launch, checks the worktree once when
-the panel is quiescent, and consumes reports in frozen panel order. It has
-never run against a provider.
+1. **Dashboard-approval feature** — `docs/features/dashboard-approval/plan.md`
+   is `Implemented`; its `## Independent review — 2026-09-26` section is
+   `reconciled`. Adds the one dashboard write ARCHITECTURE.md's 2026-09-26
+   decision permits — submitting an approval signature through the same
+   `approveRun` core and writer lock as `bw approve`, via
+   `src/dashboard-approval.ts`. README.md/CLAUDE.md/AGENTS.md/ARCHITECTURE.md
+   already document it (confirmed 2026-09-26: README has a full "Approving
+   from the dashboard" section; CLAUDE.md's hard-rule-2 paragraph names the
+   decision). **Known-deferred, still open:** `test/sign-approval.test.ts:99`
+   ("nothing under src/ touches a private key") fails — the guard regex
+   `/private[ -]?key/i` matches a code comment on
+   `src/dashboard-approval.ts:16` ("never receives a private key"), a false
+   positive, not a real leak. Reword the comment or narrow the guard —
+   operator's call, not fixed.
+2. **Reconciliation-disposition-shapes fix** —
+   `docs/features/reconciliation-disposition-shapes/plan.md` is `Implemented`
+   but **has no `## Independent review` section** (unlike dashboard-approval's
+   plan) — a real process gap, still open. Fixes a bug where
+   `validateReconciliation` (`src/reconciliation.ts`) refuses a decision
+   missing `changedLocations` (required on every disposition) or `proposal`
+   (required for `upstream_follow_up`/`upstream_blocking`) with a hard
+   validation error (`spec.reconcile.invalid`) instead of a clean gate block.
+   `src/prompts.ts`'s `reconciliationDecisionContract`/`exampleDecisionsFor`
+   now state and demonstrate every disposition's required shape.
+   `node --test test/reconciliation.test.ts test/prompts.test.ts` → 76/76,
+   against two real recorded fixtures
+   (`test/fixtures/recorded/spec-reconciliation-note-keeper-missing-*.json`).
+   Full write-up: `docs/hazards.md` hazard 3. Not committed.
+3. **`docs/proposals/spec-review-severity-nondeterminism.md`** (new, pure
+   backlog, no remedy chosen) — see [[reviewer-severity-nondeterminism]].
+4. **`docs/features/stage-role-model-overrides/plan.md`** (new,
+   `Status: Proposed`, **not implemented** — the operator explicitly wants to
+   review this plan before any `implement-plan` run). Lets `bw new-run`
+   freeze an independent model for the reviewer role, and — only where a
+   distinct role exists (spec/plan's reconciliation dispatch, code_review's
+   remediation-implementer dispatch) — a second override, without inventing a
+   role code_review doesn't have. 9 tasks, self-reviewed once (2 findings
+   fixed inline). Does **not** by itself resolve item 3 — a different model
+   is just a different sample.
 
-**Checks before commit (2026-09-24):** typecheck and `check:docs` were clean
-(operator). The operator's `npm test` failed only on the recurring
-`test/verify-command.test.ts:134` cleanup EPERM. Node 26 `rmSync` never retried
-the transient external hold on `evidence.txt`, so the approved test-only fix
-makes `withRoot` retry only EPERM/EBUSY for about 2 s. It was validated by a
-held-file probe with a break-test, 256 stress runs (0 failures, one real lock
-absorbed), and a full suite run in which it passed
-(`.claude/sessions/2026-09-24-debug-verify-command-eperm-inert-retry.md`). That
-run's only failure, `test/cli-operator.test.ts:1394`, is environment-specific:
-it fails when launched from the assistant's tool shell and passed in the
-operator's terminal.
+**Carried forward, unchanged since 2026-09-24:** Target Tap PRD
+(`.claude/skills/run-buildworks/target-tap-design.md`) has run against a
+provider twice, both blocked; its scratch target's frozen verification
+commands are still only `node --version`/`npm --version`. Hard rules,
+authorized decisions and the observed $1.39–$3.59 three-reviewer cost range
+are recorded in `ARCHITECTURE.md`/`CLAUDE.md` (source of truth) — **no paid
+execution against BuildWorks' own target is authorized.** The separate
+note-keeper investigation (item 3) ran against paid chains on a different,
+external target repository, not BuildWorks' own.
 
-**Committed since the last resume point:**
-- `834d209` — exhaustive-audit (anti-sampling) code-review prompt and a
-  pre-dispatch declared-artifact check that blocks stage and run via
-  `code_review.artifact.missing` before any reviewer spend. Prompted by paid run
-  `target-tap-live-2` (16 dispatches, $3.58933), which blocked at the final
-  round-2 panel on two new high findings after one remediation.
-- `2a31e5c` — plan reconciliation prompt treats every `## Coverage` line as a
-  normative node. Prompted by a `target-tap` paid run (10 dispatches, $1.55366)
-  blocked at `plan_review` round 1 on an unclaimed `AC-011` rewording.
-- `4848a64` — verify-command `'close'`-not-`'finish'` cleanup race fix; its code
-  review is `reconciled`, 0 findings.
+**Verification run this session:** `npm run check:docs` → exit 0, clean (84
+pre-existing warnings, all in historical fixture/bootstrap docs unrelated to
+this session, none new).
 
-**Completed earlier:** guided project bootstrap (`plan.md` `Implemented`, both
-reviews `reconciled`); fence anchoring and the 1800-second idle budget
-(`docs/features/unfenced-json-extraction/plan.md` amendment, review
-`reconciled`); read-only dashboard and command-center redesign (`3415032`).
+**Running state:** two background dashboard shells started earlier this
+session may still be running against scratch targets under this session's
+temp scratchpad — irrelevant to a future session (a new session gets a new
+scratchpad path). Stop with TaskStop if still needed; otherwise ignore.
 
-**Target Tap PRD:** `.claude/skills/run-buildworks/target-tap-design.md`
-(slug `target-tap`). It has now run against a provider twice (the two runs
-above, both blocked). The scratch target's frozen verification commands are
-still only `node --version` and `npm --version`, and the PRD asks for five kinds
-of test that nothing in the chain executes.
+**Open/deferred — all four are operator decisions; nothing is pending from
+the assistant:**
+- Which of the 6 candidate remedies (if any) to pursue for item 3.
+- Whether to add/run an Independent-review pass for item 2's plan.
+- Review, and separately approve, item 4 for implementation.
+- Fix, or decide not to fix, item 1's private-key-guard false positive.
+- Whether to commit items 1-2 (feature-complete) and/or run `/code-review
+  ultra` on the dashboard-approval work first, as the operator earlier said
+  they wanted to.
 
-**Decisions locked:** Hard Rule 2 holds — the guided initializer lives inside
-the CLI mutation authority; the dashboard is a read-only loopback projection.
-Signing stays external via canonical bytes and detached signatures. The single
-starter is `static-web`. Guided mode is interactive only. Run identity is the
-exact project, feature ID, slug and change-kind tuple. The idle budget is 1800
-seconds in the frozen sandbox. Only `code_review` (2026-09-04) and its bounded
-remediation loop (2026-09-06) are authorized past step 9.
-
-**Implementation boundary:** Presentation narrows, never alters. Interactive UI
-mutation, remote access, a second harness, a production executor switch, and
-fabricated telemetry remain unauthorized. **No paid execution is authorized.**
-No current dollar range exists for a three-reviewer chain; observed chains have
-cost $1.39–$3.59.
-
-**Active work (2026-09-24, uncommitted):** branch `dashboard-ux-redesign`, from
-`1b42825`. This is the dashboard PWA redesign in
-`docs/features/dashboard-pwa-redesign/plan.md`. The operator approved mockup
-revision 2. Task 2 is done: `RunSnapshot.cost.byAgent` now carries roles,
-requested and effective models, unreported-model rows, and summed duration.
-Task 3, the dashboard-model projections, is done. Task 4 is also done: the
-ARCHITECTURE section 23 "Dashboard live observation — 2026-09-24" decision and
-the 15-second visible-only auto-refresh with its toggle. Task 5, the renderer
-replacement from the mockup, is done: typecheck is clean, and the live views match
-the mockup's values. Task 6, rewriting the five structure-pinning tests that now
-fail in `test/dashboard-ui.test.ts`, is next. The task record is
-`.claude/sessions/2026-09-24-dashboard-pwa-redesign.md`.
-
-**Running state:** No dashboard or run process is started. The 2026-09-15
-dashboard on port 61419 is not listening (probed 2026-09-24).
-
-**Open/deferred:**
-- Pushing `guided-project-bootstrap` — not requested.
-- Manual browser evaluation of the dashboard across themes and viewports.
-- `RunSnapshot.cost.byAgent` still projects no harness (executor) field.
-- Production interactive guided mode is proved only as two composed checks,
-  because redirected stdin is refused by design.
-- Whether a paid chain should exercise the three-lens concurrent panel, and at
-  what budget and verification-command scope — operator decision.
-
-**Next up:** Nothing is pending for the assistant. The next decisions are the
-operator's: whether to push `guided-project-bootstrap`, and whether to
-authorize a paid chain that exercises the three-lens concurrent panel.
+**Next up:** Nothing pending from the assistant — every thread above waits on
+the operator.
 
 ## Diagnostics quick-reference
 
@@ -147,6 +130,8 @@ Durable project facts belong here, regardless of whether a host also caches them
 - Scoping views filters the array fed to `portfolioProjection`, `commandCenterKpis`, `needsAttentionQueue` and `governedDeliveriesRows` by `selectedRepositoryId || repositoryFilter`.
 - `--repositories-file` is read once at startup; changing targets means restarting, which mints a new port and bearer token.
 - Popover listeners need `{ once: true }` or explicit cleanup. Presentation may narrow, never alter; apply formatting honesty to every value class at once.
+- An executing stage is usually `pending`, not `in_progress`: spec, plan and implementation never leave the store default while they run; only verification and code review set `in_progress`. The stages' own failure paths treat both as unfinished (`stageIsOpen` in `dashboard-model.js`). Until 2026-09-26 the dashboard matched only `in_progress`, so LIVE never showed during those three stages. That flaw sat in `liveness()` from the start, and the IN PROGRESS badge copied it.
+- Rule from that rework: take a status predicate's expected values from the writers' `setStageStatus`/insert sites or a live record, never from the name of the state. The unit tests passed because their fixtures called `setStageStatus("in_progress")`, and only the live run exposed the gap. Check a live-state feature against a real running snapshot before calling it done.
 
 ### Windows, Node and TypeScript
 - `evidence.end(cb)` fires on `'finish'` before the descriptor closes; wait for `'close'` before deleting the directory.
@@ -167,30 +152,88 @@ Durable project facts belong here, regardless of whether a host also caches them
 
 ## Session records
 
-### Resume-point audit finds an undocumented layer (2026-09-24)
+### Dashboard-approval shipped; reconciler bug fixed; note-keeper severity-variance investigated (2026-09-26)
 
 #### Decisions and assumptions
-- The session ran context compaction only; no code, tests, review or spend. The
-  assistant took its picture of the resilience/parallel layer from the committed
-  plan and review records plus `git diff --stat`, not from re-running anything.
+- Operator rejected the initial hypothesis that the spec-writer needed more
+  thoroughness or a higher reasoning-effort setting: no such config knob
+  exists anywhere in this codebase (checked by grep), and direct spec-content
+  comparison across 6 note-keeper runs found only one narrow author-stage
+  content gap, not a systemic authoring weakness.
+- Operator: for `stage-role-model-overrides`, code_review gets its two
+  existing roles (reviewer, remediation-implementer) parameterized — no
+  invented third "reconciler" role for code_review, since none exists there.
+  Operator also wants to review that plan before any `implement-plan` run.
 
 #### What failed
-- The previous Current state (2026-09-16) described `834d209`'s work as
-  uncommitted and knew nothing of `docs/features/resilience-parallel-code-review/`,
-  planned, implemented and reviewed on 2026-09-17/18. It also still said the
-  Target Tap PRD had never run against a provider, which two paid runs had
-  already contradicted. Second occurrence of an undocumented layer; see the
-  2026-09-15 record.
+- A `note-keeper` test-target run (run 6) blocked at `spec_review`; initially
+  suspected as a repeat of an earlier session-limit (429) failure, but its
+  audit trail was a clean `spec.gate.block` with 5/5 agent rows reported and
+  0 failed attempts — a real policy block, not an error.
+- Root cause isolated to reviewer-stage sampling variance, not a bug: across
+  6 same-model (`claude-sonnet-5`), same-PRD note-keeper runs, the same
+  disclosed security gap (export-archive access control, attachment
+  content-type/disposition, password-reset token security) got different
+  severity/blocking verdicts with zero model, prompt, or config difference
+  found (verified field-by-field against raw dispatch envelopes and a
+  `prompts.ts` diff). Full write-up:
+  `docs/proposals/spec-review-severity-nondeterminism.md`. This directly
+  contradicts hazard 7's stated premise for review-panel dispatches
+  specifically (their raw envelopes carry `thinking_tokens` in the
+  thousands — not zero-temperature calls).
+- Separately, runs 2 and 3 of the same investigation surfaced a real
+  reconciler defect (already fixed earlier in this session, before this
+  compaction): `validateReconciliation` refused a decision missing
+  `changedLocations` or `proposal` with a hard validation error instead of a
+  clean gate block. Fixed via `src/prompts.ts` contract/example changes;
+  76/76 regression tests pass; full write-up in `docs/hazards.md` hazard 3.
+  Cross-timezone mtime analysis confirmed the fix predates 3 of the 6 runs
+  (UTC dispatch timestamps vs. local `ls -la --time-style=full-iso` mtimes
+  must be converted to the same zone before comparing, or the ordering looks
+  contradictory).
 
-#### Verification
-- `git log --oneline -8`, `git status --short`, `git diff --stat` — HEAD
-  `834d209`, 18 modified plus 2 untracked paths.
-- `Get-FileHash` on `CLAUDE.md` and `AGENTS.md` — equal.
-- `Test-NetConnection 127.0.0.1 -Port 61419` — not listening.
+#### What worked
+- Comparing raw provider envelopes field-by-field (`canonicalModel`,
+  `requestedModel` vs. `effectiveModel`, `contextWindow`, `service_tier`)
+  ruled out silent model fallback as a cause in under one read.
+- `git stash list` recovered leftover `spec.md` content from 4 prior
+  note-keeper runs that a subsequent `new-run` had cleared from the working
+  tree, which is what made the author-stage vs. reviewer-stage variance
+  split possible.
+
+#### Deferred and open
+- Open: which of 6 candidate remedies (if any) to pursue for the
+  severity-variance finding — operator decision, no remedy chosen.
+- Open: `docs/features/reconciliation-disposition-shapes/plan.md` has no
+  `## Independent review` section, unlike dashboard-approval's plan.
+- Open: `docs/features/stage-role-model-overrides/plan.md` awaits the
+  operator's review before any implementation.
+- Deferred: `test/sign-approval.test.ts:99`'s private-key-guard false
+  positive against a comment in `src/dashboard-approval.ts:16` — reword vs.
+  narrow the guard is the operator's call.
+
+#### Next time
+- When a user asks to "write up" a defect, check whether it is already
+  fully diagnosed/fixed/documented in the current session before drafting a
+  new document — a narrow `git diff | grep` for one category of keyword
+  (severity wording) is not evidence the whole file has no relevant change.
+- LLM review-panel dispatches are not zero-temperature; do not assume a
+  second identical-input dispatch will reproduce a first verdict when
+  designing consistency remedies.
 
 #### Next up
-- Re-run the three repository checks on the uncommitted layer, then ask the
-  operator about committing it.
+- Nothing pending from the assistant. See Current state for the four open
+  operator decisions.
+
+### Resume-point audit finds an undocumented layer (2026-09-24)
+
+The previous Current state (2026-09-16) described `834d209`'s work as
+uncommitted and knew nothing of `docs/features/resilience-parallel-code-review/`,
+planned, implemented and reviewed on 2026-09-17/18; it also still said the
+Target Tap PRD had never run against a provider, which two paid runs had
+already contradicted. Second occurrence of an undocumented layer (see the
+2026-09-15 record); the general lesson is in the Diagnostics quick-reference
+above.
 
 ### Code-review audit prompt, artifact check, plan-reconcile coverage fix (2026-09-16/17, `2a31e5c`, `834d209`)
 

@@ -1,15 +1,19 @@
 /** @typedef {import("../operator-output.ts").OperatorResult} OperatorResult */
 /** @typedef {import("../operator-state.ts").RunSnapshot} RunSnapshot */
+/** @typedef {import("../dashboard-approval.ts").ApprovalRequestResult} ApprovalRequestResult */
+/** @typedef {import("../dashboard-approval.ts").ApprovalSubmitResult} ApprovalSubmitResult */
+/** @typedef {Extract<ApprovalRequestResult, { outcome: "ok" }>} ApprovalRequest */
 
 import {
   AGENT_TOKEN_CLASS_NOTE, AUTO_REFRESH_INTERVAL_MS, FINDING_ORDER_STATEMENT, MALFORMED_LIST_REASON,
   MALFORMED_NORMATIVE_REASON,
-  agentRows, autoRefreshPlan, cardSeverity, changedRuns, finalPanelBlockingSummary, findingCard, findingStatus,
+  agentRows, approvalFallbackScript, autoRefreshPlan, cardSeverity, changedRuns, commandText,
+  finalPanelBlockingSummary, findingCard, findingStatus,
   findingStatusCounts, findingStatuses, forbiddenFieldStatement, governanceChecks, identityPresentation,
   latestTimestamp, liveness, needsAttentionQueue, orderFindings, portfolioProjection, readableIntent,
-  relativeTimePresentation, repositoryIdentity, runExecutiveSummary, runOutcome, searchIndex, searchMatches,
-  severityOrder, snapshotProjection, snapshotState, stageLedger, stageMap, stageUsage, statusPresentation,
-  telemetryCoverage, timestampPresentation, usdPresentation,
+  relativeTimePresentation, repositoryIdentity, runExecutiveSummary, runOutcome, runRest, searchIndex, searchMatches,
+  severityOrder, signApprovalPayload, snapshotProjection, snapshotState, stageLedger, stageMap, stageUsage,
+  statusPresentation, telemetryCoverage, timestampPresentation, usdPresentation, writerHoldsOpenStage,
 } from "./dashboard-model.js";
 
 const TOKEN_KEY = "governed-delivery-dashboard-token";
@@ -256,6 +260,54 @@ async function fetchEnvelope(path, token) {
     return { status: response.status, reason: failure.reason ?? response.statusText };
   } catch (error) {
     return { status: 0, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** @param {string} repositoryId @param {number} runId */
+function approvalPath(repositoryId, runId) {
+  return `/api/repositories/${encodeURIComponent(repositoryId)}/runs/${runId}/approval`;
+}
+
+/**
+ * The approval request the core would bind now: payload, reviewed spec, and
+ * the non-secret key facts.
+ * @param {string} repositoryId @param {number} runId @param {string} token
+ * @returns {Promise<{ status: number, result: ApprovalRequestResult | null, reason: string }>}
+ */
+async function fetchApproval(repositoryId, runId, token) {
+  try {
+    const response = await fetch(new URL(approvalPath(repositoryId, runId), window.location.origin), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const body = /** @type {ApprovalRequestResult & { reason?: string }} */ (await response.json());
+    return response.status === 200
+      ? { status: 200, result: body, reason: "" }
+      : { status: response.status, result: null, reason: body.reason ?? response.statusText };
+  } catch (error) {
+    return { status: 0, result: null, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * The dashboard's one write (architecture section 23, 2026-09-26): the expiry
+ * the payload bound and the detached signature. Nothing else leaves the page.
+ * @param {string} repositoryId @param {number} runId @param {string} token
+ * @param {{ expiresAt: string, signature: string }} body
+ * @returns {Promise<{ status: number, result: ApprovalSubmitResult | null, reason: string }>}
+ */
+async function postApproval(repositoryId, runId, token, body) {
+  try {
+    const response = await fetch(new URL(approvalPath(repositoryId, runId), window.location.origin), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ expiresAt: body.expiresAt, signature: body.signature }),
+    });
+    const result = /** @type {ApprovalSubmitResult & { reason?: string }} */ (await response.json());
+    return [200, 409, 422].includes(response.status)
+      ? { status: response.status, result, reason: result.reason ?? "" }
+      : { status: response.status, result: null, reason: result.reason ?? response.statusText };
+  } catch (error) {
+    return { status: 0, result: null, reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -919,6 +971,9 @@ const FINDING_STATUS = {
   addressed: { label: "Addressed", tone: "success", rank: 5, active: false },
 };
 
+/** The run table's `change_kind` values (migrations/001_init.sql). @type {Record<string, string>} */
+const CHANGE_KIND_LABEL = { feature: "New feature", defect_fix: "Defect fix" };
+
 /** @type {Record<string, { name: string, description: string }>} */
 const COMMAND_PRESENTATION = {
   status: { name: "Run status", description: "Inspect one run without changing state." },
@@ -1043,6 +1098,254 @@ function openFindingById(application, repositoryId, runId, findingId, trigger) {
   if (state === undefined || snapshot === null) return;
   const row = snapshotFindingRows(repositoryId, state.repository.path, snapshot).find((entry) => entry.card.id === findingId);
   if (row !== undefined) openFindingDrawer(application, row, trigger);
+}
+
+/* ------------------------------------------------------------------ *
+ * Approval handoff (architecture section 23, 2026-09-26)
+ * ------------------------------------------------------------------ */
+
+/** @typedef {{ pending: Promise<ApprovalSlot> | null, request: ApprovalRequest | null, reason: string | null, loadedAt: number }} ApprovalSlot */
+
+/**
+ * A held request whose signing window has passed, or a refusal older than one
+ * refresh interval, no longer describes what the core would bind now. The
+ * interval bounds how often a persistent refusal is re-read.
+ * @param {ApprovalSlot} slot @param {number} now
+ */
+function approvalSlotStale(slot, now) {
+  if (slot.pending !== null) return false;
+  if (slot.request !== null) return Date.parse(slot.request.expiresAt) <= now;
+  return slot.reason !== null && now - slot.loadedAt >= AUTO_REFRESH_INTERVAL_MS;
+}
+
+/**
+ * Load one run's approval request into its slot. The banner reads the slot
+ * synchronously; the drawer forces a fresh read so the spec it shows is the
+ * one on disk now. Concurrent callers share one request.
+ * @param {DashboardApplication} application @param {string} repositoryId @param {number} runId
+ * @param {boolean} [force]
+ * @returns {Promise<ApprovalSlot>}
+ */
+function loadApprovalRequest(application, repositoryId, runId, force = false) {
+  const key = `${repositoryId}:${runId}`;
+  let slot = application.approvalRequests.get(key);
+  if (slot === undefined) {
+    slot = { pending: null, request: null, reason: null, loadedAt: 0 };
+    application.approvalRequests.set(key, slot);
+  }
+  if (slot.pending !== null) return slot.pending;
+  if (!force && (slot.request !== null || slot.reason !== null)) return Promise.resolve(slot);
+  const current = slot;
+  current.pending = fetchApproval(repositoryId, runId, application.token).then((response) => {
+    current.pending = null;
+    current.loadedAt = Date.now();
+    if (response.status === 401) application.sessionExpired = true;
+    const result = response.result;
+    current.request = result?.outcome === "ok" ? result : null;
+    current.reason = result === null ? response.reason : result.outcome === "refused" ? result.reason : null;
+    return current;
+  });
+  return current.pending;
+}
+
+/**
+ * The run view's approval prompt. It never opens the drawer by itself:
+ * auto-refresh re-renders the run view every interval and would reopen it.
+ * @param {DashboardApplication} application @param {RunContext} context
+ */
+function approvalBanner(application, context) {
+  const runId = context.snapshot.run.id;
+  const slot = application.approvalRequests.get(`${context.repositoryId}:${runId}`);
+  if (slot === undefined || approvalSlotStale(slot, Date.now())) {
+    void loadApprovalRequest(application, context.repositoryId, runId, true).then(() => render(application));
+  }
+  const request = slot?.request ?? null;
+  const banner = element("section", null, "approval-banner tone-warning");
+  banner.setAttribute("aria-label", "Approval needed");
+  const words = element("div", null, "approval-banner-text");
+  words.append(element("h3", "Your approval is needed"),
+    element("p", `The specification for ${context.snapshot.run.featureId} passed review. Approve it so the run can continue to planning.`));
+  if (request !== null) {
+    const expiry = element("p", null, "approval-banner-expiry");
+    expiry.append("Sign before ", shortTimeNode(request.expiresAt), ".");
+    words.append(expiry);
+  } else if (slot !== undefined && slot.reason !== null) {
+    words.append(element("p", slot.reason, "unavailable"));
+  }
+  const actions = element("div", null, "approval-banner-actions");
+  const review = /** @type {HTMLButtonElement} */ (element("button", "Review spec and approve", "btn is-primary"));
+  review.type = "button";
+  review.dataset.control = "approval-review";
+  review.addEventListener("click", () => openApprovalDrawer(application, context.repositoryId, context.path, runId, review));
+  actions.append(review);
+  if (request !== null) {
+    actions.append(copyControl("Copy terminal commands", approvalFallbackScript({
+      cliPath: application.inventory?.cliPath ?? "", repositoryPath: context.path, runId, expiresAt: request.expiresAt,
+    }), "terminal approval commands", application));
+  }
+  banner.append(words, actions);
+  return banner;
+}
+
+/**
+ * @param {DashboardApplication} application @param {string} repositoryId @param {string} repositoryPath
+ * @param {number} runId @param {HTMLElement | null} trigger
+ */
+function openApprovalDrawer(application, repositoryId, repositoryPath, runId, trigger) {
+  openDrawer("Approve specification", `Run #${runId} · ${pathTail(repositoryPath)}`, () => {
+    const container = element("div", null, "drawer-content approval-drawer");
+    container.append(element("p", "Loading the approval request…", "empty-state"));
+    void loadApprovalRequest(application, repositoryId, runId, true).then((slot) => {
+      container.replaceChildren(slot.request === null
+        ? callout(slot.reason ?? "The approval request could not be loaded.", "danger")
+        : approvalDrawerBody(application, repositoryId, repositoryPath, runId, slot.request));
+    });
+    return container;
+  }, application, trigger);
+}
+
+/** @param {string} title */
+function approvalSection(title) {
+  const section = element("section", null, "approval-section");
+  section.append(element("h3", title, "eyebrow"));
+  return section;
+}
+
+/**
+ * What the operator approves, the reviewed spec, the key facts, the signing
+ * control, and the terminal alternative. The key file is read in this
+ * browser, used once, and dropped; only the signature is posted.
+ * @param {DashboardApplication} application @param {string} repositoryId @param {string} repositoryPath
+ * @param {number} runId @param {ApprovalRequest} request
+ */
+function approvalDrawerBody(application, repositoryId, repositoryPath, runId, request) {
+  const body = element("div", null, "approval-body");
+  const cliPath = application.inventory?.cliPath ?? "";
+
+  const what = approvalSection("What you are approving");
+  const scope = element("ul", null, "value-list");
+  for (const path of request.scope) scope.append(element("li", path, "mono"));
+  what.append(definitionList([
+    ["Feature", element("span", request.featureId, "mono")],
+    ["Risk", request.risk],
+    ["Scope", request.scope.length === 0 ? "No declared path" : disclosure(plural(request.scope.length, "declared path"), scope)],
+    ["Specification hash", identityNode(identityPresentation(request.specHash), "specification hash", application)],
+  ], "definitions compact"));
+
+  const spec = approvalSection("Specification");
+  const path = element("p", null, "approval-path");
+  path.append(element("span", request.specPath, "mono"),
+    copyControl("Copy path", request.specPath, "specification path", application, ""),
+    copyControl("Copy specification", request.specText, "specification text", application, ""));
+  const text = element("pre", request.specText, "approval-spec");
+  text.tabIndex = 0;
+  text.setAttribute("aria-label", "Specification text");
+  spec.append(path, text);
+
+  const sign = approvalSection("Sign and approve");
+  const signer = request.signer;
+  sign.append(
+    element("p", "Choose your private approval key. This browser reads it, signs the request above, and sends only the signature. The key is never sent and never stored."),
+    element("p", "It is the approval.key that node scripts\\sign-approval.mjs keygen --out <folder> created. Keep it outside this user profile, such as on removable media, so no process running as you can use it without you.", "source-note"),
+    definitionList([
+      ["Trusted public key", signer.publicKeyPath === null
+        ? element("span", "Not configured", "unavailable") : element("span", signer.publicKeyPath, "mono")],
+      ["Fingerprint", signer.configured === null
+        ? element("span", "Not configured", "unavailable")
+        : identityNode(identityPresentation(signer.configured), "public key fingerprint", application)],
+    ], "definitions compact"));
+  // The core would refuse these anyway; saying so before a key is chosen
+  // spares the operator a signature that cannot be recorded.
+  const blocked = signer.reason !== null ? signer.reason
+    : signer.frozen !== null && signer.configured !== signer.frozen
+      ? `This run froze signer ${signer.frozen}, but this dashboard trusts ${signer.configured ?? "no key"}. Restart the dashboard with the public key the run froze.`
+      : null;
+  if (blocked !== null) sign.append(callout(blocked, "danger"));
+  const field = element("div", null, "approval-key-field");
+  const input = /** @type {HTMLInputElement} */ (element("input", null, "input"));
+  input.type = "file";
+  input.accept = ".key,.pem";
+  input.id = `approval-key-${runId}`;
+  input.disabled = blocked !== null;
+  const label = /** @type {HTMLLabelElement} */ (element("label", "Private key file", "field"));
+  label.htmlFor = input.id;
+  const approve = /** @type {HTMLButtonElement} */ (element("button", "Approve", "btn is-primary"));
+  approve.type = "button";
+  approve.disabled = true;
+  const status = element("div", null, "approval-status");
+  status.setAttribute("role", "status");
+  /** @param {string} message @param {string} tone */
+  const report = (message, tone) => {
+    status.className = `approval-status tone-${tone}`;
+    status.replaceChildren(element("p", message));
+  };
+  input.addEventListener("change", () => {
+    approve.disabled = blocked !== null || (input.files?.length ?? 0) === 0;
+    status.replaceChildren();
+  });
+  approve.addEventListener("click", async () => {
+    const file = input.files?.[0];
+    if (file === undefined) return;
+    approve.disabled = true;
+    input.disabled = true;
+    report("Signing in this browser…", "neutral");
+    /** @type {Awaited<ReturnType<typeof signApprovalPayload>>} */
+    let signed;
+    try {
+      signed = await signApprovalPayload(await file.text(), request.payload);
+    } catch (error) {
+      signed = { ok: false, reason: `The key file could not be read: ${error instanceof Error ? error.message : String(error)}` };
+    }
+    // The key text lived only inside that call. Clearing the input drops the
+    // browser's last handle on the file. It stays disabled until the POST
+    // settles, so a second submission cannot race the first.
+    input.value = "";
+    if (!signed.ok) {
+      input.disabled = false;
+      report(signed.reason, "danger");
+      return;
+    }
+    report("Recording the approval…", "neutral");
+    const response = await postApproval(repositoryId, runId, application.token,
+      { expiresAt: request.expiresAt, signature: signed.signature });
+    const result = response.result;
+    if (result === null || result.outcome !== "approved") input.disabled = false;
+    if (result !== null && result.outcome === "approved") {
+      const resume = commandText(cliPath, "run", ["--repo", repositoryPath, "--run", String(runId), "--yes"], application.platform);
+      status.className = "approval-status tone-success";
+      status.replaceChildren(
+        element("p", `Approved. Approval ${result.approvalId} is recorded.`),
+        element("p", "Resume the run from a terminal. Resuming dispatches paid model calls."),
+        element("code", resume, "command-text"),
+        copyControl("Copy resume command", resume, "resume command", application));
+      application.approvalRequests.delete(`${repositoryId}:${runId}`);
+      void trackedRefresh(application, () => refreshAll(application));
+    } else if (response.status === 409) {
+      report(`The repository writer lock is not available, so nothing was recorded: ${response.reason}`, "warning");
+    } else if (result !== null && result.outcome === "refused") {
+      report(result.reason, "danger");
+    } else if (response.status === 401) {
+      application.sessionExpired = true;
+      render(application);
+      report("The dashboard session expired; nothing was recorded.", "danger");
+    } else {
+      report(`The approval was not recorded: ${response.reason}`, "danger");
+    }
+  });
+  field.append(label, input, approve);
+  sign.append(field, status);
+
+  const terminal = approvalSection("Terminal alternative");
+  const script = approvalFallbackScript({ cliPath, repositoryPath, runId, expiresAt: request.expiresAt });
+  const block = element("div");
+  block.append(
+    element("p", "Use these PowerShell commands when this browser cannot sign or you prefer the terminal. Set $Key to your key file first."),
+    element("pre", script, "approval-script"),
+    copyControl("Copy terminal commands", script, "terminal approval commands", application));
+  terminal.append(disclosure("Approve from a terminal instead", block));
+
+  body.append(what, spec, sign, terminal);
+  return body;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1346,9 +1649,10 @@ function runLiveness(application, repositoryId, snapshot) {
 }
 
 /**
- * The run's recorded stages in recorded order, from `stageLedger`. At micro
- * size it is one segment per stage and a terminal cell; at full size each
- * stage carries its name, gate result, and duration.
+ * The run's stages from `stageLedger`. At micro size it is one segment per
+ * recorded stage and a terminal cell; at full size it is every workflow stage
+ * in workflow order, each recorded one carrying its gate result and duration,
+ * so the current stage reads as a position in the whole workflow.
  * @param {RunSnapshot} snapshot @param {boolean} full @param {boolean} live
  */
 function stageLedgerNode(snapshot, full, live) {
@@ -1370,20 +1674,15 @@ function stageLedgerNode(snapshot, full, live) {
     return node;
   }
   const list = element("ol", null, "ledger-full");
-  list.setAttribute("aria-label", "Recorded stages in recorded order");
-  for (const segment of segments) {
-    const step = element("li", null,
-      `ledger-step ${segmentClass(segment.result)}${live && segment.result === "open" ? " is-live" : ""}`);
-    step.append(element("span", null, "bar"), element("span", readableIntent(segment.kind), "name"),
-      element("span", `gate ${segment.gateResult ?? "none"} · ${duration(segment.durationMs)}`, "meta"));
-    list.append(step);
-  }
-  if (ledger.terminal !== "in_progress") {
-    const step = element("li", null, `ledger-step ${endClass}`);
-    const meta = element("span", null, "meta");
-    if (ledger.terminal === "stopped") meta.textContent = "no later stage";
-    else meta.append(shortTimeNode(snapshot.activity.lastRecordedAt));
-    step.append(element("span", null, "bar"), element("span", ledger.terminal === "stopped" ? "Stopped" : "Completed", "name"), meta);
+  list.setAttribute("aria-label", "Workflow stages in workflow order");
+  for (const { kind, result, segment } of ledger.steps) {
+    const current = live && result === "open";
+    const step = element("li", null, `ledger-step is-${result}${current ? " is-live" : ""}`);
+    if (current) step.setAttribute("aria-current", "step");
+    step.append(element("span", null, "bar"), element("span", readableIntent(kind), "name"),
+      element("span", segment === null ? "Not reached"
+        : result === "open" ? "In progress"
+          : `gate ${segment.gateResult ?? "none"} · ${duration(segment.durationMs)}`, "meta"));
     list.append(step);
   }
   return list;
@@ -1491,36 +1790,72 @@ function renderStageMap(data, application) {
 const ATTENTION_CAP = 8;
 
 /**
- * What needs the operator, from `needsAttentionQueue`: blocked runs, then
- * blocking and open findings. Findings carry no age because a finding row
- * records no time.
+ * What needs the operator, from `needsAttentionQueue`: runs waiting for
+ * approval, blocked runs, then blocking and open findings. Findings carry no
+ * age because a finding row records no time.
  * @param {ScopeData} data @param {DashboardApplication} application
  */
 function renderAttentionQueue(data, application) {
   const queue = needsAttentionQueue(data.views);
   const blocking = queue.findings.filter((item) => item.status === "blocking").length;
   const open = queue.findings.length - blocking;
-  const total = queue.runs.length + queue.findings.length;
+  const total = queue.approvals.length + queue.runs.length + queue.findings.length;
   const title = total === 0 ? "Nothing requires attention" : `${plural(total, "item")} require${total === 1 ? "s" : ""} attention`;
   const filter = application.attentionFilter;
   const section = region(title, total === 0 ? {} : {
-    info: metricInfoButton("Order", "Ordered by operational impact, severity, and recency: blocked runs by latest activity, then blocking findings, then open findings, each by recorded severity."),
+    info: metricInfoButton("Order", "Ordered by operational impact, severity, and recency: runs waiting for your approval, then blocked runs, each by latest activity, then blocking findings, then open findings, each by recorded severity."),
     end: chipGroup("Show", "attention", [
       { value: "", label: "All", count: total },
+      { value: "approval", label: "Approvals", count: queue.approvals.length },
       { value: "run", label: "Blocked runs", count: queue.runs.length },
       { value: "blocking", label: "Blocking findings", count: blocking },
       { value: "open", label: "Open findings", count: open },
     ], filter, (value) => { application.attentionFilter = value; render(application); }),
-    sub: "Blocked runs are prioritized, followed by blocking and open findings.",
+    sub: "Approvals come first, then blocked runs, then blocking and open findings.",
   });
   if (total === 0) {
-    section.append(element("p", "No blocked runs and no blocking or open findings in this scope.", "att-empty"));
+    section.append(element("p", "No approval waiting, no blocked runs, and no blocking or open findings in this scope.", "att-empty"));
     return section;
   }
+  const approvals = filter === "" || filter === "approval" ? queue.approvals : [];
   const runs = filter === "" || filter === "run" ? queue.runs : [];
-  const findings = filter === "run" ? [] : queue.findings.filter((item) => filter === "" || item.status === filter);
-  const shownRuns = runs.slice(0, ATTENTION_CAP);
-  const shownFindings = findings.slice(0, Math.max(0, ATTENTION_CAP - shownRuns.length));
+  const findings = filter === "run" || filter === "approval" ? [] : queue.findings.filter((item) => filter === "" || item.status === filter);
+  const shownApprovals = approvals.slice(0, ATTENTION_CAP);
+  const shownRuns = runs.slice(0, Math.max(0, ATTENTION_CAP - shownApprovals.length));
+  const shownFindings = findings.slice(0, Math.max(0, ATTENTION_CAP - shownApprovals.length - shownRuns.length));
+  if (shownApprovals.length > 0) {
+    const head = element("div", "Approval needed ", "group-head");
+    head.append(element("span", String(approvals.length), "num"));
+    const list = element("ol");
+    for (const item of shownApprovals) {
+      const path = application.repositories.get(item.repositoryId)?.repository.path ?? "";
+      const entry = element("li", null, "att-item tone-warning");
+      const badges = element("span", null, "att-badges");
+      badges.append(badge("Approval needed", "warning"));
+      const main = element("span", null, "att-main");
+      const target = /** @type {HTMLButtonElement} */ (element("button", null, "att-title"));
+      target.type = "button";
+      target.dataset.control = `attention-approval:${item.repositoryId}:${item.runId}`;
+      target.append(`${item.slug} `, element("span", `#${item.runId}`, "num"), " · specification passed review");
+      target.addEventListener("click", () => openRun(application, item.repositoryId, item.runId));
+      const meta = element("span", null, "att-meta");
+      const tail = element("span", pathTail(path), "mono");
+      tail.title = path;
+      meta.append(`${item.project} · `, tail);
+      main.append(target, meta);
+      const facts = element("span", "Waiting for your signed approval", "att-facts");
+      const age = element("span", null, "att-age");
+      age.append(relativeNode(item.lastRecordedAt, data.observedAt));
+      const actions = element("span", null, "att-actions");
+      const review = /** @type {HTMLButtonElement} */ (element("button", "Review and approve", "text-btn is-quiet"));
+      review.type = "button";
+      review.addEventListener("click", () => openApprovalDrawer(application, item.repositoryId, path, item.runId, review));
+      actions.append(review);
+      entry.append(badges, main, facts, age, actions);
+      list.append(entry);
+    }
+    section.append(head, list);
+  }
   if (shownRuns.length > 0) {
     const head = element("div", "Blocked runs ", "group-head");
     head.append(element("span", String(runs.length), "num"));
@@ -1588,9 +1923,9 @@ function renderAttentionQueue(data, application) {
     }
     section.append(head, list);
   }
-  if (runs.length > shownRuns.length || findings.length > shownFindings.length) {
+  if (approvals.length > shownApprovals.length || runs.length > shownRuns.length || findings.length > shownFindings.length) {
     const foot = element("div", null, "region-foot");
-    foot.append(element("span", `Showing ${shownRuns.length + shownFindings.length} of ${runs.length + findings.length}`));
+    foot.append(element("span", `Showing ${shownApprovals.length + shownRuns.length + shownFindings.length} of ${approvals.length + runs.length + findings.length}`));
     if (runs.length > shownRuns.length) {
       const all = /** @type {HTMLButtonElement} */ (element("button", "View all blocked runs", "text-btn"));
       all.type = "button";
@@ -1670,7 +2005,9 @@ function runTableNode(entries, statuses, application, key, selected, observedAt)
     {
       label: "State", sort: (entry) => entry.run.status,
       cell: (entry) => {
-        const presentation = statusPresentation(entry.run.status, entry.run.phase);
+        const presentation = statusPresentation(entry.run.status, entry.run.phase,
+          entry.snapshot !== null && writerHoldsOpenStage(entry.snapshot),
+          entry.snapshot === null ? null : runRest(entry.snapshot));
         const cell = element("span", null, "state-stage");
         cell.append(badge(presentation.label, presentation.tone));
         if (entry.snapshot !== null) {
@@ -1898,14 +2235,20 @@ function limitationsBlock(limitations) {
   return block;
 }
 
-/** One figure of a KPI strip. @param {string} label @param {Node | string} value @param {Node | string} note @param {string} [extra] @param {string} [valueClass] */
+/**
+ * One figure of a KPI strip; a null note draws no note line.
+ * @param {string} label @param {Node | string} value @param {Node | string | null} note @param {string} [extra] @param {string} [valueClass]
+ */
 function kpi(label, value, note, extra = "", valueClass = "") {
   const node = element("div", null, `kpi ${extra}`.trim());
   const primary = element("span", null, `kpi-value ${valueClass}`.trim());
   primary.append(value);
-  const secondary = element("span", null, "kpi-note");
-  secondary.append(note);
-  node.append(element("span", label, "eyebrow"), primary, secondary);
+  node.append(element("span", label, "eyebrow"), primary);
+  if (note !== null) {
+    const secondary = element("span", null, "kpi-note");
+    secondary.append(note);
+    node.append(secondary);
+  }
   return node;
 }
 
@@ -2012,14 +2355,15 @@ function renderExecutiveSummary(summary, projection, application, context) {
   head.append(title, badge(summary.state.label, summary.state.tone));
   const tag = liveTag(state, application.autoRefresh);
   if (tag !== null) head.append(tag);
-  const meta = element("div", null, "run-meta");
-  const path = element("span", context.path, "mono");
-  path.title = context.path;
-  const latest = element("span");
-  if (stamps.latest !== null) latest.append(`${stamps.latest.label.toLowerCase()} `, relativeNode(stamps.latest.value, context.observedAt));
-  meta.append(path, element("span", `project ${summary.run.project}`), element("span", `feature ${summary.run.featureId}`),
-    element("span", `change ${summary.run.changeKind}`), latest);
-  body.append(eyebrow, head, meta);
+  // The title already names the run's slug, so the project is repeated only
+  // when it differs; the repository path stays in the Run detail disclosure.
+  /** @type {[string, Node | string][]} */
+  const facts = [];
+  if (summary.run.project !== summary.run.slug) facts.push(["Project", summary.run.project]);
+  facts.push(["Feature ID", element("span", summary.run.featureId, "mono")]);
+  facts.push(["Change type", CHANGE_KIND_LABEL[summary.run.changeKind] ?? summary.run.changeKind]);
+  if (stamps.latest !== null) facts.push(["Last activity", relativeNode(stamps.latest.value, context.observedAt)]);
+  body.append(eyebrow, head, definitionList(facts, "run-meta"));
   section.append(body);
 
   const segments = stageLedger(context.snapshot).segments;
@@ -2027,25 +2371,28 @@ function renderExecutiveSummary(summary, projection, application, context) {
   const counts = [...context.statuses.values()];
   const blocking = counts.filter((status) => status === "blocking").length;
   const open = counts.filter((status) => status === "open").length;
+  const active = counts.filter((status) => FINDING_STATUS[status].active).length;
   const tokens = summary.tokens;
   const output = tokens.classes.find((entry) => entry.key === "output")?.known ?? null;
   const strip = element("div", null, "kpis");
   strip.append(stopped !== null && run.status === "blocked"
-    ? kpi("State", `Blocked at ${stageLower(stopped.kind)}`, `stage ${segments.indexOf(stopped) + 1} of ${segments.length} recorded`, "", "is-text tone-danger")
+    ? kpi("State", `Blocked at ${stageLower(stopped.kind)}`, null, "", "is-text tone-danger")
     : run.status === "completed"
-      ? kpi("State", "Completed", `${plural(segments.length, "stage")} recorded`, "", "is-text tone-success")
-      : kpi("State", summary.state.label, segments.length === 0 ? "no stage recorded"
-        : `latest ${stageLower(segments[segments.length - 1]?.kind ?? "")}`, "", `is-text tone-${summary.state.tone}`));
-  const [findingCount, findingLabel, findingTone] = blocking > 0 ? [blocking, "blocking findings", "tone-danger"]
-    : open > 0 ? [open, "open findings", "tone-warning"] : [0, "findings require attention", ""];
-  strip.append(kpi("Findings", String(findingCount), `${findingLabel} · ${context.snapshot.evidence.findings.length} recorded`, "", findingTone));
-  const tokenNote = element("span", tokens.known === null ? "No row reported a token class"
-    : `${exactCount(tokens.known)} total · ${output === null ? "output unavailable" : `${exactCount(output)} out`}`, "mono");
-  tokenNote.title = "input · output · cache read · cache write";
-  strip.append(kpi("Tokens", tokens.known === null ? "Unavailable" : abbreviated(tokens.known), tokenNote, "is-usage"));
-  strip.append(kpi("Known cost", moneyNode(summary.cost.available ? projection.cost.knownUsd : null), "for these tokens", "is-usage"));
-  strip.append(kpi("Telemetry", fragment(String(projection.cost.costReportedRows),
-    element("span", ` of ${projection.cost.agentRows}`, "muted")), "agent rows reported"));
+      ? kpi("State", "Completed", null, "", "is-text tone-success")
+      : kpi("State", summary.state.label, null, "", `is-text tone-${summary.state.tone}`));
+  const findingTone = blocking > 0 ? "tone-danger" : open > 0 ? "tone-warning" : "";
+  strip.append(kpi("Findings", fragment(String(active), element("span", " active · ", "muted"),
+    String(counts.length - active), element("span", " historical", "muted")), null, "", findingTone));
+  const tokenNode = element("span");
+  if (tokens.known === null) tokenNode.textContent = "Unavailable";
+  else {
+    tokenNode.append(abbreviated(tokens.known),
+      element("span", output === null ? " · output unavailable" : ` · ${abbreviated(output)} out`, "muted"));
+    tokenNode.title = `${exactCount(tokens.known)} total${output === null ? "" : ` · ${exactCount(output)} output`}`;
+  }
+  strip.append(kpi("Tokens", tokenNode, null, "is-usage"));
+  strip.append(kpi("Cost", moneyNode(summary.cost.available ? projection.cost.knownUsd : null), null, "is-usage"));
+  if (context.snapshot.phase === "awaiting_approval") section.append(approvalBanner(application, context));
   section.append(strip);
   section.append(stageLedgerNode(context.snapshot, true, live));
   section.append(renderRunOutcome(summary, projection, application, context));
@@ -3113,6 +3460,7 @@ function renderEvidence(projection) {
  * refreshing: number,
  * refreshTimer: ReturnType<typeof setTimeout> | null,
  * justUpdated: Set<string>,
+ * approvalRequests: Map<string, ApprovalSlot>,
  * platform: string,
  * main: HTMLElement,
  * live: HTMLElement
@@ -3839,8 +4187,11 @@ async function refreshChanged(application) {
   if (generation !== application.refreshGeneration) return;
   const changed = changedRuns(previous, repositoryViews({ repositories: application.repositories }));
   const after = observationSignatures(application);
+  // A stale approval request re-renders so the banner re-reads it.
+  const now = Date.now();
   const differs = changed.length > 0 || before.size !== after.size ||
-    [...after].some(([key, signature]) => before.get(key) !== signature);
+    [...after].some(([key, signature]) => before.get(key) !== signature) ||
+    [...application.approvalRequests.values()].some((slot) => approvalSlotStale(slot, now));
   if (!differs) {
     renderChrome(application);
     return;
@@ -4128,6 +4479,7 @@ async function startBrowserApplication() {
     refreshing: 0,
     refreshTimer: null,
     justUpdated: new Set(),
+    approvalRequests: new Map(),
     platform: navigator.userAgent.includes("Windows") ? "win32" : "posix",
     main,
     live,

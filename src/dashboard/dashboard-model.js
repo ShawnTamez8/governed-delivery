@@ -378,17 +378,65 @@ export function portfolioProjection(repositories) {
 }
 
 /**
+ * Whether a writer process holds this repository's lock while the run has an
+ * open stage. The core derives `interrupted_or_inconsistent` for every run
+ * with an unfinished stage, so this is what separates a stage that is
+ * executing from one a crashed writer left behind.
+ * @param {RunSnapshot} snapshot
+ */
+export function writerHoldsOpenStage(snapshot) {
+  return snapshot.run.status === "in_progress" && snapshot.writer.status === "live" && snapshot.stages.some(stageIsOpen);
+}
+
+/**
+ * Whether a recorded stage is unfinished. Spec, plan, and implementation stay
+ * `pending` while they execute; verification and code review move to
+ * `in_progress`. The stages' own failure paths treat both as unfinished.
+ * @param {{ status: string }} stage
+ */
+export function stageIsOpen(stage) {
+  return stage.status === "pending" || stage.status === "in_progress";
+}
+
+/**
+ * Whether an in-progress run is resting at a stage-group boundary: phase
+ * `ready` and no BuildWorks process holding the repository. `run --yes` passes
+ * through `ready` between groups while it holds the lock, so a live writer
+ * keeps the run in progress. An unreadable lock may name a live process, so it
+ * does too. With no recorded stage the run has not started; otherwise it
+ * waits for the operator to resume it.
+ * @param {RunSnapshot} snapshot
+ * @returns {"start" | "resume" | null}
+ */
+export function runRest(snapshot) {
+  if (snapshot.run.status !== "in_progress" || snapshot.phase !== "ready") return null;
+  if (snapshot.writer.status === "live" || snapshot.writer.status === "unreadable") return null;
+  return snapshot.stages.length === 0 ? "start" : "resume";
+}
+
+/**
  * The authoritative badge for a run. A derived exceptional phase wins because
  * it is the operator-relevant signal; otherwise the persisted status speaks.
- * `in_progress` is never "running" and `completed` is never "passed".
+ * An unfinished stage under a live writer is work in progress, not an
+ * exception, so it reads IN PROGRESS; without a live writer it needs the
+ * operator. A run resting at a boundary waits for the operator to start or
+ * resume it, which is not an alarm. `completed` is never "passed".
  * @param {string} status
  * @param {string} phase
- * @returns {{ label: string, tone: "success" | "danger" | "warning" | "active" | "neutral", source: "phase" | "status" }}
+ * @param {boolean} [running] `writerHoldsOpenStage` for the run's snapshot
+ * @param {"start" | "resume" | null} [rest] `runRest` for the run's snapshot; null when no snapshot is held
+ * @returns {{ label: string, tone: "success" | "danger" | "warning" | "active" | "neutral", source: "phase" | "status" | "writer" }}
  */
-export function statusPresentation(status, phase) {
+export function statusPresentation(status, phase, running = false, rest = null) {
   if (phase === "awaiting_approval") return { label: "AWAITING APPROVAL", tone: "warning", source: "phase" };
-  if (phase === "interrupted_or_inconsistent") return { label: "ATTENTION REQUIRED", tone: "danger", source: "phase" };
-  if (status === "in_progress") return { label: "IN PROGRESS", tone: "active", source: "status" };
+  if (phase === "interrupted_or_inconsistent") {
+    return status === "in_progress" && running ? { label: "IN PROGRESS", tone: "success", source: "writer" }
+      : { label: "ATTENTION REQUIRED", tone: "danger", source: "phase" };
+  }
+  if (status === "in_progress" && phase === "ready" && rest !== null) {
+    return { label: rest === "start" ? "READY TO START" : "READY TO RESUME", tone: "active", source: "phase" };
+  }
+  if (status === "in_progress") return { label: "IN PROGRESS", tone: "success", source: "status" };
   if (status === "blocked") return { label: "BLOCKED", tone: "danger", source: "status" };
   if (status === "completed") return { label: "COMPLETED", tone: "success", source: "status" };
   return { label: status.replaceAll("_", " ").toUpperCase(), tone: "neutral", source: "status" };
@@ -796,6 +844,98 @@ export function commandText(cliPath, command, args, platform = "win32") {
 const READ_COMMAND_ORDER = ["status", "doctor", "verify-audit"];
 
 /* ------------------------------------------------------------------ *
+ * Approval signing in the operator's browser (architecture section 23,
+ * 2026-09-26). The key is the operator's; these functions receive it, use
+ * it, and return only a detached signature or a named refusal.
+ * ------------------------------------------------------------------ */
+
+/**
+ * The DER bytes of one unencrypted PKCS#8 PEM block, the shape
+ * `scripts/sign-approval.mjs keygen` writes as `approval.key`.
+ * @param {string} pem
+ * @returns {{ ok: true, der: Uint8Array<ArrayBuffer> } | { ok: false, reason: string }}
+ */
+export function privateKeyDer(pem) {
+  if (/-----BEGIN ENCRYPTED PRIVATE KEY-----/.test(pem)) {
+    return { ok: false, reason: "This key is encrypted, which is not supported. Choose the unencrypted approval.key that keygen wrote." };
+  }
+  if (/-----BEGIN PUBLIC KEY-----/.test(pem)) {
+    return { ok: false, reason: "This is the public key (approval.pub). Choose the private key, approval.key." };
+  }
+  const blocks = [...pem.matchAll(/-----BEGIN PRIVATE KEY-----([A-Za-z0-9+/=\s]+)-----END PRIVATE KEY-----/g)];
+  if (blocks.length !== 1) {
+    return { ok: false, reason: "This file is not a single unencrypted PKCS#8 private key. Choose the approval.key that keygen wrote." };
+  }
+  const binary = globalThis.atob(blocks[0][1].replace(/\s+/g, ""));
+  const der = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) der[index] = binary.charCodeAt(index);
+  return { ok: true, der };
+}
+
+/**
+ * Signs the exact canonical payload bytes with an Ed25519 PKCS#8 key and
+ * returns the detached base64 signature `bw approve` verifies.
+ * @param {string} pem
+ * @param {string} payload
+ * @param {SubtleCrypto | undefined} [subtle]
+ * @returns {Promise<{ ok: true, signature: string } | { ok: false, reason: string }>}
+ */
+export async function signApprovalPayload(pem, payload, subtle = globalThis.crypto?.subtle) {
+  const der = privateKeyDer(pem);
+  if (!der.ok) return der;
+  if (subtle === undefined) {
+    return { ok: false, reason: "This browser offers no Web Crypto signing. Use the terminal commands instead." };
+  }
+  /** @type {CryptoKey} */
+  let key;
+  try {
+    key = await subtle.importKey("pkcs8", der.der, { name: "Ed25519" }, false, ["sign"]);
+  } catch (error) {
+    const name = error instanceof Error ? error.name : "";
+    return { ok: false, reason: name === "NotSupportedError"
+      ? "This browser cannot sign with Ed25519 keys. Use the terminal commands instead."
+      : "This key is not an Ed25519 private key. Choose the approval.key that keygen wrote." };
+  }
+  const signed = new Uint8Array(await subtle.sign({ name: "Ed25519" }, key, new TextEncoder().encode(payload)));
+  let binary = "";
+  for (const byte of signed) binary += String.fromCharCode(byte);
+  return { ok: true, signature: globalThis.btoa(binary) };
+}
+
+/**
+ * The PowerShell workflow for approving from a terminal: export the exact
+ * payload, sign it with the operator's own signer, submit the signature. The
+ * key path is the one value the operator supplies; BuildWorks never knows it.
+ * @param {{ cliPath: string, repositoryPath: string, runId: number, expiresAt: string }} request
+ */
+export function approvalFallbackScript({ cliPath, repositoryPath, runId, expiresAt }) {
+  const signer = /src[\\/]cli\.ts$/.test(cliPath)
+    ? cliPath.replace(/src([\\/])cli\.ts$/, "scripts$1sign-approval.mjs") : null;
+  const quote = (/** @type {string} */ value) => shellQuote(value, "win32");
+  return [
+    `$BwCli   = ${quote(cliPath)}`,
+    signer === null
+      ? "$Signer  = ''  # set to scripts\\sign-approval.mjs in your BuildWorks checkout"
+      : `$Signer  = ${quote(signer)}`,
+    "$Key     = 'C:\\path\\to\\approval.key'  # set to your private key file",
+    `$Target  = ${quote(repositoryPath)}`,
+    `$RunId   = ${runId}`,
+    `$Expires = ${quote(expiresAt)}`,
+    "$Dir     = Join-Path $env:TEMP ('bw-approval-' + (Get-Date -Format 'yyyyMMddHHmmss'))",
+    "New-Item -ItemType Directory -Path $Dir | Out-Null",
+    "$Payload = Join-Path $Dir 'payload.txt'",
+    "$Sig     = Join-Path $Dir 'signature.txt'",
+    "& node $BwCli approval-request --repo $Target --run $RunId --expires $Expires --out $Payload",
+    "if ($LASTEXITCODE -ne 0) { throw 'Payload export failed' }",
+    "Get-Content -Raw $Payload | & node $Signer sign --key $Key | Out-File -Encoding utf8 $Sig",
+    "if ($LASTEXITCODE -ne 0) { throw 'Signing failed' }",
+    "& node $BwCli approve --repo $Target --run $RunId --expires $Expires --signature-file $Sig",
+    "if ($LASTEXITCODE -ne 0) { throw 'Approval was not recorded' }",
+    "'Approved.'",
+  ].join("\n");
+}
+
+/* ------------------------------------------------------------------ *
  * Executive summary
  * ------------------------------------------------------------------ */
 
@@ -947,7 +1087,7 @@ export function runExecutiveSummary(snapshot, options) {
       slug: snapshot.run.slug,
       changeKind: snapshot.run.changeKind,
     },
-    state: statusPresentation(snapshot.run.status, snapshot.phase),
+    state: statusPresentation(snapshot.run.status, snapshot.phase, writerHoldsOpenStage(snapshot), runRest(snapshot)),
     blockingFinding,
     cost,
     tokens,
@@ -1019,7 +1159,7 @@ export function snapshotProjection(snapshot, cliPath, platform = "win32", observ
   }
   return {
     systemName: snapshot.configuration.systemName ?? "Governed Delivery Dashboard",
-    status: statusPresentation(snapshot.run.status, snapshot.phase),
+    status: statusPresentation(snapshot.run.status, snapshot.phase, writerHoldsOpenStage(snapshot), runRest(snapshot)),
     overview: {
       run: snapshot.run,
       phase: snapshot.phase,
@@ -1064,9 +1204,19 @@ function stageName(kind) {
 }
 
 /**
- * One segment per recorded stage, in recorded order. Nothing past the last
- * recorded stage is drawn, so no stage sequence is duplicated from policy.
- * A duration exists only where both a start and an end are recorded.
+ * The workflow's stage order. A copy of `STAGES` in src/operator-state.ts,
+ * which the core checks every recorded run against; the dashboard test pins
+ * the two together.
+ */
+export const WORKFLOW_STAGES = Object.freeze(["spec", "spec_review", "awaiting_approval", "plan", "plan_review",
+  "implementation", "verification", "code_review", "delivery_check"]);
+
+/**
+ * One segment per recorded stage, in recorded order, and `steps`: every
+ * workflow stage in workflow order, each carrying its recorded segment or
+ * `not_reached`. A recorded kind outside the workflow is kept at the end of
+ * `steps` rather than dropped. A duration exists only where both a start and
+ * an end are recorded.
  * @param {RunSnapshot} snapshot
  */
 export function stageLedger(snapshot) {
@@ -1076,7 +1226,7 @@ export function stageLedger(snapshot) {
     /** @type {"passed" | "blocked" | "open" | "other"} */
     const result = stage.gateResult === "block" ? "blocked"
       : stage.status === "passed" && stage.gateResult === "pass" ? "passed"
-        : stage.status === "in_progress" ? "open" : "other";
+        : stageIsOpen(stage) ? "open" : "other";
     return {
       stageId: stage.id,
       kind: stage.kind,
@@ -1090,7 +1240,15 @@ export function stageLedger(snapshot) {
   const status = snapshot.run.status;
   /** @type {"completed" | "in_progress" | "stopped"} */
   const terminal = status === "completed" ? "completed" : status === "in_progress" ? "in_progress" : "stopped";
-  return { segments, terminal };
+  const steps = [
+    ...WORKFLOW_STAGES.map((kind) => {
+      const segment = segments.findLast((entry) => entry.kind === kind) ?? null;
+      return { kind, result: segment === null ? "not_reached" : segment.result, segment };
+    }),
+    ...segments.filter((segment) => !WORKFLOW_STAGES.includes(segment.kind))
+      .map((segment) => ({ kind: segment.kind, result: segment.result, segment })),
+  ];
+  return { segments, steps, terminal };
 }
 
 /**
@@ -1190,17 +1348,30 @@ export function findingStatusCounts(snapshots) {
 }
 
 /**
- * What needs the operator: blocked runs, newest activity first, then findings
- * whose status is blocking or open (blocking first, then the higher recorded
- * severity, then the identifier). Addressed, rejected, non-blocking, and
- * earlier-round findings are settled or superseded and never appear.
+ * What needs the operator: runs paused for their approval (the one action
+ * only the operator can take), blocked runs, both newest activity first, then
+ * findings whose status is blocking or open (blocking first, then the higher
+ * recorded severity, then the identifier). Addressed, rejected, non-blocking,
+ * and earlier-round findings are settled or superseded and never appear.
  * @param {readonly RepositoryView[]} repositories
  */
 export function needsAttentionQueue(repositories) {
+  const approvals = [];
   const runs = [];
   const findings = [];
   for (const repository of repositories) {
     for (const run of repository.runs) {
+      if (run.phase === "awaiting_approval") {
+        approvals.push({
+          kind: /** @type {const} */ ("approval"),
+          id: `approval-${repository.repositoryId}-${run.id}`,
+          repositoryId: repository.repositoryId,
+          runId: run.id,
+          slug: run.slug,
+          project: run.project,
+          lastRecordedAt: run.lastRecordedAt,
+        });
+      }
       const snapshot = repository.snapshots.find((view) => view.runId === run.id)?.snapshot ?? null;
       const statuses = snapshot === null ? new Map() : findingStatuses(snapshot);
       if (run.status === "blocked") {
@@ -1253,6 +1424,7 @@ export function needsAttentionQueue(repositories) {
       }
     }
   }
+  approvals.sort((left, right) => Date.parse(right.lastRecordedAt) - Date.parse(left.lastRecordedAt));
   runs.sort((left, right) => Date.parse(right.lastRecordedAt) - Date.parse(left.lastRecordedAt));
   findings.sort((left, right) =>
     Number(right.status === "blocking") - Number(left.status === "blocking") ||
@@ -1260,7 +1432,7 @@ export function needsAttentionQueue(repositories) {
     left.findingId - right.findingId ||
     left.repositoryId.localeCompare(right.repositoryId) ||
     left.runId - right.runId);
-  return { runs, findings };
+  return { runs, approvals, findings };
 }
 
 /* ------------------------------------------------------------------ *
@@ -1345,10 +1517,12 @@ export function runOutcome(snapshot, statuses) {
   }
   const last = segments.at(-1) ?? null;
   const waiting = snapshot.phase === "awaiting_approval";
+  const rest = runRest(snapshot);
   return {
     ...base,
     tone: waiting ? "warning" : "active",
-    headline: waiting ? "Run awaiting approval" : "Run in progress",
+    headline: waiting ? "Run awaiting approval"
+      : rest === "start" ? "Run ready to start" : rest === "resume" ? "Run ready to resume" : "Run in progress",
     sentence: last === null ? "No stage is recorded yet."
       : `The latest recorded stage is ${stageName(last.kind)} (${last.label.toLowerCase()}).`,
     stageKind: last?.kind ?? null,
@@ -1695,7 +1869,7 @@ export function liveness(snapshot, observedAt, now, intervalMs) {
   if (snapshot.writer.status === "unreadable") return "lock_unreadable";
   const observed = observedAt === null ? Number.NaN : Date.parse(observedAt);
   const fresh = !Number.isNaN(observed) && now - observed < 2 * intervalMs;
-  const open = snapshot.stages.some((stage) => stage.status === "in_progress");
+  const open = snapshot.stages.some(stageIsOpen);
   return open && snapshot.writer.status === "live" && fresh ? "live" : "no_live_writer";
 }
 

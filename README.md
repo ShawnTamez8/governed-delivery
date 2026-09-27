@@ -18,8 +18,9 @@ range, and resume the existing governed stages. Approval remains an external
 signature handoff: BuildWorks exports canonical bytes and imports a detached
 signature but never receives private-key authority. The same CLI retains
 no-spend readiness and inspection, explicit low-level commands, and an
-authorized loopback-only, read-only dashboard over explicitly selected local
-repositories. See the [operator guide](#local-operator-guide).
+authorized loopback-only dashboard over explicitly selected local
+repositories. The dashboard is read-only except for one action: submitting an
+approval that the operator signs in their own browser. See the [operator guide](#local-operator-guide).
 
 Build order steps 1-8 implemented: run store, stage chain, and audit chain
 over SQLite; the concrete harness adapter (`bw dispatch` spawns the `claude`
@@ -359,7 +360,7 @@ identities/models, and unsafe numeric IDs are usage errors. Values accept
 `--name value` or `--name=value`; booleans such as `--yes` and `--json` must
 be bare flags. Help still refuses unknown commands/options.
 
-### Launch the read-only dashboard
+### Launch the dashboard
 
 The dashboard takes one repositories file instead of `--repo`. The file is
 resolved from the original invocation directory and must be UTF-8 JSON with
@@ -418,8 +419,10 @@ The dashboard returns complete snapshots and arrays without a response-size
 ceiling or hidden pagination. It displays projected evidence references and
 availability reasons, but serves no evidence file contents or unrestricted
 filesystem path. Displayed CLI handoffs are copy-only text. The dashboard never
-executes them, opens a writer, migrates or repairs state, collects consent,
-approval, or signatures, listens remotely, or persists dashboard state.
+executes them, migrates or repairs state, collects consent, listens remotely,
+or persists dashboard state. Its one write is approval submission, described
+under [Approving from the dashboard](#approving-from-the-dashboard); the reviewed
+specification of a run waiting for approval is the one file content it serves.
 
 #### What the dashboard presents
 
@@ -492,8 +495,40 @@ never carries meaning alone — every state also has a text label and a non-colo
 icon — and the palette drops out entirely under forced colours. Light and dark
 themes both meet the 4.5:1 text and 3:1 non-text contrast requirements. Content
 Security Policy is `style-src 'self'` with zero inline styles. The dashboard is
-strictly read-only and loopback-only: it executes no commands, creates no mutations,
-and opens no background timers or WebSockets.
+loopback-only and read-only except for approval submission: it executes no
+commands and opens no WebSockets, and its one background timer is the bounded
+auto-refresh above.
+
+#### Approving from the dashboard
+
+When a run pauses at `awaiting_approval`, the run view shows a **Your approval
+is needed** banner, and the Overview lists the run under Needs attention.
+
+**Review spec and approve** opens a side panel with:
+- what you are approving: the feature, risk, signed scope and spec hash;
+- the full reviewed specification, with copy buttons;
+- the public key BuildWorks trusts for this run.
+
+The private key is the `approval.key` file that
+`node scripts\sign-approval.mjs keygen --out <folder>` created beside
+`approval.pub`. Choose it with **Choose key file** and select **Approve**.
+Your browser signs the exact canonical payload and sends only the detached
+signature. The key is never uploaded, stored, or remembered, so you choose it
+again for each approval.
+
+The dashboard records the approval with the same core function, writer lock,
+and audit events as `approve`. If another BuildWorks command holds the
+repository lock, the approval is refused and nothing is written; try again
+when that command finishes.
+
+Keep the key off the user profile BuildWorks verification runs as, for example
+on removable media. Reading it in the browser does not change the containment
+limitation described under [Prepare the checkout and target](#prepare-the-checkout-and-target).
+
+Approval does not continue the run. The panel then shows the `run --yes`
+command to paste into a terminal, which asks for its own execution consent.
+**Copy terminal commands** gives the equivalent PowerShell workflow for
+browsers that cannot sign Ed25519 keys, or when you prefer the terminal.
 
 Use Ctrl+C to close the listener. A handled `SIGINT`, and `SIGTERM` on platforms
 that deliver it to Node, closes the listener once and exits 0. Windows process
@@ -652,8 +687,11 @@ complete existing operator envelope unchanged. A core read refusal such as
 named envelope outcome, code, reason, repository, run ID, and `observedAt`.
 HTTP 400 is limited to invalid request values, 401 to an absent or rejected
 bearer token, 404 to an unknown route/repository identifier or malformed run
-identifier, and 405 to every non-`GET` request. Only 401 expires the browser
-session.
+identifier, and 405 to every non-`GET` request except `POST` on a run's
+`/approval` route. That route also answers 400 when `Origin` is missing or
+foreign, 409 when another writer holds the repository lock, 413 above 8 KiB,
+415 without a JSON body, and 422 when the core refuses the approval. Only 401
+expires the browser session.
 
 The envelope is `{ command, outcome, repository, runId, errorCode, reason,
 observedAt, result }`. `observedAt` is the observation timestamp, not an agent

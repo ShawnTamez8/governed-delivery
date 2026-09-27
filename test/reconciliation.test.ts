@@ -1125,6 +1125,81 @@ test("the recorded multi-artifact coverage line is refused by a message naming t
   );
 });
 
+// --- disposition-dependent required fields ------------------------------------
+
+/**
+ * Two consecutive spec reconciliations from the paid `note-keeper` runs of
+ * 2026-09-26, each discarded whole by one structure refusal. Run 2's upstream
+ * decisions carried a proposal and no `changedLocations`; run 3's carried
+ * `"changedLocations": []` and no proposal. Every addressed decision in both
+ * was well formed. The fix is in the prompt (hazard 3); these replays pin the
+ * other half — the validator stays strict and never defaults either field.
+ */
+interface UpstreamRun {
+  canonicalFindingIds: number[];
+  design: string;
+  envelope: { result: string };
+}
+
+function loadUpstreamRun(name: string): { run: UpstreamRun; decisions: Record<string, unknown>[] } {
+  const run = JSON.parse(
+    readFileSync(new URL(`./fixtures/recorded/${name}`, import.meta.url), "utf8")
+  ) as UpstreamRun;
+  const body = extractJsonBody(run.envelope.result);
+  assert.equal(body.kind, "ok", "the recorded response must yield a JSON body");
+  if (body.kind !== "ok") throw new Error("unreachable");
+  const list = (body.value as { proposedContentChanges?: { decisions?: unknown } }).proposedContentChanges?.decisions;
+  assert.ok(Array.isArray(list), "the recorded response carries a decisions list");
+  return { run, decisions: list as Record<string, unknown>[] };
+}
+
+function replayUpstreamRun(run: UpstreamRun, decisionList: unknown) {
+  // Empty node lists are sufficient: a structure refusal returns before the
+  // normative accounting ever reads them.
+  return validateReconciliation(decisionList, {
+    canonicalFindingIds: run.canonicalFindingIds,
+    governingSource: "design",
+    governingText: run.design,
+    beforeNormativeNodes: [],
+    afterNormativeNodes: [],
+  });
+}
+
+const isUpstream = (d: Record<string, unknown>) =>
+  d.disposition === "upstream_follow_up" || d.disposition === "upstream_blocking";
+
+test("the recorded upstream decisions without changedLocations are refused by name", () => {
+  const { run, decisions: recorded } = loadUpstreamRun(
+    "spec-reconciliation-note-keeper-missing-changed-locations.json"
+  );
+  assert.deepEqual(recorded.map((d) => d.findingId), run.canonicalFindingIds, "one decision per canonical finding");
+  // The shape of the omission: every upstream decision has its proposal and
+  // lacks the field; every other decision has the field.
+  for (const d of recorded) {
+    assert.equal("changedLocations" in d, !isUpstream(d), `finding ${d.findingId}`);
+    if (isUpstream(d)) assert.equal(typeof d.proposal, "object", `finding ${d.findingId} carries its proposal`);
+  }
+  const result = replayUpstreamRun(run, recorded);
+  assert.equal(result.ok, false, "the recorded response must still be refused");
+  if (result.ok) return;
+  assert.equal(result.reason, "reconciliation decision for finding 22 is missing changedLocations");
+});
+
+test("the recorded upstream decisions without a proposal are refused by name", () => {
+  const { run, decisions: recorded } = loadUpstreamRun("spec-reconciliation-note-keeper-missing-proposal.json");
+  assert.deepEqual(recorded.map((d) => d.findingId), run.canonicalFindingIds, "one decision per canonical finding");
+  // The inverse omission: every decision sends changedLocations, and no
+  // upstream decision sends the proposal it requires.
+  for (const d of recorded) {
+    assert.ok(Array.isArray(d.changedLocations), `finding ${d.findingId} sends changedLocations`);
+    if (isUpstream(d)) assert.equal("proposal" in d, false, `finding ${d.findingId} omits its proposal`);
+  }
+  const result = replayUpstreamRun(run, recorded);
+  assert.equal(result.ok, false, "the recorded response must still be refused");
+  if (result.ok) return;
+  assert.equal(result.reason, "finding 31 is upstream_blocking without a proposal candidate");
+});
+
 test("a claim carrying the artifact's list marker matches the derived node", () => {
   // The tolerance, in both directions, on the smallest case that shows it: the
   // author copies the line it is looking at, marker and all.

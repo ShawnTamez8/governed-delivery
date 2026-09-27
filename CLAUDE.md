@@ -18,7 +18,11 @@ The hard rules are constraints, not aspirations:
    later replacement decision and cannot create a second authority. The
    2026-09-13 guided-bootstrap authorization adds one concrete initializer and
    approval handoff inside the same CLI authority; it creates no private key,
-   signer, package artifact, adapter framework, or second lifecycle.
+   signer, package artifact, adapter framework, or second lifecycle. The
+   2026-09-26 dashboard-approval decision permits exactly one dashboard write:
+   submitting an approval signature, signed in the operator's browser, through
+   the same `approveRun` core and writer lock as `bw approve`. Every other
+   mutation remains CLI-only.
 3. One schema per thing. No unions, no version discriminators, no compatibility
    handling. Nothing has shipped.
 4. No abstraction without two real implementations.
@@ -261,9 +265,11 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
   Exact-current schema, frozen age and intact boundaries are required; this
   is not arbitrary resume, implicit migration, or a failed-stage retry.
 - `& node $BwCli dashboard --repositories-file $RepositoriesFile` — the
-  loopback-only, read-only projection. It is the one command that refuses
-  `--repo`; its targets come from that file. It opens no writer, dispatches
-  nothing, listens on no external interface, and persists no state.
+  loopback-only projection, read-only except for approval submission. It is the
+  one command that refuses `--repo`; its targets come from that file. It
+  dispatches nothing, listens on no external interface, and persists no state.
+  Its only writer is the approval `POST` route (`src/dashboard-approval.ts`),
+  which never receives a private key.
 - Existing low-level commands remain: `migrate`, `new-run`, `stage-add`,
   `stage-complete`, `dispatch`, `spec`, `plan`, `implement`, `verify`, `review`,
   `deliver`, `approval-request`, `approve`, `verify-audit`, `proposal-export`.

@@ -14,8 +14,15 @@ import { parseArguments, UsageError } from "../src/cli-args.ts";
 import { openStore } from "../src/store.ts";
 import type { OperatorResult } from "../src/operator-output.ts";
 import { readRunsResult, readStatusResult } from "../src/operator-read.ts";
-import { sha256Hex } from "../src/canonical.ts";
+import { normalizeText, sha256Hex } from "../src/canonical.ts";
 import type { DashboardRepository } from "../src/dashboard-config.ts";
+import { generateKeyPairSync, sign } from "node:crypto";
+import { approvalPayload } from "../src/approval.ts";
+import { approveRun, buildBinding } from "../src/approval-stage.ts";
+import { appendAudit, verifyAuditChain } from "../src/audit.ts";
+import { acquireLock, inspectLock } from "../src/lock.ts";
+import { freezeProfile } from "../src/profile.ts";
+import type { VerificationConfig } from "../src/governed-config.ts";
 
 const CLI = resolve("src", "cli.ts");
 
@@ -66,6 +73,245 @@ function requestStatus(url: string, headers: Record<string, string>): Promise<nu
     outgoing.end();
   });
 }
+
+const APPROVAL_SPEC = `feature: Thing
+change_kind: feature
+
+## Declared artifacts
+
+- src/thing.ts
+- test/thing.test.ts
+
+## Acceptance criteria
+
+- AC-001: It does the thing.
+`;
+
+interface ApprovalFixture {
+  root: string;
+  runId: number;
+  specPath: string;
+  privateKey: string;
+}
+
+/**
+ * A run parked where the approval gate expects it, built the way
+ * `withFixture` in test/approval-stage.test.ts builds one: spec written,
+ * spec and spec_review passed, the spec.gate.pass event the gate reads back,
+ * and a frozen profile. The key is generated and BW_APPROVAL_PUBLIC_KEY set
+ * **before** `freezeProfile`, and the order is load-bearing: the freeze reads
+ * that variable to bind the signer, so setting it afterwards freezes null and
+ * every test would exercise only the unbound path. The caller restores the
+ * variable.
+ */
+function approvalFixture(parent: string, name: string): ApprovalFixture {
+  const root = repository(parent, name);
+  const keyDir = join(parent, `${name}-keys`);
+  mkdirSync(keyDir);
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const pubPath = join(keyDir, "approval.pub");
+  writeFileSync(pubPath, publicKey.export({ format: "pem", type: "spki" }) as string);
+  process.env.BW_APPROVAL_PUBLIC_KEY = pubPath;
+  const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim();
+  const store = openStore(root);
+  try {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const specPath = join(root, "docs", "features", "s", "spec.md");
+    mkdirSync(join(root, "docs", "features", "s"), { recursive: true });
+    writeFileSync(specPath, APPROVAL_SPEC);
+    const spec = store.insertStage(run.id, "spec", null);
+    store.completeStage(spec.id, specPath, "pass");
+    const review = store.insertStage(run.id, "spec_review", spec.id);
+    store.completeStage(review.id, specPath, "pass");
+    appendAudit(store, { runId: run.id, stageId: review.id, actor: "system", actorType: "cli", action: "spec.gate.pass",
+      summary: `spec_review gate passed in round 1; specHash=${sha256Hex(normalizeText(APPROVAL_SPEC))}; risk=low` });
+    const verification: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
+    const frozen = freezeProfile(root, run.id, head, "test-model", verification);
+    store.setProfileRef(run.id, frozen.hash);
+    assert.ok(frozen.profile.approvalSigner, "the fixture must freeze a real fingerprint or this proves nothing");
+    return { root, runId: run.id, specPath, privateKey: privateKey.export({ format: "pem", type: "pkcs8" }) as string };
+  } finally {
+    store.close();
+  }
+}
+
+function auditActions(root: string): string[] {
+  const store = openStore(root, { readOnly: true });
+  try {
+    return store.query<{ action: string }>("SELECT action FROM audit ORDER BY id").map((row) => row.action);
+  } finally {
+    store.close();
+  }
+}
+
+/** The approval row without the columns that differ by construction between two runs. */
+function approvalFacts(root: string, runId: number) {
+  const store = openStore(root, { readOnly: true });
+  try {
+    const approval = store.getApproval(runId);
+    const chain = store.getStageChain(runId).map((stage) => [stage.kind, stage.status, stage.gate_result]);
+    return approval === undefined ? { approval: null, chain }
+      : { approval: { feature_id: approval.feature_id, spec_hash: approval.spec_hash, risk: approval.risk, scope: approval.scope }, chain };
+  } finally {
+    store.close();
+  }
+}
+
+async function withApprovalServer(
+  fn: (context: { parent: string; fixture: ApprovalFixture; url: string; headers: Record<string, string>; origin: string }) => Promise<void>,
+): Promise<void> {
+  const parent = workspace();
+  const before = process.env.BW_APPROVAL_PUBLIC_KEY;
+  try {
+    const fixture = approvalFixture(parent, "target");
+    const file = join(parent, "repositories.json");
+    writeFileSync(file, JSON.stringify({ repositories: [fixture.root] }));
+    const server = await startDashboardServer(loadDashboardRepositories(file, parent), parent, "C:\\BuildWorks\\src\\cli.ts");
+    try {
+      const headers = { Authorization: `Bearer ${bearer(server.bootstrapUrl)}` };
+      const inventory = await (await fetch(`${server.origin}/api/repositories`, { headers })).json() as { repositories: { id: string }[] };
+      const url = `${server.origin}/api/repositories/${inventory.repositories[0]!.id}/runs/${fixture.runId}/approval`;
+      await fn({ parent, fixture, url, headers, origin: server.origin });
+    } finally {
+      await server.close();
+    }
+  } finally {
+    if (before === undefined) delete process.env.BW_APPROVAL_PUBLIC_KEY;
+    else process.env.BW_APPROVAL_PUBLIC_KEY = before;
+    rmSync(parent, { recursive: true, force: true });
+  }
+}
+
+interface ApprovalRequestBody {
+  outcome: string;
+  expiresAt: string;
+  payload: string;
+  specText: string;
+  signer: { frozen: string | null; configured: string | null };
+}
+
+function post(url: string, headers: Record<string, string>, origin: string | null, body: string, contentType = "application/json") {
+  return fetch(url, { method: "POST", body, headers: {
+    ...headers, "Content-Type": contentType, ...(origin === null ? {} : { Origin: origin }),
+  } });
+}
+
+test("the approval route serves the core's own payload and the reviewed spec without writing", async () => {
+  await withApprovalServer(async ({ fixture, url, headers }) => {
+    const before = filesystemInventory(fixture.root);
+    const response = await fetch(url, { headers });
+    assert.deepEqual(filesystemInventory(fixture.root), before, "reading the approval request writes nothing");
+    assert.equal(response.status, 200);
+    const body = await response.json() as ApprovalRequestBody;
+    assert.equal(body.outcome, "ok");
+    const store = openStore(fixture.root, { readOnly: true });
+    try {
+      const bound = buildBinding(store, fixture.root, fixture.runId, body.expiresAt);
+      assert.ok(bound.ok, (bound as { reason?: string }).reason);
+      assert.equal(body.payload, approvalPayload(bound.binding), "the payload is the core's canonical payload");
+    } finally {
+      store.close();
+    }
+    assert.equal(body.specText, readFileSync(fixture.specPath, "utf8"));
+    assert.ok(body.signer.frozen !== null && body.signer.frozen === body.signer.configured);
+  });
+});
+
+test("a browser-signed approval is recorded through the core, identically to bw approve", async () => {
+  await withApprovalServer(async ({ parent, fixture, url, headers, origin }) => {
+    const request = await (await fetch(url, { headers })).json() as ApprovalRequestBody;
+    const signature = sign(null, Buffer.from(request.payload, "utf8"), fixture.privateKey).toString("base64");
+    assert.equal(inspectLock(fixture.root).status, "absent");
+    const response = await post(url, headers, origin, JSON.stringify({ expiresAt: request.expiresAt, signature }));
+    const result = await response.json() as { outcome: string };
+    assert.equal(response.status, 200, JSON.stringify(result));
+    assert.equal(result.outcome, "approved");
+    assert.ok(!JSON.stringify(result).includes(signature), "the response never echoes the signature");
+    // The host released the repository lock it took.
+    assert.equal(inspectLock(fixture.root).status, "absent");
+    acquireLock(fixture.root)();
+
+    const store = openStore(fixture.root, { readOnly: true });
+    try {
+      assert.equal(verifyAuditChain(store), null);
+    } finally {
+      store.close();
+    }
+
+    // Parity: a second run approved the way `bw approve` does it.
+    const direct = approvalFixture(parent, "direct");
+    const writer = openStore(direct.root);
+    try {
+      const bound = buildBinding(writer, direct.root, direct.runId, request.expiresAt);
+      assert.ok(bound.ok, (bound as { reason?: string }).reason);
+      const directSignature = sign(null, Buffer.from(approvalPayload(bound.binding), "utf8"), direct.privateKey).toString("base64");
+      const approved = approveRun(writer, direct.root, { runId: direct.runId, expiresAt: request.expiresAt, signature: directSignature });
+      assert.ok(approved.ok, (approved as { reason?: string }).reason);
+    } finally {
+      writer.close();
+    }
+    assert.deepEqual(auditActions(fixture.root), auditActions(direct.root), "both surfaces record the same audit trail");
+    assert.deepEqual(approvalFacts(fixture.root, fixture.runId), approvalFacts(direct.root, direct.runId));
+    assert.equal(approvalFacts(fixture.root, fixture.runId).chain.at(-1)?.[0], "awaiting_approval");
+  });
+});
+
+test("the core's refusals reach the operator and write only the core's refusal event", async () => {
+  await withApprovalServer(async ({ fixture, url, headers, origin }) => {
+    const request = await (await fetch(url, { headers })).json() as ApprovalRequestBody;
+    const other = generateKeyPairSync("ed25519").privateKey;
+    const wrongKey = sign(null, Buffer.from(request.payload, "utf8"), other).toString("base64");
+    const refused = await post(url, headers, origin, JSON.stringify({ expiresAt: request.expiresAt, signature: wrongKey }));
+    assert.equal(refused.status, 422);
+    assert.match((await refused.json() as { reason: string }).reason, /does not verify/);
+    assert.equal(auditActions(fixture.root).filter((action) => action === "approval.refused").length, 1);
+    assert.equal(approvalFacts(fixture.root, fixture.runId).approval, null);
+
+    // A different expiry changes the payload, so the signature no longer verifies.
+    const signature = sign(null, Buffer.from(request.payload, "utf8"), fixture.privateKey).toString("base64");
+    const moved = new Date(Date.parse(request.expiresAt) - 60_000).toISOString();
+    assert.equal((await post(url, headers, origin, JSON.stringify({ expiresAt: moved, signature }))).status, 422);
+    assert.equal(approvalFacts(fixture.root, fixture.runId).approval, null);
+  });
+});
+
+test("an approval while another writer holds the repository lock writes nothing", async () => {
+  await withApprovalServer(async ({ fixture, url, headers, origin }) => {
+    const request = await (await fetch(url, { headers })).json() as ApprovalRequestBody;
+    const signature = sign(null, Buffer.from(request.payload, "utf8"), fixture.privateKey).toString("base64");
+    const before = auditActions(fixture.root);
+    const release = acquireLock(fixture.root);
+    try {
+      const busy = await post(url, headers, origin, JSON.stringify({ expiresAt: request.expiresAt, signature }));
+      assert.equal(busy.status, 409);
+      assert.equal((await busy.json() as { outcome: string }).outcome, "writer_busy");
+    } finally {
+      release();
+    }
+    assert.deepEqual(auditActions(fixture.root), before, "a refused lock appends no audit event");
+    assert.equal(approvalFacts(fixture.root, fixture.runId).approval, null);
+  });
+});
+
+test("the approval route refuses every transport shape but an authenticated same-origin JSON POST", async () => {
+  await withApprovalServer(async ({ fixture, url, headers, origin }) => {
+    const body = JSON.stringify({ expiresAt: "2026-01-01T00:00:00.000Z", signature: "x" });
+    assert.equal((await post(url, headers, null, body)).status, 400, "no Origin");
+    assert.equal((await post(url, headers, "http://example.invalid", body)).status, 400, "foreign Origin");
+    assert.equal((await post(url, { Authorization: "Bearer wrong-token" }, origin, body)).status, 401);
+    assert.equal((await post(url, headers, origin, body, "text/plain")).status, 415);
+    assert.equal((await post(url, headers, origin, JSON.stringify({ expiresAt: "x", signature: "y".repeat(9000) }))).status, 413);
+    assert.equal((await post(url, headers, origin, JSON.stringify({ signature: 1 }))).status, 400);
+    assert.equal((await post(url, headers, origin, "not json")).status, 400);
+    const put = await fetch(url, { method: "PUT", headers });
+    assert.equal(put.status, 405);
+    assert.equal(put.headers.get("allow"), "GET, POST");
+    const status = await fetch(url.replace(/\/approval$/, ""), { method: "POST", headers: { ...headers, Origin: origin } });
+    assert.equal(status.status, 405, "no other route accepts a write");
+    assert.equal(status.headers.get("allow"), "GET");
+    assert.equal(auditActions(fixture.root).includes("approval.refused"), false, "no transport refusal reaches the core");
+  });
+});
 
 test("dashboard repository files accept one leading BOM and reject every other shape", () => {
   const parent = workspace();

@@ -3,10 +3,15 @@ import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
+import { readApprovalRequest, submitApproval } from "./dashboard-approval.ts";
 import type { DashboardRepository } from "./dashboard-config.ts";
 import { readRunsResult, readStatusResult } from "./operator-read.ts";
 
 const HOST = "127.0.0.1";
+/** The one route that accepts a write (architecture section 23, 2026-09-26). */
+const APPROVAL_ROUTE = /^\/api\/repositories\/([A-Za-z0-9_-]+)\/runs\/(\d+)\/approval$/;
+/** An expiry and a 64-byte signature in base64 fit many times over. */
+const APPROVAL_BODY_MAX_BYTES = 8192;
 const SECURITY_HEADERS = {
   "Cache-Control": "no-store",
   "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
@@ -90,6 +95,46 @@ function transportError(response: ServerResponse, status: number, code: string, 
   json(response, status, { error: code, reason });
 }
 
+/**
+ * Reads a request body up to `limit` bytes. Past the limit it stops keeping
+ * bytes and resolves null at once, so the caller can answer 413 while the
+ * remainder drains unstored.
+ */
+function readBody(request: IncomingMessage, limit: number): Promise<Buffer | null> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let over = false;
+    request.on("data", (chunk: Buffer) => {
+      if (over) return;
+      size += chunk.length;
+      if (size > limit) {
+        over = true;
+        resolve(null);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on("end", () => {
+      if (!over) resolve(Buffer.concat(chunks));
+    });
+    request.on("error", reject);
+  });
+}
+
+/** The submitted body: an object carrying exactly the two strings approval needs. */
+function approvalBody(bytes: Buffer): { expiresAt: string; signature: string } | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const { expiresAt, signature } = value as Record<string, unknown>;
+  return typeof expiresAt === "string" && typeof signature === "string" ? { expiresAt, signature } : null;
+}
+
 export async function startDashboardServer(
   repositories: readonly DashboardRepository[],
   invocationDirectory: string,
@@ -123,12 +168,14 @@ export async function startDashboardServer(
         transportError(response, 400, "invalid_origin", "request Origin does not match the dashboard listener");
         return;
       }
-      if (request.method !== "GET") {
-        response.setHeader("Allow", "GET");
-        transportError(response, 405, "method_not_allowed", "dashboard routes permit only GET");
+      const url = new URL(request.url ?? "/", origin);
+      const approvalMatch = APPROVAL_ROUTE.exec(url.pathname);
+      if (approvalMatch !== null ? request.method !== "GET" && request.method !== "POST" : request.method !== "GET") {
+        response.setHeader("Allow", approvalMatch !== null ? "GET, POST" : "GET");
+        transportError(response, 405, "method_not_allowed", approvalMatch !== null
+          ? "the approval route permits only GET and POST" : "dashboard routes permit only GET");
         return;
       }
-      const url = new URL(request.url ?? "/", origin);
       const asset = assets.get(url.pathname);
       if (asset !== undefined) {
         write(response, 200, asset.contentType, asset.body);
@@ -140,6 +187,51 @@ export async function startDashboardServer(
       }
       if (!authorized(request.headers.authorization, token)) {
         transportError(response, 401, "unauthorized", "a valid dashboard bearer token is required");
+        return;
+      }
+      if (approvalMatch !== null) {
+        const repository = byId.get(approvalMatch[1]);
+        const runId = Number(approvalMatch[2]);
+        if (repository === undefined) {
+          transportError(response, 404, "repository_not_found", "repository identifier is not configured");
+          return;
+        }
+        if (!Number.isSafeInteger(runId)) {
+          transportError(response, 404, "run_not_found", "run identifier is malformed");
+          return;
+        }
+        if (request.method === "GET") {
+          json(response, 200, readApprovalRequest(repository.path, invocationDirectory, runId));
+          return;
+        }
+        // A browser always sends Origin on a fetch POST; its absence means the
+        // request did not come from the dashboard page.
+        if (request.headers.origin !== origin) {
+          transportError(response, 400, "invalid_origin", "an approval must carry the dashboard's Origin");
+          return;
+        }
+        if (!(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+          transportError(response, 415, "unsupported_media_type", "an approval body must be application/json");
+          return;
+        }
+        readBody(request, APPROVAL_BODY_MAX_BYTES).then((bytes) => {
+          if (bytes === null) {
+            response.setHeader("Connection", "close");
+            transportError(response, 413, "payload_too_large", `an approval body is at most ${APPROVAL_BODY_MAX_BYTES} bytes`);
+            return;
+          }
+          const body = approvalBody(bytes);
+          if (body === null) {
+            transportError(response, 400, "invalid_body", "an approval body is a JSON object with string expiresAt and signature");
+            return;
+          }
+          const result = submitApproval(repository.path, invocationDirectory, { runId, ...body });
+          json(response, result.outcome === "approved" ? 200 : result.outcome === "writer_busy" ? 409 : 422, result);
+        }).catch((error: unknown) => {
+          if (!response.headersSent) {
+            transportError(response, 500, "internal_error", error instanceof Error ? error.message : String(error));
+          }
+        });
         return;
       }
       if (url.pathname === "/api/repositories") {

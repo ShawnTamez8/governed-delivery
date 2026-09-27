@@ -807,7 +807,7 @@ th[aria-sort] { color: var(--text); }
 .ledger-end.is-progress { background: transparent; box-shadow: inset 0 0 0 1px var(--active); }
 .ledger-end.is-completed { width: 2px; height: 12px; background: var(--success); }
 
-/* Full ledger atop a run view: one column per recorded stage. */
+/* Full ledger atop a run view: one column per workflow stage. */
 .ledger-full {
   display: grid;
   grid-auto-flow: column;
@@ -817,19 +817,15 @@ th[aria-sort] { color: var(--text); }
   overflow-x: auto;
 }
 .ledger-step { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.ledger-step .bar { height: 4px; border-radius: 1px; background: var(--neutral); }
+.ledger-step .bar { height: 10px; border-radius: 2px; background: var(--neutral); }
 .ledger-step.is-passed .bar { background: var(--success); }
-.ledger-step.is-blocked .bar { background: var(--error); height: 6px; margin-top: -1px; }
+.ledger-step.is-blocked .bar { background: var(--error); }
 .ledger-step.is-open .bar { background: var(--active); }
-.ledger-step.is-stopped .bar {
-  background: repeating-linear-gradient(135deg, var(--hatch) 0 1px, transparent 1px 3px);
-  box-shadow: inset 0 0 0 1px var(--hatch);
-}
-.ledger-step.is-completed .bar { background: transparent; box-shadow: inset 0 0 0 1px var(--success); }
+.ledger-step.is-not_reached .bar { background: transparent; box-shadow: inset 0 0 0 1px var(--border); }
+.ledger-step.is-not_reached .name { color: var(--muted); font-weight: 400; }
 .ledger-step .name { font-size: var(--text-xs); font-weight: 600; overflow-wrap: anywhere; }
 .ledger-step .meta { color: var(--muted); font-family: var(--font-data); font-size: var(--text-2xs); }
 .ledger-step.is-blocked .name, .ledger-step.is-blocked .meta { color: var(--error); }
-.ledger-step.is-stopped .name, .ledger-step.is-completed .name { color: var(--muted); font-weight: 400; }
 
 /* Stage map: where the loaded runs are, in recorded stage order. */
 .stage-map {
@@ -916,15 +912,29 @@ th[aria-sort] { color: var(--text); }
 .run-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
 .run-title { font-size: var(--text-lg); font-weight: 600; }
 .run-title .num { color: var(--muted); font-weight: 400; margin-left: 4px; }
+/* Label over value, one column per fact; label beside value on a phone. */
 .run-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px var(--space-4);
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: var(--text-xs);
+  display: grid;
+  grid-template-rows: auto auto;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  justify-content: start;
+  gap: 2px var(--space-6);
+  margin-top: var(--space-2);
 }
+.run-meta dt {
+  color: var(--muted);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.run-meta dd { margin: 0; font-size: var(--text-sm); }
 .run-meta .mono { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .run-meta { grid-template-rows: none; grid-auto-flow: row; grid-template-columns: max-content minmax(0, 1fr); gap: 4px var(--space-3); }
+  .run-meta dt { align-self: center; }
+}
 
 /* Selected-run KPIs: one ruled strip, scoped by the run header above it. */
 .kpis {
@@ -1207,12 +1217,86 @@ body.modal-open { overflow: hidden; }
 .dialog-foot .btn { margin-left: auto; }
 
 /* ------------------------------------------------------------------ *
+ * Approval handoff: the one action the dashboard records
+ * ------------------------------------------------------------------ */
+
+.btn.is-primary { border-color: var(--primary); background: var(--primary); color: var(--panel); font-weight: 600; }
+.btn.is-primary:hover { background: var(--primary); filter: brightness(1.1); }
+
+/* Waiting on the operator: the warning tone of the shared state scale. Static. */
+.approval-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-4);
+  margin: var(--space-3) var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid currentcolor;
+  border-left-width: 4px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, currentcolor 8%, var(--panel));
+}
+.approval-banner-text { flex: 1 1 18rem; min-width: 0; }
+.approval-banner-text h3 { color: var(--text); font-size: var(--text-base); font-weight: 600; }
+.approval-banner-text p { color: var(--text); font-size: var(--text-sm); }
+.approval-banner-text .approval-banner-expiry { color: var(--muted); font-size: var(--text-xs); }
+.approval-banner-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.approval-banner-actions .copy-control { min-height: 30px; font-size: var(--text-sm); }
+
+/* The approval drawer holds a whole specification to read, so it takes half
+   the window, never narrower than the default drawer. */
+.drawer-panel:has(.approval-drawer) { width: min(100%, max(34rem, 50vw)); }
+.approval-body { display: flex; flex-direction: column; gap: var(--space-4); }
+.approval-section { display: flex; flex-direction: column; gap: 6px; }
+.approval-section p { font-size: var(--text-sm); }
+.approval-path { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.approval-path .mono { font-size: var(--text-xs); overflow-wrap: anywhere; }
+.approval-spec, .approval-script {
+  max-height: 60vh;
+  margin: 0;
+  padding: var(--space-3);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font: var(--text-xs)/1.5 var(--font-data);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.approval-script { max-height: 14rem; }
+.approval-key-field { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.approval-key-field .input { padding: 3px 6px; }
+.approval-status:empty { display: none; }
+.approval-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid currentcolor;
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+.approval-status p { color: var(--text); }
+.approval-status .copy-control { align-self: flex-start; }
+
+/* ------------------------------------------------------------------ *
  * Telemetry-backed motion (see the convention at the top)
  * ------------------------------------------------------------------ */
 
-/* Executing, per fresh telemetry: a slow opacity pulse, never movement. */
+/* Executing, per fresh telemetry: a slow opacity pulse on small marks. The
+   current stage of the full ledger is the one exception that moves: light
+   bands sweep across its whole bar, so the current stage reads as a place in
+   the workflow, not a percentage complete. */
 .is-live .dot, .live-dot { animation: live-pulse 2s ease-in-out infinite; }
-.ledger-seg.is-open.is-live, .ledger-step.is-open.is-live .bar, .map-cell.is-open.is-live { animation: live-pulse 2s ease-in-out infinite; }
+.ledger-seg.is-open.is-live, .map-cell.is-open.is-live { animation: live-pulse 2s ease-in-out infinite; }
+.ledger-step.is-open.is-live .bar {
+  background-color: var(--active);
+  background-image: repeating-linear-gradient(135deg,
+    color-mix(in srgb, var(--panel) 35%, transparent) 0 6px, transparent 6px 12px);
+  background-size: 34px 100%;
+  animation: live-sweep 1s linear infinite;
+}
 .live-tag {
   display: inline-flex;
   align-items: center;
@@ -1245,6 +1329,7 @@ body.modal-open { overflow: hidden; }
 .just-updated { animation: updated 1.6s ease-out 1; }
 
 @keyframes live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+@keyframes live-sweep { to { background-position: 34px 0; } }
 @keyframes turn { to { transform: rotate(360deg); } }
 @keyframes skeleton { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
 @keyframes updated { from { background-color: var(--accent-wash); } to { background-color: transparent; } }
@@ -1521,11 +1606,15 @@ body.modal-open { overflow: hidden; }
     animation: none !important;
     transition: none !important;
   }
+  /* The executing stage must still read as active, or a live run looks hung.
+     A slow fade in place replaces the sweep: no movement across the screen. */
+  .ledger-step.is-open.is-live .bar { animation: live-pulse 2s ease-in-out infinite !important; }
 }
 
 @media (forced-colors: active) {
   .btn, .icon-btn, .copy-control, .input, .region, .section, .card, .badge, .chip,
-  .att-item, .check, .report, .drawer-panel, .status-pill, .live-tag, .outcome {
+  .att-item, .check, .report, .drawer-panel, .status-pill, .live-tag, .outcome,
+  .approval-banner, .approval-status, .approval-spec, .approval-script {
     border-color: CanvasText;
     forced-color-adjust: none;
     background: Canvas;
@@ -1533,7 +1622,8 @@ body.modal-open { overflow: hidden; }
   }
   .badge, .status-pill, .live-tag { border: 1px solid CanvasText; }
   .ledger-seg, .ledger-step .bar, .ledger-end, .map-cell { forced-color-adjust: none; background: CanvasText; box-shadow: none; }
-  .ledger-seg.is-other, .ledger-end.is-stopped, .ledger-step.is-stopped .bar, .map-cell.is-empty { background: Canvas; box-shadow: inset 0 0 0 1px CanvasText; }
+  .ledger-step.is-open.is-live .bar { background: CanvasText; }
+  .ledger-seg.is-other, .ledger-end.is-stopped, .ledger-step.is-not_reached .bar, .map-cell.is-empty { background: Canvas; box-shadow: inset 0 0 0 1px CanvasText; }
   .ledger-seg.is-blocked, .ledger-step.is-blocked .bar, .map-cell.is-blocked { background: Highlight; }
   .kpis, .coverage, .card-pair { background: CanvasText; }
   .tab[aria-selected="true"]::after { background: Highlight; }
