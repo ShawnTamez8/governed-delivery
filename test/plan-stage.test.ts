@@ -146,6 +146,8 @@ function withApprovedRun(
     spec?: string;
     scope?: string[];
     gateSummary?: string | null;
+    /** The spec_review gate's hash; differs from the spec's when answers were folded. */
+    reviewedHash?: string;
     approval?: boolean;
     changeKind?: string;
   } = {}
@@ -169,30 +171,40 @@ function withApprovedRun(
     store.completeStage(specStage.id, specPath, "pass");
     const reviewStage = store.insertStage(run.id, "spec_review", specStage.id);
     store.completeStage(reviewStage.id, specPath, "pass");
+    appendAudit(store, {
+      runId: run.id,
+      stageId: reviewStage.id,
+      actor: "system",
+      actorType: "cli",
+      action: "spec.gate.pass",
+      summary: `spec_review gate passed after 1 round(s); specHash=${opts.reviewedHash ?? sha256Hex(normalizeText(spec))}; risk=low`,
+    });
+    const decisionStage = store.insertStage(run.id, "spec_decision", reviewStage.id);
+    store.completeStage(decisionStage.id, specPath, "pass");
 
     // The audit table is append-only by trigger, so the absent and malformed
     // cases are configured here rather than deleted afterwards.
     if (opts.gateSummary === undefined) {
       appendAudit(store, {
         runId: run.id,
-        stageId: reviewStage.id,
+        stageId: decisionStage.id,
         actor: "system",
         actorType: "cli",
-        action: "spec.gate.pass",
-        summary: `spec_review gate passed after 1 round(s); specHash=${sha256Hex(normalizeText(spec))}; risk=low`,
+        action: "spec_decision.gate.pass",
+        summary: `spec_decision gate passed; specHash=${sha256Hex(normalizeText(spec))}; risk=low; answers=0; folded=0`,
       });
     } else if (opts.gateSummary !== null) {
       appendAudit(store, {
         runId: run.id,
-        stageId: reviewStage.id,
+        stageId: decisionStage.id,
         actor: "system",
         actorType: "cli",
-        action: "spec.gate.pass",
+        action: "spec_decision.gate.pass",
         summary: opts.gateSummary,
       });
     }
 
-    const approvalStage = store.insertStage(run.id, "awaiting_approval", reviewStage.id);
+    const approvalStage = store.insertStage(run.id, "awaiting_approval", decisionStage.id);
     store.completeStage(approvalStage.id, specPath, "pass");
     if (opts.approval !== false) {
       store.insertApproval({
@@ -266,8 +278,8 @@ test("Task 5 low-level plan accepts an otherwise valid aged run and still refuse
     assert.ok(result.ok, result.ok ? "" : result.reason);
     const chain = store.getStageChain(runId);
     assert.deepEqual(chain.map((stage) => stage.kind),
-      ["spec", "spec_review", "awaiting_approval", "plan", "plan_review"]);
-    assert.equal(chain[3].input_stage_id, approvalStageId);
+      ["spec", "spec_review", "spec_decision", "awaiting_approval", "plan", "plan_review"]);
+    assert.equal(chain[4].input_stage_id, approvalStageId);
     assert.ok(chain.every((stage) => stage.status === "passed" && stage.gate_result === "pass"));
     assert.ok(readFileSync(result.planPath, "utf8").includes("REVISED-plan"));
     assert.deepEqual(store.getApproval(runId), approval);
@@ -296,7 +308,7 @@ test("the happy path chains plan and plan_review from the approved stage, and ga
     const chain = store.getStageChain(runId);
     assert.deepEqual(
       chain.map((s) => s.kind),
-      ["spec", "spec_review", "awaiting_approval", "plan", "plan_review"]
+      ["spec", "spec_review", "spec_decision", "awaiting_approval", "plan", "plan_review"]
     );
     const planStage = chain.find((s) => s.kind === "plan")!;
     const reviewStage = chain.find((s) => s.kind === "plan_review")!;
@@ -963,20 +975,33 @@ test("a spec edited after approval is refused by name before any dispatch", asyn
   });
 });
 
-test("a run with no spec.gate.pass event is refused", async () => {
+test("a run with no spec_decision.gate.pass event is refused", async () => {
   await withApprovedRun(
     async ({ store, root, runId }) => {
       const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
       assert.equal(result.ok, false);
       if (result.ok) return;
-      assert.match(result.reason, /has no spec\.gate\.pass audit event/);
+      assert.match(result.reason, /has no spec_decision\.gate\.pass audit event/);
       assert.equal(agentRunCounts(store, runId).author, 0, "nothing was spent");
     },
     { gateSummary: null }
   );
 });
 
-test("a spec.gate.pass event in the old prose shape is refused, not approved past", async () => {
+test("a folded spec binds through the spec_decision gate, not the reviewed spec's hash", async () => {
+  // After a fold, spec.gate.pass names the reviewed spec and only
+  // spec_decision.gate.pass names the spec approval signed. A plan stage
+  // reading the review's event would refuse every folded run.
+  await withApprovedRun(
+    async ({ store, root, runId }) => {
+      const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
+      assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    },
+    { reviewedHash: "a".repeat(64) }
+  );
+});
+
+test("a spec_decision.gate.pass event in the old prose shape is refused, not approved past", async () => {
   await withApprovedRun(
     async ({ store, root, runId }) => {
       const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
@@ -985,7 +1010,7 @@ test("a spec.gate.pass event in the old prose shape is refused, not approved pas
       assert.match(result.reason, /does not record a spec hash and risk/);
       assert.equal(agentRunCounts(store, runId).author, 0, "nothing was spent");
     },
-    { gateSummary: "spec_review gate passed in round 1" }
+    { gateSummary: "spec_decision gate passed" }
   );
 });
 

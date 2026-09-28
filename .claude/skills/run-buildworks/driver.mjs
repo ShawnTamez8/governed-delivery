@@ -217,11 +217,11 @@ function freeSmoke() {
     bw(["new-run", "--project", "s", "--feature", "f", "--slug", "s",
         "--change-kind", "feature", "--model", "bad model name"]));
 
-  // The approval gate reads the spec_review stage's own audit event, so it
+  // The approval gate reads the spec_decision stage's own audit event, so it
   // cannot be reached without a real spec stage. This refusal is where the
   // free path ends.
-  step("approval-request refuses before a passed spec_review",
-    { exit: 1, match: /no passed spec_review stage/ }, () =>
+  step("approval-request refuses before a passed spec_decision",
+    { exit: 1, match: /no passed spec_decision stage/ }, () =>
     bw(["approval-request", "--run", runId, "--expires", expiry()]));
 
   step("verify refuses without a passed implementation",

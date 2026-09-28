@@ -16,6 +16,7 @@ import { runDeliveryStage } from "./delivery-stage.ts";
 import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
 import { approvalPayload, validateExpiry } from "./approval.ts";
 import { approveRun, buildBinding } from "./approval-stage.ts";
+import { answerQuestion } from "./spec-decision-stage.ts";
 import { APPROVAL_DEFAULT_LIFETIME_SECONDS, APPROVAL_MAX_LIFETIME_SECONDS } from "./policy.ts";
 import { inspectReadiness } from "./readiness.ts";
 import { ACTION_REASON_ORDER, readRunSnapshot, RunMissingError, type ActionReason } from "./operator-state.ts";
@@ -508,6 +509,33 @@ async function main(): Promise<void> {
         });
         if (result.ok) {
           console.log(String(result.approvalId));
+        } else {
+          console.error(result.reason);
+          process.exitCode = 1;
+        }
+        break;
+      }
+      case "decide": {
+        // The answer file resolves from the invocation directory, as the
+        // approval transport files do, not from --repo.
+        let answer: string | undefined;
+        if (args.has("answer-file")) {
+          const answerPath = resolve(invocationDirectory, args.get("answer-file")!);
+          try {
+            answer = readFileSync(answerPath, "utf8").replace(/^﻿/, "").trim();
+          } catch (error) {
+            throw new UsageError(`cannot read answer file ${answerPath}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+        const result = answerQuestion(store, {
+          runId: Number(args.get("run")),
+          findingId: Number(args.get("finding")),
+          action: parsed.flags.has("approve") ? "approve" : parsed.flags.has("deny") ? "deny" : "modify",
+          answer,
+        });
+        if (result.ok) {
+          console.log(String(result.answerId));
+          console.error(`${result.open} question(s) still open`);
         } else {
           console.error(result.reason);
           process.exitCode = 1;

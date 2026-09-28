@@ -1353,7 +1353,7 @@ test("static assets keep the approved accessible boundary and omit unauthorized 
   assert.match(css, /:focus-visible/);
   assert.match(css, /prefers-reduced-motion/);
   assert.match(css, /forced-colors/);
-  assert.match(css, /#repository-filter\s*\{[^}]*width:\s*min\(32rem,\s*100%\)/s);
+  assert.match(css, /#repository-filter\s*\{[^}]*width:\s*min\(20rem,\s*100%\)/s);
   assert.match(css, /main\s*>\s*\*\s*\{[^}]*min-width:\s*0/s);
   for (const series of [1, 2, 3, 4, 5, 6, 7, 8]) assert.match(css, new RegExp(`\\.series-${series}\\b`));
 
@@ -1365,14 +1365,14 @@ test("static assets keep the approved accessible boundary and omit unauthorized 
   for (const token of ["--accent", "--surface-raised", "--surface-sunken", "--accent-wash"]) {
     assert.match(css, new RegExp(`var\\(${token}\\)`), `${token} is used, not merely declared`);
   }
-  // One state scale: the finding card takes the same tone classes the badges
-  // and timeline markers take, and the charts keep the separate series scale
-  // because they encode agents and stages rather than state.
-  assert.ok(script.includes("`finding-card tone-${tone}`"),
-    "the finding card carries a tone class from the shared state scale");
-  assert.ok(script.includes("`summary-head tone-${summary.state.tone}`"),
-    "the executive summary head carries a tone class from the shared state scale");
-  assert.match(css, /\.finding-card\s*\{[^}]*border-left:\s*4px solid currentcolor/s);
+  // One state scale: the findings table's status column and the executive
+  // summary head take the same tone badges the timeline markers take, and the
+  // charts keep the separate series scale because they encode agents and
+  // stages rather than state.
+  assert.ok(script.includes('{ label: "Status", cell: (row) => badge(FINDING_STATUS[row.status].label, FINDING_STATUS[row.status].tone) }'),
+    "the findings table's status column is a badge from the shared state scale");
+  assert.ok(script.includes("head.append(title, badge(summary.state.label, summary.state.tone));"),
+    "the executive summary head carries a badge from the shared state scale");
 
   // What the visual observation can be held to mechanically: focus is never
   // suppressed, the indicator rule stays unscoped so it reaches the new
@@ -1392,16 +1392,18 @@ test("static assets keep the approved accessible boundary and omit unauthorized 
   assert.match(script, /function showSessionExpired\([^)]*\)\s*\{[^}]*setAttribute\("aria-busy", "false"\)/s);
 
   // Density restructure. The run view opens on one triage summary with the
-  // findings section still expanded, and every other section is a native
-  // disclosure whose content is built before it is ever opened.
+  // findings and the available commands still expanded, and every other
+  // section is a native disclosure whose content is built before it is ever
+  // opened.
   assert.match(script, /function collapsibleSection\(/);
   assert.match(script, /function renderExecutiveSummary\(/);
   assert.doesNotMatch(script, /function renderSummary\b|function renderLimitations\b/);
-  assert.match(script, /renderExecutiveSummary\(summary, projection, application\),\s*renderFindings\(projection, application\),/);
+  assert.match(script, /renderExecutiveSummary\(summary, projection, application, context\),\s*renderFindings\(projection, application, context\),\s*renderCommands\(projection, application, runId\),/);
+  assert.match(script, /region\("Available commands"/);
   for (const [title, id] of [
-    ["Governed actions", "governance"], ["Cost and tokens", "cost-and-tokens"],
+    ["Cost and tokens", "cost-and-tokens"],
     ["Workflow timeline", "workflow"], ["Activity", "activity"], ["Agent analytics", "agents"],
-    ["Frozen configuration and approval", "configuration"], ["Delivery", "delivery"],
+    ["Configuration and approvals", "configuration"], ["Delivery", "delivery"],
     ["Evidence", "evidence"],
   ] as const) {
     assert.ok(script.includes(`panel("${title}", "${id}")`), `${title} keeps id ${id}`);
@@ -1427,8 +1429,8 @@ test("static assets keep the approved accessible boundary and omit unauthorized 
   for (const call of ["orderFindings(", "forbiddenFieldStatement(", "finalPanelBlockingSummary(", "cardSeverity("]) {
     assert.ok(script.includes(call), call);
   }
-  const findingsStart = script.indexOf("function findingCardNode(");
-  const findingsEnd = script.indexOf("function renderGovernance(");
+  const findingsStart = script.indexOf("function decisionEvidence(");
+  const findingsEnd = script.indexOf("function renderFindings(");
   assert.ok(findingsStart > 0 && findingsEnd > findingsStart, "the finding renderers bound a region to assert against");
   const findingsBody = script.slice(findingsStart, findingsEnd);
   // Both forbidden branches must be inside the finding renderers and must be
@@ -1455,13 +1457,9 @@ test("static assets keep the approved accessible boundary and omit unauthorized 
     assert.ok(!zeroBranch.includes(forbidden),
       `the zero-run branch renders no ${forbidden}: ${zeroBranch}`);
   }
-  // The repeated per-card trend label became one statement for the region.
-  assert.doesNotMatch(script, /const trend = element\("p", null, "kpi-trend"\)/);
-  const kpiStart = script.indexOf("function kpiCard(");
-  const kpiEnd = script.indexOf("function renderRepository(");
-  assert.ok(kpiStart > 0 && kpiEnd > kpiStart, "the portfolio renderers bound a region to assert against");
-  const kpiBody = script.slice(kpiStart, kpiEnd);
-  assert.equal((kpiBody.match(/TREND_UNAVAILABLE_LABEL/g) ?? []).length, 1);
+  // No card repeats a per-card trend label; the status cards carry no trend.
+  assert.doesNotMatch(script, /kpi-trend/);
+  assert.ok((script.match(/TREND_UNAVAILABLE_LABEL/g) ?? []).length <= 1, "a trend statement is never repeated per card");
 
   // The next action's own command is projected under the kind "workflow". An
   // execution group is never a command kind, so matching on action.group would
@@ -1476,15 +1474,15 @@ test("static assets keep the approved accessible boundary and omit unauthorized 
   assert.match(script, /stamps\.others\.map\(/);
   assert.match(script, /stamps\.latest !== null/);
   // Every collapsed section states a count; none is left unstated.
-  const appendStart = script.indexOf("renderExecutiveSummary(summary, projection, application),");
+  const appendStart = script.indexOf("renderExecutiveSummary(summary, projection, application, context),");
   assert.ok(appendStart > 0, "the run view appends its sections in one place");
-  const appendBody = script.slice(appendStart, script.indexOf("aria-busy", appendStart));
-  assert.equal((appendBody.match(/collapsibleSection\(/g) ?? []).length, 8);
+  const appendBody = script.slice(appendStart, script.indexOf("return container;", appendStart));
+  assert.equal((appendBody.match(/collapsibleSection\(/g) ?? []).length, 7);
   assert.ok(!appendBody.includes("collapsibleSection(null,"),
     `every collapsed section states its count: ${appendBody}`);
 });
 
-test("the dashboard's only write is approval submission", () => {
+test("the dashboard's only writes are approval submission and decision answers", () => {
   const script = readFileSync(resolve("src", "dashboard", "app.js"), "utf8").replace(/\r\n/g, "\n");
   const model = readFileSync(resolve("src", "dashboard", "dashboard-model.js"), "utf8").replace(/\r\n/g, "\n");
 
@@ -1503,10 +1501,14 @@ test("the dashboard's only write is approval submission", () => {
     return script.slice(start, script.indexOf("\n}\n", start));
   };
   const post = functionBody("postApproval");
-  assert.equal((script.match(/\bmethod\s*:/g) ?? []).length, 1, "exactly one request method in the dashboard script");
+  const decision = functionBody("postDecision");
+  // The second write (2026-09-27): one operator answer, named only by action and text.
+  assert.equal((script.match(/\bmethod\s*:/g) ?? []).length, 2, "exactly two request methods in the dashboard script");
   assert.match(post, /method: "POST"/);
-  assert.equal((script.match(/JSON\.stringify/g) ?? []).length, 1, "exactly one serialization in the dashboard script");
+  assert.match(decision, /method: "POST"/);
+  assert.equal((script.match(/JSON\.stringify/g) ?? []).length, 2, "exactly two serializations in the dashboard script");
   assert.match(post, /body: JSON\.stringify\(\{ expiresAt: body\.expiresAt, signature: body\.signature \}\)/);
+  assert.match(decision, /body: JSON\.stringify\(body\.action === "modify" \? \{ action: body\.action, answer: body\.answer \} : \{ action: body\.action \}\)/);
   // The key is used only where the operator chose it, and nothing in the
   // approval handoff persists anything in the browser.
   assert.equal((script.match(/signApprovalPayload\(/g) ?? []).length, 1);
@@ -1566,86 +1568,156 @@ test("slide-over drawer and popover controllers maintain accessibility and stati
   assert.ok(!script.includes(".style."), "no element.style mutations");
 });
 
-test("overview canvas renders portfolio banner, horizontal kpi strip, needs attention, and delivery pipeline", () => {
-  const script = readFileSync(resolve("src", "dashboard", "app.js"), "utf8").replace(/\r\n/g, "\n");
-  assert.match(script, /export function renderPortfolioBanner\(/);
-  assert.match(script, /export function renderCommandCenterKpis\(/);
-  assert.match(script, /export function renderNeedsAttention\(/);
-  assert.match(script, /export function renderDeliveryPipeline\(/);
-  assert.match(script, /export function renderOverviewTab\(/);
+/** The dashboard script with LF line endings, so source assertions hold on a CRLF checkout. */
+function dashboardScript(): string {
+  return readFileSync(resolve("src", "dashboard", "app.js"), "utf8").replace(/\r\n/g, "\n");
+}
 
-  // Check 12-column grid and analytical row assembly
-  assert.match(script, /analytical-row primary-row grid-12/);
-  assert.match(script, /needsAttentionEl\.classList\.add\("col-7"\)/);
-  assert.match(script, /pipelineEl\.classList\.add\("col-5"\)/);
+/** One top-level function's source, from its declaration to its closing brace at column zero. */
+function functionSource(script: string, name: string): string {
+  const start = script.indexOf(`function ${name}(`);
+  assert.ok(start >= 0, `${name} exists`);
+  const end = script.indexOf("\n}\n", start);
+  assert.ok(end > start, `${name} closes`);
+  return script.slice(start, end);
+}
 
-  // Check CSS styles for overview components
-  const css = readFileSync(resolve("src", "dashboard", "styles.css"), "utf8");
-  assert.match(css, /\.portfolio-banner/);
-  assert.match(css, /\.kpi-strip/);
-  assert.match(css, /\.kpi-card/);
-  assert.match(css, /\.needs-attention-panel/);
-  assert.match(css, /\.delivery-pipeline-panel/);
-  assert.match(css, /\.pipeline-stepper/);
-  assert.match(css, /\.stepper-step/);
-  assert.match(css, /\.grid-12/);
+test("the Overview composes its five regions in order, and every rendered ledger comes from stageLedger", () => {
+  const script = dashboardScript();
+  const overview = functionSource(script, "renderOverviewTab");
+  const order = ["renderStatusCards(", "renderStageMap(", "renderAttentionQueue(", "renderRunTable(", "renderCoverage("]
+    .map((call) => {
+      const at = overview.indexOf(call);
+      assert.ok(at > 0, `renderOverviewTab calls ${call}`);
+      return at;
+    });
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), "the Overview regions appear in their designed order");
+
+  // The ledger markup is built in exactly one place, from stageLedger. (The
+  // loading skeleton's "skeleton ledger-skeleton" class draws no stage.)
+  const ledgerNode = functionSource(script, "stageLedgerNode");
+  assert.match(ledgerNode, /const ledger = stageLedger\(snapshot\);/);
+  const ledgerStart = script.indexOf("function stageLedgerNode(");
+  const ledgerEnd = ledgerStart + ledgerNode.length;
+  const ledgerMarkup = [...script.matchAll(/["`]ledger[-"` ]/g)];
+  assert.ok(ledgerMarkup.length >= 5, "the ledger's own class names are found, so the scan can fail");
+  for (const match of ledgerMarkup) {
+    assert.ok(match.index >= ledgerStart && match.index < ledgerEnd, `ledger markup outside stageLedgerNode at offset ${match.index}`);
+  }
+  assert.match(functionSource(script, "renderStageMap"), /const map = stageMap\(snapshots\);/);
 });
 
-test("overview canvas secondary row, lower analytics, and governed deliveries table assemble correctly", () => {
-  const script = readFileSync(resolve("src", "dashboard", "app.js"), "utf8").replace(/\r\n/g, "\n");
-  assert.match(script, /export function renderGovernanceHealth\(/);
-  assert.match(script, /export function renderModelAssignments\(/);
-  assert.match(script, /export function renderLowerAnalytics\(/);
-  assert.match(script, /export function renderGovernedDeliveriesTable\(/);
+test("scope headers name repositories by project and path, never by identifier, and claim no verified audit", () => {
+  const script = dashboardScript();
+  const heads = [...script.matchAll(/viewHead\(([^,]+),/g)].map((match) => match[1]!);
+  assert.equal(heads.length, 7, "six views and the viewHead declaration");
+  for (const head of heads.filter((value) => value !== "title")) {
+    assert.match(head, /^"[^"$`]+"$/, `a view heading is a plain title, not an interpolation: ${head}`);
+  }
+  assert.doesNotMatch(functionSource(script, "scopeLabel"), /\$\{[^}]*(repositoryId|repositoryFilter|RepoId)/);
+  assert.match(functionSource(script, "runPicker"),
+    /label: `\$\{entry\.run\.slug\} #\$\{entry\.run\.id\} · \$\{pathTail\(entry\.path\)\}`/);
 
-  // Secondary row and lower row assembly
-  assert.match(script, /analytical-row secondary-row grid-12/);
-  assert.match(script, /govHealthEl\.classList\.add\("col-6"\)/);
-  assert.match(script, /modelEl\.classList\.add\("col-6"\)/);
-  assert.match(script, /renderLowerAnalytics\(portfolio, snapshots, application\)/);
-  assert.match(script, /renderGovernedDeliveriesTable\(views, application\)/);
-
-  // Check CSS styles for Task 5 components
-  const css = readFileSync(resolve("src", "dashboard", "styles.css"), "utf8");
-  assert.match(css, /\.health-row/);
-  assert.match(css, /\.health-findings-block/);
-  assert.match(css, /\.severity-counts-group/);
-  assert.match(css, /\.deliveries-table/);
-  assert.match(css, /\.deliveries-count-badge/);
-  assert.match(css, /\.delivery-repo-name/);
-  assert.match(css, /\.findings-badge-highlight/);
+  // The dashboard reads the record; only verify-audit recomputes the chain.
+  assert.doesNotMatch(script, /\bVerified\b/);
+  const html = readFileSync(resolve("src", "dashboard", "index.html"), "utf8");
+  assert.doesNotMatch(html, /aria-orientation="vertical"/);
+  assert.doesNotMatch(script, /aria-orientation/);
 });
 
-test("dedicated tab views dispatch correctly and render domain models", () => {
-  const script = readFileSync(resolve("src", "dashboard", "app.js"), "utf8").replace(/\r\n/g, "\n");
-  assert.match(script, /export function renderRunsTab\(/);
-  assert.match(script, /export function renderFindingsTab\(/);
-  assert.match(script, /export function renderGovernanceTab\(/);
-  assert.match(script, /export function renderModelsTab\(/);
-  assert.match(script, /export function renderAuditTab\(/);
-
-  // Tab branching in render(application)
-  assert.match(script, /if \(application\.currentTab === "overview"\)/);
-  assert.match(script, /else if \(application\.currentTab === "runs"\)/);
-  assert.match(script, /else if \(application\.currentTab === "findings"\)/);
-  assert.match(script, /else if \(application\.currentTab === "governance"\)/);
-  assert.match(script, /else if \(application\.currentTab === "models"\)/);
-  assert.match(script, /else if \(application\.currentTab === "audit"\)/);
-
-  // Check CSS styles for tab components
-  const css = readFileSync(resolve("src", "dashboard", "styles.css"), "utf8");
-  assert.match(css, /\.tab-scope-header/);
-  assert.match(css, /\.findings-filter-bar/);
-  assert.match(css, /\.findings-tab-list/);
-  assert.match(css, /\.finding-scope-tag/);
-  assert.match(css, /\.finding-card-actions/);
+test("shortcuts reach the Overview and the help dialog, and the Findings count is red only when attention is required", () => {
+  assert.equal(shortcutDestination("g", "o"), "overview");
+  assert.equal(shortcutDestination("?", null), "shortcuts");
+  const script = dashboardScript();
+  assert.match(functionSource(script, "renderChrome"),
+    /attention\.classList\.toggle\("tone-danger", data\.counts\.requireAttention > 0\);/);
 });
 
-test("repository selection scopes overview metrics, runs, and tab views", () => {
-  const script = readFileSync(resolve("src", "dashboard", "app.js"), "utf8").replace(/\r\n/g, "\n");
-  assert.match(script, /const filterRepoId = application\.selectedRepositoryId \|\| application\.repositoryFilter \|\| "";/);
-  assert.match(script, /if \(filterRepoId !== "" &&\s*repositoryState\.repository\.id !== filterRepoId\) continue;/);
-  assert.match(script, /if \(targetRepoId !== null && repoState\.repository\.id !== targetRepoId\) continue;/);
+test("Findings rows take status from findingStatus and severity from cardSeverity, never from a report", () => {
+  const script = dashboardScript();
+  const rows = functionSource(script, "snapshotFindingRows");
+  // findingStatuses carries each question's recorded answer, so the Findings
+  // tab and the run view agree on an answered question's status.
+  assert.match(rows, /const statuses = findingStatuses\(snapshot\);/);
+  assert.match(rows, /status: statuses\.get\(finding\.id\) \?\? findingStatus\(card, stageKind\)/);
+  assert.match(rows, /severity: cardSeverity\(card, severities\)/);
+  const tab = functionSource(script, "renderFindingsTab");
+  assert.match(tab, /snapshotFindingRows\(entry\.repositoryId, entry\.path, entry\.snapshot\)/);
+  assert.match(tab, /row\.status === statusFilter/);
+  assert.match(tab, /const severity = row\.severity\.available \? row\.severity\.severity \?\? "unranked" : "unranked";/);
+  for (const source of [rows, tab]) assert.doesNotMatch(source, /reports\[0\]|\.reports\./);
+});
+
+test("Overview, Runs, and Findings read one scope: the header's repository selection", () => {
+  const script = dashboardScript();
+  // scopeViews narrows by the header's value only; a selected run from
+  // another repository returns the scope to all repositories instead.
+  assert.match(functionSource(script, "scopeViews"),
+    /return repositoryViews\(\{ repositories: application\.repositories, repositoryFilter: application\.repositoryFilter \}\);/);
+  assert.match(functionSource(script, "scopeData"), /const views = scopeViews\(application\);/);
+  for (const name of ["renderOverviewTab", "renderRunsTab", "renderFindingsTab"]) {
+    assert.match(functionSource(script, name), /const data = scopeData\(application\);/, `${name} reads the scope`);
+  }
+  for (const name of ["renderOverviewTab", "renderFindingsTab"]) {
+    assert.doesNotMatch(functionSource(script, name), /application\.repositories\b/, `${name} never reads repositories directly`);
+  }
+  // Runs lists repository notices, and skips every repository outside the scope.
+  const runs = functionSource(script, "renderRunsTab");
+  assert.equal((runs.match(/application\.repositories\b/g) ?? []).length, 1);
+  assert.match(runs, /if \(application\.repositoryFilter !== "" && repositoryState\.repository\.id !== application\.repositoryFilter\) continue;/);
+});
+
+test("a selected repository scopes finding counts, the stage map, and the attention queue to its own runs", () => {
+  const blockedParent = workspace();
+  const partialParent = workspace();
+  try {
+    // Two real stores. One holds a blocked run with blocking and open findings,
+    // the other a partial run whose only finding is addressed, so a scope that
+    // leaked the other repository would change every count below.
+    const blockedRoot = repository(blockedParent);
+    const { snapshot: decided } = seedDecidedRun(blockedRoot, blockedParent, "scoped-blocked");
+    const partialRoot = repository(partialParent);
+    const partial = seedPartialRun(partialRoot, partialParent, "scoped-partial");
+    const state = (id: string, root: string, parent: string, runId: number) => ({
+      repository: { id, path: root },
+      runs: applyRefresh(emptyResourceState(), { status: 200, envelope: readRunsResult(root, parent, 20) }).resource,
+      runsRequestId: 1,
+      snapshots: new Map([[runId, {
+        resource: applyRefresh(emptyResourceState(runId), { status: 200, envelope: readStatusResult(root, parent, runId) }, runId).resource,
+        requestId: 1, loading: false,
+      }]]),
+    });
+    const repositories = new Map([
+      ["repo-blocked", state("repo-blocked", blockedRoot, blockedParent, decided.run.id)],
+      ["repo-partial", state("repo-partial", partialRoot, partialParent, partial.run.id)],
+    ]);
+    const snapshotsOf = (views: ReturnType<typeof repositoryViews>) =>
+      views.flatMap((view) => view.snapshots.flatMap((slot) => slot.snapshot === null ? [] : [slot.snapshot]));
+    const blockedSnapshot = readSnapshot(blockedRoot, blockedParent, decided.run.id);
+    const partialSnapshot = readSnapshot(partialRoot, partialParent, partial.run.id);
+
+    const all = repositoryViews({ repositories, repositoryFilter: "" });
+    const onlyPartial = repositoryViews({ repositories, repositoryFilter: "repo-partial" });
+    const onlyBlocked = repositoryViews({ repositories, repositoryFilter: "repo-blocked" });
+    assert.deepEqual(onlyPartial.map((view) => view.repositoryId), ["repo-partial"]);
+
+    assert.deepEqual(findingStatusCounts(snapshotsOf(onlyPartial)), findingStatusCounts([partialSnapshot]));
+    assert.deepEqual(findingStatusCounts(snapshotsOf(onlyBlocked)), findingStatusCounts([blockedSnapshot]));
+    assert.notDeepEqual(findingStatusCounts(snapshotsOf(all)), findingStatusCounts(snapshotsOf(onlyPartial)),
+      "the unscoped count includes the other repository, so the scoped equality is not a coincidence");
+
+    assert.deepEqual(stageMap(snapshotsOf(onlyPartial)), stageMap([partialSnapshot]));
+    assert.equal(stageMap(snapshotsOf(all)).rows.length, 2);
+
+    const partialQueue = needsAttentionQueue(onlyPartial);
+    assert.deepEqual(partialQueue, { runs: [], approvals: [], findings: [] });
+    const blockedQueue = needsAttentionQueue(onlyBlocked);
+    assert.ok(blockedQueue.runs.length > 0 && blockedQueue.findings.length > 0);
+    for (const item of [...blockedQueue.runs, ...blockedQueue.findings]) assert.equal(item.repositoryId, "repo-blocked");
+  } finally {
+    rmSync(blockedParent, { recursive: true, force: true });
+    rmSync(partialParent, { recursive: true, force: true });
+  }
 });
 
 /** One loaded run as the repository view the dashboard assembles from the read routes. */
@@ -1777,12 +1849,12 @@ test("stage ledger and stage map follow recorded stages in recorded order", () =
     assert.deepEqual(WORKFLOW_STAGES, JSON.parse(core[1]!), "the dashboard's stage order is the core's own");
     const unreached = (count: number) => Array<string>(count).fill("not_reached");
     assert.deepEqual(ledgers.map((l) => l.steps.map((s) => s.result)), [
-      ["passed", "not_reached", "not_reached", "open", ...unreached(5)],
-      ["passed", "blocked", ...unreached(7)],
-      ["passed", ...unreached(8)],
+      ["passed", "not_reached", "not_reached", "not_reached", "open", ...unreached(5)],
+      ["passed", "blocked", ...unreached(8)],
+      ["passed", ...unreached(9)],
     ]);
     assert.deepEqual(ledgers[0]!.steps.map((s) => s.kind), [...WORKFLOW_STAGES]);
-    assert.equal(ledgers[0]!.steps[3]!.segment?.stageId, partial.stages[1]!.id, "a reached step carries its recorded segment");
+    assert.equal(ledgers[0]!.steps[4]!.segment?.stageId, partial.stages[1]!.id, "a reached step carries its recorded segment");
     const timed = snapshots[1]!.stages[0]!;
     assert.ok(timed.startEvidence.at !== null && timed.endedAt !== null);
     assert.equal(ledgers[1]!.segments[0]!.durationMs, Date.parse(timed.endedAt) - Date.parse(timed.startEvidence.at));
@@ -1854,6 +1926,8 @@ test("a run paused at approval leads the attention queue as an approval entry", 
     store.completeStage(spec.id, "spec.md", "pass");
     const review = store.insertStage(runId, "spec_review", spec.id);
     store.completeStage(review.id, "spec.md", "pass");
+    const decision = store.insertStage(runId, "spec_decision", review.id);
+    store.completeStage(decision.id, "spec.md", "pass");
     store.close();
     const snapshot = readSnapshot(root, parent, runId);
     assert.equal(snapshot.phase, "awaiting_approval", "the core derives the pause; the test does not assert it into being");
@@ -1876,7 +1950,7 @@ test("a run resting at a boundary reads ready to start or resume, and a live wri
     const approvedId = newRun(root, parent, "approved");
     const store = openStore(root);
     let input: number | null = null;
-    for (const kind of ["spec", "spec_review", "awaiting_approval"]) {
+    for (const kind of ["spec", "spec_review", "spec_decision", "awaiting_approval"]) {
       const stage = store.insertStage(approvedId, kind, input);
       store.completeStage(stage.id, "spec.md", "pass");
       input = stage.id;
@@ -2218,6 +2292,86 @@ test("auto-refresh plan re-fetches only changed, in-progress, stale, or absent s
   } finally {
     rmSync(parent, { recursive: true, force: true });
   }
+});
+
+test("a run paused for operator decisions projects its questions and reads awaiting decision", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const runId = newRun(root, parent, "deciding");
+    const store = openStore(root);
+    const spec = store.insertStage(runId, "spec", null);
+    store.completeStage(spec.id, "spec.md", "pass");
+    const review = store.insertStage(runId, "spec_review", spec.id);
+    store.completeStage(review.id, "spec.md", "pass");
+    const reconciler = store.insertAgentRun({
+      stageId: review.id, agent: "spec-author", role: "author", executor: "claude_code",
+      requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+      tokensIn: 10, tokensOut: 5, cacheRead: 1, cacheWrite: 1, cost: 0.1,
+      durationMs: 100, inputHash: "in", outputHash: "out", rawOutputRef: "raw/a.json",
+      independence: "configured_standalone",
+    });
+    const findings: number[] = [];
+    // Every question rides on a blocking decision, as the spec_review gate records it.
+    const questions = ["retention", "access", "sharing"].map((intent) => {
+      const finding = store.upsertCanonicalFinding(review.id, 1, intent, `upstream:design:${intent}`).id;
+      findings.push(finding);
+      store.insertFindingDecision({
+        findingId: finding, agentRunId: reconciler.id, disposition: "cannot_determine", rationale: "ask the operator",
+        changedLocations: [], grounding: null, normativeChanges: null,
+        artifactHashBefore: "a".repeat(64), artifactHashAfter: "a".repeat(64),
+      });
+      return store.insertDecisionQuestion({
+        findingId: finding,
+        text: `Decide ${intent}?`,
+        options: [{ label: "A", answer: `${intent} answer A` }, { label: "B", answer: `${intent} answer B` }],
+        recommended: 1, why: "the design is silent",
+      });
+    });
+    store.insertDecisionAnswer({ questionId: questions[0]!.id, action: "approve", answer: "retention answer B" });
+    store.insertDecisionAnswer({ questionId: questions[2]!.id, action: "deny", answer: "" });
+    store.close();
+    const snapshot = readSnapshot(root, parent, runId);
+    // The core, not this test, derives the pause and the recorded answer.
+    assert.equal(snapshot.phase, "awaiting_decision");
+    assert.deepEqual(snapshot.questions.map((q) => [q.text, q.answer?.action ?? null, q.answer?.text ?? null]),
+      [["Decide retention?", "approve", "retention answer B"], ["Decide access?", null, null], ["Decide sharing?", "deny", ""]]);
+    // An answer settles its finding; only the unanswered question still holds the run.
+    const statuses = findingStatuses(snapshot);
+    assert.deepEqual(findings.map((id) => statuses.get(id)), ["addressed", "blocking", "non_blocking"]);
+    assert.deepEqual(snapshotProjection(snapshot, "C:\\cli.ts").questions, snapshot.questions);
+    assert.deepEqual(statusPresentation(snapshot.run.status, snapshot.phase),
+      { label: "AWAITING DECISION", tone: "warning", source: "phase" });
+    assert.equal(runOutcome(snapshot, findingStatuses(snapshot)).headline, "Run awaiting operator decisions");
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("the question card shows the options, the recommendation, and the reason, and hides controls once answered", () => {
+  const script = dashboardScript();
+  assert.ok(functionSource(script, "renderExecutiveSummary")
+    .includes("if (context.snapshot.questions.length > 0) section.append(decisionQuestions(application, context));"));
+  const card = functionSource(script, "questionCard");
+  assert.match(card, /question\.options\.forEach\(\(option, index\) =>/);
+  assert.match(card, /if \(index === question\.recommended\) item\.append\(" ", badge\("Recommended", "success"\)\);/);
+  assert.match(card, /element\("p", question\.why, "question-why"\)/);
+  // An answered question returns before any answer control is built.
+  const answered = card.indexOf("if (question.answer !== null) {");
+  const controls = card.indexOf('const approve = button("Approve"');
+  assert.ok(answered > 0 && controls > answered);
+  assert.match(card.slice(answered, controls), /return card;/);
+  // An ineligible boundary also returns before any control, with its reason.
+  const ineligible = card.indexOf("if (!action.eligible) {");
+  assert.ok(ineligible > answered && controls > ineligible);
+  assert.match(card.slice(ineligible, controls), /action\.reasons\[0\]\?\.reason[^]*return card;/);
+  for (const action of ["approve", "deny", "modify"]) {
+    assert.match(card, new RegExp(`button\\("[A-Z][a-z]+", "${action}"`), `${action} control`);
+  }
+  // Modify opens a text area; nothing is recorded until Record answer is pressed.
+  assert.match(card, /modify\.addEventListener\("click", \(\) => \{\s*field\.hidden = false;/);
+  assert.match(card, /submit\.addEventListener\("click"[^]*record\("modify", area\.value\)/);
+  assert.match(card, /await postDecision\(/);
 });
 
 

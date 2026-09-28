@@ -129,6 +129,46 @@ export interface ProposalRow {
   created_at: string;
 }
 
+/**
+ * A question a spec_review decision asks the operator (section 12,
+ * `spec_decision`). It carries no stage of its own: `finding.stage_id` is the
+ * one authority for which stage owns it, and every read joins through the
+ * finding. `options` is JSON, matching `approval.scope`'s convention for an
+ * array column nothing queries into.
+ */
+export interface DecisionQuestionRow {
+  id: number;
+  finding_id: number;
+  text: string;
+  options: string;
+  recommended: number;
+  why: string;
+  created_at: string;
+}
+
+/** The operator's one immutable answer to a question. */
+export interface DecisionAnswerRow {
+  id: number;
+  question_id: number;
+  action: string;
+  answer: string;
+  created_at: string;
+}
+
+export interface DecisionQuestionInput {
+  findingId: number;
+  text: string;
+  options: { label: string; answer: string }[];
+  recommended: number;
+  why: string;
+}
+
+export interface DecisionAnswerInput {
+  questionId: number;
+  action: string;
+  answer: string;
+}
+
 export interface ApprovalRow {
   id: number;
   run_id: number;
@@ -226,6 +266,8 @@ export const GATE_RESULTS: readonly string[] = ["pass", "block"];
 export const ROLES: readonly string[] = ["author", "reviewer"];
 export const INDEPENDENCE: readonly string[] = ["unverified_self_attestation", "configured_standalone"];
 const RUN_STATUSES: readonly string[] = ["in_progress", "blocked", "completed"];
+/** The operator's three answers to a question; the migration CHECK matches. */
+export const DECISION_ACTIONS: readonly string[] = ["approve", "deny", "modify"];
 // Single source: finding.ts and reconciliation.ts own their vocabularies; the
 // store imports them so validation and the migration CHECK cannot drift apart.
 import { SEVERITIES as FINDING_SEVERITIES } from "./finding.ts";
@@ -787,6 +829,69 @@ export class Store {
   /** Every proposal raised out of this stage, oldest first. */
   getProposalsForStage(stageId: number): ProposalRow[] {
     return this.query<ProposalRow>("SELECT * FROM proposal WHERE stage_id = ? ORDER BY id", [stageId]);
+  }
+
+  /**
+   * One question per finding, ever (`UNIQUE (finding_id)`). The finding's
+   * stage is the question's stage; nothing here stores a second one.
+   */
+  insertDecisionQuestion(input: DecisionQuestionInput): DecisionQuestionRow {
+    const result = this.#withRetry(() =>
+      this.#db
+        .prepare(
+          `INSERT INTO decision_question (finding_id, text, options, recommended, why, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          input.findingId,
+          input.text,
+          JSON.stringify(input.options),
+          input.recommended,
+          input.why,
+          new Date().toISOString()
+        )
+    );
+    return this.query<DecisionQuestionRow>("SELECT * FROM decision_question WHERE id = ?", [
+      Number(result.lastInsertRowid),
+    ])[0]!;
+  }
+
+  /** Every question whose finding belongs to this stage, oldest first. */
+  getDecisionQuestions(stageId: number): DecisionQuestionRow[] {
+    return this.query<DecisionQuestionRow>(
+      `SELECT decision_question.* FROM decision_question
+       JOIN finding ON finding.id = decision_question.finding_id
+       WHERE finding.stage_id = ?
+       ORDER BY decision_question.id`,
+      [stageId]
+    );
+  }
+
+  /** One immutable answer per question, ever (`UNIQUE (question_id)`). */
+  insertDecisionAnswer(input: DecisionAnswerInput): DecisionAnswerRow {
+    if (!DECISION_ACTIONS.includes(input.action)) {
+      throw new Error(`invalid decision action ${input.action}: allowed values are ${DECISION_ACTIONS.join(", ")}`);
+    }
+    const result = this.#withRetry(() =>
+      this.#db
+        .prepare("INSERT INTO decision_answer (question_id, action, answer, created_at) VALUES (?, ?, ?, ?)")
+        .run(input.questionId, input.action, input.answer, new Date().toISOString())
+    );
+    return this.query<DecisionAnswerRow>("SELECT * FROM decision_answer WHERE id = ?", [
+      Number(result.lastInsertRowid),
+    ])[0]!;
+  }
+
+  /** Every answer to a question whose finding belongs to this stage, oldest first. */
+  getDecisionAnswers(stageId: number): DecisionAnswerRow[] {
+    return this.query<DecisionAnswerRow>(
+      `SELECT decision_answer.* FROM decision_answer
+       JOIN decision_question ON decision_question.id = decision_answer.question_id
+       JOIN finding ON finding.id = decision_question.finding_id
+       WHERE finding.stage_id = ?
+       ORDER BY decision_answer.id`,
+      [stageId]
+    );
   }
 
   /** Every canonical finding id that contributed to one proposal, oldest link first. */

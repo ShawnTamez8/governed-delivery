@@ -411,7 +411,7 @@ test("one frozen executor advances the real chain across separate approval and n
   const sequence = sequenceText.split(/\s*->\s*/).map((kind) => kind.trim());
   assert.equal(sequence.at(-1), snapshot.run.status);
   assert.deepEqual(store.getStageChain(runId).map((stage) => stage.kind), sequence.slice(0, -1));
-  const groups = sequence.filter((kind) => !["spec", "spec_review", "awaiting_approval", "plan_review", "completed"].includes(kind));
+  const groups = sequence.filter((kind) => !["spec", "spec_review", "spec_decision", "awaiting_approval", "plan_review", "completed"].includes(kind));
   assert.deepEqual(data(completed).execution.groupsAttempted, groups);
   assert.deepEqual(data(completed).execution.groupsCompleted, groups);
   assert.deepEqual(data(completed).execution.remainingGroups, []);

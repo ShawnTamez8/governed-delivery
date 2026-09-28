@@ -84,6 +84,12 @@ function emit(agentResult) {
 // everywhere the fixture emits one, or the self-critique would hand the
 // review stage a different document than the draft did.
 function authoredSpec() {
+  // FIXTURE-DISCLOSE-OD in the design: the author discloses one open decision,
+  // which the stage records as a round-1 finding.
+  // The plain return stays a literal line: a stage test substitutes it.
+  if (stdin.includes("FIXTURE-DISCLOSE-OD")) {
+    return `${BASE_SPEC}\n## Open decisions\n\n- OD-001 (high): who may download the export archive\n`;
+  }
   return BASE_SPEC;
 }
 
@@ -122,9 +128,92 @@ function supersededCriterion(artifact) {
 // and converts its decision, and a node left unclaimed in either direction
 // fails the accounting. A round that already reviews the revised document
 // revises nothing and claims nothing.
+// The operator-question modes (spec-operator-decisions). A test selects one by
+// writing its marker into the design document, which every reconcile prompt
+// carries — the env-var route cannot reach the spawned child. The first
+// finding id receives the named disposition; the rest are addressed without a
+// revision. The question and proposal shapes are the ones the spec reconcile
+// prompt states and `validateReconciliation` accepts with `requireQuestions`
+// (hazard 4: the shape comes from the validator's contract, not the stage).
+const QUESTION = {
+  text: "How long are exports retained?",
+  options: [
+    { label: "Thirty days", answer: "Exports are retained for thirty days." },
+    { label: "Until deleted", answer: "Exports are retained until the operator deletes them." },
+  ],
+  recommended: 0,
+  why: "the design names a short-lived export",
+};
+const PROPOSAL = {
+  title: "Decide export retention",
+  problem: "the design does not say how long exports are kept",
+  whyUpstream: "retention is a product decision the design owns",
+};
+const MODES = [
+  ["FIXTURE-ASK-OPERATOR", { disposition: "upstream_blocking", changedLocations: [], proposal: PROPOSAL, question: QUESTION }],
+  ["FIXTURE-ASK-CANNOT", { disposition: "cannot_determine", changedLocations: [], question: QUESTION }],
+  ["FIXTURE-FOLLOW-UP", { disposition: "upstream_follow_up", changedLocations: [], proposal: PROPOSAL }],
+  // A rejection whose excerpt the design never contains: deterministic
+  // validation converts it to cannot_determine, which carries no question.
+  [
+    "FIXTURE-UNGROUNDED-REJECTION",
+    {
+      disposition: "rejected_with_rationale",
+      changedLocations: [],
+      grounding: { source: "design", location: "# design", excerpt: "words no design in this suite contains" },
+    },
+  ],
+];
+
 function reconcile() {
   const ids = [...stdin.matchAll(/finding (\d+)/g)].map((m) => Number(m[1]));
   const current = currentArtifact();
+  // FIXTURE-ASK-EVERY: every finding, disclosed or reviewer-raised, is
+  // upstream_blocking with a question, so a test can answer several.
+  // FIXTURE-RECONCILE-DROP-OD also drops OD-001 from the revision that asks
+  // about it — only an added entry is refused at spec_review.
+  if (stdin.includes("FIXTURE-ASK-EVERY")) {
+    const decisions = ids.map((id) => ({
+      findingId: id,
+      rationale: "fixture asks the operator",
+      disposition: "upstream_blocking",
+      changedLocations: [],
+      proposal: PROPOSAL,
+      question: QUESTION,
+    }));
+    emit({
+      status: "proposed",
+      agent: "spec-author",
+      role: "author",
+      executor: "claude-code",
+      summary: "fixture reconcile",
+      proposedContentChanges: {
+        spec: stdin.includes("FIXTURE-RECONCILE-DROP-OD") ? current.replace(/- OD-001 .*\n?/, "") : current,
+        decisions,
+      },
+    });
+    return;
+  }
+  const mode = MODES.find(([marker]) => stdin.includes(marker));
+  if (mode !== undefined) {
+    // FIXTURE-ASK-SECOND routes the second finding, so a disclosed open
+    // decision (always recorded first) is addressed without a question.
+    const routed = stdin.includes("FIXTURE-ASK-SECOND") ? 1 : 0;
+    const decisions = ids.map((id, index) =>
+      index === routed
+        ? { findingId: id, rationale: "fixture routed the finding", ...mode[1] }
+        : { findingId: id, disposition: "addressed", rationale: "fixture addressed the finding", changedLocations: [], normativeChanges: [] }
+    );
+    emit({
+      status: "proposed",
+      agent: "spec-author",
+      role: "author",
+      executor: "claude-code",
+      summary: "fixture reconcile",
+      proposedContentChanges: { spec: current, decisions },
+    });
+    return;
+  }
   const revising = ids.length > 0 && !current.includes("REVISED-spec");
   const artifact = revising ? REVISED_SPEC : current;
   const decisions = ids.map((id, index) => ({
@@ -155,6 +244,65 @@ function reconcile() {
     executor: "claude-code",
     summary: "fixture reconcile",
     proposedContentChanges: { spec: artifact, decisions },
+  });
+}
+
+// The spec decision fold. Everything it folds is read from the prompt the
+// stage rendered — the folded answers, the denied finding ids, and the spec —
+// never from a literal this file carries (hazard 4). By default each folded
+// answer becomes one new acceptance criterion whose text is the answer,
+// claimed by that finding's addressed decision and grounded in that answer.
+// A FIXTURE-FOLD-* marker in the design breaks one rule for a refusal test.
+function fold() {
+  // The instructions name the heading too; the answers follow its last use.
+  const at = stdin.lastIndexOf("Operator answers to fold:");
+  const head = stdin.slice(0, at);
+  const tail = stdin.slice(at);
+  const spec = (head.split("The specification to revise:")[1] ?? "").trim() + "\n";
+  const [foldedBlock, deniedBlock] = tail.split("Denied questions (leave open):");
+  const folded = [...foldedBlock.matchAll(/- finding (\d+)\n  question: .*\n  operator answer \((approve|modify)\): (.*)/g)].map(
+    (m) => ({ findingId: Number(m[1]), answer: m[3] })
+  );
+  const denied = [...(deniedBlock ?? "").matchAll(/- finding (\d+)/g)].map((m) => Number(m[1]));
+  const lines = spec.split("\n");
+  const criteria = lines.filter((l) => /^- AC-\d+:/.test(l));
+  let next = Math.max(...criteria.map((l) => Number(/^- AC-(\d+):/.exec(l)[1]))) + 1;
+  const added = folded.map((f) => ({ ...f, node: `AC-${String(next++).padStart(3, "0")}: ${f.answer}` }));
+  if (stdin.includes("FIXTURE-FOLD-DENIED-NODE") && denied.length > 0) {
+    added.push({ findingId: null, node: `AC-${String(next++).padStart(3, "0")}: the denied question is settled after all` });
+  }
+  const lastCriterion = lines.map((l) => /^- AC-\d+:/.test(l)).lastIndexOf(true);
+  lines.splice(lastCriterion + 1, 0, ...added.map((a) => `- ${a.node}`));
+  let revised = lines.join("\n");
+  if (stdin.includes("FIXTURE-FOLD-ADD-OD")) revised = revised.replace(/(- OD-001 .*\n)/, "$1- OD-099 (low): a newly noticed question\n");
+  if (stdin.includes("FIXTURE-FOLD-DROP-OD")) revised = revised.replace(/- OD-001 .*\n/, "");
+  if (stdin.includes("FIXTURE-FOLD-RESEVERITY-OD")) revised = revised.replace("- OD-001 (high):", "- OD-001 (low):");
+  if (stdin.includes("FIXTURE-FOLD-REWORD-OD")) revised = revised.replace("who may download the export archive", "who may download the archive");
+  const decisions = folded.map((f, index) => {
+    let excerpt = f.answer;
+    if (stdin.includes("FIXTURE-FOLD-UNGROUNDED")) excerpt = "words the operator never wrote";
+    if (stdin.includes("FIXTURE-FOLD-CROSS")) excerpt = folded[(index + 1) % folded.length].answer;
+    return {
+      findingId: f.findingId,
+      disposition: "addressed",
+      rationale: "fixture folded the operator's answer",
+      changedLocations: ["## Acceptance criteria"],
+      normativeChanges: added
+        .filter((a) => a.findingId === f.findingId)
+        .map((a) => ({
+          artifactLocation: "## Acceptance criteria",
+          artifactText: a.node,
+          grounding: { source: "operator_decision", location: `finding ${f.findingId}`, excerpt },
+        })),
+    };
+  });
+  emit({
+    status: "proposed",
+    agent: "spec-author",
+    role: "author",
+    executor: "claude-code",
+    summary: "fixture fold",
+    proposedContentChanges: { spec: revised, decisions },
   });
 }
 
@@ -209,6 +357,8 @@ if (stdin.includes("self-critique")) {
   });
 } else if (stdin.includes("reconcile")) {
   reconcile();
+} else if (stdin.includes("Operator answers to fold:")) {
+  fold();
 } else if (stdin.includes("spec author")) {
   const spec = authoredSpec();
   emit({

@@ -48,6 +48,8 @@ test("low-level consumers resolve stored evidence against the selected repositor
           stage("spec", ref(specPath));
           const specReview = stage("spec_review", ref(specPath));
           audit(specReview.id, "spec.gate.pass", `specHash=${specHash}; risk=low`);
+          const specDecision = stage("spec_decision", ref(specPath));
+          audit(specDecision.id, "spec_decision.gate.pass", `spec_decision gate passed; specHash=${specHash}; risk=low; answers=0; folded=0`);
           stage("awaiting_approval", ref(specPath));
           store.insertApproval({
             runId: run.id, featureId: run.feature_id, specHash, startingCommit: start,

@@ -72,6 +72,17 @@ export type Disposition = (typeof DISPOSITIONS)[number];
 export const UPSTREAM_SOURCES = ["design", "specification", "plan"] as const;
 export type UpstreamSource = (typeof UPSTREAM_SOURCES)[number];
 
+/**
+ * The grounding source a spec decision fold may cite besides the design: the
+ * operator's recorded answer to the question its decision answers
+ * (architecture section 12, `spec_decision`). Deliberately not a member of
+ * `UPSTREAM_SOURCES`: that array is also the reviewer upstream-location
+ * vocabulary and the storage boundary's allowed decision sources, and a fold
+ * decision is never stored. It is accepted only where a caller supplies
+ * `operatorAnswers`.
+ */
+export const OPERATOR_DECISION_SOURCE = "operator_decision";
+
 /** The exact upstream location token prefix an artifact's review may cite. */
 export function upstreamPrefixFor(source: UpstreamSource): string {
   if (source === "design") return "upstream:design:";
@@ -271,7 +282,7 @@ export interface Grounding {
  */
 export function groundingTextuallyFails(
   grounding: Grounding,
-  governingSource: UpstreamSource,
+  governingSource: UpstreamSource | typeof OPERATOR_DECISION_SOURCE,
   governingText: string
 ): string | null {
   if (grounding.source !== governingSource) {
@@ -379,6 +390,31 @@ export interface NormativeChange {
   grounding: Grounding;
 }
 
+export interface DecisionQuestionOption {
+  label: string;
+  answer: string;
+}
+
+/**
+ * What a spec `upstream_blocking` or `cannot_determine` decision asks the
+ * operator (section 12, `spec_decision`). `recommended` is a zero-based index
+ * into `options`.
+ */
+export interface DecisionQuestion {
+  text: string;
+  options: DecisionQuestionOption[];
+  recommended: number;
+  why: string;
+}
+
+const QUESTION_FIELDS = ["text", "options", "recommended", "why"] as const;
+const QUESTION_OPTION_FIELDS = ["label", "answer"] as const;
+export const QUESTION_OPTIONS_MIN = 2;
+export const QUESTION_OPTIONS_MAX = 4;
+
+/** The dispositions that ask the operator when a caller requires questions. */
+export const QUESTION_DISPOSITIONS: readonly string[] = ["upstream_blocking", "cannot_determine"];
+
 export interface ReconciliationDecision {
   findingId: number;
   /** Rewritten to `cannot_determine` when a deterministic content check
@@ -392,6 +428,10 @@ export interface ReconciliationDecision {
   grounding: Grounding | null;
   normativeChanges: NormativeChange[] | null;
   proposal: ProposalCandidate | null;
+  /** Present exactly on a model-chosen `upstream_blocking` or
+   * `cannot_determine` decision when the caller requires questions; dropped
+   * when a deterministic check converts the decision. */
+  question: DecisionQuestion | null;
 }
 
 export interface ReconciliationValidation {
@@ -411,6 +451,74 @@ export interface ReconciliationValidation {
 }
 
 const PROPOSAL_FIELDS = ["title", "problem", "whyUpstream"] as const;
+
+/**
+ * The question a spec decision asks the operator, checked field by field. A
+ * missing or malformed question refuses the whole reconciliation by name —
+ * the same class as a missing proposal: the envelope is wrong, not the claim.
+ */
+function parseQuestion(
+  raw: unknown,
+  findingId: number,
+  disposition: string
+): { ok: true; value: DecisionQuestion } | { ok: false; reason: string } {
+  const refuse = (reason: string): { ok: false; reason: string } => ({ ok: false, reason });
+  if (raw === undefined || raw === null) {
+    return refuse(`finding ${findingId} is ${disposition} without a question for the operator`);
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    return refuse(`finding ${findingId} question is not an object`);
+  }
+  const q = raw as { [key: string]: unknown };
+  const unknownField = unknownMember(q, QUESTION_FIELDS);
+  if (unknownField !== null) {
+    return refuse(
+      `finding ${findingId} question carries an unknown field ${unknownField}: allowed fields are ${QUESTION_FIELDS.join(", ")}`
+    );
+  }
+  if (typeof q.text !== "string" || q.text.trim() === "") {
+    return refuse(`finding ${findingId} question is missing a non-empty text`);
+  }
+  if (typeof q.why !== "string" || q.why.trim() === "") {
+    return refuse(`finding ${findingId} question is missing a non-empty why`);
+  }
+  if (!Array.isArray(q.options) || q.options.length < QUESTION_OPTIONS_MIN || q.options.length > QUESTION_OPTIONS_MAX) {
+    return refuse(
+      `finding ${findingId} question must carry ${QUESTION_OPTIONS_MIN} to ${QUESTION_OPTIONS_MAX} options`
+    );
+  }
+  const options: DecisionQuestionOption[] = [];
+  for (const option of q.options as unknown[]) {
+    if (option === null || typeof option !== "object" || Array.isArray(option)) {
+      return refuse(`finding ${findingId} question has an option that is not an object`);
+    }
+    const o = option as { [key: string]: unknown };
+    const unknownOption = unknownMember(o, QUESTION_OPTION_FIELDS);
+    if (unknownOption !== null) {
+      return refuse(
+        `finding ${findingId} question option carries an unknown field ${unknownOption}: allowed fields are ${QUESTION_OPTION_FIELDS.join(", ")}`
+      );
+    }
+    if (typeof o.label !== "string" || o.label.trim() === "") {
+      return refuse(`finding ${findingId} question has an option missing a non-empty label`);
+    }
+    if (typeof o.answer !== "string" || o.answer.trim() === "") {
+      return refuse(`finding ${findingId} question has an option missing a non-empty answer`);
+    }
+    options.push({ label: o.label, answer: o.answer });
+  }
+  if (
+    typeof q.recommended !== "number" ||
+    !Number.isInteger(q.recommended) ||
+    q.recommended < 0 ||
+    q.recommended >= options.length
+  ) {
+    return refuse(
+      `finding ${findingId} question recommended ${JSON.stringify(q.recommended)} is not an option index from 0 to ${options.length - 1}`
+    );
+  }
+  return { ok: true, value: { text: q.text, options, recommended: q.recommended, why: q.why } };
+}
 
 /**
  * The reconciliation decisions, checked against the round's canonical finding
@@ -438,6 +546,14 @@ export function validateReconciliation(
     governingText: string;
     beforeNormativeNodes: string[];
     afterNormativeNodes: string[];
+    /** Spec reconciliation: every `upstream_blocking` and `cannot_determine`
+     * decision must carry a question for the operator. Without it a question
+     * is refused on every disposition. */
+    requireQuestions?: boolean;
+    /** A spec decision fold: finding id -> the operator's recorded answer.
+     * Only when supplied is `operator_decision` an accepted grounding source,
+     * and only for an excerpt occurring in that same finding's answer. */
+    operatorAnswers?: ReadonlyMap<number, string>;
   }
 ): { ok: true; value: ReconciliationValidation } | { ok: false; reason: string } {
   const refuse = (reason: string): { ok: false; reason: string } => ({ ok: false, reason });
@@ -473,6 +589,21 @@ export function validateReconciliation(
     decision.grounding = null;
     decision.normativeChanges = null;
     decision.proposal = null;
+    decision.question = null;
+  };
+
+  // The governing input grounds every decision. A fold may also cite the
+  // operator's answer to the question this decision answers — never another
+  // question's answer, and never outside a fold.
+  const groundingFails = (grounding: Grounding, findingId: number): string | null => {
+    if (ctx.operatorAnswers !== undefined && grounding.source === OPERATOR_DECISION_SOURCE) {
+      const answer = ctx.operatorAnswers.get(findingId);
+      if (answer === undefined) {
+        return `grounding source ${OPERATOR_DECISION_SOURCE} has no recorded operator answer for finding ${findingId}`;
+      }
+      return groundingTextuallyFails(grounding, OPERATOR_DECISION_SOURCE, answer);
+    }
+    return groundingTextuallyFails(grounding, ctx.governingSource, ctx.governingText);
   };
 
   for (const entry of raw) {
@@ -480,8 +611,8 @@ export function validateReconciliation(
       return refuse("reconciliation decision entry is not an object");
     }
     const d = entry as { [key: string]: unknown };
-    const { findingId, disposition, rationale, grounding, proposal, impact } = d;
-    const unknown = unknownMember(d, [
+    const { findingId, disposition, rationale, grounding, proposal, question, impact } = d;
+    const allowedFields = [
       "findingId",
       "disposition",
       "rationale",
@@ -489,10 +620,17 @@ export function validateReconciliation(
       "grounding",
       "normativeChanges",
       "proposal",
-    ]);
+      ...(ctx.requireQuestions === true ? ["question"] : []),
+    ];
+    const unknown = unknownMember(d, allowedFields);
+    if (unknown === "question") {
+      return refuse(
+        `reconciliation decision for finding ${JSON.stringify(findingId)} carries a question, but this reconciliation asks the operator nothing`
+      );
+    }
     if (unknown !== null && unknown !== "impact") {
       return refuse(
-        `reconciliation decision for finding ${JSON.stringify(findingId)} carries an unknown field ${unknown}: allowed fields are findingId, disposition, rationale, changedLocations, grounding, normativeChanges, proposal`
+        `reconciliation decision for finding ${JSON.stringify(findingId)} carries an unknown field ${unknown}: allowed fields are ${allowedFields.join(", ")}`
       );
     }
     if (typeof findingId !== "number" || !Number.isInteger(findingId)) {
@@ -537,6 +675,7 @@ export function validateReconciliation(
       grounding: null,
       normativeChanges: null,
       proposal: null,
+      question: null,
     };
 
     if (decision.disposition === "rejected_with_rationale") {
@@ -551,11 +690,7 @@ export function validateReconciliation(
         );
       }
       decision.grounding = { source: g.source as string, location: g.location as string, excerpt: g.excerpt as string };
-      const failure = groundingTextuallyFails(
-        decision.grounding,
-        ctx.governingSource,
-        ctx.governingText
-      );
+      const failure = groundingFails(decision.grounding, findingId);
       if (failure !== null) {
         convert(decision, failure);
       }
@@ -601,7 +736,7 @@ export function validateReconciliation(
             artifactText: c.artifactText,
             grounding: { source: g.source as string, location: g.location as string, excerpt: g.excerpt as string },
           };
-          const failure = groundingTextuallyFails(entry.grounding, ctx.governingSource, ctx.governingText);
+          const failure = groundingFails(entry.grounding, findingId);
           if (failure !== null) {
             convert(decision, failure);
             break;
@@ -642,6 +777,20 @@ export function validateReconciliation(
     } else if (proposal !== undefined) {
       return refuse(
         `finding ${findingId} carries a proposal candidate on disposition ${disposition}, where it is forbidden`
+      );
+    }
+
+    // Keyed on the disposition the author returned, not the current one: a
+    // rejected_with_rationale converted above is now cannot_determine, but it
+    // is a malformed answer the gate blocks on, not a question the author
+    // asked. Conversions run only on dispositions that may carry no question.
+    if (ctx.requireQuestions === true && QUESTION_DISPOSITIONS.includes(disposition)) {
+      const parsed = parseQuestion(question, findingId, decision.disposition);
+      if (!parsed.ok) return parsed;
+      decision.question = parsed.value;
+    } else if (question !== undefined) {
+      return refuse(
+        `finding ${findingId} carries a question on disposition ${disposition}, where it is forbidden`
       );
     }
 

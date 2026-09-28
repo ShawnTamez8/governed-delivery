@@ -21,8 +21,10 @@ The hard rules are constraints, not aspirations:
    signer, package artifact, adapter framework, or second lifecycle. The
    2026-09-26 dashboard-approval decision permits exactly one dashboard write:
    submitting an approval signature, signed in the operator's browser, through
-   the same `approveRun` core and writer lock as `bw approve`. Every other
-   mutation remains CLI-only.
+   the same `approveRun` core and writer lock as `bw approve`. The 2026-09-27
+   spec-operator-decisions decision permits a second: recording an operator's
+   answer to a spec-review question through the same `answerQuestion` core and
+   writer lock as `bw decide`. Every other mutation remains CLI-only.
 3. One schema per thing. No unions, no version discriminators, no compatibility
    handling. Nothing has shipped.
 4. No abstraction without two real implementations.
@@ -99,8 +101,9 @@ JSON-standard escaping instructions to both patch-producing prompts and
 regressions for direct launch, missing-executable reporting, and the prompt
 contract. The strict extractor remains unchanged; it does not guess repairs.
 
-The 2026-09-14 correction anchored closing code fences (`(?<=\n)```[ \t]*(?=\n|$)`)
-so markdown code blocks within JSON string literals cannot prematurely terminate
+The 2026-09-14 correction anchored opening and closing code fences to the start
+of a line, allowing only indentation before them (`src/parse-output.ts`), so
+markdown code blocks within JSON string literals cannot prematurely terminate
 extraction (hazard 1, item 9). The idle generation budget is 1800 seconds,
 decided exclusively by the frozen sandbox profile (hard rule 6).
 
@@ -234,7 +237,8 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
 - `npm install --global <absolute-BuildWorks-checkout>` — one-time optional
   checkout-linked installation exposing both `buildworks` and `bw`; the
   checkout must remain at that path. This is not a packed or registry install.
-- `npm run typecheck` — strict `tsc --noEmit`.
+- `npm run typecheck` — strict `tsc --noEmit`, then the same over the dashboard
+  assets (`tsconfig.dashboard.json`).
 - `npm test` — `node --test` (Node 24 type stripping; relative imports carry
   explicit `.ts` extensions).
 - `npm run check:docs` — the documentation checker (`scripts/doc-check.mjs`);
@@ -251,7 +255,8 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
   model, and matches a persisted run by the exact project, feature ID, slug and
   change-kind tuple rather than the newest. It is interactive only — redirected
   input refuses before mutation or spend — takes separate consent for each paid
-  range, and pauses at approval with exit 3. `README.md` and
+  range, and pauses with exit 3 at approval and, when spec review asks the
+  operator questions, at the earlier decision prompt. `README.md` and
   `docs/runbooks/cli-operator.md` carry the full procedure.
 - `& node $BwCli doctor --repo $Target`, `& node $BwCli runs --repo $Target`,
   and `& node $BwCli status --repo $Target --run $RunId` — free readiness and
@@ -261,19 +266,23 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
   Doctor/runs/status/run support `--json`.
 - `& node $BwCli run --repo $Target --run $RunId --yes` — consent covers every
   previewed group through approval or terminalization, not signing, export,
-  publication, or a later invocation. Exit 3 is the external approval pause.
+  publication, or a later invocation. Exit 3 is a human pause: the operator
+  decision pause (`awaiting_decision`) or the external approval pause.
   Exact-current schema, frozen age and intact boundaries are required; this
   is not arbitrary resume, implicit migration, or a failed-stage retry.
 - `& node $BwCli dashboard --repositories-file $RepositoriesFile` — the
-  loopback-only projection, read-only except for approval submission. It is the
-  one command that refuses `--repo`; its targets come from that file. It
-  dispatches nothing, listens on no external interface, and persists no state.
-  Its only writer is the approval `POST` route (`src/dashboard-approval.ts`),
-  which never receives a private key.
+  loopback-only projection, read-only except for approval submission and
+  decision answers. It is the one command that refuses `--repo`; its targets
+  come from that file. It dispatches nothing, listens on no external interface,
+  and persists no state. Its only writers are the approval `POST` route
+  (`src/dashboard-approval.ts`), which never receives a private key, and the
+  decision `POST` route (`src/dashboard-decision.ts`).
 - Existing low-level commands remain: `migrate`, `new-run`, `stage-add`,
   `stage-complete`, `dispatch`, `spec`, `plan`, `implement`, `verify`, `review`,
-  `deliver`, `approval-request`, `approve`, `verify-audit`, `proposal-export`.
-  Their numeric/path/raw-payload outputs remain unchanged. `new-run` requires
+  `deliver`, `approval-request`, `approve`, `decide`, `verify-audit`,
+  `proposal-export`. Their numeric/path/raw-payload outputs remain unchanged.
+  `decide --run --finding (--approve | --deny | --answer-file <path>)` records
+  one operator answer to a spec-review question and dispatches nothing. `new-run` requires
   project, feature, slug, change-kind and model; it never selects these
   implicitly. All of these commands accept one `--repo`, defaulting to the
   invocation worktree, so omitting it here targets BuildWorks itself.

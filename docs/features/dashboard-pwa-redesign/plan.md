@@ -1,6 +1,6 @@
 # Dashboard PWA Redesign Implementation Plan
 
-**Status:** Reconciled. Revision 2 of the mockup, with its follow-ups (repository scoping, run progression, the usage pair, and the Models view), was approved by the operator on 2026-09-24. The Task 1 mockup was reviewed by the operator on 2026-09-24 (`mockup-feedback.md`, reconciled), and revision 2 was built the same day. Task 2 is complete (2026-09-24): the `byAgent` test passes, it failed under both break mutations, `operator-state` and `cli-operator` pass 189 of 189 from the tool shell, and `npm run typecheck` is clean. Tasks 3, 4, and 5 are complete (2026-09-24; see their Results). Task 6 is next; until it lands, five structure-pinning tests in `test/dashboard-ui.test.ts` fail as that task expects.
+**Status:** Reconciled. Revision 2 of the mockup, with its follow-ups (repository scoping, run progression, the usage pair, and the Models view), was approved by the operator on 2026-09-24. The Task 1 mockup was reviewed by the operator on 2026-09-24 (`mockup-feedback.md`, reconciled), and revision 2 was built the same day. Task 2 is complete (2026-09-24): the `byAgent` test passes, it failed under both break mutations, `operator-state` and `cli-operator` pass 189 of 189 from the tool shell, and `npm run typecheck` is clean. Tasks 3, 4, and 5 are complete (2026-09-24; see their Results). Task 6 is complete (2026-09-27; see its Result): `test/dashboard-ui.test.ts` passes 49 of 49. Task 7 is next.
 
 **Goal:** Replace the dashboard's presentation with a dense, restrained operator console built on the TheSnitch design language, installable as a per-launch Progressive Web App. It observes runs through a bounded, read-only auto-refresh, keeps every read-only, loopback, and presentation-honesty guarantee, and corrects four existing honesty defects.
 
@@ -656,6 +656,32 @@ The mockup's "Component states" page (reachable from the status line, mockup onl
       - restore the first-report severity filter: the named test fails; restore;
       - make `renderOverviewTab` read `application.repositories` directly: the scoping test fails; restore.
   - Task completion evidence: the file passes; each new structural guard failed under its break mutation.
+  - Result (2026-09-27):
+    - `test/dashboard-ui.test.ts` passes 49 of 49, and typecheck (both programs) is clean. The full suite fails 2 of 1224. Both failures are outside this plan: the SIGTERM test sees Node's SQLite `ExperimentalWarning` on stderr, and the sign-approval scan flags a comment in `src/dashboard-approval.ts`. The five structure-pinning failures Task 5 recorded are gone.
+    - The four old tests (banner, secondary row, tab-assembly CSS, repository-selection regexes) are replaced by six:
+      - the Overview's five regions in order, with every ledger class built only in `stageLedgerNode` from `stageLedger`;
+      - scope headers that are plain titles, `scopeLabel` and `runPicker` labels that never interpolate a repository identifier, no `Verified`, and no `aria-orientation`;
+      - `shortcutDestination` for `g o` and `?`, and the Findings count's `tone-danger` toggle at `requireAttention > 0`;
+      - `snapshotFindingRows` taking status from `findingStatus` and severity from `cardSeverity`, never from a report;
+      - Overview, Runs and Findings reading `scopeData`, which reads `scopeViews`, with the Runs notice loop filtered by the header selection;
+      - a behavioural test over two real stores (a blocked run with blocking and open findings, and a partial run with one addressed finding): with one repository selected, `findingStatusCounts`, `stageMap` and `needsAttentionQueue` over `repositoryViews` equal the same functions over that repository's snapshot alone, and the unscoped count differs.
+    - Six break mutations ran against a scratch mirror of `src/` and this test file. Each failed its named test with an assertion and was reversed from the saved original:
+      - the three named above;
+      - the Findings count red at zero;
+      - `repositoryViews` ignoring the selection, which also failed the existing portfolio-views test;
+      - ledger markup outside `stageLedgerNode`.
+
+    Deviations, each grounded in the code:
+    - **Scoping guard.** The planned wording "from `repositoryViews(application)`" does not match the code: Task 5's recorded deviation routes the views through `scopeViews`, which passes only the header's `repositoryFilter`. The guard pins that wrapper. `renderRunsTab` reads `application.repositories` once, for repository notices, and that loop is pinned to skip repositories outside the selection.
+    - **Step 1's "unchanged" assertions** anchored on renderers Task 5 renamed or removed. The invariants are kept and re-anchored:
+      - the finding-renderer region is now `decisionEvidence`;
+      - the run view calls its renderers with `context`, and "Available commands" is an always-visible region;
+      - the collapsed-section count is 7, per Task 5;
+      - "Configuration and approvals" replaces "Frozen configuration and approval";
+      - the executive summary's state tone is a badge.
+    - **Per-card trend.** `kpiCard` no longer exists. The assertion now forbids `kpi-trend` and allows at most one trend statement.
+    - **Removed:** the `.finding-card` border CSS assertion, because the findings table replaced the cards.
+    - **README.** The "What the dashboard presents" subsection was already rewritten on 2026-09-27 from the rendered code, as part of a documentation staleness pass. Task 12 still owns the installation, service-worker and persistence wording, which depends on Tasks 7–11.
 
 - **Task 7: Icons and manifest.**
   - Depends on: Task 1 approval.

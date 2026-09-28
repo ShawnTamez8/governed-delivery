@@ -19,8 +19,9 @@ signature handoff: BuildWorks exports canonical bytes and imports a detached
 signature but never receives private-key authority. The same CLI retains
 no-spend readiness and inspection, explicit low-level commands, and an
 authorized loopback-only dashboard over explicitly selected local
-repositories. The dashboard is read-only except for one action: submitting an
-approval that the operator signs in their own browser. See the [operator guide](#local-operator-guide).
+repositories. The dashboard is read-only except for two actions: submitting an
+approval that the operator signs in their own browser, and recording the
+operator's answer to a spec-review question. See the [operator guide](#local-operator-guide).
 
 Build order steps 1-8 implemented: run store, stage chain, and audit chain
 over SQLite; the concrete harness adapter (`bw dispatch` spawns the `claude`
@@ -28,7 +29,13 @@ CLI, parses its envelope, retains raw output, and persists `agent_run` rows);
 the spec and spec-review stages (`bw spec` runs the author, one self-critique
 dispatch, an author-proposed specialist panel, the author's reconciliation of
 every finding into one typed decision each, and a deterministic gate that
-decides on decision completeness for each configured review round); the human
+decides on decision completeness for each configured review round; every
+question the author lists under the specification's optional
+`## Open decisions` section is recorded as a round-1 finding, so it too must
+receive a typed decision before approval; a question the reconciler judges
+blocking carries two to four options and a recommendation, and pauses the run
+for the operator to approve the recommendation, deny it, or write their own
+answer, after which the spec author folds the answers into the spec); the human
 approval gate
 (`bw approval-request` prints the payload, `bw approve` verifies one Ed25519
 authorization against a public key held outside the repository); and the plan
@@ -198,6 +205,17 @@ Guided mode is interactive only. Redirected input refuses before mutation or
 spend. Each paid range displays the frozen models, verification commands,
 review budgets, and dispatch ceilings and requires its own explicit `yes`.
 The first accepted range stops at approval with exit 3.
+
+If spec review asked the operator questions, the range stops earlier, at the
+decision pause. Guided mode lists each question with its numbered options, the
+recommended option, and the reviewer's reason, then asks for one action per
+question: `1` approves the recommendation, `2` denies it (the question stays
+open and the run continues), `3` records your own one-line answer, and `4`
+(the default) exits with code 3 and records nothing more. Three invalid entries
+also exit. Each answer is recorded as soon as you give it; answers are final.
+Once every question is answered, guided mode asks consent for the fold, in
+which the spec author folds the answers into the spec, and then continues to
+the approval pause.
 
 At that pause, BuildWorks exclusively creates:
 
@@ -382,7 +400,7 @@ usage. The list stays in process memory and is never copied into a repository.
 Each target retains its own `.governance/state.db`.
 
 ```powershell
-$RepositoriesFile = Join-Path $OperatorDirectory 'dashboard-repositories.json'
+$RepositoriesFile = Join-Path $TransportDirectory 'dashboard-repositories.json'
 @{ repositories = @($Target, 'C:\Work\Second Project') } |
   ConvertTo-Json |
   Set-Content -LiteralPath $RepositoriesFile -Encoding utf8
@@ -420,84 +438,94 @@ ceiling or hidden pagination. It displays projected evidence references and
 availability reasons, but serves no evidence file contents or unrestricted
 filesystem path. Displayed CLI handoffs are copy-only text. The dashboard never
 executes them, migrates or repairs state, collects consent, listens remotely,
-or persists dashboard state. Its one write is approval submission, described
-under [Approving from the dashboard](#approving-from-the-dashboard); the reviewed
+or persists dashboard state. Its two writes are approval submission, described
+under [Approving from the dashboard](#approving-from-the-dashboard), and an
+answer to a spec-review question, described under
+[Answering questions from the dashboard](#answering-questions-from-the-dashboard); the reviewed
 specification of a run waiting for approval is the one file content it serves.
 
 #### What the dashboard presents
 
-The dashboard operates as a dense, modern Governed Delivery Command Center
-organized around six primary navigation tabs: **Overview**, **Runs**, **Findings**,
-**Governance**, **Models & Agents**, and **Audit**. Navigation is synchronized
-with URL hash routing (`#tab=overview`, `#tab=runs`, etc.) while preserving
-repository and run selections.
+The header holds a repository filter that scopes every view, a search box
+over the loaded runs, findings and agents, the data status and last update
+time, **Refresh**, the auto-refresh toggle, a theme switch, and **Help**. Six
+tabs sit below it: **Overview**, **Runs**, **Findings**, **Governance**,
+**Models & agents**, and **Audit**. The URL fragment carries the tab, the
+repository and the selected run (`#tab=runs&repository=…&run=…`), so reload
+and back/forward keep the view.
 
-##### Overview command center canvas
+##### Overview
 
-Desktop viewports display a single-view operational command center canvas:
-- **Portfolio Status Banner:** Displays immediate portfolio health (`Healthy`,
-  `At Risk`, `Blocked`, `Unknown`), a plain-language summary of outstanding
-  conditions, quick action buttons (`[View blocked run]`, `[Review findings]`),
-  and observation freshness.
-- **6-card outcome-focused Horizontal KPI Strip:** Tracks six core delivery
-  metrics across the loaded window: *Portfolio Health*, *Release Ready* runs,
-  *Blocked Deliveries*, *Open Findings*, *Governance Coverage*, and *Delivery
-  Success*. Each card includes an info trigger (`ⓘ`) displaying definition,
-  formula, and caveats in an accessible popover.
-- **Needs Attention exception queue:** A prioritized operational triage list
-  grouping delivery blockers, governance failures, and data quality issues,
-  ordered by severity (`critical`, `high`, `medium`, `low`) with direct action
-  triggers.
-- **8-stage interactive Delivery Pipeline:** Maps the lifecycle across standard
-  stages: *Specification*, *Planning*, *Implementation*, *Testing*, *Review*,
-  *Governance*, *Approval*, and *Release*. Clicking any stage opens root-cause gate
-  diagnostics and recommended CLI actions. When no run is explicitly selected, the
-  stepper automatically inspects the primary exception run.
-- **Governance Health & Model Assignments:** Displays control pass/fail counts,
-  findings distribution by severity, approval status, tamper-evident audit chain
-  integrity, and active model/agent configurations (with unavailable fields
-  explicitly stated per Hazard 10).
-- **AI Governance & Data Quality:** Summarizes token consumption, known costs,
-  reporting coverage across agent rows, snapshot freshness, and telemetric gaps.
-- **Governed Deliveries portfolio table:** An enterprise table aggregating
-  runs across configured repositories with sticky headers, status badges,
-  findings counts, and quick-open drawer triggers.
+The Overview has four layers over the selected repository scope:
+- **Operational status:** four cards — run health (blocked, in progress,
+  completed), active findings (blocking and open, with the settled states
+  broken out), tokens, and known cost — and a run-progression map showing how
+  far each loaded run got through its recorded stages.
+- **Needs attention:** runs waiting for your approval, then blocked runs, then
+  blocking and open findings, each with a direct action. The queue shows at
+  most eight items and links to the full lists.
+- **Recent runs:** a sortable table of the loaded runs with state, recorded
+  stages, finding counts, known cost and last activity.
+- **Can I trust this data?:** coverage of snapshots, cost, tokens, model
+  attribution and duration across the loaded agent rows. It states that no
+  history is collected and that this view does not verify the audit chain.
 
-##### Progressive disclosure slide-over drawers
+##### Other tabs
 
-Detailed diagnostics open in a slide-over drawer anchored to the right side of the
-screen, preserving table and canvas context:
-- Run Detail, Finding Detail (with grounding excerpts and decision rationale),
-  Pipeline Stage Root-Cause, Data Quality Telemetry, and Model Assignments.
-- Drawers trap focus (`Tab` / `Shift+Tab`), restore focus to the opening trigger on
-  close, and close immediately on `Escape` or backdrop click.
+- **Runs:** the loaded runs across repositories, filtered by state or by
+  blocking findings. Selecting a run opens its full view: summary, findings,
+  cost and token charts, stage timeline, copy-only CLI commands, frozen
+  configuration, delivery, evidence and recent activity.
+- **Findings:** every finding in scope, filtered by status (require attention,
+  blocking, open, non-blocking, earlier round, addressed, rejected) and by
+  recorded severity.
+- **Governance:** for one selected run, a categorical governance status with
+  its policy checks (no score is computed), the auditability timeline of
+  recorded stages, and the frozen configuration with any upstream proposals.
+- **Models & agents:** for one selected run, agent, execution, token and cost
+  cards, telemetry coverage, where cost, tokens and time went by stage, and
+  the agents table.
+- **Audit:** for one selected run, the audit status (a copyable
+  `verify-audit` command; this view does not recompute the chain), the
+  workflow timeline, recorded limitations, and evidence references.
 
-##### Dedicated tab views
-
-- **Runs:** Complete repository inventory, run search, phase filters, and
-  full run inspection.
-- **Findings:** Cross-run findings triage queue with severity filters (`High`,
-  `Medium`, `Low`) and resolution status (`Addressed`, `Rejected with rationale`,
-  `Unaddressed`).
-- **Governance:** Approvals, policy hashes, upstream proposals, and copy-only
-  CLI command execution cards.
-- **Models & Agents:** AI governance analytics, including Cost by Stage, Cost by
-  Agent SVG donut chart, stage-ordered Token Consumption polyline, and Agent
-  Analytics table.
-- **Audit:** Activity stream timeline, verification command exit codes, delivery
-  result records, and evidence references.
+Details open in a drawer on the right. Drawers trap focus, return it to the
+control that opened them, and close on `Escape` or a backdrop click.
 
 ##### Accessibility and security invariants
 
-Keyboard navigation supports `ArrowLeft` / `ArrowRight` between primary tabs, `?`
-to open the keyboard shortcuts dialog, and `Escape` to dismiss overlays. Colour
+Keyboard navigation supports `ArrowLeft` / `ArrowRight` between tabs, `/` for
+search, `g` then `o`, `r`, `f` or `a` to jump to Overview, Runs, Findings or
+Governance, `?` for the help dialog, and `Escape` to dismiss overlays; the
+shortcuts can be turned off in that dialog. Colour
 never carries meaning alone — every state also has a text label and a non-colour
 icon — and the palette drops out entirely under forced colours. Light and dark
 themes both meet the 4.5:1 text and 3:1 non-text contrast requirements. Content
 Security Policy is `style-src 'self'` with zero inline styles. The dashboard is
-loopback-only and read-only except for approval submission: it executes no
+loopback-only and read-only except for approval submission and decision
+answers: it executes no
 commands and opens no WebSockets, and its one background timer is the bounded
 auto-refresh above.
+
+#### Answering questions from the dashboard
+
+When spec review asks the operator questions, the run shows **AWAITING
+DECISION** and its run view lists one card per question: the question, its
+options, a **Recommended** badge on the recommended option, and the reviewer's
+reason. Each open question has three controls:
+- **Approve** records the recommended option's answer.
+- **Deny** leaves the question open; the spec says nothing new about it and the
+  run continues.
+- **Modify** opens a text area; **Record answer** records your own answer, up
+  to 4,000 characters.
+
+The dashboard records each answer with the same core function, writer lock,
+and audit events as `decide`. Answers are final: an answered card shows the
+recorded answer and no controls. If another BuildWorks command holds the
+repository lock, nothing is written; try again when it finishes. Answering
+dispatches nothing. When every question is answered, resume the run from a
+terminal with `run --yes`; that invocation folds the answers into the spec and
+stops at approval.
 
 #### Approving from the dashboard
 
@@ -511,7 +539,7 @@ is needed** banner, and the Overview lists the run under Needs attention.
 
 The private key is the `approval.key` file that
 `node scripts\sign-approval.mjs keygen --out <folder>` created beside
-`approval.pub`. Choose it with **Choose key file** and select **Approve**.
+`approval.pub`. Select it in the **Private key file** field and select **Approve**.
 Your browser signs the exact canonical payload and sends only the detached
 signature. The key is never uploaded, stored, or remembered, so you choose it
 again for each approval.
@@ -576,6 +604,47 @@ The first invocation runs spec and spec review, then returns control at
 `awaiting_approval` with exit 3 and no held writer lock. No pending approval
 row is required for this pause. The persisted run can still be `in_progress`;
 the derived phase is not another stored lifecycle.
+
+### Answer spec-review questions
+
+When spec review judges a question blocking, the first invocation instead
+returns at `awaiting_decision`, also with exit 3. The snapshot lists each
+question under `questions`, with its options, the index of the recommended
+option, the reviewer's reason, and any recorded answer. It also carries one
+`decision_answer` operator action per open question, naming its `--finding`.
+
+```powershell
+$StatusJson = & node $BwCli status --repo $Target --run $RunId --json
+if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect the decision boundary.' }
+$Snapshot = ($StatusJson | ConvertFrom-Json).result
+$Snapshot.questions | Format-List findingId, text, options, recommended, why, answer
+```
+
+Record exactly one answer per question with `decide`:
+
+```powershell
+# Approve the recommended option.
+& node $BwCli decide --repo $Target --run $RunId --finding $FindingId --approve
+# Deny: the question stays open and the run continues.
+& node $BwCli decide --repo $Target --run $RunId --finding $FindingId --deny
+# Record your own answer from a UTF-8 file (at most 4,000 characters).
+& node $BwCli decide --repo $Target --run $RunId --finding $FindingId --answer-file $AnswerFile
+```
+
+`--approve`, `--deny`, and `--answer-file` are mutually exclusive, and one is
+required. The answer file resolves from the invocation directory, not
+`--repo`; a leading BOM and surrounding whitespace are dropped. On success
+`decide` prints the answer ID and reports the number of questions still open on
+stderr. It takes the writer lock and dispatches nothing. A second answer to the
+same question, an answer to another stage's question, or an answer outside the
+decision pause is refused with exit 1. Answers are final; a mistaken answer is
+repaired by a fresh run.
+
+After the last answer, `run --yes` previews exactly one group, `decision`. It
+dispatches the spec author once to fold the approved and modified answers into
+the spec, validates the result, and stops at `awaiting_approval` with exit 3.
+If every answer is a deny, the fold completes without a dispatch. A fold that
+fails validation blocks the run. Approval binds the folded spec.
 
 ### Review and sign outside the CLI
 
@@ -690,8 +759,13 @@ bearer token, 404 to an unknown route/repository identifier or malformed run
 identifier, and 405 to every non-`GET` request except `POST` on a run's
 `/approval` route. That route also answers 400 when `Origin` is missing or
 foreign, 409 when another writer holds the repository lock, 413 above 8 KiB,
-415 without a JSON body, and 422 when the core refuses the approval. Only 401
-expires the browser session.
+415 without a JSON body, and 422 when the core refuses the approval. The
+decision route, `/api/repositories/<id>/runs/<run>/decisions/<finding>`,
+accepts only `POST` (405 otherwise). Its body is exactly `{ "action" }` or
+`{ "action", "answer" }` with string values; any other shape answers 400. It
+applies the same Origin, lock (409), media-type (415), and core-refusal (422)
+rules, with a 24,256-byte body limit (413), and answers 200 with the recorded
+answer ID and open-question count. Only 401 expires the browser session.
 
 The envelope is `{ command, outcome, repository, runId, errorCode, reason,
 observedAt, result }`. `observedAt` is the observation timestamp, not an agent
@@ -704,7 +778,7 @@ completion, and approval pauses have null `errorCode`/`reason`.
 | `doctor` | `checks`, `current`, `frozen`, `limitations` | `ready`, `not_ready`, `error` |
 | `runs` | `runs`, `limit`, `hasMore` | `ok`, `state_missing`, `error` |
 | `status` | The complete snapshot below | `ok`, `state_missing`, `run_missing`, `error` |
-| `run` | `snapshot`, `execution` | `completed`, `awaiting_approval`, `consent_required`, `refused`, `blocked`, `failed` |
+| `run` | `snapshot`, `execution` | `completed`, `awaiting_decision`, `awaiting_approval`, `consent_required`, `refused`, `blocked`, `failed` |
 
 Doctor checks contain `name`, `status` (`pass`, `fail`, `not_checked`),
 `evidence`, and nullable `repair`. `current` contains `systemName`,
@@ -731,7 +805,8 @@ are complete, with no silent truncation or pagination:
 | Snapshot section | Contents |
 | --- | --- |
 | `run` | `id`, `project`, `featureId`, `slug`, `changeKind`, persisted `status`, `createdAt`, `updatedAt`. |
-| `phase` | `ready`, `awaiting_approval`, `blocked`, `completed`, or `interrupted_or_inconsistent`. |
+| `phase` | `ready`, `awaiting_decision`, `awaiting_approval`, `blocked`, `completed`, or `interrupted_or_inconsistent`. |
+| `questions` | Spec-review questions, oldest first: `findingId`, `text`, `options` (`label`, `answer`), `recommended` index, `why`, and nullable `answer` (`action`, `text`, `at`). |
 | `stages` | Ordered IDs/kinds/ordinals, predecessor/output refs, status/gate result, stored start/end times, and labelled `startEvidence`. |
 | `workflowAction` | `group`, `eligible`, all `reasons` (`code`, `reason`), `command`, `args`. The existing next group only, not a recovery instruction. |
 | `operatorActions` | Separate action `kind`, command/args, eligibility/reason, proposal ID/route/title, and evidence ref. |
@@ -754,8 +829,8 @@ is not proof that every part of a retained record was validated.
 `execution` contains `consent` (`not_needed`, `required`, `declined`,
 `granted`), `groupsAttempted`, `groupsCompleted`, `remainingGroups`,
 `startedAt`, `endedAt`, and `elapsedMs`. Unstarted invocation times are null.
-Group names are `spec`, `plan`, `implementation`, `verification`, `code_review`,
-and `delivery_check`. Remaining groups are invocation accounting, not permission
+Group names are `spec`, `decision`, `plan`, `implementation`, `verification`,
+`code_review`, and `delivery_check`. Remaining groups are invocation accounting, not permission
 to retry a failed or ineligible group.
 
 Known cost is summed from selected-run agent rows before report fan-out.
@@ -772,7 +847,7 @@ can delay timers. Neither a lock PID nor heartbeat identifies an active agent.
 | `0` | Successful inspection/readiness; for `run`, completed delivery only. A readable blocked-run `status` still succeeds. |
 | `1` | Operational refusal, missing state/run, failed readiness, consent required/declined, block, or execution failure. |
 | `2` | Invalid command-line usage. |
-| `3` | `run` reached a valid human approval pause. |
+| `3` | `run` reached a valid human pause: operator decisions or approval. |
 
 The closed `errorCode` set is `usage`, `target_unavailable`, `state_missing`,
 `schema_unsupported`, `state_unavailable`, `run_missing`, `setup_required`,

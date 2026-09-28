@@ -69,7 +69,10 @@ read.
    allowing two authorities to drift. The 2026-09-26 decision in section 23 is
    that decision for exactly one write: the dashboard may submit an approval
    signature through the same core function and writer lock as `bw approve`.
-   Every other mutation remains CLI-only.
+   The 2026-09-27 decision in section 23 adds a second: the dashboard may
+   record an operator's answer to a spec-review question through the same
+   core function and writer lock as `bw decide`. Every other mutation remains
+   CLI-only.
 3. **One schema per thing.** No unions, no version discriminators, no
    compatibility handling, and no version identifiers embedded in component
    names or contracts. A stable name plus a content hash is identity; nothing
@@ -114,10 +117,13 @@ Start with the minimum that delivers value. Twelve stages that never complete
 one run are worth less than eight that close the loop.
 
 ```
-spec  ->  spec_review  ->  awaiting_approval  ->  plan  ->  plan_review
-      ->  implementation  ->  verification  ->  code_review
+spec  ->  spec_review  ->  spec_decision  ->  awaiting_approval  ->  plan
+      ->  plan_review  ->  implementation  ->  verification  ->  code_review
       ->  delivery_check  ->  completed
 ```
+
+The spec decision stage joined the sequence on 2026-09-27 as an unsigned
+human decision boundary; section 12 describes it.
 
 The loop above closed end to end on 2026-09-03. On 2026-09-04 the operator
 lifted the stop for exactly one of the deferred stages, the code review, on
@@ -296,6 +302,28 @@ one repo-relative path; an acceptance-criterion line is one `AC-NNN: <text>`
 entry. The canonical form of both carries a leading list marker, and the parser
 tolerates its absence on either section — a recorded provider response writes
 the artifacts section unbulleted — so the marker is conventional, not required.
+The optional `## Open decisions` section follows the same rule: each line is one
+`OD-NNN (<severity>): <question>` entry, whose ID has the criterion ID's shape
+with an `OD` prefix and whose severity uses the finding vocabulary. The heading
+is spelled exactly and appears at most once; a second or differently spelled
+one is refused, because its entries would otherwise escape recording. An entry
+is a question the design leaves open, not an obligation, so entries are not
+normative nodes (section 12). The prompts that write the section limit it to a
+decision the design needs and does not make — one without which a behavior the
+design states cannot be written as a testable criterion. Protection, limits or
+policy beyond what the design asks for is not an entry.
+
+An acceptance criterion is a pass/fail check: a specific input, action, value
+or observable outcome, never a subjective or unquantified term. Where the
+design states a behavior in such terms, the criterion carries only its
+checkable part and the undecided part becomes an open decision, which the
+operator answers through `spec_decision` (section 12); the author never picks
+a threshold the design does not state. Guidance with no checkable part, such
+as visual tone, is an Out of scope note, not a criterion. The draft and
+self-critique prompts state this rule, and the self-critique checks every
+criterion against it (operator decision, 2026-09-27). Nothing parses criterion
+content: a word list would refuse legitimate criteria, so the rule narrows the
+author's judgement without proving it.
 
 What each rule proves is narrower than the sentence above, and the difference
 matters. A line under `## Acceptance criteria` that does not open with an
@@ -570,6 +598,19 @@ and default to one. A configured round is one complete panel-and-reconciliation
 cycle; self-critique happens once per artifact regardless of how many are
 configured.
 
+**A disclosed open decision is a finding.** Before the round-1 panel of
+`spec_review`, every entry under `## Open decisions` in the self-critiqued
+specification is recorded as a round-1 canonical finding at
+`upstream:design:<id>`, with one report from the author's self-critique
+dispatch carrying the author's severity. Reconciliation must answer it like
+any other finding, so a disclosed gap cannot reach approval without a typed
+decision. Reconciliation may keep, reword, or remove an entry, but a reconciled
+specification that adds an entry ID the reviewed one lacked is refused: a
+question found open later is answered through the decision on the finding that
+raised it. The check is by ID, so a reworded entry that keeps its ID is not
+compared with the question its decision answered. `plan_review` has no such
+section (operator decision, 2026-09-26).
+
 **The author proposes the panel; the system staffs it.** The self-critique
 result carries a requested panel size within frozen bounds and a unique list of
 specialties — never an agent identity. Configured required specialties consume
@@ -594,7 +635,9 @@ normative delta between the artifact before and after reconciliation is fully
 accounted for; that every cited excerpt occurs textually in the governing
 input; that conditional proposal content is complete where its disposition
 requires it and absent where it forbids it; that the mechanical artifact gates
-pass; and that the resulting route is honoured.
+pass; that every open decision the reviewed specification discloses is a
+canonical finding of round 1 and no reconciliation adds one; and that the
+resulting route is honoured.
 
 **`addressed` is not authority to invent an obligation.** Deterministic code
 derives the normative delta by set-diffing the parsed nodes of the validated
@@ -639,8 +682,49 @@ criterion identity does not authorize removal by itself. That closes hazard
 guard has: the grounding check proves the cited words occur in the governing
 input, never that they justify the deletion.
 
-**`awaiting_approval`.** The only human gate. One signed authorization — an
-Ed25519 signature by the operator, verified by the gate against a public key
+**`spec_decision`.** An unsigned human decision boundary between
+`spec_review` and approval (operator decision, 2026-09-27). The reason: every
+new design had blocked at `spec_review` on an open question the model judged
+blocking, and a narrower prompt criterion did not make that judgement
+consistent. A question the design leaves open is the operator's to answer.
+
+In `spec_review`, a reconciliation decision the author chose as
+`upstream_blocking` or `cannot_determine` must carry a question: its text, two
+to four options each with a label and an answer, the index of the recommended
+option, and why. Such a decision no longer blocks the gate; it opens a
+question. A `cannot_determine` that deterministic code produced by conversion
+— an unclaimed, twice-claimed or ungrounded node — still blocks, because it
+records a malformed answer, not a question an operator can settle. With no
+question open, the spec group records `spec_decision` as passed with the
+reviewed specification.
+
+Otherwise the run pauses at `awaiting_decision` until every question carries
+one immutable answer:
+- **approve** records the recommended option's answer;
+- **deny** leaves the question open: the specification says nothing new about
+  it, and a disclosed open decision it came from stays exactly as written;
+- **modify** records the operator's own text.
+
+`answerQuestion` records each answer, called by `bw decide` or the dashboard,
+under the repository writer lock, with the answer and its audit event in one
+transaction and the actor typed human. The answer is a human decision, never
+a reviewer's or a panel's (hazard 14).
+
+Once every question is answered, a separately consented execution group
+creates `spec_decision`. Unless every answer is deny, it dispatches the spec
+author once to fold the approved and modified answers into the specification.
+The fold passes the same mechanical document gates as a draft, adds no open
+decision ID, keeps every denied disclosed entry's ID, severity and text
+byte-for-byte, and accounts for its normative delta in both directions: each
+added or removed node is claimed once by an `addressed` decision grounded in
+the design or in the recorded answer to that same question. A denied question
+gets no claim, so a node added for it refuses. A failed fold blocks the run.
+No panel reviews the fold; the operator reads the folded specification at
+approval, and approval binds the `spec_decision` output and hash. A mistaken
+answer is repaired by a fresh run. `plan_review` has no decision boundary.
+
+**`awaiting_approval`.** The only signed authorization gate. One signed
+authorization — an Ed25519 signature by the operator, verified by the gate against a public key
 held in machine-local configuration, never in a repository — binds feature ID,
 spec content hash, starting commit, profile hash, risk, expiry, and scope. The
 gate re-checks that policy has not changed since intake before honoring it.
@@ -809,6 +893,16 @@ a matter of finding time.
 Reviewers produce findings. They do not vote, and the system does not need them
 to agree.
 
+The author's disclosed open decisions enter as findings too (operator decision,
+2026-09-26). A disclosure report is the author's evidence, not a reviewer's: it
+occupies no panel seat, counts toward no panel size, and makes no independence
+claim (hazard 14). Unlike a reviewer's finding, a disclosure is raised and
+answered by the same author, and an `addressed` answer that changes no
+normative node needs no grounding. What the rule guarantees is a recorded,
+typed decision for every disclosed question, not a block and not an
+independent check of that decision; the gate still decides whether the
+decision advances the run.
+
 **Findings deduplicate by identity, within a round.** Two reviewers raising the
 same concern about the same location in the same round produce one canonical
 finding, because identity derives from intent and location rather than wording.
@@ -862,7 +956,17 @@ contract says "this is valid and its cause is upstream", and reconciliation
 routes it three ways: `upstream_follow_up` writes a proposal and the run
 continues; `upstream_blocking` writes the proposal and blocks, because filing a
 missing decision does not make the approved input implementable; and
-`cannot_determine` blocks for a human and may claim no proposal. A proposal is
+`cannot_determine` blocks for a human and may claim no proposal. The test for
+`upstream_blocking` is implementability, not severity: a question about adding
+protection, limits or policy beyond a workable baseline the governing input
+already states leaves that input implementable, so it is a follow-up. The spec
+reconciliation prompt states this test; the gate still reads dispositions only,
+so it is the author's judgement under a stated rule, not a mechanical check
+(operator decision, 2026-09-27). In `spec_review` only, a model-chosen
+`upstream_blocking` or `cannot_determine` decision now asks the operator a
+question instead of blocking (section 12, operator decision 2026-09-27); an
+`upstream_blocking` proposal still records route `blocking_dependency` and is
+never rewritten. In `plan_review` both still block. A proposal is
 run state with retained evidence and is non-binding — it adds no acceptance
 criterion to the current feature. No run writes into `docs/proposals/`; export
 and promotion are human actions, as section 14 describes.
@@ -1034,6 +1138,8 @@ audit(id, run_id, stage_id, actor, actor_type, action, summary, hash, prev_hash,
 proposal(id, run_id, stage_id, identity, title, problem, why_upstream, route,
          evidence_ref, created_at)
 proposal_source(proposal_id, finding_id)
+decision_question(id, finding_id, text, options, recommended, why, created_at)
+decision_answer(id, question_id, action, answer, created_at)
 ```
 
 `run.status` is one of `in_progress`, `blocked`, `completed`; `stage.status` one
@@ -1070,8 +1176,8 @@ Approval private keys are never in the repository, never in a projection, never
 in run state, and never on a filesystem or process identity that verification
 can access. A worker, agent session, verification command, and guided CLI never
 receives them under any circumstance — an actor that can sign an approval has
-defeated the only human gate in the pipeline. The configured public key,
-canonical payload, and detached signature are not secret.
+defeated the only signed authorization gate in the pipeline. The configured
+public key, canonical payload, and detached signature are not secret.
 
 The repository's file signer remains an advanced external transport tool. It
 does not make a private key safe when the signer and verification share a host
@@ -1396,6 +1502,25 @@ clause that the browser never accepts signatures or opens a writer.
 It does not authorize collecting execution consent, resuming or rejecting a
 run, storing or generating keys, a signing service, or any other dashboard
 write.
+
+**Spec operator decisions — 2026-09-27.** The operator authorized
+`spec_decision` (section 12) and a second dashboard write: recording an
+operator's answer to a spec-review question. The reason: every new design had
+blocked at `spec_review` on a model-judged open question, and the operator
+concluded that a human answer settles what prompt tuning did not.
+
+What the host accepts: one action per question — approve, deny, or modify with
+the operator's text — over one authenticated `POST` route with the approval
+route's token, `Origin`, media type and body-size rules. It records the answer
+by taking the repository writer lock, checking that the schema is exactly
+current, opening the writer, and calling `answerQuestion`, the function
+`bw decide` calls. Answering dispatches nothing; the fold is a separately
+consented execution group. For this one action, this decision narrows the
+2026-09-26 clause that no other dashboard write is authorized.
+
+It does not authorize collecting execution consent, dispatching the fold,
+changing a recorded answer, a question path for `plan_review`, or any other
+dashboard write.
 
 ## 24. Non-goals
 

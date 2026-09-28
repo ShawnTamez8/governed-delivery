@@ -308,6 +308,7 @@ const NUMBER_WORDS = {
 const PINNED_SEQUENCE = [
   "spec",
   "spec_review",
+  "spec_decision",
   "awaiting_approval",
   "plan",
   "plan_review",
@@ -330,6 +331,8 @@ const PINNED_TABLES = [
   "agent_run",
   "approval",
   "audit",
+  "decision_answer",
+  "decision_question",
   "finding",
   "finding_decision",
   "finding_report",
@@ -374,6 +377,9 @@ const PINNED_TABLE_CONSTRAINTS = [
   ["proposal", "CHECK (route IN ('follow_up', 'blocking_dependency'))"],
   ["proposal", "UNIQUE (stage_id, identity)"],
   ["proposal_source", "UNIQUE (proposal_id, finding_id)"],
+  ["decision_question", "UNIQUE (finding_id)"],
+  ["decision_answer", "CHECK (action IN ('approve', 'deny', 'modify'))"],
+  ["decision_answer", "UNIQUE (question_id)"],
 ];
 
 const lineIn = (text, needle) => {

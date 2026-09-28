@@ -32,6 +32,10 @@ flowchart TD
     H --> I[Specification and specification review: paid]
     I --> J{Specification gate}
     J -->|Blocked or failed| X[Stop and retain evidence]
+    J -->|Questions for the operator| D1[Operator answers each question: exit 3 to pause]
+    D1 --> D2[Operator consents to the fold: paid unless every answer is deny]
+    D2 -->|Fold fails validation| X
+    D2 -->|Passed| K
     J -->|Passed| K[Guided approval handoff: exit 3]
     K --> L[External authority returns detached signature]
     L --> M[Operator reruns buildworks and confirms submission]
@@ -197,7 +201,33 @@ The command is interactive only. Redirected stdin refuses before mutation or
 spend. Review the preview and type `yes` only if you authorize its complete
 paid range. Decline, cancellation, or end-of-input starts no dispatch.
 
-### 5. Complete the external approval handoff
+### 5. Answer spec-review questions, when asked
+
+Specification review may find a question the design does not answer and that
+it judges blocking. Instead of blocking the run, it asks you. The first paid
+range then stops before approval, and guided mode shows each question with its
+numbered options, the recommended option, and the reviewer's reason:
+
+| Answer | Effect |
+| --- | --- |
+| `1` | Approve: records the recommended option's answer. |
+| `2` | Deny: the question stays open, the spec says nothing new about it, and the run continues. |
+| `3` | Modify: records your own one-line answer. |
+| `4` (default) | Exit with code 3. Answers already given stay recorded; rerun `buildworks $Target` to continue. |
+
+Three invalid entries also exit. Answers are final; a mistaken answer is
+repaired by a fresh run. You can also answer from the dashboard or with
+`decide` (see [Answer spec-review questions](#answer-spec-review-questions)
+below).
+
+After the last answer, guided mode previews the `decision` group and asks for
+a separate `yes`. That group dispatches the spec author once to fold your
+approved and modified answers into the specification; if every answer is a
+deny, it completes without a dispatch. A fold that fails validation blocks the
+run. On success the run stops at the approval handoff below, and approval binds
+the folded specification.
+
+### 6. Complete the external approval handoff
 
 The first paid range runs specification and specification review and stops at
 the valid approval boundary with exit 3. Guided mode exclusively creates the
@@ -240,7 +270,7 @@ Approval does not authorize execution. Review the newly displayed paid range
 and provide a separate `yes` only if you authorize planning, implementation,
 verification, bounded code-review remediation, and delivery checking.
 
-### 6. Inspect and integrate the result
+### 7. Inspect and integrate the result
 
 On success the guided result reports the retained branch, worktree, delivered
 commit, delivery evidence, final findings count, and known recorded cost.
@@ -507,6 +537,45 @@ The stored run may still be `in_progress`; `awaiting_approval` is its derived
 phase, not another persisted run status. A blocked specification is not an
 approval pause.
 
+If specification review asked you questions, the run instead returns at
+`awaiting_decision`, also with exit 3. Adjust the exit check accordingly and
+answer the questions before step 6.
+
+#### Answer spec-review questions
+
+```powershell
+$StatusJson = & node $BwCli status --repo $Target --run $RunId --json
+if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect the decision boundary.' }
+$Snapshot = ($StatusJson | ConvertFrom-Json).result
+$Snapshot.questions | Format-List findingId, text, options, recommended, why, answer
+```
+
+Record exactly one answer per open question. Choose one form:
+
+```powershell
+$FindingId = Read-Host 'findingId of the question to answer'
+& node $BwCli decide --repo $Target --run $RunId --finding $FindingId --approve
+& node $BwCli decide --repo $Target --run $RunId --finding $FindingId --deny
+& node $BwCli decide --repo $Target --run $RunId --finding $FindingId --answer-file $AnswerFile
+```
+
+`--approve` records the recommended option. `--deny` leaves the question open
+and lets the run continue. `--answer-file` records your own answer from a
+UTF-8 file of at most 4,000 characters; it resolves from the invocation
+directory. Each answer takes the writer lock, dispatches nothing, and is final.
+
+After the last answer, continue the run. This invocation spends provider money
+unless every answer is a deny:
+
+```powershell
+& node $BwCli run --repo $Target --run $RunId
+if ($LASTEXITCODE -ne 3) { throw 'Expected the approval pause; inspect the returned result before proceeding.' }
+```
+
+Its preview lists exactly one group, `decision`, which folds the answers into
+the specification and stops at `awaiting_approval`. Approval binds the folded
+specification.
+
 Redirected stdin or `--json` requires `--yes`; use that flag only when you have
 already authorized the full previewed range. Costs depend on the project,
 model, output, and review/remediation work. There is no fixed price or enforced
@@ -737,7 +806,7 @@ no persistence, transmission, config parsing, or repair.
 | `0` | Successful inspection/readiness; for `run`, completed delivery. A readable blocked-run `status` also exits 0. |
 | `1` | Readiness failure, missing state/run, refusal, declined/missing consent, block, or execution failure. Read the reason. |
 | `2` | Invalid command-line usage. |
-| `3` | `run` reached the human approval pause. |
+| `3` | `run` reached a human pause: operator decisions or approval. |
 
 ### Troubleshooting
 
@@ -756,6 +825,9 @@ no persistence, transmission, config parsing, or repair.
 | Verification fails in the run worktree | Read the named command's retained output. Check actual test failures, fresh-worktree dependencies, environment requirements, and generated tracked changes. Do not weaken the gate or rerun a failed group blindly. |
 | Public key missing/mismatched at approval | Restore the intended external public-key setup and compare its fingerprint with the frozen run. Do not replace the run's profile or private key to force acceptance. |
 | Private signing material is present on the BuildWorks host | Stop before execution. Move signing authority to a separate host or identity that verification cannot access; retain only the public key and returned detached signature on the BuildWorks host. |
+| `decide` refuses an answer | Read the reason. Each question takes one answer; answers are accepted only while the run is at `awaiting_decision` and only for that run's own questions. A mistaken answer needs a fresh run. |
+| Fold blocks the run | Read the `spec_decision` gate diagnostic. The folded spec failed a spec gate, added an ungrounded obligation, or changed a denied open decision. Retain the evidence and start a fresh run. |
+| Run is `interrupted_or_inconsistent` with `chain_incomplete` after upgrading | Runs recorded before the `spec_decision` stage existed have no such stage and cannot continue. Start a fresh run; `status` still reads the old one. |
 | Payload/signature filename already exists | Use new transport filenames; never overwrite canonical approval bytes. |
 | Approval expired or signature rejected | Read the binding diagnostic. Use one expiry across export/sign/submission; if expired before acceptance, start a fresh export/signing decision. Duplicate accepted approvals are refused, not execution commands. |
 | `schema_unsupported` | Use the matching checkout for newer state. For an older schema, follow the diagnostic and explicitly authorize `& node $BwCli migrate --repo $Target`; inspection and guided consent do not migrate. |
@@ -781,6 +853,7 @@ the implemented operator path, not a new runtime contract.
 | Source | Governs |
 | --- | --- |
 | [CLI arguments](../../src/cli-args.ts) and [entry point](../../src/cli.ts) | Command syntax, routing, run creation, and approval file transport. |
+| [Operator decisions](../../src/spec-decision-stage.ts) | Recording spec-review answers and the fold into the specification. |
 | [Readiness](../../src/readiness.ts) and [run orchestration](../../src/run-command.ts) | No-spend checks, consent, stage-group boundaries, and refusal behavior. |
 | [Configuration parser](../../src/governed-config.ts) and [policy](../../src/policy.ts) | Verification input shape, review controls, environment, and limits. |
 | [External signer](../../scripts/sign-approval.mjs) | Operator-only key generation/signing and PowerShell transport normalization. |

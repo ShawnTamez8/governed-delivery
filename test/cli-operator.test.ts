@@ -97,7 +97,7 @@ test("every help form succeeds without target resolution or state creation", () 
     const before = inventory(parent);
     const commands = [
       "migrate", "new-run", "stage-add", "stage-complete", "dispatch", "spec", "plan",
-      "implement", "verify", "review", "deliver", "approval-request", "approve",
+      "implement", "verify", "review", "deliver", "approval-request", "approve", "decide",
       "verify-audit", "proposal-export", "doctor", "runs", "status", "run", "dashboard",
     ];
     const helpForms = [
@@ -156,6 +156,12 @@ test("malformed command lines refuse before target resolution, lock, migration, 
       { args: ["runs", "--limit=101"], reason: /--limit.*1.*100/ },
       { args: ["approve", "--run=1", "--expires=x", "--signature=a", "--signature-file=b"], reason: /--signature.*--signature-file.*mutually exclusive/ },
       { args: ["approve", "--run=1", "--expires=x"], reason: /--signature/ },
+      { args: ["decide", "--run=1", "--finding=2", "--approve", "--deny"], reason: /--approve and --deny and --answer-file are mutually exclusive/ },
+      { args: ["decide", "--run=1", "--finding=2", "--deny", "--answer-file=a.txt"], reason: /mutually exclusive/ },
+      { args: ["decide", "--run=1", "--finding=2"], reason: /missing required option --approve or --deny or --answer-file/ },
+      { args: ["decide", "--run=1", "--approve"], reason: /missing required option --finding/ },
+      { args: ["decide", "--run=1", "--finding=x", "--approve"], reason: /--finding.*non-negative integer/ },
+      { args: ["decide", "--run=1", "--finding=2", "--approve=yes"], reason: /--approve.*bare flag/ },
       { args: ["approval-request", "--run=1", "--out="], reason: /--out/ },
       { args: [...NEW_RUN, "--project=p"], reason: /duplicate option --project/ },
       { args: NEW_RUN.map((arg) => arg === "s" ? "../escape" : arg), reason: /invalid slug/ },
@@ -368,6 +374,12 @@ test("approval-request preserves raw canonical stdout for absolute and relative 
         runId, stageId: review.id, actor: "system", actorType: "cli", action: "spec.gate.pass",
         summary: `spec_review gate passed in round 1; specHash=${sha256Hex(normalizeText(spec))}; risk=${risk}`,
       });
+      const decision = store.insertStage(runId, "spec_decision", review.id);
+      store.completeStage(decision.id, specPath, "pass");
+      appendAudit(store, {
+        runId, stageId: decision.id, actor: "system", actorType: "cli", action: "spec_decision.gate.pass",
+        summary: `spec_decision gate passed; specHash=${sha256Hex(normalizeText(spec))}; risk=${risk}; answers=0; folded=0`,
+      });
       const bound = buildBinding(store, root, runId, expires);
       assert.ok(bound.ok, bound.ok ? "" : bound.reason);
       payload = approvalPayload(bound.binding);
@@ -389,6 +401,67 @@ test("approval-request preserves raw canonical stdout for absolute and relative 
       assert.ok(result.stderr.includes(`expires: ${expires}`));
     }
     assert.ok(!existsSync(join(parent, ".governance")));
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("decide records one answer through the core, reads --answer-file from the invocation directory, and refuses a second", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const created = cli(parent, parent, ...NEW_RUN, "--repo", root);
+    assert.equal(created.status, 0, created.stderr);
+    const runId = Number(created.stdout.trim());
+    const store = openStore(root);
+    const findings: number[] = [];
+    try {
+      const spec = store.insertStage(runId, "spec", null);
+      store.completeStage(spec.id, "docs/features/s/spec.md", "pass");
+      const review = store.insertStage(runId, "spec_review", spec.id);
+      store.completeStage(review.id, "docs/features/s/spec.md", "pass");
+      for (const intent of ["retention", "access"]) {
+        const finding = store.upsertCanonicalFinding(review.id, 1, intent, `upstream:design:${intent}`);
+        store.insertDecisionQuestion({ findingId: finding.id, text: `Decide ${intent}?`,
+          options: [{ label: "A", answer: `${intent} answer A` }, { label: "B", answer: `${intent} answer B` }],
+          recommended: 1, why: "the design is silent" });
+        findings.push(finding.id);
+      }
+    } finally {
+      store.close();
+    }
+    const answerFile = "operator answer.txt";
+    writeFileSync(join(parent, answerFile), "﻿Retain exports for ninety days.\r\n");
+    const modified = cli(parent, parent, "decide", "--repo", root, "--run", String(runId),
+      "--finding", String(findings[0]), "--answer-file", answerFile);
+    assert.equal(modified.status, 0, modified.stderr);
+    assert.match(modified.stdout, /^\d+\r?\n$/);
+    assert.match(modified.stderr, /1 question\(s\) still open/);
+    const approved = cli(parent, parent, "decide", "--repo", root, "--run", String(runId),
+      "--finding", String(findings[1]), "--approve");
+    assert.equal(approved.status, 0, approved.stderr);
+    assert.match(approved.stderr, /0 question\(s\) still open/);
+    const again = cli(parent, parent, "decide", "--repo", root, "--run", String(runId),
+      "--finding", String(findings[1]), "--deny");
+    assert.equal(again.status, 1);
+    assert.match(again.stderr, /already answered; answers are immutable/);
+    const missing = cli(parent, parent, "decide", "--repo", root, "--run", String(runId),
+      "--finding", String(findings[0]), "--answer-file", "absent.txt");
+    assert.equal(missing.status, 2);
+    assert.match(missing.stderr, /cannot read answer file/);
+    const after = openStore(root, { readOnly: true });
+    try {
+      const reviewId = after.getStageChain(runId)[1].id;
+      assert.deepEqual(after.getDecisionAnswers(reviewId).map((a) => [a.action, a.answer]),
+        [["modify", "Retain exports for ninety days."], ["approve", "access answer B"]]);
+      const actions = after.getAuditEvents(runId).map((event) => event.action);
+      assert.equal(actions.filter((action) => action === "decision.answer").length, 2);
+      assert.equal(actions.filter((action) => action === "decision.refused").length, 1);
+    } finally {
+      after.close();
+    }
+    assert.ok(!existsSync(join(root, answerFile)));
+    assert.equal(inspectLock(root).status, "absent");
   } finally {
     rmSync(parent, { recursive: true, force: true });
   }
@@ -1109,7 +1182,9 @@ test("Task 8 external CLI journey delivers every declared artifact without GitHu
     const expectedStages = sequence[1].split("->").map((value) => value.trim()).filter((value) => value !== "completed");
     const approvalIndex = expectedStages.indexOf("awaiting_approval");
     assert.ok(approvalIndex > 0);
-    const expectedGroups = expectedStages.filter((kind) => !["spec_review", "plan_review", "awaiting_approval"].includes(kind));
+    // spec_decision is written by the spec group when the review asks nothing.
+    const expectedGroups = expectedStages.filter((kind) =>
+      !["spec_review", "spec_decision", "plan_review", "awaiting_approval"].includes(kind));
     assert.equal(run.project, actionValue(NEW_RUN, "--project"));
     assert.equal(run.feature_id, actionValue(NEW_RUN, "--feature"));
     assert.equal(run.slug, actionValue(NEW_RUN, "--slug"));
@@ -1672,9 +1747,10 @@ test("Task 6 run executes the actual spec group once and repeats an approval pau
     assert.equal(snapshot.run.status, "in_progress");
     assert.equal(snapshot.workflowAction.group, "approval");
     assert.equal(snapshot.workflowAction.eligible, true);
-    assert.deepEqual(snapshot.stages.map((stage) => stage.kind), ["spec", "spec_review"]);
+    assert.deepEqual(snapshot.stages.map((stage) => stage.kind), ["spec", "spec_review", "spec_decision"]);
     assert.ok(snapshot.stages.every((stage) => stage.status === "passed" && stage.gateResult === "pass"));
-    const spec = readFileSync(snapshot.stages[1].outputRef!, "utf8");
+    assert.deepEqual(snapshot.questions, []);
+    const spec = readFileSync(snapshot.stages[2].outputRef!, "utf8");
     const parsed = validateSpecDoc(spec);
     assert.ok(parsed.ok, parsed.ok ? "" : parsed.reason);
     assert.deepEqual(snapshot.approval.scope, computeScope(parsed.value.declaredArtifacts));
@@ -1717,6 +1793,68 @@ test("Task 6 run executes the actual spec group once and repeats an approval pau
       assert.doesNotMatch(repeated.stderr, /execution preview|group spec start|Type yes/);
       assert.deepEqual(inventory(parent), before, "a separate approval-pause invocation must not replay spec");
     }
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("Task 7 run pauses at awaiting_decision, then previews exactly the decision group and folds to approval", () => {
+  const parent = workspace();
+  try {
+    const { root, doctor, run, profile } = preapprovalFixture(parent);
+    writeFileSync(join(root, "docs", "features", run.slug, "design.md"), "# design\n\nFIXTURE-ASK-OPERATOR\n");
+    const timeout = profile.executor.sandbox.absoluteTimeoutSeconds * 1000;
+    const first = doctor.run(root, ["--run", String(run.id), "--yes", "--json"], { timeout });
+    const asked = operatorEnvelope(first, "run");
+    assert.equal(first.status, 3, first.stderr || first.stdout);
+    assert.equal(asked.outcome, "awaiting_decision");
+    const askedResult = asked.result as RunCommandResult;
+    assert.deepEqual(askedResult.execution.groupsCompleted, ["spec"]);
+    assert.deepEqual(askedResult.execution.remainingGroups, []);
+    const snapshot = askedResult.snapshot!;
+    assert.equal(snapshot.phase, "awaiting_decision");
+    assert.deepEqual(snapshot.stages.map((stage) => stage.kind), ["spec", "spec_review"]);
+    assert.equal(snapshot.workflowAction.group, "decide");
+    assert.equal(snapshot.questions.length, 1);
+    const question = snapshot.questions[0]!;
+    assert.equal(question.answer, null);
+    assert.ok(snapshot.operatorActions.some((action) => action.kind === "decision_answer"
+      && action.args.includes(String(question.findingId))));
+
+    const text = doctor.command(root, ["status", "--run", String(run.id)]);
+    assert.equal(text.status, 0, text.stderr);
+    assert.ok(text.stdout.includes(question.text));
+    assert.match(text.stdout, /\(recommended\)/);
+    assert.match(text.stdout, /decide .*--approve/);
+
+    const decided = doctor.command(root, ["decide", "--run", String(run.id),
+      "--finding", String(question.findingId), "--approve"]);
+    assert.equal(decided.status, 0, decided.stderr);
+    assert.match(decided.stderr, /0 question\(s\) still open/);
+
+    const preview = doctor.run(root, ["--run", String(run.id), "--json"]);
+    const previewBody = operatorEnvelope(preview, "run");
+    assert.equal(preview.status, 1, preview.stderr || preview.stdout);
+    assert.equal(previewBody.outcome, "consent_required");
+    unstartedExecution(previewBody.result as RunCommandResult, "required", ["decision"]);
+    assert.match(preview.stderr, /Remaining groups: decision\r?\n/);
+
+    const folded = doctor.run(root, ["--run", String(run.id), "--yes", "--json"], { timeout });
+    const foldedBody = operatorEnvelope(folded, "run");
+    assert.equal(folded.status, 3, folded.stderr || folded.stdout);
+    assert.equal(foldedBody.outcome, "awaiting_approval");
+    const foldedResult = foldedBody.result as RunCommandResult;
+    assert.deepEqual(foldedResult.execution.groupsCompleted, ["decision"]);
+    assert.deepEqual(foldedResult.snapshot!.stages.map((stage) => stage.kind), ["spec", "spec_review", "spec_decision"]);
+    assert.equal(foldedResult.snapshot!.questions[0]!.answer!.action, "approve");
+    const store = openStore(root, { readOnly: true });
+    try {
+      assert.ok(store.getAuditEvents(run.id).some((event) => event.action === "spec_decision.gate.pass"
+        && /answers=1; folded=1/.test(event.summary)));
+    } finally {
+      store.close();
+    }
+    assert.equal(inspectLock(root).status, "absent");
   } finally {
     rmSync(parent, { recursive: true, force: true });
   }
@@ -1789,19 +1927,27 @@ test("Task 5 doctor --run does not impose current intake cleanliness or config o
     writeFileSync(specPath, spec);
     const store = openStore(root);
     try {
+      const risk = computeRisk(parsed.value.changeKind, computeScope(parsed.value.declaredArtifacts).length,
+        touchesProtected(parsed.value.declaredArtifacts, run.slug));
+      const specHash = sha256Hex(normalizeText(spec));
       let previous: number | null = null;
-      for (const kind of ["spec", "spec_review"]) {
+      for (const kind of ["spec", "spec_review", "spec_decision"]) {
         const stage = store.insertStage(run.id, kind, previous);
         appendAudit(store, { runId: run.id, stageId: stage.id, actor: "system", actorType: "cli",
           action: `${kind}.stage.create`, summary: `created ${kind} stage ${stage.id}` });
         store.completeStage(stage.id, specPath, "pass");
+        if (kind === "spec_review") {
+          appendAudit(store, { runId: run.id, stageId: stage.id, actor: "system", actorType: "cli",
+            action: "spec.gate.pass",
+            summary: `spec_review gate passed after 1 round(s); specHash=${specHash}; risk=${risk}` });
+        }
+        if (kind === "spec_decision") {
+          appendAudit(store, { runId: run.id, stageId: stage.id, actor: "system", actorType: "cli",
+            action: "spec_decision.gate.pass",
+            summary: `spec_decision gate passed; specHash=${specHash}; risk=${risk}; answers=0; folded=0` });
+        }
         previous = stage.id;
       }
-      const risk = computeRisk(parsed.value.changeKind, computeScope(parsed.value.declaredArtifacts).length,
-        touchesProtected(parsed.value.declaredArtifacts, run.slug));
-      appendAudit(store, { runId: run.id, stageId: previous, actor: "system", actorType: "cli",
-        action: "spec.gate.pass",
-        summary: `spec_review gate passed after 1 round(s); specHash=${sha256Hex(normalizeText(spec))}; risk=${risk}` });
     } finally {
       store.close();
     }
@@ -1828,7 +1974,7 @@ test("Task 5 doctor --run does not impose current intake cleanliness or config o
     }
     assert.equal(report.current.verification, null);
     assert.match(report.checks.find((check) => check.name === "run_state")!.evidence,
-      /persisted in_progress; phase awaiting_approval; 2 recorded stage\(s\)/);
+      /persisted in_progress; phase awaiting_approval; 3 recorded stage\(s\)/);
     assert.deepEqual(report.frozen!.verificationCommands,
       profile.verification.commands.map((command) => ({ name: command.name, argv: command.command })));
     assert.equal(report.checks.find((check) => check.name === "frozen_verification")!.status, "pass");
@@ -2390,7 +2536,7 @@ test("Task 4 blocked status preserves complete structured arrays and excludes ra
     const snapshot = body.result as RunSnapshot;
     assert.deepEqual(snapshot, expectedSnapshot);
     assert.deepEqual(Object.keys(snapshot).sort(), ["run", "phase", "stages", "workflowAction",
-      "operatorActions", "proposals", "configuration", "approval", "cost", "activity",
+      "operatorActions", "proposals", "questions", "configuration", "approval", "cost", "activity",
       "writer", "delivery", "evidence", "limitations"].sort());
     assert.equal(snapshot.run.status, "blocked");
     assert.equal(snapshot.phase, "blocked");

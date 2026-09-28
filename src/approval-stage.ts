@@ -61,11 +61,11 @@ export function buildBinding(
   }
   const last = chain[chain.length - 1];
   if (!last) {
-    return no(`run ${runId} has no passed spec_review stage to approve`);
+    return no(`run ${runId} has no passed spec_decision stage to approve`);
   }
-  if (last.kind !== "spec_review" || last.status !== "passed" || !last.output_ref) {
+  if (last.kind !== "spec_decision" || last.status !== "passed" || !last.output_ref) {
     return no(
-      `run ${runId}'s last stage is ${last.kind} (${last.status}), not a passed spec_review`
+      `run ${runId}'s last stage is ${last.kind} (${last.status}), not a passed spec_decision`
     );
   }
   const verified = loadVerifiedProfile(rootDir, run);
@@ -140,23 +140,24 @@ export function buildBinding(
     touchesProtected(doc.value.declaredArtifacts, run.slug)
   );
 
-  // Section 12: the authorization must bind the specification a panel
-  // actually gated, not whatever happens to be on disk now. The spec_review
-  // gate records the hash and risk it passed; the audit chain is append-only
-  // and hash-chained, so it is a stronger place to read that historical fact
-  // from than any mutable column.
+  // Section 12: the authorization must bind the specification the gates
+  // actually passed, not whatever happens to be on disk now. The spec_decision
+  // gate records the hash and risk of the specification it passed — the
+  // reviewed one, or the one the operator's answers were folded into; the
+  // audit chain is append-only and hash-chained, so it is a stronger place to
+  // read that historical fact from than any mutable column.
   const gateEvent = store.query<{ summary: string }>(
-    "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.gate.pass' ORDER BY id DESC LIMIT 1",
+    "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec_decision.gate.pass' ORDER BY id DESC LIMIT 1",
     [runId]
   )[0];
   if (!gateEvent) {
     return no(
-      `run ${runId} has no spec.gate.pass audit event: the spec_review gate never recorded what it approved`
+      `run ${runId} has no spec_decision.gate.pass audit event: the spec_decision gate never recorded what it passed`
     );
   }
   const gated = /specHash=([0-9a-f]{64}); risk=(low|standard|high)/.exec(gateEvent.summary);
   if (!gated) {
-    return no(`run ${runId}'s spec.gate.pass event does not record a spec hash and risk`);
+    return no(`run ${runId}'s spec_decision.gate.pass event does not record a spec hash and risk`);
   }
   if (gated[1] !== specHash) {
     return no(`the spec has changed since review: gated ${gated[1]}, on disk ${specHash}`);
@@ -190,7 +191,7 @@ export function buildBinding(
 }
 
 /**
- * The only human gate (architecture section 12). It is deterministic and
+ * The only signed authorization gate (architecture section 12). It is deterministic and
  * dispatches nothing, so it spends nothing: a refusal is an operator input
  * error, not a terminal run state. It writes an `approval.refused` audit
  * event and creates no stage row, leaving the operator free to retry a

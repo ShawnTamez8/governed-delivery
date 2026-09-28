@@ -97,8 +97,8 @@ interface ApprovalFixture {
 /**
  * A run parked where the approval gate expects it, built the way
  * `withFixture` in test/approval-stage.test.ts builds one: spec written,
- * spec and spec_review passed, the spec.gate.pass event the gate reads back,
- * and a frozen profile. The key is generated and BW_APPROVAL_PUBLIC_KEY set
+ * spec, spec_review and spec_decision passed, the spec_decision.gate.pass
+ * event the gate reads back, and a frozen profile. The key is generated and BW_APPROVAL_PUBLIC_KEY set
  * **before** `freezeProfile`, and the order is load-bearing: the freeze reads
  * that variable to bind the signer, so setting it afterwards freezes null and
  * every test would exercise only the unbound path. The caller restores the
@@ -125,6 +125,10 @@ function approvalFixture(parent: string, name: string): ApprovalFixture {
     store.completeStage(review.id, specPath, "pass");
     appendAudit(store, { runId: run.id, stageId: review.id, actor: "system", actorType: "cli", action: "spec.gate.pass",
       summary: `spec_review gate passed in round 1; specHash=${sha256Hex(normalizeText(APPROVAL_SPEC))}; risk=low` });
+    const decision = store.insertStage(run.id, "spec_decision", review.id);
+    store.completeStage(decision.id, specPath, "pass");
+    appendAudit(store, { runId: run.id, stageId: decision.id, actor: "system", actorType: "cli", action: "spec_decision.gate.pass",
+      summary: `spec_decision gate passed; specHash=${sha256Hex(normalizeText(APPROVAL_SPEC))}; risk=low; answers=0; folded=0` });
     const verification: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
     const frozen = freezeProfile(root, run.id, head, "test-model", verification);
     store.setProfileRef(run.id, frozen.hash);
@@ -310,6 +314,150 @@ test("the approval route refuses every transport shape but an authenticated same
     assert.equal(status.status, 405, "no other route accepts a write");
     assert.equal(status.headers.get("allow"), "GET");
     assert.equal(auditActions(fixture.root).includes("approval.refused"), false, "no transport refusal reaches the core");
+  });
+});
+
+/**
+ * A run paused at awaiting_decision: spec and spec_review passed and one
+ * operator question per intent on the review's findings. Built with
+ * `new-run`, so the profile is the real frozen one.
+ */
+function decisionFixture(parent: string, name: string): { root: string; runId: number; findings: number[] } {
+  const root = repository(parent, name);
+  const created = spawnSync(process.execPath, [CLI, "new-run", "--repo", root, "--project", "p", "--feature", "f-1",
+    "--slug", "s", "--change-kind", "feature", "--model", "test-model"], { cwd: parent, encoding: "utf8" });
+  assert.equal(created.status, 0, created.stderr);
+  const runId = Number(created.stdout.trim());
+  const store = openStore(root);
+  try {
+    const spec = store.insertStage(runId, "spec", null);
+    store.completeStage(spec.id, "docs/features/s/spec.md", "pass");
+    const review = store.insertStage(runId, "spec_review", spec.id);
+    store.completeStage(review.id, "docs/features/s/spec.md", "pass");
+    const findings = ["retention", "access"].map((intent) => {
+      const finding = store.upsertCanonicalFinding(review.id, 1, intent, `upstream:design:${intent}`);
+      store.insertDecisionQuestion({ findingId: finding.id, text: `Decide ${intent}?`,
+        options: [{ label: "A", answer: `${intent} answer A` }, { label: "B", answer: `${intent} answer B` }],
+        recommended: 1, why: "the design is silent" });
+      return finding.id;
+    });
+    return { root, runId, findings };
+  } finally {
+    store.close();
+  }
+}
+
+function decisionFacts(root: string, runId: number) {
+  const store = openStore(root, { readOnly: true });
+  try {
+    const review = store.getStageChain(runId)[1]!;
+    return {
+      answers: store.getDecisionAnswers(review.id).map((answer) => [answer.action, answer.answer]),
+      // Intake summaries carry per-repository hashes; the decision events are
+      // the ones whose wording both surfaces must share.
+      audit: store.getAuditEvents(runId).map((event) => [event.action, event.actor, event.actor_type,
+        event.action.startsWith("decision.") ? event.summary : null]),
+    };
+  } finally {
+    store.close();
+  }
+}
+
+async function withDecisionServer(
+  fn: (context: { parent: string; root: string; runId: number; findings: number[]; base: string;
+    headers: Record<string, string>; origin: string }) => Promise<void>,
+): Promise<void> {
+  const parent = workspace();
+  try {
+    const fixture = decisionFixture(parent, "target");
+    const file = join(parent, "repositories.json");
+    writeFileSync(file, JSON.stringify({ repositories: [fixture.root] }));
+    const server = await startDashboardServer(loadDashboardRepositories(file, parent), parent, "C:\\BuildWorks\\src\\cli.ts");
+    try {
+      const headers = { Authorization: `Bearer ${bearer(server.bootstrapUrl)}` };
+      const inventory = await (await fetch(`${server.origin}/api/repositories`, { headers })).json() as { repositories: { id: string }[] };
+      const base = `${server.origin}/api/repositories/${inventory.repositories[0]!.id}/runs/${fixture.runId}/decisions`;
+      await fn({ parent, ...fixture, base, headers, origin: server.origin });
+    } finally {
+      await server.close();
+    }
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+}
+
+test("a dashboard decision is recorded through answerQuestion, identically to bw decide", async () => {
+  await withDecisionServer(async ({ parent, root, runId, findings, base, headers, origin }) => {
+    const modified = await post(`${base}/${findings[0]}`, headers, origin,
+      JSON.stringify({ action: "modify", answer: "Retain exports for ninety days." }));
+    const modifiedBody = await modified.json() as { outcome: string; open: number };
+    assert.equal(modified.status, 200, JSON.stringify(modifiedBody));
+    assert.equal(modifiedBody.outcome, "answered");
+    assert.equal(modifiedBody.open, 1);
+    const approved = await post(`${base}/${findings[1]}`, headers, origin, JSON.stringify({ action: "approve" }));
+    assert.equal(approved.status, 200);
+    assert.equal(inspectLock(root).status, "absent");
+
+    // Parity: the same two answers given through `bw decide`.
+    const direct = decisionFixture(parent, "direct");
+    const answerFile = join(parent, "answer.txt");
+    writeFileSync(answerFile, "Retain exports for ninety days.");
+    for (const args of [["--finding", String(direct.findings[0]), "--answer-file", answerFile],
+      ["--finding", String(direct.findings[1]), "--approve"]]) {
+      const decided = spawnSync(process.execPath, [CLI, "decide", "--repo", direct.root, "--run", String(direct.runId), ...args],
+        { cwd: parent, encoding: "utf8" });
+      assert.equal(decided.status, 0, decided.stderr);
+    }
+    assert.deepEqual(decisionFacts(root, runId), decisionFacts(direct.root, direct.runId),
+      "both surfaces record the same answers and audit trail");
+    assert.deepEqual(decisionFacts(root, runId).answers,
+      [["modify", "Retain exports for ninety days."], ["approve", "access answer B"]]);
+    const store = openStore(root, { readOnly: true });
+    try {
+      assert.equal(verifyAuditChain(store), null);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+test("the decision route refuses every transport shape but an authenticated same-origin JSON POST", async () => {
+  await withDecisionServer(async ({ root, runId, findings, base, headers, origin }) => {
+    const url = `${base}/${findings[0]}`;
+    const body = JSON.stringify({ action: "deny" });
+    assert.equal((await post(url, headers, null, body)).status, 400, "no Origin");
+    assert.equal((await post(url, headers, "http://example.invalid", body)).status, 400, "foreign Origin");
+    assert.equal((await post(url, { Authorization: "Bearer wrong-token" }, origin, body)).status, 401);
+    assert.equal((await post(url, headers, origin, body, "text/plain")).status, 415);
+    assert.equal((await post(url, headers, origin,
+      JSON.stringify({ action: "modify", answer: "\u0001".repeat(4100) }))).status, 413);
+    for (const shape of [{ action: 1 }, { action: "deny", extra: true }, { action: "modify", answer: 7 }, [], null]) {
+      assert.equal((await post(url, headers, origin, JSON.stringify(shape))).status, 400, JSON.stringify(shape));
+    }
+    assert.equal((await post(url, headers, origin, "not json")).status, 400);
+    for (const method of ["GET", "PUT"]) {
+      const refused = await fetch(url, { method, headers });
+      assert.equal(refused.status, 405, method);
+      assert.equal(refused.headers.get("allow"), "POST");
+    }
+    const before = decisionFacts(root, runId);
+    assert.equal(before.answers.length, 0);
+    assert.ok(!before.audit.some(([action]) => action === "decision.refused"), "no transport refusal reaches the core");
+
+    // The core's own refusal: a modify with no text is refused and audited once.
+    const empty = await post(url, headers, origin, JSON.stringify({ action: "modify" }));
+    assert.equal(empty.status, 422);
+    assert.equal(decisionFacts(root, runId).audit.filter(([action]) => action === "decision.refused").length, 1);
+
+    const release = acquireLock(root);
+    try {
+      const busy = await post(url, headers, origin, body);
+      assert.equal(busy.status, 409);
+      assert.equal((await busy.json() as { outcome: string }).outcome, "writer_busy");
+    } finally {
+      release();
+    }
+    assert.equal(decisionFacts(root, runId).answers.length, 0, "a held lock writes no answer");
   });
 });
 

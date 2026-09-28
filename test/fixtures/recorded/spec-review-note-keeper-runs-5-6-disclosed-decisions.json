@@ -1,0 +1,498 @@
+{
+  "provenance": {
+    "what": "The spec_review round of note-keeper runs 5 and 6, as the provider returned it: for each run, the spec author's self-critique response (the revised specification the panel reviewed), both panel reviewers' reports, and the spec author's reconciliation response.",
+    "run": "note-keeper runs 5 and 6, spec_review round 1 - operator-authorized live runs of 2026-09-26 against the external target C:UsersShawn-work\repositories\testing-repos\note-keeper, both frozen with claude-sonnet-5 for every stage. Run 5 passed spec_review; run 6 blocked at the spec_review gate on findings 46-48 (upstream_blocking).",
+    "capturedAt": "2026-09-26",
+    "capturedFrom": "The retained raw dispatch envelopes named in each entry's retainedAs, under that machine-local target's .governance/raw/. The target is machine-local and deletable; this file is the durable copy.",
+    "fidelity": "envelope.result is byte-for-byte the string the provider returned. num_turns, modelUsage and usage are copied unchanged. The rest of each harness envelope was dropped (session id, timings, stop and terminal reasons, permission denials, subagent stats, fast-mode state). The reviewer prompts themselves were not retained by the harness and are not here; the reviewed specification is recoverable from each run's self-critique result.",
+    "demonstrates": "Both reviewed specifications disclose the same three open security decisions in nearly identical words (export-archive access control, attachment content-type/disposition, password-reset token properties), and both AC-003s omit export jobs. Run 5's security reviewer raised the export gap as a high current_artifact defect at AC-003 plus an unrelated medium upstream finding (login rate-limiting), and did not raise the other two disclosures; its reconciler answered addressed (38, adding export jobs to AC-003) and upstream_follow_up (39). Run 6's security reviewer raised all three disclosures as high upstream findings; its reconciler answered upstream_blocking for each (46-48), citing their severity. Same model on every dispatch; token accounting shows the two security-review dispatches did not consume the same input (run 5: 2 turns; run 6: 1 turn).",
+    "seeAlso": "docs/proposals/spec-review-severity-nondeterminism.md",
+    "consumedBy": "docs/proposals/spec-review-severity-nondeterminism.md (evidence section). No test consumes it yet."
+  },
+  "runs": {
+    "5": [
+      {
+        "run": 5,
+        "agent": "spec-author",
+        "role": "author (self-critique)",
+        "dispatchedAt": "2026-09-26T17:01:51.782Z",
+        "retainedAs": ".governance/raw/5/2026-09-26T17-01-51-782Z-e05139a3fc92.json",
+        "envelope": {
+          "result": "```json\n{\"status\": \"proposed\", \"agent\": \"spec-author\", \"role\": \"author\", \"executor\": \"claude-code\", \"summary\": \"Self-critique of the Note Keeper specification: split a compound search criterion that conflated function with a performance threshold, added a criterion for the previously-undertested Trash view listing behavior, and flagged remaining unresolved traceability, interpretive, and data-model gaps for panel review.\", \"proposedContentChanges\": {\"selfCritique\": {\"critique\": [\"AC-020 bundled a functional obligation (search reaches titles and bodies) with a numeric performance threshold (results within ~1 second for up to 10,000 notes) in a single criterion, so a failure of either concern would be indistinguishable in traceability; split the threshold into a new AC-058 and narrowed AC-020 to the functional claim.\", \"client/src/components/TrashView.tsx was a declared artifact with no acceptance criterion requiring the Trash view itself to list trashed notes for selection — AC-028/AC-029/AC-030 cover retention, permanent-deletion confirmation, and restore outcome, but not the view's existence or listing behavior described in the PRD's 'Recover a deleted note' flow; added AC-057 to close that gap using only language already present in that flow.\", \"Several acceptance criteria (AC-006, AC-009, AC-018, AC-034) each bundle multiple independently testable sub-behaviors under one ID, mirroring how the PRD states them as single feature bullets; this reduces traceability granularity but I did not decompose them further, since the PRD does not call out these sub-behaviors as separately obligated and over-atomizing risks manufacturing acceptance criteria the design never separated.\", \"AC-041 (requiring explicit confirmation before a full-collection export starts) is an interpretive extension of the PRD's general statement that 'export actions must provide clear confirmation where the action is destructive or privacy-sensitive' rather than a line naming full-collection export specifically; I judged aggregating a user's entire collection into one archive to be privacy-sensitive, but this is a judgment call the panel should confirm rather than an assumption I should have silently finalized.\", \"AC-048 requires an activity timestamp for note creation, update, archive, restore, and deletion events, but the PRD's suggested data model has no field that obviously records a restore event (Note has created_at/updated_at/deleted_at but no restored_at), and no ActivityLog entity is named; the specification does not invent a fix for this data-model gap and instead leaves it for the design stage, but the gap itself is worth flagging since it affects whether AC-048 is provable against the declared artifacts.\", \"AC-001 and AC-002 depend on password-reset tokens existing as persisted state, but no model file is declared for reset tokens or sessions (they are assumed to live inside server/src/auth/session.ts and server/src/auth/passwordReset.ts); this is consistent with the specification's stated non-mandate over technology/file layout, but it means the declared-artifacts list does not make token storage a first-class, independently verifiable artifact.\", \"The declared artifacts assume a specific stack and layout (TypeScript server/, React client/) that the PRD never specifies; this is already disclosed in the Summary and Out of scope, but it remains a structural risk — if the design stage picks a different stack, every declared artifact path would need to change even though the acceptance criteria they prove would not.\"], \"artifact\": \"---\\nfeature: note-keeper\\nchange_kind: feature\\n---\\n\\n# Note Keeper — Specification\\n\\n## Summary\\n\\nNote Keeper is a web application for individuals to capture, organize, search, and revisit notes, as described in the Note Keeper product requirements document. This specification covers the MVP release: authentication, note creation and editing with auto-saved and sanitized rich text, a notes dashboard, nested folders, tags, full-text search, pinning, archive/trash with recovery, checklists, attachments, version history, and export/import.\\n\\nThe PRD does not mandate a technology stack or repository layout. The declared artifacts below assume one plausible structure — a TypeScript HTTP API under `server/` and a React client under `client/` — as a basis for delivery, not as a design mandate; this assumption should be confirmed rather than treated as decided. Google sign-in is named only as a future enhancement in the PRD, so no criterion below requires it, and it is listed as out of scope.\\n\\nNative offline-first mobile apps, full team collaboration and workspace administration, advanced document layout, full project-management features, and public publishing are explicit PRD non-goals and are excluded below.\\n\\nWhere the PRD gives an illustrative number rather than a fixed rule (the attachment file-size limit, and the trash/version retention windows), the criteria below require a documented, enforced limit or window rather than fixing it at the PRD's example value.\\n\\nThe PRD states several expectations as soft guidance (\\\"should\\\") rather than as a specific, independently testable obligation for a given artifact: regular backups with a restoration procedure, sub-200ms UI responsiveness \\\"where network conditions allow,\\\" and support for \\\"current versions\\\" of major browsers. These are not translated into acceptance criteria below, since none of them names a fixed, checkable threshold; they remain open operational expectations for the design or operator to make concrete, not decisions this specification invents on the PRD's behalf.\\n\\nThis specification also leaves three security-relevant decisions open rather than inventing obligations the PRD does not state: access-control treatment for the full-collection export archive (which aggregates a user's entire note and attachment collection into one higher-value target), content-type and content-disposition handling for non-image attachment downloads, and password-reset token security properties (expiration, single-use enforcement, rate limiting). These are named again under Out of scope.\\n\\nOn self-review, AC-020 originally combined the functional search obligation with a numeric performance threshold; these are now separated into AC-020 and AC-058 so that a failure of either can be traced independently. AC-057 was added to cover the Trash view's listing behavior, which the original acceptance criteria left implicit despite `client/src/components/TrashView.tsx` being a declared artifact. Other compound criteria (AC-006, AC-009, AC-018, AC-034) were deliberately left bundled, matching how the PRD states each as a single feature bullet rather than as separately obligated sub-behaviors; further decomposition was not applied so as not to manufacture finer-grained obligations than the PRD draws.\\n\\n## Declared artifacts\\n\\nserver/src/index.ts\\nserver/src/db/schema.sql\\nserver/src/models/user.ts\\nserver/src/models/note.ts\\nserver/src/models/folder.ts\\nserver/src/models/tag.ts\\nserver/src/models/noteTag.ts\\nserver/src/models/checklistItem.ts\\nserver/src/models/attachment.ts\\nserver/src/models/noteVersion.ts\\nserver/src/models/exportJob.ts\\nserver/src/auth/routes.ts\\nserver/src/auth/session.ts\\nserver/src/auth/passwordReset.ts\\nserver/src/notes/routes.ts\\nserver/src/notes/autosave.ts\\nserver/src/folders/routes.ts\\nserver/src/tags/routes.ts\\nserver/src/search/routes.ts\\nserver/src/search/index.ts\\nserver/src/attachments/routes.ts\\nserver/src/attachments/storage.ts\\nserver/src/versions/routes.ts\\nserver/src/exportImport/exportRoutes.ts\\nserver/src/exportImport/importRoutes.ts\\nserver/src/sanitize/richTextSanitizer.ts\\nclient/src/pages/Dashboard.tsx\\nclient/src/pages/NoteEditor.tsx\\nclient/src/pages/Login.tsx\\nclient/src/pages/Register.tsx\\nclient/src/pages/ResetPassword.tsx\\nclient/src/components/Sidebar.tsx\\nclient/src/components/SearchPalette.tsx\\nclient/src/components/TrashView.tsx\\nclient/src/components/VersionHistoryPanel.tsx\\nclient/src/components/ChecklistEditor.tsx\\nclient/src/components/AttachmentList.tsx\\nclient/src/components/ExportImportPanel.tsx\\n\\n## Acceptance criteria\\n\\n- AC-001: A visitor can register an account with email and password, sign in, sign out, and request a password reset.\\n- AC-002: A user who has requested a password reset can complete it by submitting the reset token or link with a new password, and can then sign in with the new password.\\n- AC-003: Each user can access only their own notes, folders, tags, attachments, and preferences; a request for another user's notes, folders, tags, attachments, or preferences is rejected.\\n- AC-004: Users can create a note from a prominent \\\"New note\\\" action, and the editor opens with the cursor focused in the title or body field.\\n- AC-005: A note supports a title, body content, folder assignment, tags, pinned state, archived state, checklist items, and creation/update timestamps.\\n- AC-006: The note editor supports headings, bold, italic, bulleted lists, numbered lists, checklists, links, block quotes, and code blocks.\\n- AC-007: Edits to a note are auto-saved after a debounce interval of 500-1,000 milliseconds after typing stops, without a manual save action.\\n- AC-008: The editor displays a visible save-state indicator showing Saving, Saved, Offline, or Unable to save.\\n- AC-009: Rich-text content is sanitized server-side against a fixed allow-list of tags and attributes matching the supported formatting before storage and before rendering, stripping disallowed tags, attributes, inline event handlers, and script content rather than escaping them.\\n- AC-010: Link and image URLs in rich-text content are restricted to the http, https, and mailto schemes during sanitization; a URL using any other scheme, including javascript: and data:, is rejected.\\n- AC-011: The dashboard displays recent notes, pinned notes, and quick-access controls including a \\\"New note\\\" action.\\n- AC-012: Notes can be sorted by last-updated date, creation date, title, or pinned status.\\n- AC-013: Each note card or row shows title, content preview, tags, folder, and last-updated timestamp.\\n- AC-014: The dashboard shows an empty state that guides a new user to create their first note when they have none.\\n- AC-015: Users can create, rename, reorder, and delete folders, and a folder may contain nested subfolders.\\n- AC-016: Deleting a folder that contains notes prompts the user to move the notes to another folder or leave them uncategorized.\\n- AC-017: The sidebar displays a collapsible folder tree.\\n- AC-018: Users can add multiple tags to a note; tags are reusable, color-coded, searchable, renameable, and removable, and tag names are unique per user ignoring capitalization.\\n- AC-019: Selecting a tag filters the note list to notes carrying that tag.\\n- AC-020: A global search field searches note titles and bodies and returns matching notes.\\n- AC-021: Search results display highlighted matching text where practical.\\n- AC-022: Search results can be narrowed by folder, tag, date range, note status, and attachment presence.\\n- AC-023: A keyboard shortcut (Cmd/Ctrl+K) opens global search.\\n- AC-024: Opening a search result lands the user at the matching content within the note when practical.\\n- AC-025: Users can pin and unpin a note, and a pinned note remains visually distinct from ordinary notes.\\n- AC-026: A Pinned filter or dedicated sidebar destination lists pinned notes.\\n- AC-027: Users can archive a note so it no longer appears in active views but remains retrievable.\\n- AC-028: Users can move a note to trash, and a trashed note remains recoverable for a documented retention period.\\n- AC-029: Permanently deleting a note requires explicit confirmation using an unambiguous label such as \\\"Delete permanently\\\" and states that recovery will not be possible.\\n- AC-030: Restoring a trashed note returns it to its previous folder when that folder still exists, or to the uncategorized note list otherwise, and the application confirms the restoration.\\n- AC-031: Users can insert checklist items within a note and mark them complete or incomplete without leaving the editor.\\n- AC-032: A note containing checklist items displays task progress such as \\\"3 of 7 complete.\\\"\\n- AC-033: Notes with at least one unfinished checklist item are filterable as \\\"Open tasks.\\\"\\n- AC-034: Users can attach images, PDFs, text files, and common document formats to a note, and each attachment shows file name, size, upload time, and a download/open control.\\n- AC-035: An upload exceeding the documented file-size limit, or of an unsupported type, is rejected with a clear error message.\\n- AC-036: Inline image previews render only for PNG, JPEG, GIF, and WebP attachments; an SVG attachment is downloadable like other attachments but is never rendered as an inline preview.\\n- AC-037: A meaningful content change to a note automatically creates a new version in its version history, viewable with timestamps and change previews.\\n- AC-038: Restoring a prior note version creates a new current version rather than deleting the version history, and the system retains a documented number of versions or a documented retention period.\\n- AC-039: Users can export an individual note as Markdown, plain text, or PDF.\\n- AC-040: Users can export their entire note collection as a single portable archive containing Markdown files and attachments.\\n- AC-041: Initiating a full-collection export requires an explicit confirmation step before the export job starts.\\n- AC-042: Users can import Markdown or plain-text notes through a review step that reports the number of notes, folders, tags, and attachments that will be created before the import is applied.\\n- AC-043: Imported Markdown or plain-text content is converted to the same rich-text representation as manually authored notes and passes through the identical allow-list sanitization step before storage.\\n- AC-044: The note editor accepts Unicode text and content pasted from common browsers and document editors without corrupting the content.\\n- AC-045: Navigating away from a note while an auto-save request is still pending does not silently discard the pending change: the application either completes the save or warns the user before navigation proceeds.\\n- AC-046: The note list can be filtered by folder, tag, pinned state, archive state, task-completion state, and date range, independent of any search query.\\n- AC-047: A note with no title is displayed with a generated label such as \\\"Untitled note\\\" rather than a blank title.\\n- AC-048: The application records an activity timestamp for each note creation, update, archive, restore, and deletion event.\\n- AC-049: The desktop layout uses a left navigation sidebar, a central note list, and an optional editor/detail panel.\\n- AC-050: The mobile layout collapses navigation into a drawer and prioritizes the editor.\\n- AC-051: Keyboard navigation supports creating a new note, moving through the note list, and predictable focus transitions when saving, in addition to opening search.\\n- AC-052: The interface provides semantic controls, visible focus states, sufficient color contrast, screen-reader labels, and keyboard-operable navigation throughout.\\n- AC-053: Account passwords are never stored in plaintext.\\n- AC-054: An attachment download is served from private object storage that enforces an authorization check before the file is returned.\\n- AC-055: All client-server traffic is served over HTTPS.\\n- AC-056: Error messages shown to the user are actionable and do not expose sensitive implementation details such as stack traces, internal identifiers, or raw exception text.\\n- AC-057: A Trash view lists all trashed notes, from which a user can select a note to restore or permanently delete.\\n- AC-058: Search results for a collection of up to 10,000 notes per user are returned within approximately one second.\\n\\n## Out of scope\\n\\n- Full team collaboration, commenting, and workspace administration.\\n- Advanced document layout comparable to desktop word processors.\\n- Native offline-first mobile apps.\\n- Full project-management features such as sprint planning, dependencies, or Gantt charts.\\n- Public publishing or external-facing knowledge bases.\\n- Google sign-in and any authentication method beyond email/password.\\n- Regular backup/restoration procedures, sub-200ms UI responsiveness targets, and specific browser/version support commitments: the PRD states these as soft, operational-level expectations without a fixed, independently checkable threshold, so this specification leaves them as open operational goals rather than acceptance criteria.\\n- Access-control treatment for the full-collection export archive, content-type/content-disposition handling for non-image attachment downloads, and password-reset token security properties (expiration, single-use enforcement, rate limiting): the PRD does not decide these, and they should be resolved at the design stage rather than assumed here.\\n- Further decomposition of compound acceptance criteria (AC-006, AC-009, AC-018, AC-034) into separate sub-behavior IDs: the PRD states each of these as a single feature bullet, so this specification keeps them bundled rather than manufacturing finer-grained obligations the PRD did not separately state.\\n\", \"panelRequest\": {\"size\": 2, \"specialties\": [\"security\", \"requirements-traceability\"]}}}}\n```",
+          "num_turns": 1,
+          "modelUsage": {
+            "claude-sonnet-5": {
+              "inputTokens": 2,
+              "outputTokens": 13384,
+              "cacheReadInputTokens": 7520,
+              "cacheCreationInputTokens": 10601,
+              "webSearchRequests": 0,
+              "costUSD": 0.17775200000000002,
+              "contextWindow": 1000000,
+              "maxOutputTokens": 64000,
+              "thinkingTokens": 7507,
+              "canonicalModel": "claude-sonnet-5",
+              "provider": "firstParty",
+              "costBasis": "list"
+            }
+          },
+          "usage": {
+            "input_tokens": 2,
+            "cache_creation_input_tokens": 10601,
+            "cache_read_input_tokens": 7520,
+            "output_tokens": 13384,
+            "output_tokens_details": {
+              "thinking_tokens": 7507
+            },
+            "server_tool_use": {
+              "web_search_requests": 0,
+              "web_fetch_requests": 0
+            },
+            "service_tier": "standard",
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 10601,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "inference_geo": "not_available",
+            "iterations": [
+              {
+                "input_tokens": 2,
+                "output_tokens": 13384,
+                "cache_read_input_tokens": 7520,
+                "cache_creation_input_tokens": 10601,
+                "cache_creation": {
+                  "ephemeral_5m_input_tokens": 0,
+                  "ephemeral_1h_input_tokens": 10601
+                },
+                "type": "message"
+              }
+            ],
+            "speed": "standard"
+          }
+        }
+      },
+      {
+        "run": 5,
+        "agent": "spec-reviewer-traceability",
+        "role": "reviewer",
+        "dispatchedAt": "2026-09-26T17:03:44.631Z",
+        "retainedAs": ".governance/raw/5/2026-09-26T17-03-44-631Z-ea3d637fd608.json",
+        "envelope": {
+          "result": "{\"status\": \"proposed\", \"agent\": \"spec-reviewer-traceability\", \"role\": \"reviewer\", \"executor\": \"claude-code\", \"summary\": \"Traceability review found one unexplained coverage gap: the PRD's Goals-section obligation that note creation be possible in under 10 seconds is neither promoted to an acceptance criterion nor listed among the soft-guidance thresholds the specification otherwise deliberately excludes with rationale. All other PRD features, functional/non-functional requirements, and MVP acceptance-criteria bullets trace cleanly to declared acceptance criteria and artifacts.\", \"proposedContentChanges\": {\"findings\": [{\"severity\": \"medium\", \"classification\": \"current_artifact\", \"location\": \"Out of scope\", \"intentKey\": \"missing-note-creation-latency-criterion\", \"subject\": \"The PRD's stated goal that creating a new note be possible in under 10 seconds is not represented by any acceptance criterion and, unlike the other soft/illustrative thresholds (sub-200ms UI response, browser/version support, backups) that are explicitly enumerated and justified under Out of scope, it is omitted from the specification without any rationale, leaving no way to tell whether its exclusion was deliberate.\"}]}}",
+          "num_turns": 2,
+          "modelUsage": {
+            "claude-sonnet-5": {
+              "inputTokens": 4,
+              "outputTokens": 10398,
+              "cacheReadInputTokens": 25595,
+              "cacheCreationInputTokens": 20588,
+              "webSearchRequests": 0,
+              "costUSD": 0.19145900000000002,
+              "contextWindow": 1000000,
+              "maxOutputTokens": 64000,
+              "thinkingTokens": 9865,
+              "canonicalModel": "claude-sonnet-5",
+              "provider": "firstParty",
+              "costBasis": "list"
+            }
+          },
+          "usage": {
+            "input_tokens": 4,
+            "cache_creation_input_tokens": 20588,
+            "cache_read_input_tokens": 25595,
+            "output_tokens": 10398,
+            "output_tokens_details": {
+              "thinking_tokens": 9865
+            },
+            "server_tool_use": {
+              "web_search_requests": 0,
+              "web_fetch_requests": 0
+            },
+            "service_tier": "standard",
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 20588,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "inference_geo": "not_available",
+            "iterations": [
+              {
+                "input_tokens": 2,
+                "output_tokens": 413,
+                "cache_read_input_tokens": 18075,
+                "cache_creation_input_tokens": 10033,
+                "cache_creation": {
+                  "ephemeral_5m_input_tokens": 0,
+                  "ephemeral_1h_input_tokens": 10033
+                },
+                "type": "message"
+              }
+            ],
+            "speed": "standard"
+          }
+        }
+      },
+      {
+        "run": 5,
+        "agent": "spec-reviewer-security",
+        "role": "reviewer",
+        "dispatchedAt": "2026-09-26T17:05:45.099Z",
+        "retainedAs": ".governance/raw/5/2026-09-26T17-05-45-099Z-362a7efba8f3.json",
+        "envelope": {
+          "result": "```json\n{\n  \"status\": \"proposed\",\n  \"agent\": \"spec-reviewer-security\",\n  \"role\": \"reviewer\",\n  \"executor\": \"claude-code\",\n  \"summary\": \"Two security concerns found: AC-003's ownership/access-control criterion omits the full-collection export archive despite the PRD's general ownership principle and the spec's own acknowledgment that this archive is a higher-value target, and the design leaves login brute-force/rate-limiting protection entirely undecided.\",\n  \"proposedContentChanges\": {\n    \"findings\": [\n      {\n        \"severity\": \"high\",\n        \"classification\": \"current_artifact\",\n        \"location\": \"AC-003\",\n        \"intentKey\": \"export-archive-ownership-gap\",\n        \"subject\": \"AC-003 enumerates notes, folders, tags, attachments, and preferences as ownership-protected resources but omits export jobs/archives, leaving no explicit criterion requiring that a full-collection export download be authorization-checked to its owning user even though the PRD's general ownership rule and the ExportJob.user_id field imply it should be, and the spec's own rationale flags this archive as an aggregated higher-value target.\"\n      },\n      {\n        \"severity\": \"medium\",\n        \"classification\": \"upstream\",\n        \"location\": \"upstream:design:auth-brute-force-protection\",\n        \"intentKey\": \"login-rate-limiting-undecided\",\n        \"subject\": \"Neither the PRD nor the specification decides whether sign-in attempts are rate-limited or accounts are locked/throttled after repeated failures, leaving credential-stuffing and brute-force exposure on the email/password login flow unresolved.\"\n      }\n    ]\n  }\n}\n```",
+          "num_turns": 2,
+          "modelUsage": {
+            "claude-sonnet-5": {
+              "inputTokens": 4,
+              "outputTokens": 10672,
+              "cacheReadInputTokens": 25579,
+              "cacheCreationInputTokens": 20700,
+              "webSearchRequests": 0,
+              "costUSD": 0.19464379999999998,
+              "contextWindow": 1000000,
+              "maxOutputTokens": 64000,
+              "thinkingTokens": 9963,
+              "canonicalModel": "claude-sonnet-5",
+              "provider": "firstParty",
+              "costBasis": "list"
+            }
+          },
+          "usage": {
+            "input_tokens": 4,
+            "cache_creation_input_tokens": 20700,
+            "cache_read_input_tokens": 25579,
+            "output_tokens": 10672,
+            "output_tokens_details": {
+              "thinking_tokens": 9963
+            },
+            "server_tool_use": {
+              "web_search_requests": 0,
+              "web_fetch_requests": 0
+            },
+            "service_tier": "standard",
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 20700,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "inference_geo": "not_available",
+            "iterations": [
+              {
+                "input_tokens": 2,
+                "output_tokens": 585,
+                "cache_read_input_tokens": 18059,
+                "cache_creation_input_tokens": 10161,
+                "cache_creation": {
+                  "ephemeral_5m_input_tokens": 0,
+                  "ephemeral_1h_input_tokens": 10161
+                },
+                "type": "message"
+              }
+            ],
+            "speed": "standard"
+          }
+        }
+      },
+      {
+        "run": 5,
+        "agent": "spec-author",
+        "role": "author (reconciliation)",
+        "dispatchedAt": "2026-09-26T17:14:04.639Z",
+        "retainedAs": ".governance/raw/5/2026-09-26T17-14-04-639Z-b2480d7a596a.json",
+        "envelope": {
+          "result": "{\"status\": \"proposed\", \"agent\": \"spec-author\", \"role\": \"author\", \"executor\": \"claude-code\", \"summary\": \"Added an Out of scope/Summary explanation for why the PRD's 10-second note-creation goal has no standalone acceptance criterion (finding 37); expanded AC-003 to include export jobs among ownership-protected resources, closing the export-archive ownership gap (finding 38); and routed the undecided login rate-limiting/brute-force policy upstream as a follow-up proposal, noting it alongside the specification's other open security decisions (finding 39).\", \"proposedContentChanges\": {\"spec\": \"---\\nfeature: note-keeper\\nchange_kind: feature\\n---\\n\\n# Note Keeper — Specification\\n\\n## Summary\\n\\nNote Keeper is a web application for individuals to capture, organize, search, and revisit notes, as described in the Note Keeper product requirements document. This specification covers the MVP release: authentication, note creation and editing with auto-saved and sanitized rich text, a notes dashboard, nested folders, tags, full-text search, pinning, archive/trash with recovery, checklists, attachments, version history, and export/import.\\n\\nThe PRD does not mandate a technology stack or repository layout. The declared artifacts below assume one plausible structure — a TypeScript HTTP API under `server/` and a React client under `client/` — as a basis for delivery, not as a design mandate; this assumption should be confirmed rather than treated as decided. Google sign-in is named only as a future enhancement in the PRD, so no criterion below requires it, and it is listed as out of scope.\\n\\nNative offline-first mobile apps, full team collaboration and workspace administration, advanced document layout, full project-management features, and public publishing are explicit PRD non-goals and are excluded below.\\n\\nWhere the PRD gives an illustrative number rather than a fixed rule (the attachment file-size limit, and the trash/version retention windows), the criteria below require a documented, enforced limit or window rather than fixing it at the PRD's example value.\\n\\nThe PRD states several expectations as soft guidance (\\\"should\\\") rather than as a specific, independently testable obligation for a given artifact: regular backups with a restoration procedure, sub-200ms UI responsiveness \\\"where network conditions allow,\\\" and support for \\\"current versions\\\" of major browsers. These are not translated into acceptance criteria below, since none of them names a fixed, checkable threshold; they remain open operational expectations for the design or operator to make concrete, not decisions this specification invents on the PRD's behalf. The PRD's goal that creating a new note be possible in under 10 seconds is treated the same way: although the PRD names a specific number, it describes the overall friction of the note-creation flow rather than a single system response time, and that flow is already governed by AC-004, AC-007, and AC-008 (a prominent action, immediate editor focus, and auto-save without a manual save step). It is not restated as its own numeric acceptance criterion for the same reason as the thresholds above, and is named again under Out of scope.\\n\\nThis specification also leaves three security-relevant decisions open rather than inventing obligations the PRD does not state: content-type and content-disposition handling for non-image attachment downloads, password-reset token security properties (expiration, single-use enforcement, rate limiting), and whether sign-in attempts are rate-limited or accounts are locked/throttled after repeated failures. Basic ownership enforcement for the full-collection export archive is not among them: the PRD's general rule that \\\"one user cannot access another user's content\\\" is not limited to a named subset of resources, so AC-003 now includes export jobs among the ownership-protected resources; what remains open is only whether the archive's aggregated value warrants access-control treatment beyond ownership. These are named again under Out of scope.\\n\\nOn self-review, AC-020 originally combined the functional search obligation with a numeric performance threshold; these are now separated into AC-020 and AC-058 so that a failure of either can be traced independently. AC-057 was added to cover the Trash view's listing behavior, which the original acceptance criteria left implicit despite `client/src/components/TrashView.tsx` being a declared artifact. Other compound criteria (AC-006, AC-009, AC-018, AC-034) were deliberately left bundled, matching how the PRD states each as a single feature bullet rather than as separately obligated sub-behaviors; further decomposition was not applied so as not to manufacture finer-grained obligations than the PRD draws. AC-003 was also reworded on further review to add export jobs to its enumerated ownership-protected resources, closing a gap where the archive aggregating a user's entire collection was otherwise the one PRD-listed resource type without an explicit ownership criterion.\\n\\n## Declared artifacts\\n\\nserver/src/index.ts\\nserver/src/db/schema.sql\\nserver/src/models/user.ts\\nserver/src/models/note.ts\\nserver/src/models/folder.ts\\nserver/src/models/tag.ts\\nserver/src/models/noteTag.ts\\nserver/src/models/checklistItem.ts\\nserver/src/models/attachment.ts\\nserver/src/models/noteVersion.ts\\nserver/src/models/exportJob.ts\\nserver/src/auth/routes.ts\\nserver/src/auth/session.ts\\nserver/src/auth/passwordReset.ts\\nserver/src/notes/routes.ts\\nserver/src/notes/autosave.ts\\nserver/src/folders/routes.ts\\nserver/src/tags/routes.ts\\nserver/src/search/routes.ts\\nserver/src/search/index.ts\\nserver/src/attachments/routes.ts\\nserver/src/attachments/storage.ts\\nserver/src/versions/routes.ts\\nserver/src/exportImport/exportRoutes.ts\\nserver/src/exportImport/importRoutes.ts\\nserver/src/sanitize/richTextSanitizer.ts\\nclient/src/pages/Dashboard.tsx\\nclient/src/pages/NoteEditor.tsx\\nclient/src/pages/Login.tsx\\nclient/src/pages/Register.tsx\\nclient/src/pages/ResetPassword.tsx\\nclient/src/components/Sidebar.tsx\\nclient/src/components/SearchPalette.tsx\\nclient/src/components/TrashView.tsx\\nclient/src/components/VersionHistoryPanel.tsx\\nclient/src/components/ChecklistEditor.tsx\\nclient/src/components/AttachmentList.tsx\\nclient/src/components/ExportImportPanel.tsx\\n\\n## Acceptance criteria\\n\\n- AC-001: A visitor can register an account with email and password, sign in, sign out, and request a password reset.\\n- AC-002: A user who has requested a password reset can complete it by submitting the reset token or link with a new password, and can then sign in with the new password.\\n- AC-003: Each user can access only their own notes, folders, tags, attachments, export jobs, and preferences; a request for another user's notes, folders, tags, attachments, export jobs, or preferences is rejected.\\n- AC-004: Users can create a note from a prominent \\\"New note\\\" action, and the editor opens with the cursor focused in the title or body field.\\n- AC-005: A note supports a title, body content, folder assignment, tags, pinned state, archived state, checklist items, and creation/update timestamps.\\n- AC-006: The note editor supports headings, bold, italic, bulleted lists, numbered lists, checklists, links, block quotes, and code blocks.\\n- AC-007: Edits to a note are auto-saved after a debounce interval of 500-1,000 milliseconds after typing stops, without a manual save action.\\n- AC-008: The editor displays a visible save-state indicator showing Saving, Saved, Offline, or Unable to save.\\n- AC-009: Rich-text content is sanitized server-side against a fixed allow-list of tags and attributes matching the supported formatting before storage and before rendering, stripping disallowed tags, attributes, inline event handlers, and script content rather than escaping them.\\n- AC-010: Link and image URLs in rich-text content are restricted to the http, https, and mailto schemes during sanitization; a URL using any other scheme, including javascript: and data:, is rejected.\\n- AC-011: The dashboard displays recent notes, pinned notes, and quick-access controls including a \\\"New note\\\" action.\\n- AC-012: Notes can be sorted by last-updated date, creation date, title, or pinned status.\\n- AC-013: Each note card or row shows title, content preview, tags, folder, and last-updated timestamp.\\n- AC-014: The dashboard shows an empty state that guides a new user to create their first note when they have none.\\n- AC-015: Users can create, rename, reorder, and delete folders, and a folder may contain nested subfolders.\\n- AC-016: Deleting a folder that contains notes prompts the user to move the notes to another folder or leave them uncategorized.\\n- AC-017: The sidebar displays a collapsible folder tree.\\n- AC-018: Users can add multiple tags to a note; tags are reusable, color-coded, searchable, renameable, and removable, and tag names are unique per user ignoring capitalization.\\n- AC-019: Selecting a tag filters the note list to notes carrying that tag.\\n- AC-020: A global search field searches note titles and bodies and returns matching notes.\\n- AC-021: Search results display highlighted matching text where practical.\\n- AC-022: Search results can be narrowed by folder, tag, date range, note status, and attachment presence.\\n- AC-023: A keyboard shortcut (Cmd/Ctrl+K) opens global search.\\n- AC-024: Opening a search result lands the user at the matching content within the note when practical.\\n- AC-025: Users can pin and unpin a note, and a pinned note remains visually distinct from ordinary notes.\\n- AC-026: A Pinned filter or dedicated sidebar destination lists pinned notes.\\n- AC-027: Users can archive a note so it no longer appears in active views but remains retrievable.\\n- AC-028: Users can move a note to trash, and a trashed note remains recoverable for a documented retention period.\\n- AC-029: Permanently deleting a note requires explicit confirmation using an unambiguous label such as \\\"Delete permanently\\\" and states that recovery will not be possible.\\n- AC-030: Restoring a trashed note returns it to its previous folder when that folder still exists, or to the uncategorized note list otherwise, and the application confirms the restoration.\\n- AC-031: Users can insert checklist items within a note and mark them complete or incomplete without leaving the editor.\\n- AC-032: A note containing checklist items displays task progress such as \\\"3 of 7 complete.\\\"\\n- AC-033: Notes with at least one unfinished checklist item are filterable as \\\"Open tasks.\\\"\\n- AC-034: Users can attach images, PDFs, text files, and common document formats to a note, and each attachment shows file name, size, upload time, and a download/open control.\\n- AC-035: An upload exceeding the documented file-size limit, or of an unsupported type, is rejected with a clear error message.\\n- AC-036: Inline image previews render only for PNG, JPEG, GIF, and WebP attachments; an SVG attachment is downloadable like other attachments but is never rendered as an inline preview.\\n- AC-037: A meaningful content change to a note automatically creates a new version in its version history, viewable with timestamps and change previews.\\n- AC-038: Restoring a prior note version creates a new current version rather than deleting the version history, and the system retains a documented number of versions or a documented retention period.\\n- AC-039: Users can export an individual note as Markdown, plain text, or PDF.\\n- AC-040: Users can export their entire note collection as a single portable archive containing Markdown files and attachments.\\n- AC-041: Initiating a full-collection export requires an explicit confirmation step before the export job starts.\\n- AC-042: Users can import Markdown or plain-text notes through a review step that reports the number of notes, folders, tags, and attachments that will be created before the import is applied.\\n- AC-043: Imported Markdown or plain-text content is converted to the same rich-text representation as manually authored notes and passes through the identical allow-list sanitization step before storage.\\n- AC-044: The note editor accepts Unicode text and content pasted from common browsers and document editors without corrupting the content.\\n- AC-045: Navigating away from a note while an auto-save request is still pending does not silently discard the pending change: the application either completes the save or warns the user before navigation proceeds.\\n- AC-046: The note list can be filtered by folder, tag, pinned state, archive state, task-completion state, and date range, independent of any search query.\\n- AC-047: A note with no title is displayed with a generated label such as \\\"Untitled note\\\" rather than a blank title.\\n- AC-048: The application records an activity timestamp for each note creation, update, archive, restore, and deletion event.\\n- AC-049: The desktop layout uses a left navigation sidebar, a central note list, and an optional editor/detail panel.\\n- AC-050: The mobile layout collapses navigation into a drawer and prioritizes the editor.\\n- AC-051: Keyboard navigation supports creating a new note, moving through the note list, and predictable focus transitions when saving, in addition to opening search.\\n- AC-052: The interface provides semantic controls, visible focus states, sufficient color contrast, screen-reader labels, and keyboard-operable navigation throughout.\\n- AC-053: Account passwords are never stored in plaintext.\\n- AC-054: An attachment download is served from private object storage that enforces an authorization check before the file is returned.\\n- AC-055: All client-server traffic is served over HTTPS.\\n- AC-056: Error messages shown to the user are actionable and do not expose sensitive implementation details such as stack traces, internal identifiers, or raw exception text.\\n- AC-057: A Trash view lists all trashed notes, from which a user can select a note to restore or permanently delete.\\n- AC-058: Search results for a collection of up to 10,000 notes per user are returned within approximately one second.\\n\\n## Out of scope\\n\\n- Full team collaboration, commenting, and workspace administration.\\n- Advanced document layout comparable to desktop word processors.\\n- Native offline-first mobile apps.\\n- Full project-management features such as sprint planning, dependencies, or Gantt charts.\\n- Public publishing or external-facing knowledge bases.\\n- Google sign-in and any authentication method beyond email/password.\\n- Regular backup/restoration procedures, sub-200ms UI responsiveness targets, and specific browser/version support commitments: the PRD states these as soft, operational-level expectations without a fixed, independently checkable threshold, so this specification leaves them as open operational goals rather than acceptance criteria.\\n- The PRD's goal that creating a new note be possible in under 10 seconds: this describes the overall friction of the note-creation flow rather than a single testable system response time, and that flow is already governed by AC-004, AC-007, and AC-008 (a prominent \\\"New note\\\" action, immediate editor focus, and auto-save without a manual save step), so it is not restated as its own numeric acceptance criterion.\\n- Content-type/content-disposition handling for non-image attachment downloads, password-reset token security properties (expiration, single-use enforcement, rate limiting), and whether sign-in attempts are rate-limited or accounts are locked/throttled after repeated failures: the PRD does not decide these, and they should be resolved at the design stage rather than assumed here.\\n- Further decomposition of compound acceptance criteria (AC-006, AC-009, AC-018, AC-034) into separate sub-behavior IDs: the PRD states each of these as a single feature bullet, so this specification keeps them bundled rather than manufacturing finer-grained obligations the PRD did not separately state.\\n\", \"decisions\": [{\"findingId\": 37, \"disposition\": \"addressed\", \"rationale\": \"Added an explicit Out of scope bullet, and a supporting sentence in Summary, explaining why the PRD's 'under 10 seconds' note-creation goal is not translated into its own acceptance criterion: it describes end-to-end flow friction rather than a single system response time, and is already realized through AC-004, AC-007, and AC-008. This mirrors the rationale already given for the other soft thresholds, closing the gap the reviewer identified where this goal alone lacked any stated rationale for its exclusion.\", \"changedLocations\": [\"Summary\", \"Out of scope\"], \"normativeChanges\": []}, {\"findingId\": 38, \"disposition\": \"addressed\", \"rationale\": \"AC-003 is reworded to add export jobs to its enumerated ownership-protected resources, because the PRD's Functional requirements state a general ownership rule that is not limited to the four resource types AC-003 previously named. This closes the ownership-check gap for full-collection export downloads without inventing the finer-grained access-control treatment (e.g. extra scrutiny for the aggregated archive) that the PRD does not itself decide, which remains named under Out of scope.\", \"changedLocations\": [\"AC-003\", \"Summary\", \"Out of scope\"], \"normativeChanges\": [{\"artifactLocation\": \"Acceptance criteria\", \"artifactText\": \"AC-003: Each user can access only their own notes, folders, tags, attachments, and preferences; a request for another user's notes, folders, tags, attachments, or preferences is rejected.\", \"grounding\": {\"source\": \"design\", \"location\": \"Functional requirements\", \"excerpt\": \"The database must maintain ownership relationships so one user cannot access another user’s content.\"}}, {\"artifactLocation\": \"Acceptance criteria\", \"artifactText\": \"AC-003: Each user can access only their own notes, folders, tags, attachments, export jobs, and preferences; a request for another user's notes, folders, tags, attachments, export jobs, or preferences is rejected.\", \"grounding\": {\"source\": \"design\", \"location\": \"Functional requirements\", \"excerpt\": \"The database must maintain ownership relationships so one user cannot access another user’s content.\"}}]}, {\"findingId\": 39, \"disposition\": \"upstream_follow_up\", \"rationale\": \"Neither the PRD's core authentication feature description nor its functional requirements address rate limiting, throttling, or lockout for repeated failed sign-in attempts; this is a gap in the design itself, not something the specification can resolve on its own authority without inventing a policy the PRD never states. Noted in Out of scope alongside the specification's other open security decisions and routed upstream as a follow-up.\", \"changedLocations\": [\"Out of scope\"], \"proposal\": {\"title\": \"Decide sign-in rate-limiting / brute-force protection policy\", \"problem\": \"The PRD does not state whether repeated failed sign-in attempts trigger rate limiting, throttling, or account lockout, leaving the email/password login flow's exposure to credential-stuffing and brute-force attacks undecided.\", \"whyUpstream\": \"This is a product/security policy decision (failure thresholds, lockout duration, scope and duration of throttling) that only the design document can settle; the specification cannot invent specific rate-limit or lockout values without exceeding its role of deriving acceptance criteria from obligations the PRD actually states.\"}}]}}",
+          "num_turns": 2,
+          "modelUsage": {
+            "claude-sonnet-5": {
+              "inputTokens": 4,
+              "outputTokens": 21869,
+              "cacheReadInputTokens": 28369,
+              "cacheCreationInputTokens": 28707,
+              "webSearchRequests": 0,
+              "costUSD": 0.3391998,
+              "contextWindow": 1000000,
+              "maxOutputTokens": 64000,
+              "thinkingTokens": 15228,
+              "canonicalModel": "claude-sonnet-5",
+              "provider": "firstParty",
+              "costBasis": "list"
+            }
+          },
+          "usage": {
+            "input_tokens": 4,
+            "cache_creation_input_tokens": 28707,
+            "cache_read_input_tokens": 28369,
+            "output_tokens": 21869,
+            "output_tokens_details": {
+              "thinking_tokens": 15228
+            },
+            "server_tool_use": {
+              "web_search_requests": 0,
+              "web_fetch_requests": 0
+            },
+            "service_tier": "standard",
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 28707,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "inference_geo": "not_available",
+            "iterations": [
+              {
+                "input_tokens": 2,
+                "output_tokens": 6603,
+                "cache_read_input_tokens": 20849,
+                "cache_creation_input_tokens": 15378,
+                "cache_creation": {
+                  "ephemeral_5m_input_tokens": 0,
+                  "ephemeral_1h_input_tokens": 15378
+                },
+                "type": "message"
+              }
+            ],
+            "speed": "standard"
+          }
+        }
+      }
+    ],
+    "6": [
+      {
+        "run": 6,
+        "agent": "spec-author",
+        "role": "author (self-critique)",
+        "dispatchedAt": "2026-09-26T21:49:40.860Z",
+        "retainedAs": ".governance/raw/6/2026-09-26T21-49-40-860Z-d361f9a5a61a.json",
+        "envelope": {
+          "result": "{\"status\": \"proposed\", \"agent\": \"spec-author\", \"role\": \"author\", \"executor\": \"claude-code\", \"summary\": \"Self-critique of the Note Keeper spec found five gaps against the PRD (search ranking, pinned-at-top placement, concrete desktop/mobile layout structure, destructive-label scope beyond permanent note deletion, and a misleading claim about implementer latitude to restructure declared artifacts). Added AC-053 through AC-057 to close the substantive gaps and corrected the declared-artifacts framing in the Summary; no existing AC text or ID was changed. Requesting a 2-seat panel with requirements-traceability and security lenses.\", \"proposedContentChanges\": {\"selfCritique\": {\"critique\": [\"The PRD's 'Find an old note' flow states results are 'ranked by relevance and recency,' but no acceptance criterion captured this ranking behavior — AC-019 only covered response latency. Added AC-053.\", \"Core feature 7 states pinned notes should 'keep them visible at the top of their dashboard or folder view,' but the draft only captured visual distinctness and filter/sidebar reachability (AC-024) and general dashboard display (AC-011), never the top-of-list placement itself. Added AC-054.\", \"The UX section's concrete, testable layout mandate (desktop: left sidebar + central list + optional detail panel; mobile: navigation collapses into a drawer and prioritizes the editor) was left implicit inside the generic 'core workflow usable on desktop and mobile' criterion (AC-052), understating a specific structural requirement. Added AC-055 and AC-056.\", \"The PRD's general UX rule that 'destructive actions should use explicit labels ... not ambiguous labels such as OK' was only operationalized for permanent note deletion (AC-027); it also plainly applies to other destructive actions the PRD names elsewhere, such as folder deletion, with no corresponding criterion. Added AC-057.\", \"The Summary claimed an implementer 'may restructure [the declared file layout] as long as the acceptance criteria are met,' but declared artifacts are validated by exact committed path — that sentence promised latitude the delivery process does not actually grant. Revised the wording so the declared paths are presented as binding (one reasonable structure, but authoritative unless the spec itself is revised) rather than advisory.\", \"The 2-reviewer size cap forces a choice between the security and consistency lenses for a spec with heavy sanitization, auth, and private-storage surface; I prioritized security over consistency, but that means cross-cutting wording/numbering consistency (e.g., the three areas explicitly deferred to design) will get less independent scrutiny than it might otherwise warrant.\"], \"artifact\": \"---\\nfeature: note-keeper\\nchange_kind: feature\\n---\\n\\n# Note Keeper — Specification\\n\\n## Summary\\n\\nNote Keeper is a web application for individuals to capture, organize, search, and revisit notes, per the Note Keeper product requirements document. This specification covers the full MVP surface described there: authentication, note authoring with sanitized rich text, a dashboard, nested folders, tags, full-text search, pinning, archive/trash with recovery, checklists, attachments, version history, and export/import.\\n\\nThe PRD does not mandate a technology stack or repository layout. The declared artifacts below assume one plausible structure — a TypeScript HTTP backend under `server/` and a React frontend under `client/` — as a basis for delivery. These paths are binding for this specification: delivery is proven by the exact committed paths declared below. If an implementer later needs a different structure, that requires revising this specification's declared-artifacts section, not silently diverging from it.\\n\\nWhere the PRD gives an illustrative number rather than a fixed rule (the attachment file-size limit, and the trash/version retention windows), the acceptance criteria below require that limit or window to be documented and consistently enforced rather than fixing it at the PRD's example value.\\n\\nThe PRD also states several expectations as soft, operational guidance rather than crisp, independently testable, per-artifact obligations: regular backups with a restoration procedure, sub-200ms UI responsiveness \\\"where network conditions allow,\\\" and support for \\\"current versions of major browsers.\\\" These are intentionally not translated into acceptance criteria below; they are recorded under Out of scope as open operational commitments rather than decided here.\\n\\nThis specification also leaves three security-relevant decisions to the design stage rather than inventing obligations the PRD does not state: access-control treatment for full-collection export archives (which aggregate a user's entire note and attachment set into one artifact), content-type and content-disposition handling for non-image attachment downloads, and password-reset token security properties (expiration, single-use enforcement, enumeration resistance). See Out of scope.\\n\\n## Declared artifacts\\n\\n- server/src/index.ts\\n- server/src/db/schema.sql\\n- server/src/models/user.ts\\n- server/src/models/note.ts\\n- server/src/models/folder.ts\\n- server/src/models/tag.ts\\n- server/src/models/noteTag.ts\\n- server/src/models/checklistItem.ts\\n- server/src/models/attachment.ts\\n- server/src/models/noteVersion.ts\\n- server/src/models/exportJob.ts\\n- server/src/auth/routes.ts\\n- server/src/auth/session.ts\\n- server/src/auth/passwordReset.ts\\n- server/src/notes/routes.ts\\n- server/src/notes/autosave.ts\\n- server/src/folders/routes.ts\\n- server/src/tags/routes.ts\\n- server/src/search/routes.ts\\n- server/src/search/index.ts\\n- server/src/attachments/routes.ts\\n- server/src/attachments/storage.ts\\n- server/src/versions/routes.ts\\n- server/src/exportImport/exportRoutes.ts\\n- server/src/exportImport/importRoutes.ts\\n- server/src/sanitize/richTextSanitizer.ts\\n- client/src/pages/Dashboard.tsx\\n- client/src/pages/NoteEditor.tsx\\n- client/src/pages/Login.tsx\\n- client/src/pages/Register.tsx\\n- client/src/pages/ResetPassword.tsx\\n- client/src/components/Sidebar.tsx\\n- client/src/components/SearchPalette.tsx\\n- client/src/components/TrashView.tsx\\n- client/src/components/VersionHistoryPanel.tsx\\n- client/src/components/ChecklistEditor.tsx\\n- client/src/components/AttachmentList.tsx\\n- client/src/components/ExportImportPanel.tsx\\n\\n## Acceptance criteria\\n\\n- AC-001: Users can register an account with email and password, sign in, sign out, and reset a forgotten password.\\n- AC-002: A signed-in user can access only their own notes, folders, tags, attachments, and preferences; a request for another user's resource is rejected.\\n- AC-003: Account passwords are stored only as salted password hashes, never in plaintext.\\n- AC-004: Clicking \\\"New note\\\" or invoking the note-creation keyboard shortcut opens the editor with the cursor focused in the title or body field.\\n- AC-005: A note supports a title, body, optional folder assignment, tags, pinned state, archived state, and checklist items.\\n- AC-006: The editor supports headings, bold, italic, bulleted lists, numbered lists, checklists, links, block quotes, and code blocks.\\n- AC-007: Edits to a note are auto-saved after a debounce interval of 500-1,000 milliseconds of no typing, without any manual save action.\\n- AC-008: The editor shows a visible save-state indicator with the states Saving, Saved, Offline, and Unable to save.\\n- AC-009: Rich-text content is sanitized server-side against a fixed allow-list of tags and attributes matching the supported formatting, both before storage and before rendering, stripping disallowed tags, attributes, inline event handlers, and script content rather than escaping them.\\n- AC-010: Link and image URLs in rich-text content are restricted to the http, https, and mailto schemes during sanitization; a URL using any other scheme, including javascript: and data:, is rejected.\\n- AC-011: The dashboard displays recent notes and pinned notes, and each note card or row shows title, content preview, tags, folder, and last-updated timestamp.\\n- AC-012: Notes can be sorted by last-updated date, creation date, title, or pinned status.\\n- AC-013: When a user has no notes, the dashboard shows an empty state that guides them to create their first note.\\n- AC-014: Users can create, rename, reorder, and delete folders, and a folder may contain nested subfolders.\\n- AC-015: Deleting a folder that contains notes prompts the user to move the contained notes to another folder or leave them uncategorized.\\n- AC-016: The sidebar displays a collapsible folder tree.\\n- AC-017: Users can add multiple tags to a note; tags are reusable, color-coded, searchable, renameable, and removable, and tag names are unique per user ignoring capitalization.\\n- AC-018: Selecting a tag filters the note list to notes carrying that tag.\\n- AC-019: A global search field searches note titles and bodies and returns results within approximately one second for a collection of up to 10,000 notes for a single user.\\n- AC-020: Search results can be narrowed by folder, tag, date range, note status, and attachment presence.\\n- AC-021: A keyboard shortcut (Cmd/Ctrl+K) opens global search.\\n- AC-022: Search results display highlighted matching text where practical.\\n- AC-023: Opening a search result lands the user at the matching content within the note when practical.\\n- AC-024: Users can pin and unpin a note; a pinned note remains visually distinct from ordinary notes and is reachable through a Pinned filter or dedicated sidebar destination.\\n- AC-025: Users can archive a note so that it no longer appears in active views but remains retrievable.\\n- AC-026: Users can move a note to trash, and a trashed note remains recoverable for a documented retention period.\\n- AC-027: Permanently deleting a note requires explicit confirmation using an unambiguous label such as \\\"Delete permanently\\\" and states that the action cannot be undone.\\n- AC-028: Restoring a trashed note returns it to its previous folder when that folder still exists, or to the uncategorized note list otherwise, and the application confirms the restoration.\\n- AC-029: Users can insert checklist items within a note and mark them complete without leaving the editor.\\n- AC-030: A note containing checklist items displays task progress such as \\\"3 of 7 complete,\\\" and notes with unfinished checklist items are filterable as \\\"Open tasks.\\\"\\n- AC-031: Users can attach images, PDFs, text files, and common document formats to a note, and each attachment displays its file name, size, upload time, and a download/open control.\\n- AC-032: An upload that exceeds the documented file-size limit, or that is of an unsupported type, is rejected with a clear error message.\\n- AC-033: Inline image previews render only for PNG, JPEG, GIF, and WebP attachments; an SVG attachment is downloadable like any other attachment but is never rendered as an inline preview.\\n- AC-034: A meaningful content change to a note automatically creates a new entry in its version history.\\n- AC-035: Users can view a note's version history with timestamps and a change preview for each version.\\n- AC-036: Restoring a prior note version creates a new current version rather than deleting the version history, and the system retains a documented number of versions or a documented retention period.\\n- AC-037: Users can export an individual note as Markdown, plain text, or PDF.\\n- AC-038: Users can export their entire note collection as a single portable archive containing Markdown files and attachments.\\n- AC-039: Users can import Markdown or plain-text notes through a review step that reports the number of notes, folders, tags, and attachments that will be created before the import is applied.\\n- AC-040: Imported Markdown or plain-text content is converted to the same rich-text representation as manually authored notes and passes through the identical allow-list sanitization step before storage.\\n- AC-041: A note with no title displays a generated label such as \\\"Untitled note\\\" rather than a blank title.\\n- AC-042: Navigating away from a note while an auto-save request is still pending does not silently discard the pending change: the application either completes the save first or warns the user before navigation proceeds.\\n- AC-043: The note editor accepts Unicode text and content pasted from common browsers and document editors without corruption or rejection.\\n- AC-044: The note list can be filtered by folder, tag, pinned state, archive state, task-completion state, and date range, independent of any search query.\\n- AC-045: The application records an activity timestamp for each note creation, update, archive, restore, and deletion event.\\n- AC-046: Exporting the entire note collection requires an explicit confirmation step before the export job starts.\\n- AC-047: Keyboard navigation supports creating a new note, moving through the note list, and predictable focus transitions when saving, in addition to opening search.\\n- AC-048: The interface provides semantic controls, visible focus states, sufficient color contrast, screen-reader labels, and keyboard-operable navigation throughout.\\n- AC-049: All client-server traffic is served over HTTPS.\\n- AC-050: An attachment download is served from private object storage that enforces an authorization check before the file is returned.\\n- AC-051: Error messages shown to the user are actionable and do not expose sensitive implementation details such as stack traces, internal identifiers, or raw exception text.\\n- AC-052: The core workflow of creating, editing, organizing, and finding a note is fully usable on both a desktop browser layout and a mobile browser layout.\\n- AC-053: Search results are ordered by a combination of relevance and recency rather than an arbitrary or storage order.\\n- AC-054: Pinned notes appear above unpinned notes in the dashboard and in folder note-list views.\\n- AC-055: The desktop layout presents a left navigation sidebar, a central note list, and an optional editor/detail panel.\\n- AC-056: The mobile layout collapses primary navigation into a drawer and prioritizes the note editor.\\n- AC-057: Destructive actions elsewhere in the interface, such as permanently deleting a folder or removing a tag, use explicit, unambiguous labels rather than generic labels such as \\\"OK.\\\"\\n\\n## Out of scope\\n\\n- Full team collaboration, commenting, and workspace administration.\\n- Advanced document layout comparable to desktop word processors.\\n- Native offline-first mobile apps.\\n- Full project-management features such as sprint planning, dependencies, or Gantt charts.\\n- Public publishing or external-facing knowledge bases.\\n- Google sign-in and any authentication method beyond email/password.\\n- Regular backup/restoration procedures, sub-200ms UI responsiveness targets, and specific browser/version compatibility guarantees: the PRD states these as soft, operational-level expectations rather than discrete, independently testable per-artifact obligations, and this specification leaves them undecided rather than converting them into acceptance criteria.\\n- Access-control treatment for full-collection export archives, content-type/content-disposition handling for non-image attachment downloads, and password-reset token security properties (expiration, single-use enforcement, enumeration resistance): the PRD does not decide these, and they are referred to the design stage rather than resolved here.\\n\", \"panelRequest\": {\"size\": 2, \"specialties\": [\"requirements-traceability\", \"security\"]}}}}",
+          "num_turns": 3,
+          "modelUsage": {
+            "claude-sonnet-5": {
+              "inputTokens": 6,
+              "outputTokens": 13262,
+              "cacheReadInputTokens": 51649,
+              "cacheCreationInputTokens": 18671,
+              "webSearchRequests": 0,
+              "costUSD": 0.2176458,
+              "contextWindow": 1000000,
+              "maxOutputTokens": 64000,
+              "thinkingTokens": 7819,
+              "canonicalModel": "claude-sonnet-5",
+              "provider": "firstParty",
+              "costBasis": "list"
+            }
+          },
+          "usage": {
+            "input_tokens": 6,
+            "cache_creation_input_tokens": 18671,
+            "cache_read_input_tokens": 51649,
+            "output_tokens": 13262,
+            "output_tokens_details": {
+              "thinking_tokens": 7819
+            },
+            "server_tool_use": {
+              "web_search_requests": 0,
+              "web_fetch_requests": 0
+            },
+            "service_tier": "standard",
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 18671,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "inference_geo": "not_available",
+            "iterations": [
+              {
+                "input_tokens": 2,
+                "output_tokens": 5313,
+                "cache_read_input_tokens": 26047,
+                "cache_creation_input_tokens": 144,
+                "cache_creation": {
+                  "ephemeral_5m_input_tokens": 0,
+                  "ephemeral_1h_input_tokens": 144
+                },
+                "type": "message"
+              }
+            ],
+            "speed": "standard"
+          }
+        }
+      },
+      {
+        "run": 6,
+        "agent": "spec-reviewer-traceability",
+        "role": "reviewer",
+        "dispatchedAt": "2026-09-26T21:51:30.295Z",
+        "retainedAs": ".governance/raw/6/2026-09-26T21-51-30-295Z-5bed9f4022ae.json",
+        "envelope": {
+          "result": "```json\n{\"status\": \"proposed\", \"agent\": \"spec-reviewer-traceability\", \"role\": \"reviewer\", \"executor\": \"claude-code\", \"summary\": \"Spec traces nearly all PRD features and functional/UX/non-functional requirements to specific acceptance criteria; two coverage gaps found: an undecided 'preferences/settings' capability implied by the PRD's ownership language and data model, and an inconsistent application of the spec's own soft-requirement exclusion methodology for subjective UX language.\", \"proposedContentChanges\": {\"findings\": [{\"severity\": \"low\", \"classification\": \"upstream\", \"location\": \"upstream:design:user-preferences-scope\", \"intentKey\": \"untraced-preferences-capability\", \"subject\": \"The PRD repeatedly scopes ownership to include user 'preferences' and lists a User.settings field in its data model, but never defines what preference-setting behavior is required, leaving the spec with no AC, artifact, or explicit out-of-scope entry for this PRD-referenced capability.\"}, {\"severity\": \"low\", \"classification\": \"current_artifact\", \"location\": \"Out of scope\", \"intentKey\": \"inconsistent-soft-requirement-exclusion\", \"subject\": \"The spec explicitly calls out and excludes some PRD soft/subjective UX expectations (backups, sub-200ms responsiveness, browser support) but silently drops other equally subjective PRD UX language ('calm, focused, lightweight' design, 'generous line height, restrained formatting controls') without listing them in Out of scope, breaking the traceability discipline applied elsewhere.\"}]}}\n```",
+          "num_turns": 2,
+          "modelUsage": {
+            "claude-sonnet-5": {
+              "inputTokens": 4,
+              "outputTokens": 10227,
+              "cacheReadInputTokens": 25422,
+              "cacheCreationInputTokens": 20087,
+              "webSearchRequests": 0,
+              "costUSD": 0.18771040000000003,
+              "contextWindow": 1000000,
+              "maxOutputTokens": 64000,
+              "thinkingTokens": 9555,
+              "canonicalModel": "claude-sonnet-5",
+              "provider": "firstParty",
+              "costBasis": "list"
+            }
+          },
+          "usage": {
+            "input_tokens": 4,
+            "cache_creation_input_tokens": 20087,
+            "cache_read_input_tokens": 25422,
+            "output_tokens": 10227,
+            "output_tokens_details": {
+              "thinking_tokens": 9555
+            },
+            "server_tool_use": {
+              "web_search_requests": 0,
+              "web_fetch_requests": 0
+            },
+            "service_tier": "standard",
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 20087,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "inference_geo": "not_available",
+            "iterations": [
+              {
+                "input_tokens": 2,
+                "output_tokens": 569,
+                "cache_read_input_tokens": 17902,
+                "cache_creation_input_tokens": 9705,
+                "cache_creation": {
+                  "ephemeral_5m_input_tokens": 0,
+                  "ephemeral_1h_input_tokens": 9705
+                },
+                "type": "message"
+              }
+            ],
+            "speed": "standard"
+          }
+        }
+      },
+      {
+        "run": 6,
+        "agent": "spec-reviewer-security",
+        "role": "reviewer",
+        "dispatchedAt": "2026-09-26T21:52:40.781Z",
+        "retainedAs": ".governance/raw/6/2026-09-26T21-52-40-781Z-17a32c46fee0.json",
+        "envelope": {
+          "result": "{\"status\": \"proposed\", \"agent\": \"spec-reviewer-security\", \"role\": \"reviewer\", \"executor\": \"claude-code\", \"summary\": \"The specification correctly implements the PRD's explicit sanitization, URL-scheme, attachment-preview, ownership, and transport-security obligations as testable acceptance criteria. However, it surfaces three security-relevant decisions that the governing PRD never resolves, and defers them to design rather than inventing rules; these gaps are reported upstream since the specification cannot close them on its own authority.\", \"proposedContentChanges\": {\"findings\": [{\"severity\": \"high\", \"classification\": \"upstream\", \"location\": \"upstream:design:export-archive-access-control\", \"intentKey\": \"export-archive-access-control-undecided\", \"subject\": \"The PRD never specifies access-control treatment for full-collection export archives, which aggregate a user's entire note and attachment set into a single downloadable artifact with materially higher exposure impact than per-note access.\"}, {\"severity\": \"high\", \"classification\": \"upstream\", \"location\": \"upstream:design:attachment-download-content-handling\", \"intentKey\": \"attachment-content-type-disposition-undecided\", \"subject\": \"The PRD does not specify content-type or content-disposition handling for non-image attachment downloads, leaving open whether an uploaded file (e.g., HTML) could be served in a way that triggers browser content execution rather than a safe download.\"}, {\"severity\": \"high\", \"classification\": \"upstream\", \"location\": \"upstream:design:password-reset-token-security\", \"intentKey\": \"password-reset-token-security-undecided\", \"subject\": \"The PRD states only that users can reset a forgotten password without defining token expiration, single-use enforcement, or enumeration resistance, leaving account-takeover-relevant properties of the reset flow undecided.\"}]}}",
+          "num_turns": 1,
+          "modelUsage": {
+            "claude-sonnet-5": {
+              "inputTokens": 2,
+              "outputTokens": 6346,
+              "cacheReadInputTokens": 7520,
+              "cacheCreationInputTokens": 10366,
+              "webSearchRequests": 0,
+              "costUSD": 0.10643200000000001,
+              "contextWindow": 1000000,
+              "maxOutputTokens": 64000,
+              "thinkingTokens": 5752,
+              "canonicalModel": "claude-sonnet-5",
+              "provider": "firstParty",
+              "costBasis": "list"
+            }
+          },
+          "usage": {
+            "input_tokens": 2,
+            "cache_creation_input_tokens": 10366,
+            "cache_read_input_tokens": 7520,
+            "output_tokens": 6346,
+            "output_tokens_details": {
+              "thinking_tokens": 5752
+            },
+            "server_tool_use": {
+              "web_search_requests": 0,
+              "web_fetch_requests": 0
+            },
+            "service_tier": "standard",
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 10366,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "inference_geo": "not_available",
+            "iterations": [
+              {
+                "input_tokens": 2,
+                "output_tokens": 6346,
+                "cache_read_input_tokens": 7520,
+                "cache_creation_input_tokens": 10366,
+                "cache_creation": {
+                  "ephemeral_5m_input_tokens": 0,
+                  "ephemeral_1h_input_tokens": 10366
+                },
+                "type": "message"
+              }
+            ],
+            "speed": "standard"
+          }
+        }
+      },
+      {
+        "run": 6,
+        "agent": "spec-author",
+        "role": "author (reconciliation)",
+        "dispatchedAt": "2026-09-26T21:54:38.318Z",
+        "retainedAs": ".governance/raw/6/2026-09-26T21-54-38-318Z-e1ee7cdc0175.json",
+        "envelope": {
+          "result": "```json\n{\"status\": \"proposed\", \"agent\": \"spec-author\", \"role\": \"author\", \"executor\": \"claude-code\", \"summary\": \"Added two Out of scope entries closing traceability gaps for PRD-referenced user preferences/settings and for subjective UX/design language (calm/focused/lightweight, generous line height/restrained controls), matching the treatment already used for other soft PRD language. Routed the three high-severity security-relevant undecided PRD questions (export-archive access control, attachment content-type/disposition handling, password-reset token security) upstream as blocking proposals, since the spec's existing Out of scope note documents these gaps but does not itself resolve them.\", \"proposedContentChanges\": {\"spec\": \"---\\nfeature: note-keeper\\nchange_kind: feature\\n---\\n\\n# Note Keeper — Specification\\n\\n## Summary\\n\\nNote Keeper is a web application for individuals to capture, organize, search, and revisit notes, per the Note Keeper product requirements document. This specification covers the full MVP surface described there: authentication, note authoring with sanitized rich text, a dashboard, nested folders, tags, full-text search, pinning, archive/trash with recovery, checklists, attachments, version history, and export/import.\\n\\nThe PRD does not mandate a technology stack or repository layout. The declared artifacts below assume one plausible structure — a TypeScript HTTP backend under `server/` and a React frontend under `client/` — as a basis for delivery. These paths are binding for this specification: delivery is proven by the exact committed paths declared below. If an implementer later needs a different structure, that requires revising this specification's declared-artifacts section, not silently diverging from it.\\n\\nWhere the PRD gives an illustrative number rather than a fixed rule (the attachment file-size limit, and the trash/version retention windows), the acceptance criteria below require that limit or window to be documented and consistently enforced rather than fixing it at the PRD's example value.\\n\\nThe PRD also states several expectations as soft, operational guidance rather than crisp, independently testable, per-artifact obligations: regular backups with a restoration procedure, sub-200ms UI responsiveness \\\"where network conditions allow,\\\" and support for \\\"current versions of major browsers.\\\" These are intentionally not translated into acceptance criteria below; they are recorded under Out of scope as open operational commitments rather than decided here.\\n\\nThis specification also leaves three security-relevant decisions to the design stage rather than inventing obligations the PRD does not state: access-control treatment for full-collection export archives (which aggregate a user's entire note and attachment set into one artifact), content-type and content-disposition handling for non-image attachment downloads, and password-reset token security properties (expiration, single-use enforcement, enumeration resistance). See Out of scope.\\n\\n## Declared artifacts\\n\\n- server/src/index.ts\\n- server/src/db/schema.sql\\n- server/src/models/user.ts\\n- server/src/models/note.ts\\n- server/src/models/folder.ts\\n- server/src/models/tag.ts\\n- server/src/models/noteTag.ts\\n- server/src/models/checklistItem.ts\\n- server/src/models/attachment.ts\\n- server/src/models/noteVersion.ts\\n- server/src/models/exportJob.ts\\n- server/src/auth/routes.ts\\n- server/src/auth/session.ts\\n- server/src/auth/passwordReset.ts\\n- server/src/notes/routes.ts\\n- server/src/notes/autosave.ts\\n- server/src/folders/routes.ts\\n- server/src/tags/routes.ts\\n- server/src/search/routes.ts\\n- server/src/search/index.ts\\n- server/src/attachments/routes.ts\\n- server/src/attachments/storage.ts\\n- server/src/versions/routes.ts\\n- server/src/exportImport/exportRoutes.ts\\n- server/src/exportImport/importRoutes.ts\\n- server/src/sanitize/richTextSanitizer.ts\\n- client/src/pages/Dashboard.tsx\\n- client/src/pages/NoteEditor.tsx\\n- client/src/pages/Login.tsx\\n- client/src/pages/Register.tsx\\n- client/src/pages/ResetPassword.tsx\\n- client/src/components/Sidebar.tsx\\n- client/src/components/SearchPalette.tsx\\n- client/src/components/TrashView.tsx\\n- client/src/components/VersionHistoryPanel.tsx\\n- client/src/components/ChecklistEditor.tsx\\n- client/src/components/AttachmentList.tsx\\n- client/src/components/ExportImportPanel.tsx\\n\\n## Acceptance criteria\\n\\n- AC-001: Users can register an account with email and password, sign in, sign out, and reset a forgotten password.\\n- AC-002: A signed-in user can access only their own notes, folders, tags, attachments, and preferences; a request for another user's resource is rejected.\\n- AC-003: Account passwords are stored only as salted password hashes, never in plaintext.\\n- AC-004: Clicking \\\"New note\\\" or invoking the note-creation keyboard shortcut opens the editor with the cursor focused in the title or body field.\\n- AC-005: A note supports a title, body, optional folder assignment, tags, pinned state, archived state, and checklist items.\\n- AC-006: The editor supports headings, bold, italic, bulleted lists, numbered lists, checklists, links, block quotes, and code blocks.\\n- AC-007: Edits to a note are auto-saved after a debounce interval of 500-1,000 milliseconds of no typing, without any manual save action.\\n- AC-008: The editor shows a visible save-state indicator with the states Saving, Saved, Offline, and Unable to save.\\n- AC-009: Rich-text content is sanitized server-side against a fixed allow-list of tags and attributes matching the supported formatting, both before storage and before rendering, stripping disallowed tags, attributes, inline event handlers, and script content rather than escaping them.\\n- AC-010: Link and image URLs in rich-text content are restricted to the http, https, and mailto schemes during sanitization; a URL using any other scheme, including javascript: and data:, is rejected.\\n- AC-011: The dashboard displays recent notes and pinned notes, and each note card or row shows title, content preview, tags, folder, and last-updated timestamp.\\n- AC-012: Notes can be sorted by last-updated date, creation date, title, or pinned status.\\n- AC-013: When a user has no notes, the dashboard shows an empty state that guides them to create their first note.\\n- AC-014: Users can create, rename, reorder, and delete folders, and a folder may contain nested subfolders.\\n- AC-015: Deleting a folder that contains notes prompts the user to move the contained notes to another folder or leave them uncategorized.\\n- AC-016: The sidebar displays a collapsible folder tree.\\n- AC-017: Users can add multiple tags to a note; tags are reusable, color-coded, searchable, renameable, and removable, and tag names are unique per user ignoring capitalization.\\n- AC-018: Selecting a tag filters the note list to notes carrying that tag.\\n- AC-019: A global search field searches note titles and bodies and returns results within approximately one second for a collection of up to 10,000 notes for a single user.\\n- AC-020: Search results can be narrowed by folder, tag, date range, note status, and attachment presence.\\n- AC-021: A keyboard shortcut (Cmd/Ctrl+K) opens global search.\\n- AC-022: Search results display highlighted matching text where practical.\\n- AC-023: Opening a search result lands the user at the matching content within the note when practical.\\n- AC-024: Users can pin and unpin a note; a pinned note remains visually distinct from ordinary notes and is reachable through a Pinned filter or dedicated sidebar destination.\\n- AC-025: Users can archive a note so that it no longer appears in active views but remains retrievable.\\n- AC-026: Users can move a note to trash, and a trashed note remains recoverable for a documented retention period.\\n- AC-027: Permanently deleting a note requires explicit confirmation using an unambiguous label such as \\\"Delete permanently\\\" and states that the action cannot be undone.\\n- AC-028: Restoring a trashed note returns it to its previous folder when that folder still exists, or to the uncategorized note list otherwise, and the application confirms the restoration.\\n- AC-029: Users can insert checklist items within a note and mark them complete without leaving the editor.\\n- AC-030: A note containing checklist items displays task progress such as \\\"3 of 7 complete,\\\" and notes with unfinished checklist items are filterable as \\\"Open tasks.\\\"\\n- AC-031: Users can attach images, PDFs, text files, and common document formats to a note, and each attachment displays its file name, size, upload time, and a download/open control.\\n- AC-032: An upload that exceeds the documented file-size limit, or that is of an unsupported type, is rejected with a clear error message.\\n- AC-033: Inline image previews render only for PNG, JPEG, GIF, and WebP attachments; an SVG attachment is downloadable like any other attachment but is never rendered as an inline preview.\\n- AC-034: A meaningful content change to a note automatically creates a new entry in its version history.\\n- AC-035: Users can view a note's version history with timestamps and a change preview for each version.\\n- AC-036: Restoring a prior note version creates a new current version rather than deleting the version history, and the system retains a documented number of versions or a documented retention period.\\n- AC-037: Users can export an individual note as Markdown, plain text, or PDF.\\n- AC-038: Users can export their entire note collection as a single portable archive containing Markdown files and attachments.\\n- AC-039: Users can import Markdown or plain-text notes through a review step that reports the number of notes, folders, tags, and attachments that will be created before the import is applied.\\n- AC-040: Imported Markdown or plain-text content is converted to the same rich-text representation as manually authored notes and passes through the identical allow-list sanitization step before storage.\\n- AC-041: A note with no title displays a generated label such as \\\"Untitled note\\\" rather than a blank title.\\n- AC-042: Navigating away from a note while an auto-save request is still pending does not silently discard the pending change: the application either completes the save first or warns the user before navigation proceeds.\\n- AC-043: The note editor accepts Unicode text and content pasted from common browsers and document editors without corruption or rejection.\\n- AC-044: The note list can be filtered by folder, tag, pinned state, archive state, task-completion state, and date range, independent of any search query.\\n- AC-045: The application records an activity timestamp for each note creation, update, archive, restore, and deletion event.\\n- AC-046: Exporting the entire note collection requires an explicit confirmation step before the export job starts.\\n- AC-047: Keyboard navigation supports creating a new note, moving through the note list, and predictable focus transitions when saving, in addition to opening search.\\n- AC-048: The interface provides semantic controls, visible focus states, sufficient color contrast, screen-reader labels, and keyboard-operable navigation throughout.\\n- AC-049: All client-server traffic is served over HTTPS.\\n- AC-050: An attachment download is served from private object storage that enforces an authorization check before the file is returned.\\n- AC-051: Error messages shown to the user are actionable and do not expose sensitive implementation details such as stack traces, internal identifiers, or raw exception text.\\n- AC-052: The core workflow of creating, editing, organizing, and finding a note is fully usable on both a desktop browser layout and a mobile browser layout.\\n- AC-053: Search results are ordered by a combination of relevance and recency rather than an arbitrary or storage order.\\n- AC-054: Pinned notes appear above unpinned notes in the dashboard and in folder note-list views.\\n- AC-055: The desktop layout presents a left navigation sidebar, a central note list, and an optional editor/detail panel.\\n- AC-056: The mobile layout collapses primary navigation into a drawer and prioritizes the note editor.\\n- AC-057: Destructive actions elsewhere in the interface, such as permanently deleting a folder or removing a tag, use explicit, unambiguous labels rather than generic labels such as \\\"OK.\\\"\\n\\n## Out of scope\\n\\n- Full team collaboration, commenting, and workspace administration.\\n- Advanced document layout comparable to desktop word processors.\\n- Native offline-first mobile apps.\\n- Full project-management features such as sprint planning, dependencies, or Gantt charts.\\n- Public publishing or external-facing knowledge bases.\\n- Google sign-in and any authentication method beyond email/password.\\n- Regular backup/restoration procedures, sub-200ms UI responsiveness targets, and specific browser/version compatibility guarantees: the PRD states these as soft, operational-level expectations rather than discrete, independently testable per-artifact obligations, and this specification leaves them undecided rather than converting them into acceptance criteria.\\n- Access-control treatment for full-collection export archives, content-type/content-disposition handling for non-image attachment downloads, and password-reset token security properties (expiration, single-use enforcement, enumeration resistance): the PRD does not decide these, and they are referred to the design stage rather than resolved here.\\n- User preference/settings behavior beyond the per-user ownership scoping already covered by AC-002 (the PRD's `User.settings` field and its references to account \\\"preferences\\\"): the PRD never defines what preference-setting behavior is required, so no further acceptance criterion or declared artifact is derived from it here.\\n- The PRD's subjective UX/design language — the overall design feeling \\\"calm, focused, and lightweight,\\\" and the editor being \\\"readable, with generous line height and restrained formatting controls\\\" — is not decomposed into acceptance criteria for the same reason as the other soft UX expectations above: it states an aesthetic and comfort goal rather than an independently testable, per-artifact obligation.\\n\", \"decisions\": [{\"findingId\": 44, \"disposition\": \"addressed\", \"rationale\": \"The PRD's User.settings field and references to account 'preferences' never define required preference-setting behavior, so no AC or artifact can be derived from it; added an explicit Out of scope entry acknowledging the gap so the capability is traceably accounted for rather than silently dropped.\", \"changedLocations\": [\"Out of scope\"], \"normativeChanges\": []}, {\"findingId\": 45, \"disposition\": \"addressed\", \"rationale\": \"The spec already excludes some PRD soft/subjective UX language (backups, responsiveness, browser support) but had dropped 'calm, focused, lightweight' and 'generous line height, restrained formatting controls' without a corresponding Out of scope entry; added a matching entry so the same traceability discipline applies to all PRD soft UX language.\", \"changedLocations\": [\"Out of scope\"], \"normativeChanges\": []}, {\"findingId\": 46, \"disposition\": \"upstream_blocking\", \"rationale\": \"The PRD never specifies access-control treatment for full-collection export archives, which bundle a user's entire note and attachment set into one artifact with materially higher exposure than per-note access; the spec's existing Out of scope note documents this gap but a concrete access-control decision (e.g., authorization/expiry/one-time-link requirements) must come from the design stage before this security-relevant behavior can be specified or built.\", \"changedLocations\": [], \"proposal\": {\"title\": \"Decide access-control treatment for full-collection export archives\", \"problem\": \"A full-collection export aggregates a user's entire note and attachment set into a single downloadable artifact (ExportJob/storage_key), but the PRD gives no requirement for how access to that artifact should be controlled (authorization scope, link expiry, one-time-use, re-authentication before download, etc.), leaving a high-impact exposure surface undecided.\", \"whyUpstream\": \"The PRD (Export and import, Suggested data model) describes the export capability and ExportJob entity but is silent on its access-control properties; this is a product/security decision that belongs in the design document, not one the specification can invent unilaterally.\"}}, {\"findingId\": 47, \"disposition\": \"upstream_blocking\", \"rationale\": \"The PRD does not specify content-type or content-disposition handling for non-image attachment downloads, leaving open whether an uploaded file could be served in a way that triggers browser execution rather than a safe download; the spec's existing Out of scope note documents this gap but the actual serving-header policy must be decided upstream.\", \"changedLocations\": [], \"proposal\": {\"title\": \"Decide content-type and content-disposition handling for non-image attachment downloads\", \"problem\": \"The PRD requires attachment upload/download support (Attachments and media) but never specifies how non-image attachments (e.g., HTML, text, PDF, or other document formats) should be served: whether Content-Type is forced/sanitized and Content-Disposition forces a download rather than allowing the browser to render the content inline, which is security-relevant for formats capable of carrying active content.\", \"whyUpstream\": \"The PRD's Attachments and media section only requires 'download/open controls' and a private-storage authorization check; it does not decide serving-header policy, so this must be resolved in the design document before it can become a testable acceptance criterion.\"}}, {\"findingId\": 48, \"disposition\": \"upstream_blocking\", \"rationale\": \"The PRD states only that users can reset a forgotten password and does not define token expiration, single-use enforcement, or enumeration resistance; the spec's existing Out of scope note documents this gap but the account-takeover-relevant security properties of the reset flow must be decided upstream.\", \"changedLocations\": [], \"proposal\": {\"title\": \"Decide password-reset token security properties\", \"problem\": \"The PRD's authentication requirement ('reset a forgotten password') does not define token expiration, single-use enforcement, or resistance to account/email enumeration during the reset flow, leaving account-takeover-relevant behavior of server/src/auth/passwordReset.ts undecided.\", \"whyUpstream\": \"The PRD (User authentication) states the reset capability at a product-feature level only; the specific security properties of the reset token are a design decision the PRD does not make, so they cannot be invented in the specification without upstream input.\"}}]}}\n```",
+          "num_turns": 1,
+          "modelUsage": {
+            "claude-sonnet-5": {
+              "inputTokens": 2,
+              "outputTokens": 12765,
+              "cacheReadInputTokens": 7520,
+              "cacheCreationInputTokens": 13430,
+              "webSearchRequests": 0,
+              "costUSD": 0.182878,
+              "contextWindow": 1000000,
+              "maxOutputTokens": 64000,
+              "thinkingTokens": 6527,
+              "canonicalModel": "claude-sonnet-5",
+              "provider": "firstParty",
+              "costBasis": "list"
+            }
+          },
+          "usage": {
+            "input_tokens": 2,
+            "cache_creation_input_tokens": 13430,
+            "cache_read_input_tokens": 7520,
+            "output_tokens": 12765,
+            "output_tokens_details": {
+              "thinking_tokens": 6527
+            },
+            "server_tool_use": {
+              "web_search_requests": 0,
+              "web_fetch_requests": 0
+            },
+            "service_tier": "standard",
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 13430,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "inference_geo": "not_available",
+            "iterations": [
+              {
+                "input_tokens": 2,
+                "output_tokens": 12765,
+                "cache_read_input_tokens": 7520,
+                "cache_creation_input_tokens": 13430,
+                "cache_creation": {
+                  "ephemeral_5m_input_tokens": 0,
+                  "ephemeral_1h_input_tokens": 13430
+                },
+                "type": "message"
+              }
+            ],
+            "speed": "standard"
+          }
+        }
+      }
+    ]
+  }
+}

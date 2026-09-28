@@ -4,7 +4,7 @@ import { acquireLock } from "./lock.ts";
 import { openStore, StoreStateError, type Store } from "./store.ts";
 import {
   EXECUTION_GROUPS, readRunSnapshot, RunMissingError,
-  type ExecutionGroup, type RunObservation,
+  type ExecutionGroup, type RunObservation, type WorkflowAction,
 } from "./operator-state.ts";
 import {
   formatRunPreview, operatorEnvelope, type OperatorErrorCode, type OperatorResult,
@@ -12,6 +12,7 @@ import {
 } from "./operator-output.ts";
 import type { Profile } from "./profile.ts";
 import { runSpecStage } from "./spec-stage.ts";
+import { runSpecDecisionStage } from "./spec-decision-stage.ts";
 import { runPlanStage } from "./plan-stage.ts";
 import { runImplementationStage } from "./implementation-stage.ts";
 import { runVerificationStage } from "./verification-stage.ts";
@@ -26,10 +27,12 @@ export interface AdvanceRunOptions {
   consent?: (preview: string) => Promise<boolean>;
 }
 
+// The groups before approval end at a human boundary, so a consent preview
+// for either covers exactly that group, never anything after the signature.
 function remainingGroups(observed: RunObservation): ExecutionGroup[] {
   const group = observed.snapshot.workflowAction.group;
-  if (group === null || group === "approval") return [];
-  return group === "spec" ? ["spec"] : EXECUTION_GROUPS.slice(EXECUTION_GROUPS.indexOf(group));
+  if (group === null || group === "approval" || group === "decide") return [];
+  return group === "spec" || group === "decision" ? [group] : EXECUTION_GROUPS.slice(EXECUTION_GROUPS.indexOf(group));
 }
 
 function observe(rootDir: string, runId: number): RunObservation {
@@ -70,6 +73,7 @@ function callGroup(store: Store, rootDir: string, runId: number, profile: Profil
   const options = { rootDir, runId };
   switch (group) {
     case "spec": return runSpecStage(store, profile.executor, options);
+    case "decision": return runSpecDecisionStage(store, profile.executor, options);
     case "plan": return runPlanStage(store, profile.executor, options);
     case "implementation": return runImplementationStage(store, profile.executor, options);
     case "verification": return runVerificationStage(store, options);
@@ -78,15 +82,22 @@ function callGroup(store: Store, rootDir: string, runId: number, profile: Profil
   }
 }
 
+// The spec group ends in exactly one of two proven shapes: three passed stages
+// awaiting approval when the review asked nothing, or two passed stages
+// awaiting the operator's answers. The decision group then adds its one stage
+// and hands over to approval, not to the next execution group.
 function expectedBoundary(before: RunObservation, after: RunObservation, group: ExecutionGroup): boolean {
-  const next = group === "spec" ? "approval" : EXECUTION_GROUPS[EXECUTION_GROUPS.indexOf(group) + 1] ?? null;
-  const added = group === "spec" || group === "plan" ? 2 : 1;
+  const shapes: { added: number; next: WorkflowAction["group"] }[] =
+    group === "spec" ? [{ added: 3, next: "approval" }, { added: 2, next: "decide" }]
+      : group === "decision" ? [{ added: 1, next: "approval" }]
+        : [{ added: group === "plan" ? 2 : 1, next: EXECUTION_GROUPS[EXECUTION_GROUPS.indexOf(group) + 1] ?? null }];
   return after.fingerprint !== before.fingerprint &&
     after.snapshot.configuration.profileHash === before.snapshot.configuration.profileHash &&
-    after.snapshot.stages.length === before.snapshot.stages.length + added &&
-    after.snapshot.stages.slice(-added).every((stage) => stage.status === "passed" && stage.gateResult === "pass") &&
-    after.snapshot.workflowAction.group === next &&
-    (next !== null || after.snapshot.phase === "completed") &&
+    shapes.some(({ added, next }) =>
+      after.snapshot.stages.length === before.snapshot.stages.length + added &&
+      after.snapshot.stages.slice(-added).every((stage) => stage.status === "passed" && stage.gateResult === "pass") &&
+      after.snapshot.workflowAction.group === next &&
+      (next !== null || after.snapshot.phase === "completed")) &&
     !after.snapshot.workflowAction.reasons.some((reason) =>
       reason.code === "observation_changed" || reason.code === "chain_incomplete" || reason.code === "evidence_invalid");
 }
@@ -122,6 +133,7 @@ export async function advanceRun(rootDir: string, runId: number, options: Advanc
         action.reasons.map((reason) => reason.reason).join("; ") || "No proven execution boundary is available.");
     }
     if (action.group === "approval") return result("awaiting_approval");
+    if (action.group === "decide") return result("awaiting_decision");
     return null;
   };
   try {
@@ -172,7 +184,7 @@ export async function advanceRun(rootDir: string, runId: number, options: Advanc
       const stopped = boundaryResult();
       if (stopped !== null) return stopped;
       const group = observed.snapshot.workflowAction.group;
-      if (group === null || group === "approval" || observed.profile === null ||
+      if (group === null || group === "approval" || group === "decide" || observed.profile === null ||
           group !== execution.remainingGroups[0]) {
         return result("refused", "observation_changed", "The eligible group is outside this invocation's consented range.");
       }

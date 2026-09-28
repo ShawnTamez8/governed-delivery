@@ -3,6 +3,7 @@
 /** @typedef {import("../dashboard-approval.ts").ApprovalRequestResult} ApprovalRequestResult */
 /** @typedef {import("../dashboard-approval.ts").ApprovalSubmitResult} ApprovalSubmitResult */
 /** @typedef {Extract<ApprovalRequestResult, { outcome: "ok" }>} ApprovalRequest */
+/** @typedef {import("../dashboard-decision.ts").DecisionSubmitResult} DecisionSubmitResult */
 
 import {
   AGENT_TOKEN_CLASS_NOTE, AUTO_REFRESH_INTERVAL_MS, FINDING_ORDER_STATEMENT, MALFORMED_LIST_REASON,
@@ -305,6 +306,31 @@ async function postApproval(repositoryId, runId, token, body) {
     const result = /** @type {ApprovalSubmitResult & { reason?: string }} */ (await response.json());
     return [200, 409, 422].includes(response.status)
       ? { status: response.status, result, reason: result.reason ?? "" }
+      : { status: response.status, result: null, reason: result.reason ?? response.statusText };
+  } catch (error) {
+    return { status: 0, result: null, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * The dashboard's second write (architecture section 23, 2026-09-27): one
+ * operator answer to one spec_review question, recorded by the same core as
+ * `bw decide`.
+ * @param {string} repositoryId @param {number} runId @param {number} findingId @param {string} token
+ * @param {{ action: "approve" | "deny" | "modify", answer?: string }} body
+ * @returns {Promise<{ status: number, result: DecisionSubmitResult | null, reason: string }>}
+ */
+async function postDecision(repositoryId, runId, findingId, token, body) {
+  try {
+    const path = `/api/repositories/${encodeURIComponent(repositoryId)}/runs/${runId}/decisions/${findingId}`;
+    const response = await fetch(new URL(path, window.location.origin), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body.action === "modify" ? { action: body.action, answer: body.answer } : { action: body.action }),
+    });
+    const result = /** @type {DecisionSubmitResult & { reason?: string }} */ (await response.json());
+    return [200, 409, 422].includes(response.status)
+      ? { status: response.status, result, reason: result.outcome === "answered" ? "" : result.reason }
       : { status: response.status, result: null, reason: result.reason ?? response.statusText };
   } catch (error) {
     return { status: 0, result: null, reason: error instanceof Error ? error.message : String(error) };
@@ -1069,12 +1095,13 @@ function openFindingDrawer(application, row, trigger) {
 function snapshotFindingRows(repositoryId, path, snapshot) {
   const severities = severityOrder(snapshot.configuration);
   const kinds = new Map(snapshot.stages.map((stage) => [stage.id, stage.kind]));
+  const statuses = findingStatuses(snapshot);
   return snapshot.evidence.findings.map((finding) => {
     const card = findingCard(finding);
     const stageKind = kinds.get(finding.stageId) ?? "";
     return {
       repositoryId, runId: snapshot.run.id, runLabel: `${snapshot.run.slug} #${snapshot.run.id}`, path,
-      card, status: findingStatus(card, stageKind), stageKind, severity: cardSeverity(card, severities),
+      card, status: statuses.get(finding.id) ?? findingStatus(card, stageKind), stageKind, severity: cardSeverity(card, severities),
     };
   });
 }
@@ -1346,6 +1373,131 @@ function approvalDrawerBody(application, repositoryId, repositoryPath, runId, re
 
   body.append(what, spec, sign, terminal);
   return body;
+}
+
+/* ------------------------------------------------------------------ *
+ * Operator decisions (architecture section 12, 2026-09-27)
+ * ------------------------------------------------------------------ */
+
+/** @type {Record<string, string>} */
+const DECISION_ACTION_LABEL = { approve: "Approved the recommendation", deny: "Denied: left open", modify: "Answered in your own words" };
+
+/**
+ * One spec_review question as a card: the options, the recommended option,
+ * the reviewer's reason, and either the recorded answer or the three answer
+ * controls. Nothing is recorded until the operator presses one of them.
+ * @param {DashboardApplication} application @param {RunContext} context
+ * @param {RunSnapshot["questions"][number]} question
+ */
+function questionCard(application, context, question) {
+  const card = element("article", null, `question-card${question.answer === null ? " tone-warning" : ""}`);
+  card.dataset.question = String(question.findingId);
+  card.append(element("h4", question.text, "question-text"));
+  const options = element("ol", null, "question-options");
+  question.options.forEach((option, index) => {
+    const item = element("li", null, index === question.recommended ? "question-option is-recommended" : "question-option");
+    item.append(element("strong", option.label));
+    if (index === question.recommended) item.append(" ", badge("Recommended", "success"));
+    item.append(element("p", option.answer, "question-answer"));
+    options.append(item);
+  });
+  card.append(options, element("p", question.why, "question-why"));
+  if (question.answer !== null) {
+    const recorded = element("div", null, "question-recorded");
+    recorded.append(badge(DECISION_ACTION_LABEL[question.answer.action] ?? question.answer.action, "neutral"), " ",
+      shortTimeNode(question.answer.at));
+    if (question.answer.text !== "") recorded.append(element("p", question.answer.text, "question-answer"));
+    card.append(recorded);
+    return card;
+  }
+  // An answer is immutable, so none is offered on a boundary that cannot continue.
+  const action = context.snapshot.workflowAction;
+  if (!action.eligible) {
+    card.append(callout(`No answer can be recorded now: ${action.reasons[0]?.reason ?? "the decision boundary is not eligible"}.`, "danger"));
+    return card;
+  }
+  const status = element("div", null, "question-status");
+  status.setAttribute("role", "status");
+  const controls = element("div", null, "question-controls");
+  /** @param {string} label @param {string} action @param {string} className */
+  const button = (label, action, className) => {
+    const node = /** @type {HTMLButtonElement} */ (element("button", label, className));
+    node.type = "button";
+    node.dataset.control = `decision-${action}:${context.repositoryId}:${context.snapshot.run.id}:${question.findingId}`;
+    return node;
+  };
+  const approve = button("Approve", "approve", "btn is-primary");
+  const deny = button("Deny", "deny", "btn");
+  const modify = button("Modify", "modify", "btn");
+  const field = element("div", null, "question-modify");
+  field.hidden = true;
+  const area = /** @type {HTMLTextAreaElement} */ (element("textarea", null, "input"));
+  area.id = `decision-answer-${context.repositoryId}-${context.snapshot.run.id}-${question.findingId}`;
+  area.maxLength = 4000;
+  area.rows = 3;
+  const areaLabel = /** @type {HTMLLabelElement} */ (element("label", "Your answer", "field"));
+  areaLabel.htmlFor = area.id;
+  const submit = button("Record answer", "submit", "btn is-primary");
+  field.append(areaLabel, area, submit);
+  /** @param {"approve" | "deny" | "modify"} action @param {string} [answer] */
+  const record = async (action, answer) => {
+    for (const node of [approve, deny, modify, submit]) node.disabled = true;
+    status.replaceChildren(element("p", "Recording the answer…"));
+    const response = await postDecision(context.repositoryId, context.snapshot.run.id, question.findingId,
+      application.token, answer === undefined ? { action } : { action, answer });
+    const result = response.result;
+    if (result !== null && result.outcome === "answered") {
+      const remaining = result.open;
+      status.replaceChildren(element("p", remaining === 0
+        ? "Answer recorded. Every question is answered; resume the run from a terminal to fold the answers into the spec."
+        : `Answer recorded. ${plural(remaining, "question")} still open.`));
+      void trackedRefresh(application, () => refreshAll(application));
+      return;
+    }
+    for (const node of [approve, deny, modify, submit]) node.disabled = false;
+    if (response.status === 401) {
+      application.sessionExpired = true;
+      render(application);
+    }
+    status.replaceChildren(callout(response.status === 409
+      ? `The repository writer lock is not available, so nothing was recorded: ${response.reason}`
+      : `The answer was not recorded: ${response.reason}`, response.status === 409 ? "warning" : "danger"));
+  };
+  approve.addEventListener("click", () => void record("approve"));
+  deny.addEventListener("click", () => void record("deny"));
+  modify.addEventListener("click", () => {
+    field.hidden = false;
+    area.focus();
+  });
+  submit.addEventListener("click", () => {
+    if (area.value.trim() === "") {
+      status.replaceChildren(callout("Write an answer before recording it.", "warning"));
+      return;
+    }
+    void record("modify", area.value);
+  });
+  controls.append(approve, deny, modify);
+  card.append(controls, field, status);
+  return card;
+}
+
+/**
+ * The run view's decision region: every question spec_review asked, open ones
+ * first in recorded order. Approve records the recommended option, Deny leaves
+ * the question open, Modify records the operator's own answer.
+ * @param {DashboardApplication} application @param {RunContext} context
+ */
+function decisionQuestions(application, context) {
+  const questions = context.snapshot.questions;
+  const open = questions.filter((question) => question.answer === null).length;
+  const section = element("section", null, "decision-questions");
+  section.setAttribute("aria-label", "Operator decisions");
+  section.append(element("h3", open === 0 ? "Your decisions are recorded" : `${plural(open, "question")} need${open === 1 ? "s" : ""} your decision`),
+    element("p", "Approve records the recommended option. Deny leaves the question open and the run continues. Modify records your own answer.", "source-note"));
+  for (const question of [...questions].sort((left, right) => Number(left.answer !== null) - Number(right.answer !== null))) {
+    section.append(questionCard(application, context, question));
+  }
+  return section;
 }
 
 /* ------------------------------------------------------------------ *
@@ -2252,6 +2404,24 @@ function kpi(label, value, note, extra = "", valueClass = "") {
   return node;
 }
 
+/** An upper-case state label in sentence case, for text that is not a badge. @param {string} label */
+function sentenceCase(label) {
+  const lower = label.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+/**
+ * The run state as a tinted pill: a dot, the state, and the liveness while the
+ * writer lock is observed live. The dot pulses only under the live rule.
+ * @param {string} label @param {string} tone @param {ReturnType<typeof liveness>} state @param {boolean} autoRefresh
+ */
+function statePill(label, tone, state, autoRefresh) {
+  const pill = element("span", null, `state-pill tone-${tone}${state === "live" && autoRefresh ? " is-live" : ""}`);
+  pill.append(element("span", null, "dot"), element("span", label));
+  if (state === "live") pill.append(element("span", autoRefresh ? "· Live" : "· Live at last observation", "state-pill-live"));
+  return pill;
+}
+
 /**
  * The outcome statement: the model's headline and derived sentence, whether a
  * governed action is eligible, the actions an operator takes next, and the
@@ -2366,35 +2536,37 @@ function renderExecutiveSummary(summary, projection, application, context) {
   body.append(eyebrow, head, definitionList(facts, "run-meta"));
   section.append(body);
 
-  const segments = stageLedger(context.snapshot).segments;
-  const stopped = segments.findLast((segment) => segment.result === "blocked") ?? null;
+  const ledger = stageLedger(context.snapshot);
+  const stopped = ledger.segments.findLast((segment) => segment.result === "blocked") ?? null;
   const counts = [...context.statuses.values()];
   const blocking = counts.filter((status) => status === "blocking").length;
   const open = counts.filter((status) => status === "open").length;
   const active = counts.filter((status) => FINDING_STATUS[status].active).length;
   const tokens = summary.tokens;
   const output = tokens.classes.find((entry) => entry.key === "output")?.known ?? null;
-  const strip = element("div", null, "kpis");
-  strip.append(stopped !== null && run.status === "blocked"
-    ? kpi("State", `Blocked at ${stageLower(stopped.kind)}`, null, "", "is-text tone-danger")
-    : run.status === "completed"
-      ? kpi("State", "Completed", null, "", "is-text tone-success")
-      : kpi("State", summary.state.label, null, "", `is-text tone-${summary.state.tone}`));
+  // Every figure has one anatomy: label, primary value, secondary note.
+  const strip = element("div", null, "kpis is-cards");
+  const [stateLabel, stateTone] = stopped !== null && run.status === "blocked"
+    ? [`Blocked at ${stageLower(stopped.kind)}`, "danger"]
+    : run.status === "completed" ? ["Completed", "success"] : [sentenceCase(summary.state.label), summary.state.tone];
+  const reached = ledger.steps.findLastIndex((step) => step.segment !== null);
+  const current = ledger.steps[reached];
+  strip.append(kpi("Current state", statePill(stateLabel, stateTone, state, application.autoRefresh),
+    current === undefined ? "No stage recorded yet" : `Stage ${reached + 1} of ${ledger.steps.length} · ${readableIntent(current.kind)}`));
   const findingTone = blocking > 0 ? "tone-danger" : open > 0 ? "tone-warning" : "";
-  strip.append(kpi("Findings", fragment(String(active), element("span", " active · ", "muted"),
-    String(counts.length - active), element("span", " historical", "muted")), null, "", findingTone));
-  const tokenNode = element("span");
-  if (tokens.known === null) tokenNode.textContent = "Unavailable";
-  else {
-    tokenNode.append(abbreviated(tokens.known),
-      element("span", output === null ? " · output unavailable" : ` · ${abbreviated(output)} out`, "muted"));
-    tokenNode.title = `${exactCount(tokens.known)} total${output === null ? "" : ` · ${exactCount(output)} output`}`;
-  }
-  strip.append(kpi("Tokens", tokenNode, null, "is-usage"));
-  strip.append(kpi("Cost", moneyNode(summary.cost.available ? projection.cost.knownUsd : null), null, "is-usage"));
+  strip.append(kpi("Active findings", String(active), fragment(toned(blocking, "danger", `${blocking} blocking`), " · ",
+    toned(open, "warning", `${open} open`), ` · ${counts.length - active} historical`), "", findingTone));
+  const tokenNode = element("span", tokens.known === null ? "Unavailable" : abbreviated(tokens.known));
+  if (tokens.known !== null) tokenNode.title = `${exactCount(tokens.known)} total${output === null ? "" : ` · ${exactCount(output)} output`}`;
+  strip.append(kpi("Tokens", tokenNode, output === null ? "Output tokens unavailable" : `${abbreviated(output)} output`));
+  strip.append(kpi("Known cost", moneyNode(summary.cost.available ? projection.cost.knownUsd : null),
+    `Reported for ${projection.cost.costReportedRows} of ${projection.cost.agentRows} agent rows`));
   if (context.snapshot.phase === "awaiting_approval") section.append(approvalBanner(application, context));
-  section.append(strip);
-  section.append(stageLedgerNode(context.snapshot, true, live));
+  if (context.snapshot.questions.length > 0) section.append(decisionQuestions(application, context));
+  // The figures and the workflow they summarize are one bounded panel.
+  const statusPanel = element("div", null, "run-status");
+  statusPanel.append(strip, stageLedgerNode(context.snapshot, true, live));
+  section.append(statusPanel);
   section.append(renderRunOutcome(summary, projection, application, context));
 
   for (const entry of summary.grouped) {

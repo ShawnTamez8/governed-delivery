@@ -532,17 +532,19 @@ test("request, sign, and approve walk end to end through the CLI", () => {
     store.completeStage(specStage.id, specPath, "pass");
     const reviewStage = store.insertStage(runId, "spec_review", specStage.id);
     store.completeStage(reviewStage.id, specPath, "pass");
-    // What the real spec_review gate records; the approval gate reads it back
-    // to refuse binding a spec no panel gated.
+    const decisionStage = store.insertStage(runId, "spec_decision", reviewStage.id);
+    store.completeStage(decisionStage.id, specPath, "pass");
+    // What the real spec_decision gate records; the approval gate reads it
+    // back to refuse binding a spec no gate passed.
     appendAudit(store, {
       runId,
-      stageId: reviewStage.id,
+      stageId: decisionStage.id,
       actor: "system",
       actorType: "cli",
-      action: "spec.gate.pass",
-      summary: `spec_review gate passed in round 1; specHash=${sha256Hex(
+      action: "spec_decision.gate.pass",
+      summary: `spec_decision gate passed; specHash=${sha256Hex(
         normalizeText(readFileSync(specPath, "utf8"))
-      )}; risk=low`,
+      )}; risk=low; answers=0; folded=0`,
     });
     store.close();
 
@@ -817,7 +819,17 @@ test("plan drives the real stage logic up to the dispatch boundary", () => {
       action: "spec.gate.pass",
       summary: `spec_review gate passed in round 1; specHash=${sha256Hex(normalizeText(spec))}; risk=low`,
     });
-    const approvalStage = store.insertStage(runId, "awaiting_approval", reviewStage.id);
+    const decisionStage = store.insertStage(runId, "spec_decision", reviewStage.id);
+    store.completeStage(decisionStage.id, specPath, "pass");
+    appendAudit(store, {
+      runId,
+      stageId: decisionStage.id,
+      actor: "system",
+      actorType: "cli",
+      action: "spec_decision.gate.pass",
+      summary: `spec_decision gate passed; specHash=${sha256Hex(normalizeText(spec))}; risk=low; answers=0; folded=0`,
+    });
+    const approvalStage = store.insertStage(runId, "awaiting_approval", decisionStage.id);
     store.completeStage(approvalStage.id, specPath, "pass");
     store.insertApproval({
       runId,

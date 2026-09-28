@@ -18,19 +18,19 @@ import { computeScope } from "./scope.ts";
 import { codeReviewPanel, codeReviewStaffingShortfall, staffingShortfall } from "./select.ts";
 import { readSpecDeclaredArtifacts, validateSpecDoc } from "./spec-doc.ts";
 import {
-  type AgentRunRow, type ApprovalRow, type CanonicalFindingRow, type FindingDecisionRow,
-  type FindingReportRow, type ProposalRow, type RunRow, type StageRow, type Store,
+  type AgentRunRow, type ApprovalRow, type CanonicalFindingRow, type DecisionAnswerRow, type DecisionQuestionRow,
+  type FindingDecisionRow, type FindingReportRow, type ProposalRow, type RunRow, type StageRow, type Store,
 } from "./store.ts";
 
-export const EXECUTION_GROUPS = ["spec", "plan", "implementation", "verification", "code_review", "delivery_check"] as const;
+export const EXECUTION_GROUPS = ["spec", "decision", "plan", "implementation", "verification", "code_review", "delivery_check"] as const;
 export type ExecutionGroup = (typeof EXECUTION_GROUPS)[number];
-export type RunPhase = "ready" | "awaiting_approval" | "blocked" | "completed" | "interrupted_or_inconsistent";
+export type RunPhase = "ready" | "awaiting_decision" | "awaiting_approval" | "blocked" | "completed" | "interrupted_or_inconsistent";
 export interface ActionReason {
   code: "observation_changed" | "evidence_invalid" | "policy_block" | "chain_incomplete" | "writer_contention" | "run_aged" | "setup_required";
   reason: string;
 }
 export interface WorkflowAction {
-  group: ExecutionGroup | "approval" | null;
+  group: ExecutionGroup | "decide" | "approval" | null;
   eligible: boolean;
   reasons: ActionReason[];
   command: string | null;
@@ -105,6 +105,11 @@ export interface RunSnapshot {
     status: string; createdAt: string; updatedAt: string;
   };
   phase: RunPhase;
+  /** The spec_review questions the operator answers at `spec_decision`, oldest first. */
+  questions: {
+    findingId: number; text: string; options: { label: string; answer: string }[]; recommended: number; why: string;
+    answer: { action: string; text: string; at: string } | null;
+  }[];
   stages: {
     id: number; runId: number; kind: string; ordinal: number; inputStageId: number | null;
     outputRef: string | null; status: string; gateResult: string | null; startedAt: string | null;
@@ -162,6 +167,8 @@ export interface RunRows {
   decisions: FindingDecisionRow[];
   proposals: ProposalRow[];
   sources: { proposal_id: number; finding_id: number }[];
+  questions: DecisionQuestionRow[];
+  answers: DecisionAnswerRow[];
 }
 export interface RunObservation {
   snapshot: RunSnapshot;
@@ -193,8 +200,17 @@ function readRows(store: Store, runId: number): RunRows {
       decisions: store.query<FindingDecisionRow>("SELECT d.* FROM finding_decision d JOIN finding f ON f.id = d.finding_id JOIN stage s ON s.id = f.stage_id WHERE s.run_id = ? ORDER BY d.id", [runId]),
       proposals: store.query<ProposalRow>("SELECT * FROM proposal WHERE run_id = ? ORDER BY id", [runId]),
       sources: store.query<{ proposal_id: number; finding_id: number }>("SELECT ps.* FROM proposal_source ps JOIN proposal p ON p.id = ps.proposal_id WHERE p.run_id = ? ORDER BY ps.proposal_id, ps.finding_id", [runId]),
+      ...runQuestions(store, runId),
     };
   });
+}
+
+/** Every operator question and answer on this run, through the finding's stage (the one stage authority). */
+function runQuestions(store: Store, runId: number): { questions: DecisionQuestionRow[]; answers: DecisionAnswerRow[] } {
+  return {
+    questions: store.query<DecisionQuestionRow>("SELECT q.* FROM decision_question q JOIN finding f ON f.id = q.finding_id JOIN stage s ON s.id = f.stage_id WHERE s.run_id = ? ORDER BY q.id", [runId]),
+    answers: store.query<DecisionAnswerRow>("SELECT a.* FROM decision_answer a JOIN decision_question q ON q.id = a.question_id JOIN finding f ON f.id = q.finding_id JOIN stage s ON s.id = f.stage_id WHERE s.run_id = ? ORDER BY a.id", [runId]),
+  };
 }
 
 export function boundaryFingerprint(run: RunRow | undefined, stages: StageRow[], audit: AuditRow[]): string {
@@ -227,24 +243,39 @@ function lastActivity(run: RunRow, stages: StageRow[], audit: AuditRow[]): strin
     .reduce((latest, at) => Date.parse(at) > Date.parse(latest) ? at : latest);
 }
 
-const STAGES = ["spec", "spec_review", "awaiting_approval", "plan", "plan_review", "implementation", "verification", "code_review", "delivery_check"];
+const STAGES = ["spec", "spec_review", "spec_decision", "awaiting_approval", "plan", "plan_review", "implementation", "verification", "code_review", "delivery_check"];
 
-function prefixAction(rows: Pick<RunRows, "run" | "stages">): { phase: RunPhase; group: WorkflowAction["group"]; reasons: ActionReason[] } {
+/**
+ * The boundary a recorded chain sits at. Two passed stages is the one boundary
+ * with two states: while any spec_review question is unanswered the run waits
+ * for the operator (`decide`, not an execution group); once every question has
+ * an answer the `decision` group folds them. Two stages with no question at
+ * all is not a boundary the spec group writes — it creates `spec_decision`
+ * itself then — so such a chain (including one recorded before
+ * `spec_decision` existed) is inconsistent, and a fresh run is the repair.
+ */
+function prefixAction(rows: Pick<RunRows, "run" | "stages" | "questions" | "answers">): { phase: RunPhase; group: WorkflowAction["group"]; reasons: ActionReason[] } {
   const { run, stages } = rows;
   const invalid = stages.some((s, i) => s.run_id !== run.id || s.ordinal !== i || s.kind !== STAGES[i] ||
     s.input_stage_id !== (i === 0 ? null : stages[i - 1]!.id) || s.status !== "passed" || s.gate_result !== "pass" || !s.output_ref);
+  const answered = new Set(rows.answers.map((a) => a.question_id));
+  const unanswered = rows.questions.filter((q) => !answered.has(q.id)).length;
   const groups: Record<number, WorkflowAction["group"]> = {
-    0: "spec", 2: "approval", 3: "plan", 5: "implementation", 6: "verification", 7: "code_review", 8: "delivery_check", 9: null,
+    0: "spec", 2: unanswered > 0 ? "decide" : "decision", 3: "approval", 4: "plan", 6: "implementation",
+    7: "verification", 8: "code_review", 9: "delivery_check", 10: null,
   };
   if (run.status === "blocked") return { phase: "blocked", group: null, reasons: [{ code: "policy_block", reason: `run ${run.id} is blocked` }] };
   if (invalid || !Object.hasOwn(groups, stages.length) ||
-      (stages.length === STAGES.length) !== (run.status === "completed")) {
+      (stages.length === STAGES.length) !== (run.status === "completed") ||
+      (stages.length === 2 && rows.questions.length === 0)) {
     return { phase: "interrupted_or_inconsistent", group: null, reasons: [{
       code: "chain_incomplete", reason: `run ${run.id} does not have an intact passed stage-group boundary; partial, manual, or contradictory chains cannot be replayed`,
     }] };
   }
-  return { phase: run.status === "completed" ? "completed" : stages.length === 2 ? "awaiting_approval" : "ready",
-    group: groups[stages.length]!, reasons: [] };
+  const phase: RunPhase = run.status === "completed" ? "completed"
+    : stages.length === 2 && unanswered > 0 ? "awaiting_decision"
+      : stages.length === 3 ? "awaiting_approval" : "ready";
+  return { phase, group: groups[stages.length]!, reasons: [] };
 }
 
 export function runConfiguration(profile: Profile | null, hash: string | null, createdAt: string): RunConfiguration {
@@ -358,6 +389,12 @@ export function readRunSnapshot(store: Store, rootDir: string, runId: number,
     run: { id: run.id, project: run.project, featureId: run.feature_id, slug: run.slug, changeKind: run.change_kind,
       status: run.status, createdAt: run.created_at, updatedAt: run.updated_at },
     phase: prefix.phase,
+    questions: rows.questions.map((q) => {
+      const answer = rows.answers.find((a) => a.question_id === q.id);
+      return { findingId: q.finding_id, text: q.text, options: JSON.parse(q.options) as { label: string; answer: string }[],
+        recommended: q.recommended, why: q.why,
+        answer: answer ? { action: answer.action, text: answer.answer, at: answer.created_at } : null };
+    }),
     stages: stages.map((s) => {
       const event = audit.find((a) => a.stage_id === s.id && a.action === (s.kind === "awaiting_approval" ? "approval.stage.create" : `${s.kind}.stage.create`));
       return { id: s.id, runId: s.run_id, kind: s.kind, ordinal: s.ordinal, inputStageId: s.input_stage_id,
@@ -367,7 +404,8 @@ export function readRunSnapshot(store: Store, rootDir: string, runId: number,
             : { at: null, source: null, auditId: null } };
     }),
     workflowAction: { group: prefix.group, eligible: false, reasons: prefix.reasons,
-      command: prefix.group === null ? null : prefix.group === "approval" ? "approval-request" : "run",
+      command: prefix.group === null ? null : prefix.group === "approval" ? "approval-request"
+        : prefix.group === "decide" ? "decide" : "run",
       args: prefix.group === null ? [] : ["--repo", rootDir, "--run", String(runId)] },
     operatorActions: actions, proposals, configuration,
     approval: { state: approval ? "granted" : "missing", id: approval?.id ?? null, featureId: approval?.feature_id ?? null,
@@ -425,6 +463,14 @@ export function readRunSnapshot(store: Store, rootDir: string, runId: number,
       action.reason ??= snapshot.workflowAction.reasons[0]?.reason ?? "The approval boundary is not eligible.";
     }
   }
+  // An answer recorded on a boundary that cannot continue is immutable and
+  // wasted, so the answer actions follow the boundary's eligibility too.
+  for (const action of snapshot.operatorActions.filter((a) => a.kind === "decision_answer")) {
+    if (!snapshot.workflowAction.eligible) {
+      action.eligible = false;
+      action.reason = snapshot.workflowAction.reasons[0]?.reason ?? "The decision boundary is not eligible.";
+    }
+  }
   const ordinals = new Map(stages.map((s) => [s.id, s.ordinal]));
   references.sort((a, b) => (ordinals.get(a.stageId ?? -1) ?? -1) - (ordinals.get(b.stageId ?? -1) ?? -1) ||
     a.kind.localeCompare(b.kind) || (a.agentRunId ?? -1) - (b.agentRunId ?? -1) ||
@@ -468,8 +514,10 @@ function inspectGit(cwd: string, ...args: string[]) {
 function frozenGroupReasons(profile: Profile, group: ExecutionGroup): ActionReason[] {
   const reasons: ActionReason[] = [];
   const fail = (reason: string) => reasons.push({ code: "setup_required", reason });
+  // The decision fold is one spec-author dispatch under the spec model.
   const kinds = group === "spec" || group === "plan" ? [group, `${group}_review`]
-    : group === "implementation" || group === "code_review" ? [group] : [];
+    : group === "decision" ? ["spec"]
+      : group === "implementation" || group === "code_review" ? [group] : [];
   for (const kind of kinds) {
     const model = resolveStageModel(profile, kind);
     if (!model.ok) fail(model.reason);
@@ -477,9 +525,10 @@ function frozenGroupReasons(profile: Profile, group: ExecutionGroup): ActionReas
     if (!binding.ok) fail(binding.reason);
   }
   if (kinds.length > 0) {
-    const authorId = group === "spec" || group === "plan" ? `${group}-author` : "implementer";
+    const authorId = group === "spec" || group === "plan" ? `${group}-author` : group === "decision" ? "spec-author" : "implementer";
     const requiredOutputs = group === "spec" || group === "plan"
-      ? [group, `${group}-self-critique`, `${group}-reconciliation`] : ["patches"];
+      ? [group, `${group}-self-critique`, `${group}-reconciliation`]
+      : group === "decision" ? ["spec-reconciliation"] : ["patches"];
     const author = profile.agents.find((a) => a.id === authorId);
     if (!author) fail(`configured agent ${authorId} is not in the frozen profile`);
     else if (author.role !== "author" || author.executor !== profile.executor.id) {
@@ -608,31 +657,40 @@ function interpretBoundary(
     const name = stage.kind === "awaiting_approval" ? "approval.stage.create" : `${stage.kind}.stage.create`;
     if (STAGES.includes(stage.kind)) requireEvent(stage, name);
   }
-  if (stages.length < 3 && approval !== null) {
+  if (stages.length < 4 && approval !== null) {
     refuse("chain_incomplete", `run ${run.id} has an approval row without its passed awaiting_approval boundary`);
   }
   const spec = stages.find((s) => s.kind === "spec");
   const specReview = stages.find((s) => s.kind === "spec_review");
+  const specDecision = stages.find((s) => s.kind === "spec_decision");
   const approved = stages.find((s) => s.kind === "awaiting_approval");
   const plan = stages.find((s) => s.kind === "plan");
   const planReview = stages.find((s) => s.kind === "plan_review");
   let specHash: string | null = null;
   let specRisk: string | null = null;
   let specContent: string | null = null;
-  if (specReview?.status === "passed") {
-    specContent = readText(specReview);
-    const gate = requireEvent(specReview, "spec.gate.pass");
+  // The specification the run stands on: the decision boundary's output once
+  // it has passed (it may carry folded answers), the reviewed one before.
+  const gateStage = specDecision?.status === "passed" ? specDecision
+    : specReview?.status === "passed" ? specReview : undefined;
+  const gateName = gateStage === specDecision ? "spec_decision.gate.pass" : "spec.gate.pass";
+  if (gateStage !== undefined && gateStage === specDecision && specReview !== undefined) {
+    requireEvent(specReview, "spec.gate.pass");
+  }
+  if (gateStage !== undefined) {
+    specContent = readText(gateStage);
+    const gate = requireEvent(gateStage, gateName);
     const gated = gate && /specHash=([0-9a-f]{64}); risk=(low|standard|high)/.exec(gate.summary);
-    if (gate && !gated) invalid(specReview, "spec.gate.pass does not record a specification hash and risk");
+    if (gate && !gated) invalid(gateStage, `${gateName} does not record a specification hash and risk`);
     if (specContent !== null) specHash = sha256Hex(normalizeText(specContent));
     if (gated && specHash !== null) {
       specRisk = gated[2]!;
-      if (gated[1] !== specHash) invalid(specReview, `the spec has changed since review: gated ${gated[1]}, on disk ${specHash}`);
-      else mark(specReview.id, specReview.output_ref!, "available", null);
+      if (gated[1] !== specHash) invalid(gateStage, `the spec has changed since review: gated ${gated[1]}, on disk ${specHash}`);
+      else mark(gateStage.id, gateStage.output_ref!, "available", null);
     }
-    for (const stage of [spec, approved]) {
-      if (stage && (!stage.output_ref || !specReview.output_ref || resolve(root, stage.output_ref) !== resolve(root, specReview.output_ref))) {
-        invalid(stage, `${stage.kind} output does not identify the reviewed specification ${specReview.output_ref}`);
+    for (const stage of [spec, gateStage === specDecision ? specReview : undefined, approved]) {
+      if (stage && (!stage.output_ref || !gateStage.output_ref || resolve(root, stage.output_ref) !== resolve(root, gateStage.output_ref))) {
+        invalid(stage, `${stage.kind} output does not identify the reviewed specification ${gateStage.output_ref}`);
       } else if (stage?.output_ref && gated?.[1] === specHash) mark(stage.id, stage.output_ref, "available", null);
     }
   }
@@ -649,7 +707,7 @@ function interpretBoundary(
         invalid(approved, "the recorded approval does not match this run's feature, frozen profile, starting commit, or signer binding");
       }
       if (specHash !== null && approval.spec_hash !== specHash) invalid(approved, `the spec has changed since approval: signed ${approval.spec_hash}, on disk ${specHash}`);
-      if (specRisk !== null && approval.risk !== specRisk) invalid(approved, `approval risk ${approval.risk} does not match spec.gate.pass risk ${specRisk}`);
+      if (specRisk !== null && approval.risk !== specRisk) invalid(approved, `approval risk ${approval.risk} does not match ${gateName} risk ${specRisk}`);
       if (specContent !== null) {
         if (action.group === "plan") {
           const doc = validateSpecDoc(specContent);
@@ -816,7 +874,7 @@ function interpretBoundary(
     }
   }
 
-  if (action.group === "spec") {
+  if (action.group === "spec" || action.group === "decision") {
     const design = join(root, "docs", "features", run.slug, "design.md");
     try { readFileSync(design, "utf8"); }
     catch (error) { refuse("setup_required", `cannot read design document ${design}: ${message(error)}`); }
@@ -850,7 +908,20 @@ function interpretBoundary(
       refuse("evidence_invalid", `worktree is not clean at the ${action.group ?? "recorded delivery"} boundary: ${clean.error?.message ?? (clean.stderr.trim() || clean.stdout.trim() || "tracked changes since the reviewed commit")}`);
     }
   }
-  if (profile && action.group !== null && action.group !== "approval") {
+  if (action.group === "decide") {
+    // Answering is the operator's free, dispatch-free input; each open
+    // question is its own action.
+    const answered = new Set(rows.answers.map((a) => a.question_id));
+    for (const q of rows.questions.filter((q) => !answered.has(q.id))) {
+      snapshot.operatorActions.push({
+        kind: "decision_answer", command: "decide",
+        args: ["--repo", root, "--run", String(run.id), "--finding", String(q.finding_id)],
+        eligible: true, reason: "Choose exactly one of --approve, --deny, or --answer-file <path>.",
+        proposalId: null, route: null, title: q.text, evidenceRef: specReview?.output_ref ?? null,
+      });
+    }
+  }
+  if (profile && action.group !== null && action.group !== "approval" && action.group !== "decide") {
     try { action.reasons.push(...frozenGroupReasons(profile, action.group)); }
     catch (error) { refuse("evidence_invalid", `cannot inspect frozen execution metadata: ${message(error)}`); }
     const age = (Date.now() - Date.parse(run.created_at)) / 1000;
@@ -905,7 +976,7 @@ export function listRuns(store: Store, limit = 20) {
     return { runs: selected.slice(0, limit).map((run) => {
       const stages = store.query<StageRow>("SELECT * FROM stage WHERE run_id = ? ORDER BY ordinal, id", [run.id]);
       return { id: run.id, project: run.project, featureId: run.feature_id, slug: run.slug,
-        status: run.status, phase: prefixAction({ run, stages }).phase,
+        status: run.status, phase: prefixAction({ run, stages, ...runQuestions(store, run.id) }).phase,
         lastRecordedAt: lastActivity(run, stages, store.getAuditEvents(run.id)) };
     }), limit, hasMore: selected.length > limit };
   });

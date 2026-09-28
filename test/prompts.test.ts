@@ -14,9 +14,11 @@ import {
   buildPlanReviewPrompt,
   buildPlanSelfCritiquePrompt,
   buildSpecAuthorPrompt,
+  buildSpecDecisionFoldPrompt,
   buildSpecReconcilePrompt,
   buildSpecReviewPrompt,
   buildSpecSelfCritiquePrompt,
+  type FoldQuestionInput,
   type PanelPromptBounds,
   type ReconciliationFindingInput,
 } from "../src/prompts.ts";
@@ -253,7 +255,50 @@ const CONSTRAINT_STRINGS = [
   "Conduct an exhaustive audit across the entire diff and all changed paths within your specialty",
   "Do not stop after finding the first few defects or return only a sample of issues",
   "report every actionable defect you identify across all declared acceptance criteria and plan tasks",
+  // The open-decisions section (docs/features/disclosed-open-decisions/plan.md):
+  // its form, ID pattern and membership rule where a spec is requested, the
+  // no-add rule where it is revised, and what the reviewer need not repeat.
+  "## Open decisions",
+  "OD-(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})",
+  "one open decision and nothing else",
+  "must receive a typed decision before approval",
+  "never add a new entry during this revision",
+  "an open decision you disclosed",
+  "already recorded as a finding",
+  // The blocking criterion (docs/features/spec-review-blocking-criterion/plan.md):
+  // ARCHITECTURE.md section 13 blocks only when the approved input is not
+  // implementable. Measured 2026-09-27, $1.4078: team-notes run 1 blocked on
+  // two questions about exceeding a baseline the design already stated.
+  "List only a decision the design needs and does not make",
+  "beyond what the design asks for is not an open decision",
+  "choose upstream_blocking only when the design states a behavior",
+  "the design is implementable as written: choose upstream_follow_up",
+  "does not by itself make a finding blocking",
+  // The operator question (docs/features/spec-operator-decisions/plan.md): a
+  // constrained object whose option count and index range the validator
+  // enforces, stated where the spec reconcile prompt requests it.
+  "question for the operator",
+  "options holds 2 to 4 entries",
+  "zero-based",
+  "question is allowed only on upstream_blocking and cannot_determine",
+  // The decision fold's contract: one addressed decision per folded answer,
+  // grounded in the design or that same finding's answer, and the denied
+  // open decisions left exactly as written.
+  "disposition is always addressed",
+  "never in another finding's answer",
+  "Denied questions stay open",
+  "for a denied question stays exactly as written",
+  // What a criterion may say (docs/features/spec-criterion-testability/plan.md).
+  // Measured 2026-09-27, $1.6186: team-notes run 3 copied the design's
+  // "meaningful content change" into AC-041, and its tone guidance reached
+  // review with no home, where it became the finding that blocked the run.
+  "Every acceptance criterion must be decidable by one objective pass/fail check: a specific input, action, value, or observable outcome, never a subjective or unquantified term such as fast, meaningful, intuitive, or clean.",
+  "Where the design states a behavior in subjective or unquantified terms, write only its checkable part as a criterion, and record the undecided part under ## Open decisions instead of choosing a threshold the design does not state.",
+  "Guidance with no checkable part, such as visual tone or typographic feel, belongs in an Out of scope note, not in a criterion.",
 ];
+
+/** The criterion-quality rule, asserted per prompt: two builders carry it. */
+const CRITERION_QUALITY_RULE = CONSTRAINT_STRINGS.slice(-3);
 
 test("every constrained field's constraint appears in the prompt source", () => {
   for (const constraint of CONSTRAINT_STRINGS) {
@@ -279,6 +324,13 @@ test("the generated author prompt states the schema constraints", () => {
     "a path contains no whitespace",
     "one criterion and nothing else",
     "not inside this section",
+    "## Open decisions",
+    "- OD-001 (high): <the question the design leaves open>",
+    "one open decision and nothing else",
+    "must receive a typed decision before approval",
+    "List only a decision the design needs and does not make",
+    "beyond what the design asks for is not an open decision",
+    ...CRITERION_QUALITY_RULE,
   ]) {
     assert.ok(prompt.includes(constraint), `author prompt missing: ${constraint}`);
   }
@@ -304,6 +356,9 @@ test("the generated spec reviewer prompt states the finding constraints and name
     // defect, so the reviewer is told before it can report one.
     "not a sequence",
     "gap in the numbering is not by itself a finding",
+    // Disclosed open decisions are already findings; omissions still are not.
+    "already recorded as a finding",
+    "Report a decision the design needs but does not make that the section omits as an upstream finding",
   ]) {
     assert.ok(prompt.includes(constraint), `reviewer prompt missing: ${constraint}`);
   }
@@ -498,6 +553,13 @@ test("the generated spec self-critique prompt states the contract and carries bo
     "always seated and already consume seats",
     "      - requirements-traceability",
     "must fit inside the size you request",
+    "one open decision and nothing else",
+    "Where the design needs a decision it does not make, record it under ## Open decisions rather than deciding it yourself",
+    "List only a decision the design needs and does not make",
+    "beyond what the design asks for is not an open decision",
+    ...CRITERION_QUALITY_RULE,
+    // The pass is where the author applies the rule to what it already wrote.
+    "Check every acceptance criterion against the pass/fail rule stated with the ## Acceptance criteria schema above and rewrite, split, or move any criterion that fails it.",
   ]) {
     assert.ok(prompt.includes(constraint), `spec self-critique prompt missing: ${constraint}`);
   }
@@ -711,7 +773,13 @@ test("the generated spec reconciliation prompt carries the decision contract and
     "Deleting an obligation is not a way to answer a finding",
     "source is always design",
     "does not authorize you to add an obligation",
-    "upstream_blocking blocks the run, upstream_follow_up does not",
+    // Spec side only: a blocking decision asks the operator instead of
+    // ending the run (spec-operator-decisions).
+    "upstream_blocking pauses the run until the operator answers its question, upstream_follow_up does not",
+    "question for the operator",
+    "options holds 2 to 4 entries",
+    "zero-based integer index",
+    "question is allowed only on upstream_blocking and cannot_determine",
     // The conditional-field matrix: each disposition lists its fields, and the
     // validator refuses any field on a disposition that does not list it.
     "grounding is allowed only on rejected_with_rationale",
@@ -726,6 +794,16 @@ test("the generated spec reconciliation prompt carries the decision contract and
     "Preserve each existing ID",
     "cite its AC ID",
     "Output the JSON object",
+    "one open decision and nothing else",
+    "never add a new entry during this revision",
+    "A finding whose report comes from spec-author is an open decision you disclosed",
+    // The blocking criterion lives only on the spec side (plan scope), so it is
+    // asserted on this prompt rather than trusted to the whole-file scan.
+    "choose upstream_blocking only when the design states a behavior",
+    "no acceptance criterion for that behavior can be written",
+    "the design is implementable as written: choose upstream_follow_up",
+    "does not by itself make a finding blocking",
+    "List only a decision the design needs and does not make",
   ]) {
     assert.ok(prompt.includes(constraint), `spec reconcile prompt missing: ${constraint}`);
   }
@@ -804,9 +882,13 @@ test("the generated plan reconciliation prompt carries the spec as governing inp
     "normativeChanges is",
     "proposal is allowed only on upstream_follow_up",
     "return no field at all that your disposition does not list",
+    // plan_review has no operator question: its blocking route still blocks.
+    "upstream_blocking blocks the run, upstream_follow_up does not",
   ]) {
     assert.ok(prompt.includes(constraint), `plan reconcile prompt missing: ${constraint}`);
   }
+  assert.ok(!prompt.includes('"question"'), "the plan reconcile prompt asks the operator nothing");
+  assert.ok(!prompt.includes("pauses the run"), "the plan reconcile prompt promises no operator pause");
   assert.ok(prompt.includes("SPEC-TEXT"), "the approved specification is the governing input");
   assert.ok(prompt.includes("PLAN-TEXT"), "the plan under review travels with it");
   // The two values the gates bind are stated rather than left to be
@@ -833,7 +915,10 @@ test("the spec reconciliation prompt is not the spec author prompt", () => {
   const author = buildSpecAuthorPrompt(SPEC_AUTHOR, "DESIGN-TEXT");
   const reconcile = buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", []);
   assert.notEqual(author, reconcile);
-  assert.ok(!author.includes("decisions"), "the draft prompt asks for a spec, not decisions");
+  // The JSON key, not the word: the draft states the `## Open decisions`
+  // section, but it never asks for a decisions list.
+  assert.ok(!author.includes('"decisions"'), "the draft prompt asks for a spec, not decisions");
+  assert.ok(reconcile.includes('"decisions"'), "the reconcile prompt does ask for them");
 });
 
 test("every finding id a reconcile prompt advertises is one the validator accepts", () => {
@@ -922,12 +1007,17 @@ test("every decision shape a reconcile prompt advertises validates against valid
       if (disposition === "addressed") {
         assert.equal(claimed.length, 1, `${name} addressed shape shows one complete normativeChanges entry`);
       }
+      // The spec side's blocking shapes carry the operator question and the
+      // plan side's never do; each validates under its own caller's context.
+      const asksOperator = name === "spec" && (disposition === "upstream_blocking" || disposition === "cannot_determine");
+      assert.equal("question" in decision, asksOperator, `${name} ${disposition} shape question presence`);
       const result = validateReconciliation([decision], {
         canonicalFindingIds: [7],
         governingSource,
         governingText,
         beforeNormativeNodes: [],
         afterNormativeNodes: claimed,
+        requireQuestions: name === "spec",
       });
       assert.ok(result.ok, `${name} ${disposition} shape: ${result.ok ? "" : result.reason}`);
       assert.deepEqual(result.value.conversions, [], `${name} ${disposition} shape converts`);
@@ -935,6 +1025,67 @@ test("every decision shape a reconcile prompt advertises validates against valid
       assert.deepEqual(result.value.unclaimedRemovals, []);
     }
   }
+});
+
+// --- spec decision fold (spec-operator-decisions Task 6) ---------------------
+
+const FOLD_QUESTIONS: FoldQuestionInput[] = [
+  { findingId: 4, text: "How long are exports kept?", action: "approve", answer: "Exports are kept for thirty days." },
+  { findingId: 6, text: "Who may download exports?", action: "modify", answer: "Only the owner may download exports." },
+  { findingId: 9, text: "Is there a size cap?", action: "deny", answer: "" },
+];
+
+test("the generated fold prompt carries every answer, lists denied questions apart, and states the fold contract", () => {
+  const prompt = buildSpecDecisionFoldPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", FOLD_QUESTIONS);
+  for (const text of [
+    "DESIGN-TEXT",
+    "SPEC-TEXT",
+    "- finding 4\n  question: How long are exports kept?\n  operator answer (approve): Exports are kept for thirty days.",
+    "- finding 6\n  question: Who may download exports?\n  operator answer (modify): Only the owner may download exports.",
+    "Denied questions (leave open):\n\n- finding 9\n  question: Is there a size cap?",
+    "disposition is always addressed",
+    "never in another finding's answer",
+    "Denied questions stay open",
+    "for a denied question stays exactly as written",
+    "Never add a new ## Open decisions",
+    "a path contains no whitespace",
+    "Output the JSON object",
+  ]) {
+    assert.ok(prompt.includes(text), `fold prompt missing: ${text}`);
+  }
+  const folded = prompt.slice(prompt.lastIndexOf(promptBuilders.SPEC_DECISION_FOLD_MARKER));
+  assert.ok(!/operator answer \(deny\)/.test(folded), "a denied question is not presented as an answer to fold");
+  // The advertised envelope names exactly the folded ids — never a denied one.
+  assert.deepEqual([...prompt.matchAll(/"findingId": (\d+)/g)].map((m) => Number(m[1])), [4, 6]);
+  // The harness fixture routes the earlier spec prompts on these words and is
+  // checked in that order, so the fold prompt must carry none of them.
+  for (const word of ["self-critique", "spec reviewer", "reconcile"]) {
+    assert.ok(!prompt.includes(word), `fold prompt carries the routing word ${word}`);
+  }
+});
+
+test("the fold decision shape the prompt advertises validates with the operator's answer as grounding", () => {
+  const prompt = buildSpecDecisionFoldPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", FOLD_QUESTIONS);
+  const shape = /^(\{"findingId": <id>, "disposition": "addressed".*\})$/m.exec(prompt);
+  assert.ok(shape, "the fold prompt advertises one complete decision shape");
+  const answer = FOLD_QUESTIONS[0].answer;
+  const decision = JSON.parse(
+    shape![1]!
+      .replaceAll("<id>", "4")
+      .replace("<exact words of the operator's answer to that finding>", answer)
+      .replace(/<[^>]*>/g, "AC-002: Exports are kept for thirty days.")
+  );
+  const result = validateReconciliation([decision], {
+    canonicalFindingIds: [4],
+    governingSource: "design",
+    governingText: "DESIGN-TEXT",
+    beforeNormativeNodes: [],
+    afterNormativeNodes: ["AC-002: Exports are kept for thirty days."],
+    operatorAnswers: new Map([[4, answer]]),
+  });
+  assert.ok(result.ok, result.ok ? "" : result.reason);
+  assert.deepEqual(result.value.conversions, []);
+  assert.deepEqual(result.value.unclaimedNodes, []);
 });
 
 test("the generated code review prompt states every field the validator and the gate act on", () => {
@@ -1109,6 +1260,7 @@ function routingPrompts(document: string) {
     { builder: "buildSpecSelfCritiquePrompt", prefix: "SPEC_AUTHOR_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecSelfCritiquePrompt(SPEC_AUTHOR, document, document, PANEL) },
     { builder: "buildSpecReviewPrompt", prefix: "SPEC_REVIEW_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecReviewPrompt(SPEC_REVIEWER_TRACEABILITY, document, document) },
     { builder: "buildSpecReconcilePrompt", prefix: "SPEC_AUTHOR_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecReconcilePrompt(SPEC_AUTHOR, document, document, PAIR) },
+    { builder: "buildSpecDecisionFoldPrompt", prefix: "SPEC_AUTHOR_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecDecisionFoldPrompt(SPEC_AUTHOR, document, document, FOLD_QUESTIONS) },
     { builder: "buildPlanAuthorPrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanAuthorPrompt(PLAN_AUTHOR, document, hash, scope) },
     { builder: "buildPlanSelfCritiquePrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanSelfCritiquePrompt(PLAN_AUTHOR, document, document, hash, scope, PANEL) },
     { builder: "buildPlanReviewPrompt", prefix: "PLAN_REVIEW_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanReviewPrompt(SPEC_REVIEWER_TRACEABILITY, document, document) },
@@ -1269,6 +1421,7 @@ test("CLI fixture composes existing emitters for all builder families with recei
         governingText: kind === "spec" ? design : specText as string,
         beforeNormativeNodes: kind === "spec" ? specNormativeNodes(spec.value) : planNormativeNodes(plan.value),
         afterNormativeNodes: kind === "spec" ? specNormativeNodes(revisedSpec.value) : planNormativeNodes(revisedPlan.value),
+        requireQuestions: kind === "spec",
       });
       assert.ok(decisions.ok, decisions.ok ? "" : decisions.reason);
       assert.deepEqual(decisions.value.conversions, []);

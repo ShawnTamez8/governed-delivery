@@ -43,6 +43,7 @@ export function formatRunPreview(rootDir: string, snapshot: RunSnapshot, groups:
   const policy = profile.policy;
   const ceilings = {
     spec: 2 + policy.specReviewRounds * (policy.panelSizeMax + 1),
+    decision: 1,
     plan: 2 + policy.planReviewRounds * (policy.panelSizeMax + 1),
     implementation: 1,
     verification: 0,
@@ -131,7 +132,11 @@ export function operatorEnvelope(command: OperatorCommand, repository: string | 
 
 export function operatorExit(result: OperatorResult): number {
   if (result.errorCode === "usage") return 2;
-  if (result.command === "run") return result.outcome === "completed" ? 0 : result.outcome === "awaiting_approval" ? 3 : 1;
+  // Both human boundaries are the same external pause to a caller.
+  if (result.command === "run") {
+    return result.outcome === "completed" ? 0
+      : result.outcome === "awaiting_approval" || result.outcome === "awaiting_decision" ? 3 : 1;
+  }
   return result.outcome === "ok" || result.outcome === "ready" ? 0 : 1;
 }
 
@@ -192,6 +197,31 @@ function approvalHandoff(snapshot: RunSnapshot): string[] {
   return lines;
 }
 
+/** The operator's open spec_review questions, each with its options and the one decide command per answer. */
+export function formatDecisionQuestions(snapshot: RunSnapshot): string[] {
+  const open = snapshot.questions.filter((q) => q.answer === null);
+  if (snapshot.workflowAction.group !== "decide" || open.length === 0) return [];
+  const lines = [`Operator decision needed: ${open.length} open question(s). Answer each once; answers are immutable.`];
+  for (const q of open) {
+    lines.push(`Finding ${q.findingId}: ${q.text}`);
+    q.options.forEach((option, index) => {
+      lines.push(`  ${index + 1}. ${option.label}${index === q.recommended ? " (recommended)" : ""}: ${option.answer}`);
+    });
+    lines.push(`  Why recommended: ${q.why}`);
+    // Match the --finding value itself: the args also carry the run id, which
+    // can equal another question's finding id.
+    const action = snapshot.operatorActions.find((a) => a.kind === "decision_answer" &&
+      a.args[a.args.indexOf("--finding") + 1] === String(q.findingId));
+    if (action?.eligible === true) {
+      const base = `& node $BwCli decide ${action.args.map((a) => JSON.stringify(a)).join(" ")}`;
+      lines.push(`  Approve the recommendation: ${base} --approve`, `  Deny (leave it open): ${base} --deny`,
+        `  Write your own answer: ${base} --answer-file <path>`);
+    }
+  }
+  lines.push("After every question has an answer, resume with run; it folds the answers into the specification before approval.");
+  return lines;
+}
+
 export function snapshotText(snapshot: RunSnapshot): string {
   const lines = [
     `${snapshot.configuration.systemName ?? SYSTEM_NAME}: run ${snapshot.run.id} (${snapshot.run.slug})`,
@@ -201,6 +231,7 @@ export function snapshotText(snapshot: RunSnapshot): string {
   ];
   if (snapshot.workflowAction.eligible) lines.push(`Next workflow action: ${snapshot.workflowAction.command} ${snapshot.workflowAction.args.map((a) => JSON.stringify(a)).join(" ")}`);
   for (const refusal of snapshot.workflowAction.reasons) lines.push(`Unavailable: ${refusal.code}: ${refusal.reason}`);
+  lines.push(...formatDecisionQuestions(snapshot));
   lines.push(...approvalHandoff(snapshot));
   // The complete structured projection is also useful redirected to a file.
   // Unlike raw provider bodies, no evidence array is silently shortened here.

@@ -23,6 +23,7 @@ import {
   upstreamPrefixFor,
   validateReconciliation,
   validateReviewerReports,
+  type ReviewerReport,
 } from "./reconciliation.ts";
 import { validateSelfCritique } from "./self-critique.ts";
 import { deriveRoute, proposalIdentity, writeProposalEvidence } from "./proposal.ts";
@@ -30,27 +31,57 @@ import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
 import { BLOCKING_DISPOSITIONS } from "./plan-gate.ts";
 
+export const DISCLOSED_OPEN_DECISION_INTENT = "disclosed-open-decision";
+
+/**
+ * The spec's `## Open decisions` entries as reports on round-1 findings. The
+ * lowercase ID is a valid kebab decision key, so the location passes the same
+ * upstream token rule `validateReviewerReports` enforces on reviewers.
+ */
+export function disclosedOpenDecisionReports(doc: SpecDoc): ReviewerReport[] {
+  return doc.openDecisions.map((d) => ({
+    severity: d.severity,
+    classification: "upstream",
+    location: `${upstreamPrefixFor("design")}${d.id.toLowerCase()}`,
+    intentKey: DISCLOSED_OPEN_DECISION_INTENT,
+    subject: `${d.id}: ${d.text}`,
+  }));
+}
+
+/**
+ * `specDecision` is null when the review opened questions: the run then
+ * pauses at `awaiting_decision`, and the decision group creates the stage
+ * once every question is answered (section 12, `spec_decision`).
+ */
 export type StageResult =
-  | { ok: true; stageIds: { spec: number; specReview: number }; specPath: string }
+  | { ok: true; stageIds: { spec: number; specReview: number; specDecision: number | null }; specPath: string }
   | { ok: false; reason: string };
 
 /**
- * The deterministic decision gate (section 12, as amended for step 5b).
- * Identical in contract to `planReviewGate` — see that function's comment for
- * what "decision completeness" means and what it does not establish.
+ * The deterministic decision gate (section 12, as amended for step 5b and for
+ * `spec_decision`). Decision completeness as in `planReviewGate`, with one
+ * difference: a blocking disposition whose finding carries an operator
+ * question does not block — it opens the question. Every model-chosen
+ * `upstream_blocking` and `cannot_determine` decision carries one, because
+ * spec reconciliation requires it; a `cannot_determine` that deterministic
+ * validation produced by conversion carries none, so it still blocks.
  */
 export function specReviewGate(
-  decisions: FindingDecisionRow[]
+  decisions: FindingDecisionRow[],
+  questionFindingIds: ReadonlySet<number>
 ): { pass: true } | { pass: false; blockedFindingIds: number[] } {
-  const blocked = decisions.filter((d) => BLOCKING_DISPOSITIONS.includes(d.disposition));
+  const blocked = decisions.filter(
+    (d) => BLOCKING_DISPOSITIONS.includes(d.disposition) && !questionFindingIds.has(d.finding_id)
+  );
   return blocked.length === 0
     ? { pass: true }
     : { pass: false, blockedFindingIds: blocked.map((d) => d.finding_id) };
 }
 
 /**
- * The spec and spec-review stages, as two rows matching section 5's chain.
- * Every failure path is terminal: the affected stage completes blocked (with
+ * The spec and spec-review stages, as two rows matching section 5's chain,
+ * plus a passed `spec_decision` row when the review opened no operator
+ * question. Every failure path is terminal: the affected stage completes blocked (with
  * no approved output_ref), the run blocks, and the reason returns — and an
  * unexpected throw is caught by the same terminal machinery, so no run is
  * ever left wedged.
@@ -166,6 +197,7 @@ export async function runSpecStage(
 
   let specStageId: number | null = null;
   let reviewStageId: number | null = null;
+  let decisionStageId: number | null = null;
 
   const abort = (stageId: number, action: string, reason: string): StageResult => {
     audit(stageId, action, reason);
@@ -422,6 +454,32 @@ export async function runSpecStage(
       // the earlier one.
       const roundReports = new Map<string, ReconciliationFindingInput["reports"]>();
       const roundFindings = new Map<string, CanonicalFindingRow>();
+      // The author's disclosed open decisions, recorded once from the
+      // specification the panel reviews. The report is the author's
+      // disclosure, not a panel seat, and claims no independence (section 13).
+      if (round === 1) {
+        const disclosed = written.doc.openDecisions;
+        for (const [index, report] of disclosedOpenDecisionReports(written.doc).entries()) {
+          const finding = store.upsertCanonicalFinding(reviewStage.id, round, report.intentKey, report.location);
+          store.insertFindingReport({
+            findingId: finding.id,
+            agentRunId: critiqueDispatch.agentRunId,
+            severity: report.severity,
+            classification: report.classification,
+            subject: report.subject,
+          });
+          audit(
+            reviewStage.id,
+            "spec.disclosure.record",
+            `recorded disclosed open decision ${disclosed[index].id} as finding ${finding.id} at ${report.location} (${report.severity}), round ${round}`
+          );
+          const identity = findingIdentity(report.location, report.intentKey);
+          roundFindings.set(identity, finding);
+          const list = roundReports.get(identity) ?? [];
+          list.push({ reviewerId: author.id, ...report });
+          roundReports.set(identity, list);
+        }
+      }
       for (const reviewer of panel) {
         if (!reviewer.outputs.includes("findings")) {
           return abort(reviewStage.id, "spec.reviewer.failed", `configured agent ${reviewer.id} does not allow findings output`);
@@ -560,6 +618,7 @@ export async function runSpecStage(
         governingText: design,
         beforeNormativeNodes: specNormativeNodes(written.doc),
         afterNormativeNodes: specNormativeNodes(reconciledDoc.value),
+        requireQuestions: true,
       });
       if (!reconciliation.ok) {
         return abort(reviewStage.id, "spec.reconcile.invalid", `spec reconciliation refused: ${reconciliation.reason}`);
@@ -612,6 +671,19 @@ export async function runSpecStage(
           `spec change_kind ${reconciledDoc.value.changeKind} does not match run change_kind ${run.change_kind}`
         );
       }
+      // An entry added here would reach approval with no finding and no
+      // decision; disclosures are recorded only from the reviewed artifact.
+      const reviewedDecisionIds = new Set(written.doc.openDecisions.map((d) => d.id));
+      const addedDecisionIds = reconciledDoc.value.openDecisions
+        .map((d) => d.id)
+        .filter((id) => !reviewedDecisionIds.has(id));
+      if (addedDecisionIds.length > 0) {
+        return abort(
+          reviewStage.id,
+          "spec.reconcile.invalid",
+          `spec reconciliation added open decision(s) ${addedDecisionIds.join(", ")}: a new open question is answered through the decision on the finding that raised it, not by a new entry`
+        );
+      }
       try {
         written = writeSpecDoc(rootDir, run.slug, reconcileContent.spec, profile.startingCommit);
       } catch (err) {
@@ -639,6 +711,24 @@ export async function runSpecStage(
           artifactHashBefore: specHashBefore,
           artifactHashAfter: specHashAfter,
         });
+        // The operator's question, beside the decision that asks it. Only a
+        // model-chosen blocking decision carries one (the validator requires
+        // it there and drops it on conversion), so its presence is what the
+        // gate reads to tell a question from a malformed answer.
+        if (decision.question !== null) {
+          const question = store.insertDecisionQuestion({
+            findingId: decision.findingId,
+            text: decision.question.text,
+            options: decision.question.options,
+            recommended: decision.question.recommended,
+            why: decision.question.why,
+          });
+          audit(
+            reviewStage.id,
+            "spec.question.record",
+            `question ${question.id} for finding ${decision.findingId} (${decision.disposition}); options=${decision.question.options.length}; recommended=${decision.question.recommended}; round ${round}`
+          );
+        }
         if (decision.disposition === "upstream_follow_up" || decision.disposition === "upstream_blocking") {
           const candidate = decision.proposal!;
           const route = deriveRoute(decision.disposition);
@@ -708,18 +798,49 @@ export async function runSpecStage(
 
     // --- decision gate: over every round this stage ran, not the last one ---
     const decisions = store.getFindingDecisions(reviewStage.id);
-    const gate = specReviewGate(decisions);
+    const questions = store.getDecisionQuestions(reviewStage.id);
+    const gate = specReviewGate(decisions, new Set(questions.map((q) => q.finding_id)));
     if (gate.pass) {
+      const specHash = sha256Hex(normalizeText(specContent));
       audit(
         reviewStage.id,
         "spec.gate.pass",
         // Machine-readable: the approval gate reads these back to refuse an
         // authorization binding a spec no panel gated. Normalized before
         // hashing so a CRLF checkout cannot break the comparison.
-        `spec_review gate passed after ${rounds} round(s); specHash=${sha256Hex(normalizeText(specContent))}; risk=${risk}`
+        `spec_review gate passed after ${rounds} round(s); specHash=${specHash}; risk=${risk}`
       );
       store.completeStage(reviewStage.id, specPath, "pass");
-      return { ok: true, stageIds: { spec: specStage.id, specReview: reviewStage.id }, specPath };
+      if (questions.length > 0) {
+        // The run pauses at `awaiting_decision`: no spec_decision row until
+        // the operator has answered every question (section 12).
+        audit(
+          reviewStage.id,
+          "spec.questions.open",
+          `questions=${questions.map((q) => q.finding_id).join(",")}`
+        );
+        return {
+          ok: true,
+          stageIds: { spec: specStage.id, specReview: reviewStage.id, specDecision: null },
+          specPath,
+        };
+      }
+      // Nothing to ask: the decision boundary passes with the reviewed
+      // specification, so the chain keeps its one fixed length (hard rule 3).
+      const decisionStage = store.insertStage(runId, "spec_decision", reviewStage.id);
+      decisionStageId = decisionStage.id;
+      audit(decisionStage.id, "spec_decision.stage.create", `created spec_decision stage ${decisionStage.id}`);
+      store.completeStage(decisionStage.id, specPath, "pass");
+      audit(
+        decisionStage.id,
+        "spec_decision.gate.pass",
+        `spec_decision gate passed; specHash=${specHash}; risk=${risk}; answers=0; folded=0`
+      );
+      return {
+        ok: true,
+        stageIds: { spec: specStage.id, specReview: reviewStage.id, specDecision: decisionStage.id },
+        specPath,
+      };
     }
     const proposalsByFinding = new Map<number, number[]>();
     for (const proposal of store.getProposalsForStage(reviewStage.id)) {
@@ -740,7 +861,7 @@ export async function runSpecStage(
     // The wedge guard: an unexpected throw (filesystem, database) must
     // produce the same terminal state as any other failure.
     const reason = `spec stage failed: ${(err as Error).message}`;
-    for (const id of [specStageId, reviewStageId]) {
+    for (const id of [specStageId, reviewStageId, decisionStageId]) {
       if (id !== null) {
         const stage = store.getStage(id);
         if (stage && (stage.status === "pending" || stage.status === "in_progress")) {
@@ -748,7 +869,7 @@ export async function runSpecStage(
         }
       }
     }
-    audit(reviewStageId ?? specStageId, "spec.stage.failed", reason);
+    audit(decisionStageId ?? reviewStageId ?? specStageId, "spec.stage.failed", reason);
     store.setRunStatus(runId, "blocked");
     return { ok: false, reason };
   }

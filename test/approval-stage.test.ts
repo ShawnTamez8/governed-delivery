@@ -32,24 +32,25 @@ change_kind: feature
 `;
 
 /**
- * What the spec_review gate writes when it passes. The approval gate reads it
- * back to refuse an authorization binding a spec no panel gated, so a fixture
- * that skips it is a run that was never actually reviewed.
+ * What the spec_decision gate writes when it passes (the shape
+ * `runSpecStage` writes when the review asked nothing). The approval gate
+ * reads it back to refuse an authorization binding a spec no gate passed, so
+ * a fixture that skips it is a run that was never actually reviewed.
  */
 function writeGateEvent(
   store: Store,
   runId: number,
-  reviewStageId: number,
+  decisionStageId: number,
   specContent: string,
   risk = "low"
 ): void {
   appendAudit(store, {
     runId,
-    stageId: reviewStageId,
+    stageId: decisionStageId,
     actor: "system",
     actorType: "cli",
-    action: "spec.gate.pass",
-    summary: `spec_review gate passed in round 1; specHash=${sha256Hex(normalizeText(specContent))}; risk=${risk}`,
+    action: "spec_decision.gate.pass",
+    summary: `spec_decision gate passed; specHash=${sha256Hex(normalizeText(specContent))}; risk=${risk}; answers=0; folded=0`,
   });
 }
 
@@ -58,7 +59,7 @@ interface Fixture {
   root: string;
   runId: number;
   specPath: string;
-  reviewStageId: number;
+  decisionStageId: number;
   keyDir: string;
   privateKey: string;
   expiresAt: string;
@@ -117,20 +118,22 @@ function withFixture(fn: (f: Fixture) => void, opts: {
     store.completeStage(specStage.id, specPath, "pass");
     const reviewStage = store.insertStage(run.id, "spec_review", specStage.id);
     store.completeStage(reviewStage.id, specPath, "pass");
+    const decisionStage = store.insertStage(run.id, "spec_decision", reviewStage.id);
+    store.completeStage(decisionStage.id, specPath, "pass");
     // SPEC declares two ordinary artifacts on a feature run, so the gate this
     // fixture stands in for would have passed it at low risk. The success test
     // pins that literal independently.
     // The audit table is append-only by trigger, so a test cannot delete this
     // event afterwards — the absent and malformed cases are configured here.
     if (opts.gateSummary === undefined) {
-      writeGateEvent(store, run.id, reviewStage.id, opts.spec ?? SPEC, opts.risk ?? "low");
+      writeGateEvent(store, run.id, decisionStage.id, opts.spec ?? SPEC, opts.risk ?? "low");
     } else if (opts.gateSummary !== null) {
       appendAudit(store, {
         runId: run.id,
-        stageId: reviewStage.id,
+        stageId: decisionStage.id,
         actor: "system",
         actorType: "cli",
-        action: "spec.gate.pass",
+        action: "spec_decision.gate.pass",
         summary: opts.gateSummary,
       });
     }
@@ -169,7 +172,7 @@ function withFixture(fn: (f: Fixture) => void, opts: {
       root,
       runId: run.id,
       specPath,
-      reviewStageId: reviewStage.id,
+      decisionStageId: decisionStage.id,
       keyDir,
       privateKey: privateKey.export({ format: "pem", type: "pkcs8" }) as string,
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),
@@ -272,7 +275,7 @@ test("a blocked run is refused naming its status", () => {
   });
 });
 
-test("a run whose last stage is not a passed spec_review is refused", () => {
+test("a run whose last stage is not a passed spec_decision is refused", () => {
   const root = mkdtempSync(join(tmpdir(), "bw-approve-"));
   const store = openStore(root);
   try {
@@ -284,7 +287,39 @@ test("a run whose last stage is not a passed spec_review is refused", () => {
       signature: "AAAA",
     });
     assert.equal(r.ok, false);
-    assert.match((r as { reason: string }).reason, /last stage is spec \(pending\), not a passed spec_review/);
+    assert.match((r as { reason: string }).reason, /last stage is spec \(pending\), not a passed spec_decision/);
+  } finally {
+    store.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a run paused for operator decisions cannot be approved before spec_decision passes", () => {
+  // A passed spec_review with its spec.gate.pass event is what an
+  // awaiting_decision run holds. Approval used to accept exactly this shape.
+  const root = mkdtempSync(join(tmpdir(), "bw-approve-"));
+  const store = openStore(root);
+  try {
+    const run = store.insertRun("p", "f-1", SLUG, "feature");
+    const specPath = join(root, "docs", "features", SLUG, "spec.md");
+    mkdirSync(dirname(specPath), { recursive: true });
+    writeFileSync(specPath, SPEC);
+    const specStage = store.insertStage(run.id, "spec", null);
+    store.completeStage(specStage.id, specPath, "pass");
+    const reviewStage = store.insertStage(run.id, "spec_review", specStage.id);
+    store.completeStage(reviewStage.id, specPath, "pass");
+    appendAudit(store, {
+      runId: run.id, stageId: reviewStage.id, actor: "system", actorType: "cli", action: "spec.gate.pass",
+      summary: `spec_review gate passed in round 1; specHash=${sha256Hex(normalizeText(SPEC))}; risk=low`,
+    });
+    const r = approveRun(store, root, {
+      runId: run.id,
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      signature: "AAAA",
+    });
+    assert.equal(r.ok, false);
+    assert.match((r as { reason: string }).reason, /last stage is spec_review \(passed\), not a passed spec_decision/);
+    assert.equal(store.getStageChain(run.id).some((s) => s.kind === "awaiting_approval"), false);
   } finally {
     store.close();
     rmSync(root, { recursive: true, force: true });
@@ -302,7 +337,7 @@ test("a run with no stages at all is refused", () => {
       signature: "AAAA",
     });
     assert.equal(r.ok, false);
-    assert.match((r as { reason: string }).reason, /has no passed spec_review stage to approve/);
+    assert.match((r as { reason: string }).reason, /has no passed spec_decision stage to approve/);
   } finally {
     store.close();
     rmSync(root, { recursive: true, force: true });
@@ -462,7 +497,7 @@ test("a spec edited after review is refused by name, before the signature is eve
   });
 });
 
-test("a run whose spec_review gate recorded nothing cannot be approved", () => {
+test("a run whose spec_decision gate recorded nothing cannot be approved", () => {
   withFixture(
     (f) => {
       const r = approveRun(f.store, f.root, {
@@ -473,7 +508,7 @@ test("a run whose spec_review gate recorded nothing cannot be approved", () => {
       assert.equal(r.ok, false);
       assert.match(
         (r as { reason: string }).reason,
-        /has no spec[.]gate[.]pass audit event: the spec_review gate never recorded what it approved/
+        /has no spec_decision[.]gate[.]pass audit event: the spec_decision gate never recorded what it passed/
       );
       assertNothingWritten(f);
     },
@@ -494,11 +529,11 @@ test("a gate event in the old prose format is refused, not approved past", () =>
       assert.equal(r.ok, false);
       assert.match(
         (r as { reason: string }).reason,
-        /spec[.]gate[.]pass event does not record a spec hash and risk/
+        /spec_decision[.]gate[.]pass event does not record a spec hash and risk/
       );
       assertNothingWritten(f);
     },
-    { gateSummary: "spec_review gate passed in round 1" }
+    { gateSummary: "spec_decision gate passed" }
   );
 });
 

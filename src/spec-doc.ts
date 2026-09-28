@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { normalizeText } from "./canonical.ts";
+import { SEVERITIES } from "./finding.ts";
 import { artifactDirectoryRefusals, normalizePath } from "./scope.ts";
 import { isTaskDocumentPath } from "./task-artifact.ts";
 
@@ -9,6 +10,7 @@ export interface SpecDoc {
   changeKind: "feature" | "defect_fix";
   declaredArtifacts: string[];
   acceptanceCriteria: AcceptanceCriterion[];
+  openDecisions: OpenDecision[];
 }
 
 export interface AcceptanceCriterion {
@@ -16,7 +18,20 @@ export interface AcceptanceCriterion {
   text: string;
 }
 
+/**
+ * A question the author says the design leaves open. Not a normative node:
+ * the spec stage records each one as a round-1 finding that reconciliation
+ * must answer (architecture section 12, operator decision 2026-09-26).
+ */
+export interface OpenDecision {
+  id: string;
+  severity: string;
+  text: string;
+}
+
 export const CRITERION_ID_PATTERN = /^AC-(?:00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})$/;
+
+export const OPEN_DECISION_ID_PATTERN = /^OD-(?:00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})$/;
 
 export function isCriterionId(value: string): boolean {
   return CRITERION_ID_PATTERN.test(value);
@@ -40,8 +55,9 @@ export function readSpecDeclaredArtifacts(content: string): string[] | null {
 
 /**
  * The minimal spec document schema: frontmatter, a declared-artifacts list,
- * and acceptance criteria. Everything else is unvalidated prose — the
- * schema accepts whatever the source never required (hazard 13).
+ * acceptance criteria, and an optional open-decisions list. Everything else is
+ * unvalidated prose — the schema accepts whatever the source never required
+ * (hazard 13).
  */
 export function validateSpecDoc(
   content: string
@@ -191,6 +207,66 @@ export function validateSpecDoc(
     seenCriterionIds.add(id);
     criteria.push({ id, text: criterionText });
   }
+  // Optional: an absent or empty section means the author disclosed nothing.
+  // Closed by the same membership principle as the two sections above, so a
+  // prose line here is diagnosed as prose rather than as a malformed entry.
+  //
+  // `section` reads only the first heading spelled exactly, so a second or
+  // differently spelled open-decisions heading would carry entries that are
+  // neither recorded as findings nor held to the no-add rule. Refuse both.
+  const decisionHeadings = [...text.matchAll(/^## (.*)$/gm)]
+    .map((m) => m[1].trim())
+    .filter((title) => /^open\s+decisions\b/i.test(title));
+  for (const title of decisionHeadings) {
+    if (title !== "Open decisions") {
+      return {
+        ok: false,
+        reason: `the open decisions heading must be exactly '## Open decisions'; this heading is not: ## ${title}`,
+      };
+    }
+  }
+  if (decisionHeadings.length > 1) {
+    return { ok: false, reason: "a specification has at most one ## Open decisions section" };
+  }
+  const openDecisions: OpenDecision[] = [];
+  const decisionsSection = section(text, "Open decisions");
+  if (decisionsSection !== null) {
+    const decisionLines = decisionsSection
+      .split("\n")
+      .map((line) => line.trim().replace(/^-\s*/, ""))
+      .filter((line) => line !== "");
+    const seenDecisionIds = new Set<string>();
+    for (const line of decisionLines) {
+      if (!/^OD-\S*/i.test(line)) {
+        return {
+          ok: false,
+          reason: `every line under ## Open decisions must be one open decision of the form '- OD-NNN (<severity>): <question the design leaves open>'; an explanation belongs in another section; this line is not an open decision: ${line}`,
+        };
+      }
+      const shape = /^(\S+) \(([^)]*)\): (.*\S.*)$/.exec(line);
+      if (!shape) {
+        return { ok: false, reason: `open decision must be '<OD-NNN> (<severity>): <question>': ${line}` };
+      }
+      const [, id, severity, question] = shape;
+      if (!OPEN_DECISION_ID_PATTERN.test(id)) {
+        return {
+          ok: false,
+          reason: `invalid open decision ID ${id}: must match ${OPEN_DECISION_ID_PATTERN.source}`,
+        };
+      }
+      if (!SEVERITIES.includes(severity)) {
+        return {
+          ok: false,
+          reason: `open decision ${id} severity ${severity} is not one of ${SEVERITIES.join(", ")}`,
+        };
+      }
+      if (seenDecisionIds.has(id)) {
+        return { ok: false, reason: `duplicate open decision ID ${id}` };
+      }
+      seenDecisionIds.add(id);
+      openDecisions.push({ id, severity, text: question.trim() });
+    }
+  }
   return {
     ok: true,
     value: {
@@ -198,6 +274,7 @@ export function validateSpecDoc(
       changeKind: changeMatch[1].trim() as "feature" | "defect_fix",
       declaredArtifacts: artifacts,
       acceptanceCriteria: criteria,
+      openDecisions,
     },
   };
 }

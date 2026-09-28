@@ -1510,3 +1510,210 @@ test("unknown fields are refused at every model-returned level, by name", () => 
     assert.match(result.reason, reason);
   }
 });
+
+// --- the operator question (spec-operator-decisions) ---------------------------
+
+function question(): Record<string, unknown> {
+  return {
+    text: "How long are exports retained?",
+    options: [
+      { label: "Thirty days", answer: "Exports are retained for thirty days." },
+      { label: "Until deleted", answer: "Exports are retained until the operator deletes them." },
+    ],
+    recommended: 0,
+    why: "the design names a short-lived export",
+  };
+}
+
+function blocking(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    ...baseDecision(),
+    disposition: "upstream_blocking",
+    changedLocations: [],
+    proposal: { title: "Decide retention", problem: "the design defers it", whyUpstream: "the design owns it" },
+    question: question(),
+    ...overrides,
+  };
+}
+
+test("a spec blocking decision carrying a valid question validates and keeps the question", () => {
+  for (const decision of [
+    blocking(),
+    { ...baseDecision(), disposition: "cannot_determine", changedLocations: [], question: question() },
+  ]) {
+    const result = validate(decisions([decision]), { requireQuestions: true });
+    assert.equal(result.ok, true, result.ok ? "" : result.reason);
+    if (!result.ok) return;
+    assert.deepEqual(result.value.decisions[0].question, question());
+    assert.deepEqual(result.value.conversions, []);
+  }
+});
+
+test("each malformed question refuses the whole reconciliation by name", () => {
+  const withQuestion = (q: unknown) => decisions([blocking({ question: q })]);
+  const cases: { raw: unknown; reason: RegExp }[] = [
+    { raw: decisions([blocking({ question: undefined })]), reason: /finding 1 is upstream_blocking without a question for the operator/ },
+    {
+      raw: decisions([{ ...baseDecision(), disposition: "cannot_determine", changedLocations: [] }]),
+      reason: /finding 1 is cannot_determine without a question for the operator/,
+    },
+    { raw: withQuestion("which one?"), reason: /question is not an object/ },
+    { raw: withQuestion({ ...question(), extra: 1 }), reason: /question carries an unknown field extra: allowed fields are text, options, recommended, why/ },
+    { raw: withQuestion({ ...question(), text: " " }), reason: /question is missing a non-empty text/ },
+    { raw: withQuestion({ ...question(), why: "" }), reason: /question is missing a non-empty why/ },
+    { raw: withQuestion({ ...question(), options: [{ label: "only", answer: "one" }] }), reason: /question must carry 2 to 4 options/ },
+    {
+      raw: withQuestion({ ...question(), options: Array.from({ length: 5 }, (_, i) => ({ label: `o${i}`, answer: `a${i}` })) }),
+      reason: /question must carry 2 to 4 options/,
+    },
+    { raw: withQuestion({ ...question(), options: "a or b" }), reason: /question must carry 2 to 4 options/ },
+    { raw: withQuestion({ ...question(), options: [null, { label: "b", answer: "b" }] }), reason: /question has an option that is not an object/ },
+    {
+      raw: withQuestion({ ...question(), options: [{ label: "a", answer: "a", note: 1 }, { label: "b", answer: "b" }] }),
+      reason: /question option carries an unknown field note: allowed fields are label, answer/,
+    },
+    { raw: withQuestion({ ...question(), options: [{ label: "", answer: "a" }, { label: "b", answer: "b" }] }), reason: /option missing a non-empty label/ },
+    { raw: withQuestion({ ...question(), options: [{ label: "a", answer: " " }, { label: "b", answer: "b" }] }), reason: /option missing a non-empty answer/ },
+    { raw: withQuestion({ ...question(), recommended: 2 }), reason: /question recommended 2 is not an option index from 0 to 1/ },
+    { raw: withQuestion({ ...question(), recommended: -1 }), reason: /question recommended -1 is not an option index from 0 to 1/ },
+    { raw: withQuestion({ ...question(), recommended: 0.5 }), reason: /question recommended 0\.5 is not an option index/ },
+    { raw: withQuestion({ ...question(), recommended: "0" }), reason: /question recommended "0" is not an option index/ },
+  ];
+  for (const { raw, reason } of cases) {
+    const result = validate(raw, { requireQuestions: true });
+    assert.equal(result.ok, false, `${JSON.stringify(raw)} must not validate`);
+    if (result.ok) return;
+    assert.match(result.reason, reason);
+  }
+});
+
+test("a question is forbidden on every other disposition and on every disposition without requireQuestions", () => {
+  const onAddressed = validate(decisions([{ ...baseDecision(), question: question() }]), { requireQuestions: true });
+  assert.equal(onAddressed.ok, false);
+  if (onAddressed.ok) return;
+  assert.match(onAddressed.reason, /finding 1 carries a question on disposition addressed, where it is forbidden/);
+
+  const onFollowUp = validate(
+    decisions([blocking({ disposition: "upstream_follow_up" })]),
+    { requireQuestions: true }
+  );
+  assert.equal(onFollowUp.ok, false);
+  if (onFollowUp.ok) return;
+  assert.match(onFollowUp.reason, /carries a question on disposition upstream_follow_up, where it is forbidden/);
+
+  // The plan side, and any caller that does not ask the operator: a question
+  // is not part of its contract on any disposition.
+  for (const raw of [decisions([blocking()]), decisions([{ ...baseDecision(), question: question() }])]) {
+    const result = validate(raw);
+    assert.equal(result.ok, false, `${JSON.stringify(raw)} must not validate without requireQuestions`);
+    if (result.ok) return;
+    assert.match(result.reason, /carries a question, but this reconciliation asks the operator nothing/);
+  }
+  // Without requireQuestions a blocking decision needs no question either.
+  const { question: _dropped, ...withoutQuestion } = blocking();
+  const plain = validate(decisions([withoutQuestion]));
+  assert.equal(plain.ok, true, plain.ok ? "" : plain.reason);
+});
+
+test("a rejection converted to cannot_determine is not asked a question", () => {
+  // The conversion is a malformed answer, not an open question: it must not
+  // then be refused for lacking a question it was never asked to carry, and
+  // the gate still sees it in conversions.
+  const result = validate(
+    decisions([
+      {
+        ...baseDecision(),
+        disposition: "rejected_with_rationale",
+        grounding: { source: "design", location: "## Decisions", excerpt: "words the design never wrote" },
+      },
+    ]),
+    { requireQuestions: true }
+  );
+  assert.equal(result.ok, true, result.ok ? "" : result.reason);
+  if (!result.ok) return;
+  assert.equal(result.value.decisions[0].disposition, "cannot_determine");
+  assert.equal(result.value.decisions[0].question, null);
+  assert.equal(result.value.conversions.length, 1);
+});
+
+test("operator_decision grounds a fold claim only in that same finding's recorded answer", () => {
+  const claim = (excerpt: string) => ({
+    artifactLocation: "## Acceptance criteria",
+    artifactText: "AC-002: exports are retained for thirty days",
+    grounding: { source: "operator_decision", location: "finding 1", excerpt },
+  });
+  const fold = {
+    canonicalFindingIds: [1, 2],
+    beforeNormativeNodes: ["AC-001: the thing works"],
+    afterNormativeNodes: ["AC-001: the thing works", "AC-002: exports are retained for thirty days"],
+    operatorAnswers: new Map([
+      [1, "Exports are retained for thirty days."],
+      [2, "Exports are encrypted at rest."],
+    ]),
+  };
+  const second = { ...baseDecision(), findingId: 2, rationale: "prose only" };
+
+  const accepted = validate(decisions([{ ...baseDecision(), normativeChanges: [claim("retained for thirty days")] }, second]), fold);
+  assert.equal(accepted.ok, true, accepted.ok ? "" : accepted.reason);
+  if (!accepted.ok) return;
+  assert.deepEqual(accepted.value.conversions, []);
+  assert.deepEqual(accepted.value.unclaimedNodes, []);
+
+  // The excerpt occurs only in finding 2's answer: another question's answer
+  // is not authority for this decision's node.
+  const crossed = validate(decisions([{ ...baseDecision(), normativeChanges: [claim("encrypted at rest")] }, second]), fold);
+  assert.equal(crossed.ok, true, crossed.ok ? "" : crossed.reason);
+  if (!crossed.ok) return;
+  assert.equal(crossed.value.decisions[0].disposition, "cannot_determine");
+  assert.match(crossed.value.conversions[0].reason, /does not occur in the governing operator_decision/);
+  assert.deepEqual(crossed.value.unclaimedNodes, ["AC-002: exports are retained for thirty days"]);
+
+  // A finding with no recorded answer (a denied question is never in the map).
+  const unanswered = validate(
+    decisions([{ ...baseDecision(), normativeChanges: [claim("retained for thirty days")] }, second]),
+    { ...fold, operatorAnswers: new Map([[2, "Exports are encrypted at rest."]]) }
+  );
+  assert.equal(unanswered.ok, true, unanswered.ok ? "" : unanswered.reason);
+  if (!unanswered.ok) return;
+  assert.match(unanswered.value.conversions[0].reason, /has no recorded operator answer for finding 1/);
+
+  // The design still grounds a fold claim.
+  const design = validate(
+    decisions([{ ...baseDecision(), normativeChanges: [{ ...claim("x"), grounding: { source: "design", location: "## Design", excerpt: "the thing works" } }] }, second]),
+    fold
+  );
+  assert.equal(design.ok, true, design.ok ? "" : design.reason);
+  if (!design.ok) return;
+  assert.deepEqual(design.value.conversions, []);
+});
+
+test("operator_decision is not a grounding source outside a fold", () => {
+  // Ordinary spec and plan reconciliation supply no operatorAnswers, so the
+  // source is simply not the governing input and the claim converts.
+  for (const governingSource of ["design", "specification"] as const) {
+    const result = validate(
+      decisions([
+        {
+          ...baseDecision(),
+          normativeChanges: [
+            {
+              artifactLocation: "## Acceptance criteria",
+              artifactText: "the thing works precisely",
+              grounding: { source: "operator_decision", location: "finding 1", excerpt: "the thing works" },
+            },
+          ],
+        },
+      ]),
+      {
+        governingSource,
+        governingText: DESIGN,
+        beforeNormativeNodes: ["the thing works"],
+        afterNormativeNodes: ["the thing works precisely"],
+      }
+    );
+    assert.equal(result.ok, true, result.ok ? "" : result.reason);
+    if (!result.ok) return;
+    assert.equal(result.value.decisions[0].disposition, "cannot_determine");
+    assert.match(result.value.conversions[0].reason, new RegExp(`source "operator_decision" is not the governing ${governingSource}`));
+  }
+});

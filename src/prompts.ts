@@ -44,11 +44,42 @@ The specification document schema is:
   one criterion and nothing else: no heading, no note, no explanation, and
   never one criterion wrapped across two lines; put an explanation of a
   numbering decision in your summary or an ordinary prose section,
-  not inside this section
+  not inside this section.
+${criterionQualityRule("")}
+${openDecisionsSchema("")}
 
 Design document:
 
 ${designContent}`;
+}
+
+/**
+ * What an acceptance criterion may say, stated once for the draft and the
+ * self-critique so the two cannot drift (hazard 3). The format rules above it
+ * fix a criterion's shape; this fixes its content. A design's subjective term
+ * becomes an open decision rather than an invented threshold (hazard 13):
+ * team-notes run 3 copied "meaningful content change" into a criterion.
+ */
+function criterionQualityRule(indent: string): string {
+  return `${indent}  Every acceptance criterion must be decidable by one objective pass/fail check: a specific input, action, value, or observable outcome, never a subjective or unquantified term such as fast, meaningful, intuitive, or clean.
+${indent}  Where the design states a behavior in subjective or unquantified terms, write only its checkable part as a criterion, and record the undecided part under ## Open decisions instead of choosing a threshold the design does not state.
+${indent}  Guidance with no checkable part, such as visual tone or typographic feel, belongs in an Out of scope note, not in a criterion.`;
+}
+
+/**
+ * The `## Open decisions` schema, stated once and indented to match each
+ * caller's list (hazard 3: the constrained section is stated wherever a
+ * specification is requested). Entries are recorded as round-1 findings by
+ * `runSpecStage`; the final sentence tells the author so, without naming a
+ * stage the draft prompt must not mention (the harness emitter routes on it).
+ */
+function openDecisionsSchema(indent: string): string {
+  return `${indent}- an optional ## Open decisions section: one question the design leaves open per list line, in exactly this form: \`- OD-001 (high): <the question the design leaves open>\`.
+${indent}  Open decision IDs must match \`OD-(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})\`, and the parenthesized severity is one of low, medium, high, critical: how much the feature is at risk while the question stays open.
+${indent}  List only a decision the design needs and does not make: one without which a behavior the design states cannot be written as a testable acceptance criterion.
+${indent}  Protection, limits, or policy beyond what the design asks for is not an open decision; leave it out.
+${indent}  Every non-blank line in this section is one open decision and nothing else.
+${indent}  Record a question here instead of deciding it yourself or leaving it only in prose: each entry is recorded as a finding that must receive a typed decision before approval.`;
 }
 
 /**
@@ -170,7 +201,9 @@ The self-critique has:
     one criterion and nothing else: no heading, no note, no explanation, and
     never one criterion wrapped across two lines; put an explanation of a
     numbering decision in your summary or an ordinary prose section,
-    not inside this section
+    not inside this section.
+${criterionQualityRule("  ")}
+${openDecisionsSchema("  ")}
   A revised specification that does not validate blocks the run. There is no
   fallback to your draft.
 - panelRequest: the panel you propose for the independent review
@@ -186,8 +219,8 @@ ${panel.registeredSpecialties.map((s) => `      - ${s}`).join("\n")}
 You may not add an obligation the design below does not contain. Sharpening
 the specification, completing it, and making it consistent is the work;
 inventing a requirement the design never states is not, however reasonable
-that requirement looks. Where the design leaves a decision open, say that it
-is open rather than deciding it yourself.
+that requirement looks. Where the design needs a decision it does not make, record it under ## Open decisions rather than deciding it yourself.
+Check every acceptance criterion against the pass/fail rule stated with the ## Acceptance criteria schema above and rewrite, split, or move any criterion that fails it.
 
 Design document:
 
@@ -249,6 +282,10 @@ criterion keeps the ID it was minted with, so the numbering is expected to
 carry gaps. A gap in the numbering is not by itself a finding. A finding about
 coverage names the design obligation the specification is missing, never a
 missing number.
+
+The specification's ## Open decisions section lists questions its author says the design leaves open.
+Each entry is already recorded as a finding and will receive a decision, so you need not report it again.
+Report a decision the design needs but does not make that the section omits as an upstream finding, and an entry the design actually decides as a current_artifact finding at ## Open decisions.
 
 Output the JSON object directly, with no surrounding prose, no markdown
 fences, and no commentary. Concerns within your specialty that you do not
@@ -568,13 +605,37 @@ function renderFindingsBlock(findings: ReconciliationFindingInput[]): string {
  * sentence). Two paid runs on 2026-09-26 blocked on upstream decisions, one
  * missing `changedLocations` and one missing `proposal`, while the prompt
  * advertised only an addressed-like entry.
+ *
+ * `asksOperator` is the spec caller's: its `upstream_blocking` and
+ * `cannot_determine` decisions carry a question the operator answers
+ * (architecture section 12, `spec_decision`), so those two shapes and the
+ * field matrix gain it. The plan caller passes false and its contract is
+ * unchanged.
  */
 function reconciliationDecisionContract(
   sourceName: string,
   normativeNodes: string,
   nodeForm: string,
-  exampleDecisions: string
+  exampleDecisions: string,
+  asksOperator: boolean
 ): string {
+  const questionShape = asksOperator
+    ? `, "question": {"text": "<the question the operator answers>", "options": [{"label": "<short name>", "answer": "<the decision this option makes>"}, {"label": "<short name>", "answer": "<the decision this option makes>"}], "recommended": 0, "why": "<why you recommend that option>"}`
+    : "";
+  const questionContract = asksOperator
+    ? `
+
+For disposition upstream_blocking or cannot_determine you must also supply a
+question for the operator, who answers it before approval:
+- question: {"text": "...", "options": [{"label": "...", "answer": "..."}], "recommended": 0, "why": "..."}
+  options holds 2 to 4 entries, each with a non-empty label and a non-empty
+  answer; each answer is the decision that option makes, written so it can be
+  folded into the specification as it stands.
+  recommended is the zero-based integer index of the option you recommend (0 is the first option).
+  text and why are non-empty. The operator approves your recommended option,
+  denies it and leaves the question open, or writes their own answer.
+question is allowed only on upstream_blocking and cannot_determine.`
+    : "";
   return `The decisions list has exactly one entry per finding id listed below, no
 more and no fewer. Each decision has:
 - findingId: the finding id it answers
@@ -627,13 +688,13 @@ your revision adds, replaces, or removes, exactly one entry in:
 For disposition upstream_follow_up or upstream_blocking you must also supply:
 - proposal: {"title": "...", "problem": "...", "whyUpstream": "..."}
   A concern whose cause is the ${sourceName} document goes upstream. The
-  system derives the impact from your disposition: upstream_blocking blocks the run, upstream_follow_up does not. Do not return an impact field.
+  system derives the impact from your disposition: ${asksOperator ? "upstream_blocking pauses the run until the operator answers its question" : "upstream_blocking blocks the run"}, upstream_follow_up does not. Do not return an impact field.
   The proposal is required even when your revised artifact, its summary, or an out-of-scope note already describes the same open decision: prose in the document is not a proposal candidate, and a decision without its proposal object blocks the run.
 
 grounding is allowed only on rejected_with_rationale; normativeChanges is
 allowed only on addressed; proposal is allowed only on upstream_follow_up and
 upstream_blocking. Return none of those fields on any other disposition, and
-return no field at all that your disposition does not list.
+return no field at all that your disposition does not list.${questionContract}
 
 cannot_determine carries none of grounding, normativeChanges, or proposal.
 
@@ -641,8 +702,8 @@ Each decision takes exactly one of these complete shapes. Replace every <...> pl
 - addressed: {"findingId": <id>, "disposition": "addressed", "rationale": "<why>", "changedLocations": ["<location you changed>"], "normativeChanges": [{"artifactLocation": "<the section heading>", "artifactText": "<the exact text of the added or removed node>", "grounding": {"source": "${sourceName}", "location": "<heading in the ${sourceName} document>", "excerpt": "<that document's exact words>"}}]}
 - rejected_with_rationale: {"findingId": <id>, "disposition": "rejected_with_rationale", "rationale": "<why>", "changedLocations": [], "grounding": {"source": "${sourceName}", "location": "<heading in the ${sourceName} document>", "excerpt": "<that document's exact words>"}}
 - upstream_follow_up: {"findingId": <id>, "disposition": "upstream_follow_up", "rationale": "<why>", "changedLocations": [], "proposal": {"title": "<title>", "problem": "<problem>", "whyUpstream": "<why upstream>"}}
-- upstream_blocking: {"findingId": <id>, "disposition": "upstream_blocking", "rationale": "<why>", "changedLocations": [], "proposal": {"title": "<title>", "problem": "<problem>", "whyUpstream": "<why upstream>"}}
-- cannot_determine: {"findingId": <id>, "disposition": "cannot_determine", "rationale": "<why>", "changedLocations": []}
+- upstream_blocking: {"findingId": <id>, "disposition": "upstream_blocking", "rationale": "<why>", "changedLocations": [], "proposal": {"title": "<title>", "problem": "<problem>", "whyUpstream": "<why upstream>"}${questionShape}}
+- cannot_determine: {"findingId": <id>, "disposition": "cannot_determine", "rationale": "<why>", "changedLocations": []${questionShape}}
 An addressed decision's normativeChanges holds one entry per normative node it adds or removes, as described above; send "normativeChanges": [] only when the change touches no normative node or another decision already claims it.`;
 }
 
@@ -705,7 +766,8 @@ ${reconciliationDecisionContract(
     "design",
     "declared artifact or acceptance criterion",
     'an acceptance criterion\'s node text is `AC-001: <criterion text>` and a declared artifact\'s is the bare path, so write "AC-001: the display announces results", never "- AC-001: the display announces results".',
-    exampleDecisions
+    exampleDecisions,
+    true
   )}
 
 You may address a finding only by a change whose added normative nodes you
@@ -716,6 +778,14 @@ work; inventing a requirement the design never states is not, however
 reasonable that requirement looks. Where the design leaves a decision open,
 route the concern upstream with a complete proposal candidate, or return
 cannot_determine.
+
+A finding whose report comes from ${agent.id} is an open decision you disclosed under ## Open decisions.
+Answer it like any other finding: upstream_follow_up or upstream_blocking with a complete proposal when the design must decide it, addressed only when you can ground the resolution in the design, or cannot_determine.
+
+Choosing between the two upstream routes, for every finding whoever reported it:
+choose upstream_blocking only when the design states a behavior and leaves a decision without which no acceptance criterion for that behavior can be written, so the design as written cannot be implemented.
+When the design already states a workable baseline and the question is whether to add protection, limits, or policy beyond it, the design is implementable as written: choose upstream_follow_up.
+A report's severity, or how serious a risk sounds, does not by itself make a finding blocking.
 
 The revised specification must satisfy the same document schema as before:
 - frontmatter with feature and change_kind (one of feature, defect_fix)
@@ -736,6 +806,8 @@ The revised specification must satisfy the same document schema as before:
   never one criterion wrapped across two lines; put an explanation of a
   numbering decision in your summary or an ordinary prose section,
   not inside this section
+${openDecisionsSchema("")}
+  You may keep, reword, or remove an existing entry, but never add a new entry during this revision; a question you now find open is answered through the decision on the finding that raised it.
 A revised specification that does not validate blocks the run.
 
 Design document:
@@ -749,6 +821,127 @@ ${specContent}
 Findings to reconcile:
 
 ${renderFindingsBlock(findings)}`;
+}
+
+/** One answered spec_review question, as the decision fold presents it. */
+export interface FoldQuestionInput {
+  findingId: number;
+  text: string;
+  action: "approve" | "deny" | "modify";
+  /** The recorded answer text; empty for deny. */
+  answer: string;
+}
+
+/** The heading the fold prompt lists answers under; the harness fixture routes on it. */
+export const SPEC_DECISION_FOLD_MARKER = "Operator answers to fold:";
+
+/**
+ * The spec decision fold prompt (architecture section 12, `spec_decision`):
+ * the design, the reviewed specification, and every answered question. The
+ * author folds each approved or modified answer into the specification and
+ * returns one `addressed` decision per folded answer, grounded in the design
+ * or in that same question's recorded answer (hazard 13: an answer is the
+ * operator's decision, so it may ground an obligation; nothing else new may).
+ * A denied question is listed so the author knows to leave it open, and gets
+ * no decision. The wording avoids the words the harness fixture routes the
+ * earlier prompts on, so the fold is recognized by its own heading.
+ */
+export function buildSpecDecisionFoldPrompt(
+  agent: AgentDefinition,
+  designContent: string,
+  specContent: string,
+  questions: FoldQuestionInput[]
+): string {
+  const folded = questions.filter((q) => q.action !== "deny");
+  const denied = questions.filter((q) => q.action === "deny");
+  const exampleDecisions = folded.length > 0
+    ? `[${folded.map((q) => `{"findingId": ${q.findingId}, <the remaining fields of the shape below>}`).join(", ")}]`
+    : "[]";
+  const renderedFolded = folded.length > 0
+    ? folded
+        .map((q) => `- finding ${q.findingId}\n  question: ${q.text}\n  operator answer (${q.action}): ${q.answer}`)
+        .join("\n")
+    : "none.";
+  const renderedDenied = denied.length > 0
+    ? denied.map((q) => `- finding ${q.findingId}\n  question: ${q.text}`).join("\n")
+    : "none.";
+  return `${SPEC_AUTHOR_PROMPT_PREFIX} ${agent.id}
+
+The operator has answered the open questions your specification raised. Fold
+each answer listed under "${SPEC_DECISION_FOLD_MARKER}" into the specification.
+No git operations are involved: you are revising a specification document, not
+code changes.
+
+Return exactly a JSON AgentResult object with this shape; the revised
+specification and your decisions travel together in the AgentResult's
+proposedContentChanges:
+{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"spec": "<the full revised specification markdown>", "decisions": ${exampleDecisions}}}
+
+status must be one of proposed, blocked, failed. Output the JSON object
+directly, with no surrounding prose, no markdown fences, and no commentary.
+
+The decisions list has exactly one entry per finding id listed under
+"${SPEC_DECISION_FOLD_MARKER}", no more and no fewer, and no entry for a denied
+question. Every decision takes exactly this shape; replace every <...>
+placeholder, and <id> is the finding id whose answer the decision folds:
+{"findingId": <id>, "disposition": "addressed", "rationale": "<how the specification now reflects the answer>", "changedLocations": ["<location you changed>"], "normativeChanges": [{"artifactLocation": "<the section heading>", "artifactText": "<the exact text of the added or removed node>", "grounding": {"source": "operator_decision", "location": "finding <id>", "excerpt": "<exact words of the operator's answer to that finding>"}}]}
+disposition is always addressed. changedLocations is required; send [] when you
+changed nothing.
+
+normativeChanges holds exactly one entry for every declared artifact or
+acceptance criterion your revision adds or removes, across the whole decisions
+list. The system derives the added and removed nodes itself; one entry claims
+one node in either direction. The added half of a replacement is an added node
+and the superseded half is a removed node needing its own entry. Send
+"normativeChanges": [] when a decision touches no normative node.
+artifactText is the node's own text: an acceptance criterion's node text is
+\`AC-001: <criterion text>\` and a declared artifact's is the bare path, never
+with the list marker.
+Each entry's grounding cites either the operator's answer to the same finding
+the decision folds — source operator_decision, whose excerpt must occur
+verbatim in that finding's answer below, never in another finding's answer —
+or the design — {"source": "design", "location": "<heading in the design>", "excerpt": "<the design's exact words>"}.
+A node you cannot ground in one of those two blocks the run: fold only what
+the operator decided.
+
+Denied questions stay open. Add nothing about them. An entry under
+## Open decisions for a denied question stays exactly as written: the same ID,
+the same severity, and the same text. You may remove the ## Open decisions
+entry for a question whose answer you folded. Never add a new ## Open decisions
+entry.
+
+The revised specification must satisfy the same document schema as before:
+- frontmatter with feature and change_kind (one of feature, defect_fix)
+- a ## Declared artifacts section: one concrete, exact, repo-relative file
+  path per line — never a directory scope or a glob, and never a document
+  the run itself writes (the design, spec, or plan under docs/features/).
+  Every non-blank line in this section is one path and nothing else,
+  and a path contains no whitespace
+- an ## Acceptance criteria section: one criterion per list line in exactly
+  this form: \`- AC-001: <criterion text>\`. Criterion IDs must match
+  \`AC-(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,})\`. Preserve each existing ID;
+  mint a greater unused ID only for a genuinely new criterion, and never
+  reuse or renumber an ID. Every non-blank line here is one criterion and
+  nothing else
+- an optional ## Open decisions section: one entry per list line in exactly
+  this form: \`- OD-001 (high): <the question the design leaves open>\`
+A revised specification that does not validate blocks the run.
+
+Design document:
+
+${designContent}
+
+The specification to revise:
+
+${specContent}
+
+${SPEC_DECISION_FOLD_MARKER}
+
+${renderedFolded}
+
+Denied questions (leave open):
+
+${renderedDenied}`;
 }
 
 /**
@@ -784,7 +977,8 @@ ${reconciliationDecisionContract(
     "specification",
     "task or coverage line",
     'a task\'s node text is the task itself and a coverage entry\'s is `AC-001 -> <artifact path>` or `AC-001 -> not_applicable: <rationale> / <alternative verification>`, so write "AC-001 -> src/a.ts" or the full not_applicable line, never "- AC-001 -> src/a.ts".',
-    exampleDecisions
+    exampleDecisions,
+    false
   )}
 
 You may address a finding only by a change whose added normative nodes you

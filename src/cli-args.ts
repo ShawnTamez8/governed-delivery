@@ -83,6 +83,12 @@ export const COMMANDS: Readonly<Record<string, CommandDefinition>> = {
       { name: "signature", value: "base64" }, { name: "signature-file", value: "path" }],
     exclusive: ["signature", "signature-file"], requireExclusive: true,
   },
+  decide: {
+    description: "record the operator's answer to one spec_review question; exactly one answer source",
+    options: [run, { name: "finding", value: "id", required: true, validate: validateNumber },
+      { name: "approve" }, { name: "deny" }, { name: "answer-file", value: "path" }],
+    exclusive: ["approve", "deny", "answer-file"], requireExclusive: true,
+  },
   "verify-audit": { description: "recompute the whole audit chain", options: [] },
   "proposal-export": {
     description: "explicitly materialize a stored proposal in docs/proposals/",
@@ -229,14 +235,15 @@ export function parseArguments(argv: readonly string[]): CliArguments {
     if (reason) throw new UsageError(reason);
   }
   const exclusive = definition?.exclusive ?? [];
-  if (exclusive.filter((name) => args.has(name)).length > 1) {
+  const given = (name: string): boolean => args.has(name) || flags.has(name);
+  if (exclusive.filter(given).length > 1) {
     throw new UsageError(`${exclusive.map((name) => `--${name}`).join(" and ")} are mutually exclusive`);
   }
   if (!helpRequested) {
     for (const option of options) {
       if (option.required && !args.has(option.name)) throw new UsageError(`missing required option --${option.name}`);
     }
-    if (definition?.requireExclusive && !exclusive.some((name) => args.has(name))) {
+    if (definition?.requireExclusive && !exclusive.some(given)) {
       throw new UsageError(`missing required option ${exclusive.map((name) => `--${name}`).join(" or ")}`);
     }
   }

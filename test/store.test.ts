@@ -694,6 +694,119 @@ test("insertFindingDecision refuses a grounding source that is not a governing i
   });
 });
 
+test("insertFindingDecision refuses operator_decision: a fold-only grounding source is never stored", () => {
+  // The spec decision fold may cite the operator's answer, but its decisions
+  // are never persisted as finding decisions, so the storage vocabulary stays
+  // design / specification / plan (spec-operator-decisions Task 2).
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const agent = store.insertAgentRun(agentRunInput(stage.id));
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "missing-trace", "## Acceptance criteria");
+    assert.throws(
+      () =>
+        store.insertFindingDecision(
+          decisionInput(finding.id, agent.id, {
+            normativeChanges: [
+              {
+                artifactLocation: "## Acceptance criteria",
+                artifactText: "AC-002: exports are retained for thirty days",
+                grounding: { source: "operator_decision", location: "finding 1", excerpt: "thirty days" },
+              },
+            ],
+          })
+        ),
+      /invalid grounding source operator_decision: allowed values are design, specification, plan/
+    );
+  });
+});
+
+// --- decision questions and answers (spec-operator-decisions) ----------------
+
+function questionInput(findingId: number) {
+  return {
+    findingId,
+    text: "How long are exports retained?",
+    options: [
+      { label: "Thirty days", answer: "Exports are retained for thirty days." },
+      { label: "Until deleted", answer: "Exports are retained until deleted." },
+    ],
+    recommended: 0,
+    why: "the design names a short-lived export",
+  };
+}
+
+test("a decision question and its answer round-trip, read through the finding's stage", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "retention", "upstream:design:retention");
+    const question = store.insertDecisionQuestion(questionInput(finding.id));
+    assert.equal(question.finding_id, finding.id);
+    assert.deepEqual(JSON.parse(question.options), questionInput(finding.id).options);
+    assert.equal(question.recommended, 0);
+    assert.deepEqual(store.getDecisionQuestions(stage.id), [question]);
+    assert.deepEqual(store.getDecisionAnswers(stage.id), []);
+    const answer = store.insertDecisionAnswer({ questionId: question.id, action: "approve", answer: "Exports are retained for thirty days." });
+    assert.equal(answer.question_id, question.id);
+    assert.equal(answer.action, "approve");
+    assert.ok(!Number.isNaN(Date.parse(answer.created_at)));
+    assert.deepEqual(store.getDecisionAnswers(stage.id), [answer]);
+  });
+});
+
+test("one question per finding and one answer per question, by UNIQUE constraint", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "retention", "upstream:design:retention");
+    const question = store.insertDecisionQuestion(questionInput(finding.id));
+    assert.throws(() => store.insertDecisionQuestion(questionInput(finding.id)), /UNIQUE constraint failed/);
+    store.insertDecisionAnswer({ questionId: question.id, action: "deny", answer: "" });
+    assert.throws(
+      () => store.insertDecisionAnswer({ questionId: question.id, action: "modify", answer: "changed my mind" }),
+      /UNIQUE constraint failed/
+    );
+  });
+});
+
+test("an invalid decision action is refused by the store and by the migration CHECK", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "retention", "upstream:design:retention");
+    const question = store.insertDecisionQuestion(questionInput(finding.id));
+    assert.throws(
+      () => store.insertDecisionAnswer({ questionId: question.id, action: "waive", answer: "" }),
+      /invalid decision action waive: allowed values are approve, deny, modify/
+    );
+    // The CHECK holds for a writer that bypasses the method.
+    assert.throws(
+      () => store.exec(
+        "INSERT INTO decision_answer (question_id, action, answer, created_at) VALUES (?, ?, ?, ?)",
+        [question.id, "waive", "", new Date().toISOString()]
+      ),
+      /CHECK constraint failed/
+    );
+  });
+});
+
+test("a question on another stage's finding is absent from this stage's questions and answers", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const specReview = store.insertStage(run.id, "spec_review", null);
+    const other = store.insertStage(run.id, "plan_review", specReview.id);
+    const own = store.upsertCanonicalFinding(specReview.id, 1, "retention", "upstream:design:retention");
+    const foreign = store.upsertCanonicalFinding(other.id, 1, "retention", "upstream:specification:retention");
+    const ownQuestion = store.insertDecisionQuestion(questionInput(own.id));
+    const foreignQuestion = store.insertDecisionQuestion(questionInput(foreign.id));
+    store.insertDecisionAnswer({ questionId: foreignQuestion.id, action: "deny", answer: "" });
+    assert.deepEqual(store.getDecisionQuestions(specReview.id).map((q) => q.id), [ownQuestion.id]);
+    assert.deepEqual(store.getDecisionQuestions(other.id).map((q) => q.id), [foreignQuestion.id]);
+    assert.deepEqual(store.getDecisionAnswers(specReview.id), []);
+  });
+});
+
 test("getFindingDecisions reads across every round of a stage, not only the latest", () => {
   withStore((store) => {
     const run = store.insertRun("p", "f-1", "s", "feature");

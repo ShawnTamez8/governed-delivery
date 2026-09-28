@@ -5,13 +5,22 @@ import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { readApprovalRequest, submitApproval } from "./dashboard-approval.ts";
 import type { DashboardRepository } from "./dashboard-config.ts";
+import { submitDecisionAnswer } from "./dashboard-decision.ts";
 import { readRunsResult, readStatusResult } from "./operator-read.ts";
+import { DECISION_ANSWER_MAX_CHARS } from "./spec-decision-stage.ts";
 
 const HOST = "127.0.0.1";
-/** The one route that accepts a write (architecture section 23, 2026-09-26). */
+/** The approval write route (architecture section 23, 2026-09-26). */
 const APPROVAL_ROUTE = /^\/api\/repositories\/([A-Za-z0-9_-]+)\/runs\/(\d+)\/approval$/;
 /** An expiry and a 64-byte signature in base64 fit many times over. */
 const APPROVAL_BODY_MAX_BYTES = 8192;
+/** The decision answer write route: one answer to one spec_review question. */
+const DECISION_ROUTE = /^\/api\/repositories\/([A-Za-z0-9_-]+)\/runs\/(\d+)\/decisions\/(\d+)$/;
+/**
+ * The longest answer `answerQuestion` accepts, with every UTF-16 unit escaped
+ * as `\uXXXX` (6 bytes), plus the object's keys and the action.
+ */
+const DECISION_BODY_MAX_BYTES = DECISION_ANSWER_MAX_CHARS * 6 + 256;
 const SECURITY_HEADERS = {
   "Cache-Control": "no-store",
   "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
@@ -135,6 +144,22 @@ function approvalBody(bytes: Buffer): { expiresAt: string; signature: string } |
   return typeof expiresAt === "string" && typeof signature === "string" ? { expiresAt, signature } : null;
 }
 
+/** The submitted body: exactly `{action, answer?}`, both strings. */
+function decisionBody(bytes: Buffer): { action: string; answer?: string } | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => key !== "action" && key !== "answer")) return null;
+  if (typeof record.action !== "string") return null;
+  if (record.answer === undefined) return { action: record.action };
+  return typeof record.answer === "string" ? { action: record.action, answer: record.answer } : null;
+}
+
 export async function startDashboardServer(
   repositories: readonly DashboardRepository[],
   invocationDirectory: string,
@@ -170,10 +195,13 @@ export async function startDashboardServer(
       }
       const url = new URL(request.url ?? "/", origin);
       const approvalMatch = APPROVAL_ROUTE.exec(url.pathname);
-      if (approvalMatch !== null ? request.method !== "GET" && request.method !== "POST" : request.method !== "GET") {
-        response.setHeader("Allow", approvalMatch !== null ? "GET, POST" : "GET");
-        transportError(response, 405, "method_not_allowed", approvalMatch !== null
-          ? "the approval route permits only GET and POST" : "dashboard routes permit only GET");
+      const decisionMatch = DECISION_ROUTE.exec(url.pathname);
+      if (decisionMatch !== null ? request.method !== "POST"
+        : approvalMatch !== null ? request.method !== "GET" && request.method !== "POST" : request.method !== "GET") {
+        response.setHeader("Allow", decisionMatch !== null ? "POST" : approvalMatch !== null ? "GET, POST" : "GET");
+        transportError(response, 405, "method_not_allowed", decisionMatch !== null
+          ? "the decision route permits only POST"
+          : approvalMatch !== null ? "the approval route permits only GET and POST" : "dashboard routes permit only GET");
         return;
       }
       const asset = assets.get(url.pathname);
@@ -227,6 +255,47 @@ export async function startDashboardServer(
           }
           const result = submitApproval(repository.path, invocationDirectory, { runId, ...body });
           json(response, result.outcome === "approved" ? 200 : result.outcome === "writer_busy" ? 409 : 422, result);
+        }).catch((error: unknown) => {
+          if (!response.headersSent) {
+            transportError(response, 500, "internal_error", error instanceof Error ? error.message : String(error));
+          }
+        });
+        return;
+      }
+      if (decisionMatch !== null) {
+        const repository = byId.get(decisionMatch[1]);
+        const runId = Number(decisionMatch[2]);
+        const findingId = Number(decisionMatch[3]);
+        if (repository === undefined) {
+          transportError(response, 404, "repository_not_found", "repository identifier is not configured");
+          return;
+        }
+        if (!Number.isSafeInteger(runId) || !Number.isSafeInteger(findingId)) {
+          transportError(response, 404, "run_not_found", "run or finding identifier is malformed");
+          return;
+        }
+        // The approval route's rules: a fetch POST always carries Origin.
+        if (request.headers.origin !== origin) {
+          transportError(response, 400, "invalid_origin", "a decision must carry the dashboard's Origin");
+          return;
+        }
+        if (!(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+          transportError(response, 415, "unsupported_media_type", "a decision body must be application/json");
+          return;
+        }
+        readBody(request, DECISION_BODY_MAX_BYTES).then((bytes) => {
+          if (bytes === null) {
+            response.setHeader("Connection", "close");
+            transportError(response, 413, "payload_too_large", `a decision body is at most ${DECISION_BODY_MAX_BYTES} bytes`);
+            return;
+          }
+          const body = decisionBody(bytes);
+          if (body === null) {
+            transportError(response, 400, "invalid_body", "a decision body is a JSON object with string action and optional string answer, and nothing else");
+            return;
+          }
+          const result = submitDecisionAnswer(repository.path, invocationDirectory, { runId, findingId, ...body });
+          json(response, result.outcome === "answered" ? 200 : result.outcome === "writer_busy" ? 409 : 422, result);
         }).catch((error: unknown) => {
           if (!response.headersSent) {
             transportError(response, 500, "internal_error", error instanceof Error ? error.message : String(error));

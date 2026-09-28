@@ -429,6 +429,7 @@ export function runRest(snapshot) {
  */
 export function statusPresentation(status, phase, running = false, rest = null) {
   if (phase === "awaiting_approval") return { label: "AWAITING APPROVAL", tone: "warning", source: "phase" };
+  if (phase === "awaiting_decision") return { label: "AWAITING DECISION", tone: "warning", source: "phase" };
   if (phase === "interrupted_or_inconsistent") {
     return status === "in_progress" && running ? { label: "IN PROGRESS", tone: "success", source: "writer" }
       : { label: "ATTENTION REQUIRED", tone: "danger", source: "phase" };
@@ -1168,6 +1169,7 @@ export function snapshotProjection(snapshot, cliPath, platform = "win32", observ
       writer: snapshot.writer,
       limitations: snapshot.limitations,
     },
+    questions: snapshot.questions,
     stages: snapshot.stages,
     stageViews: snapshot.stages.map((stage) => ({ stage, presentation: stagePresentation(stage) })),
     activityItems: activityItems(snapshot),
@@ -1208,7 +1210,7 @@ function stageName(kind) {
  * which the core checks every recorded run against; the dashboard test pins
  * the two together.
  */
-export const WORKFLOW_STAGES = Object.freeze(["spec", "spec_review", "awaiting_approval", "plan", "plan_review",
+export const WORKFLOW_STAGES = Object.freeze(["spec", "spec_review", "spec_decision", "awaiting_approval", "plan", "plan_review",
   "implementation", "verification", "code_review", "delivery_check"]);
 
 /**
@@ -1305,11 +1307,18 @@ export const BLOCKING_DECISIONS = ["cannot_determine", "upstream_blocking"];
  * finding is open; a code-review finding never carries a disposition, so its
  * status is the final panel's recorded result, and a finding outside the final
  * panel is remediation input from an earlier round rather than an open item.
+ * An operator's answer to the finding's spec_review question outranks its
+ * blocking disposition: approve or modify folds it into the spec (addressed),
+ * and deny leaves it open without holding the run (non-blocking). An
+ * unanswered question stays blocking, because it holds the run.
  * @param {{ decision: { disposition: string } | null, finalPanelBlocking: boolean | null }} card
  * @param {string} stageKind
+ * @param {string | null} [answer] the recorded answer's action, when the finding's question has one
  * @returns {FindingStatus}
  */
-export function findingStatus(card, stageKind) {
+export function findingStatus(card, stageKind, answer = null) {
+  if (answer === "approve" || answer === "modify") return "addressed";
+  if (answer === "deny") return "non_blocking";
   const disposition = card.decision?.disposition ?? null;
   if (disposition === "addressed") return "addressed";
   if (disposition === "rejected_with_rationale") return "rejected";
@@ -1326,8 +1335,9 @@ export function findingStatus(card, stageKind) {
  */
 export function findingStatuses(snapshot) {
   const kinds = new Map(snapshot.stages.map((stage) => [stage.id, stage.kind]));
+  const answers = new Map(snapshot.questions.map((question) => [question.findingId, question.answer?.action ?? null]));
   return new Map(snapshot.evidence.findings.map((finding) =>
-    [finding.id, findingStatus(finding, kinds.get(finding.stageId) ?? "")]));
+    [finding.id, findingStatus(finding, kinds.get(finding.stageId) ?? "", answers.get(finding.id) ?? null)]));
 }
 
 /**
@@ -1517,11 +1527,12 @@ export function runOutcome(snapshot, statuses) {
   }
   const last = segments.at(-1) ?? null;
   const waiting = snapshot.phase === "awaiting_approval";
+  const deciding = snapshot.phase === "awaiting_decision";
   const rest = runRest(snapshot);
   return {
     ...base,
-    tone: waiting ? "warning" : "active",
-    headline: waiting ? "Run awaiting approval"
+    tone: waiting || deciding ? "warning" : "active",
+    headline: waiting ? "Run awaiting approval" : deciding ? "Run awaiting operator decisions"
       : rest === "start" ? "Run ready to start" : rest === "resume" ? "Run ready to resume" : "Run in progress",
     sentence: last === null ? "No stage is recorded yet."
       : `The latest recorded stage is ${stageName(last.kind)} (${last.label.toLowerCase()}).`,

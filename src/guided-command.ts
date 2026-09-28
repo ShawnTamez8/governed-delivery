@@ -5,6 +5,7 @@ import type { Readable, Writable } from "node:stream";
 import { appendAudit } from "./audit.ts";
 import { approvalPayload, loadPublicKey, validateExpiry } from "./approval.ts";
 import { approveRun, buildBinding } from "./approval-stage.ts";
+import { answerQuestion } from "./spec-decision-stage.ts";
 import { acquireLock } from "./lock.ts";
 import { readRunSnapshot, type RunSnapshot } from "./operator-state.ts";
 import { formatGuidedApproval, formatGuidedTerminal } from "./operator-output.ts";
@@ -395,6 +396,72 @@ async function approvalHandoff(
   }
 }
 
+// The spec review asked the operator something. Each answer goes through the
+// same answerQuestion core and writer lock as `decide`; leaving any question
+// unanswered keeps the run paused, exactly as an unsigned approval does.
+async function decisionHandoff(
+  rootDir: string,
+  runId: number,
+  prompt: GuidedPrompt,
+  stdout: Writable,
+): Promise<"paused" | "answered"> {
+  const observed = snapshot(rootDir, runId);
+  // Answers are immutable, so none is taken on a boundary that cannot continue.
+  if (!observed.workflowAction.eligible) {
+    throw new GuidedCommandError(`run ${runId} cannot take operator decisions: ${
+      observed.workflowAction.reasons.map((reason) => `${reason.code}: ${reason.reason}`).join("; ")}`);
+  }
+  const open = observed.questions.filter((question) => question.answer === null);
+  stdout.write(`Step 4: The specification review needs ${open.length} operator decision(s) for run ${runId}. Answers are immutable.\n`);
+  for (const question of open) {
+    stdout.write(
+      `\nFinding ${question.findingId}: ${question.text}\n` +
+      question.options.map((option, index) =>
+        `  ${index + 1}. ${option.label}${index === question.recommended ? " (recommended)" : ""}: ${option.answer}\n`).join("") +
+      `  Why recommended: ${question.why}\n\n` +
+      "Decision options:\n" +
+      "  1. Approve - Accept the recommended answer\n" +
+      "  2. Deny    - Leave this question open in the specification\n" +
+      "  3. Modify  - Write your own answer\n" +
+      "  4. Exit    - Leave the run paused to decide later\n\n",
+    );
+    let action: "approve" | "deny" | "modify" | null = null;
+    let answer: string | undefined;
+    for (let attempt = 0; action === null; attempt++) {
+      if (attempt === 3) throw new GuidedCommandError(`no valid decision was selected for finding ${question.findingId}`, 3);
+      const choice = (await prompt(`Action for finding ${question.findingId} (1-4) [default 4]: `)).trim().toLowerCase();
+      if (choice === "" || choice === "4" || choice === "exit") {
+        stdout.write(`Run ${runId} remains paused awaiting operator decisions.\n`);
+        return "paused";
+      }
+      if (choice === "1" || choice === "approve") action = "approve";
+      else if (choice === "2" || choice === "deny") action = "deny";
+      else if (choice === "3" || choice === "modify") {
+        const text = (await prompt("Your answer (one line): ")).trim();
+        if (text === "") stdout.write("An empty answer is not an answer; choose again.\n");
+        else { action = "modify"; answer = text; }
+      } else {
+        stdout.write("Invalid selection. Please choose 1, 2, 3, or 4.\n");
+      }
+    }
+    let release: (() => void) | null = null;
+    let store = null as ReturnType<typeof openStore> | null;
+    try {
+      release = acquireLock(rootDir);
+      const schema = openStore(rootDir, { readOnly: true });
+      schema.close();
+      store = openStore(rootDir);
+      const recorded = answerQuestion(store, { runId, findingId: question.findingId, action, answer });
+      if (!recorded.ok) throw new GuidedCommandError(recorded.reason, 3);
+      stdout.write(`Recorded ${action} for finding ${question.findingId}; ${recorded.open} question(s) still open.\n`);
+    } finally {
+      store?.close();
+      release?.();
+    }
+  }
+  return "answered";
+}
+
 function terminalResult(rootDir: string, snapshotValue: RunSnapshot, stdout: Writable): number {
   stdout.write(formatGuidedTerminal(rootDir, snapshotValue));
   return snapshotValue.run.status === "completed" ? 0 : 1;
@@ -495,6 +562,10 @@ export async function runGuidedCommand(
 
     let observed = snapshot(rootDir, runId);
     if (observed.run.status !== "in_progress") return terminalResult(rootDir, observed, stdout);
+    if (observed.workflowAction.group === "decide") {
+      if (await decisionHandoff(rootDir, runId, prompt, stdout) === "paused") return 3;
+      observed = snapshot(rootDir, runId);
+    }
     if (observed.workflowAction.group === "approval") {
       const approval = await approvalHandoff(rootDir, runId, prompt, stdout);
       if (approval === "paused") return 3;
@@ -504,21 +575,21 @@ export async function runGuidedCommand(
       stdout.write(`Step 5: Paid execution consent for run ${runId}.\n${preview}`);
       return (await prompt("Execute every group in this preview? Type yes to consent: ")).trim().toLowerCase() === "yes";
     };
-    const advanced = await advanceRun(rootDir, runId, { consent, stderr });
+    let advanced = await advanceRun(rootDir, runId, { consent, stderr });
     if (advanced.reason !== null) stderr.write(`${advanced.reason}\n`);
-    const result = advanced.result as { snapshot: RunSnapshot | null };
-    if (advanced.outcome === "awaiting_approval") {
-      const approval = await approvalHandoff(rootDir, runId, prompt, stdout);
-      if (approval === "paused") return 3;
-      const continued = await advanceRun(rootDir, runId, { consent, stderr });
-      if (continued.reason !== null) stderr.write(`${continued.reason}\n`);
-      const continuedResult = continued.result as { snapshot: RunSnapshot | null };
-      if (continuedResult.snapshot !== null &&
-          (continuedResult.snapshot.run.status !== "in_progress" || continuedResult.snapshot.phase === "completed")) {
-        return terminalResult(rootDir, continuedResult.snapshot, stdout);
-      }
-      return 1;
+    // Each human boundary is crossed at most once per invocation: the spec
+    // group may pause for decisions, the decision group then pauses for
+    // approval, and approval hands over to the remaining execution groups.
+    for (const boundary of ["awaiting_decision", "awaiting_approval"] as const) {
+      if (advanced.outcome !== boundary) continue;
+      const handed = boundary === "awaiting_decision"
+        ? await decisionHandoff(rootDir, runId, prompt, stdout)
+        : await approvalHandoff(rootDir, runId, prompt, stdout);
+      if (handed === "paused") return 3;
+      advanced = await advanceRun(rootDir, runId, { consent, stderr });
+      if (advanced.reason !== null) stderr.write(`${advanced.reason}\n`);
     }
+    const result = advanced.result as { snapshot: RunSnapshot | null };
     if (result.snapshot !== null &&
         (result.snapshot.run.status !== "in_progress" || result.snapshot.phase === "completed")) {
       return terminalResult(rootDir, result.snapshot, stdout);

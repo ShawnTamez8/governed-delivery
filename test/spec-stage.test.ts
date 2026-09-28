@@ -195,7 +195,7 @@ test("Task 5 low-level spec accepts an otherwise valid aged run and still refuse
     const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
     assert.ok(result.ok, result.ok ? "" : result.reason);
     const chain = store.getStageChain(runId);
-    assert.deepEqual(chain.map((stage) => stage.kind), ["spec", "spec_review"]);
+    assert.deepEqual(chain.map((stage) => stage.kind), ["spec", "spec_review", "spec_decision"]);
     assert.ok(chain.every((stage) => stage.status === "passed" && stage.gate_result === "pass"));
     assert.ok(readFileSync(result.specPath, "utf8").includes("REVISED-spec"));
     assert.equal(store.getRun(runId)!.created_at, createdAt);
@@ -220,8 +220,9 @@ test("happy path: a clean-panel round gates on decision completeness, not a clos
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
     if (!result.ok) return;
     const chain = store.getStageChain(runId);
-    assert.deepEqual(chain.map((s) => s.kind), ["spec", "spec_review"]);
+    assert.deepEqual(chain.map((s) => s.kind), ["spec", "spec_review", "spec_decision"]);
     assert.equal(chain[1].input_stage_id, chain[0].id);
+    assert.equal(chain[2].input_stage_id, chain[1].id);
     assert.ok(chain.every((s) => s.status === "passed"));
     assert.ok(chain.every((s) => s.output_ref === result.specPath));
     const spec = readFileSync(result.specPath, "utf8");
@@ -328,14 +329,16 @@ test("a configured round count runs panel then reconciliation that many times, w
   });
 });
 
-test("the gate blocks on a cannot_determine decision from an earlier round even though a later round finds nothing new", async () => {
+test("the gate blocks on a converted cannot_determine decision from an earlier round even though a later round finds nothing new", async () => {
   await withRun(async ({ store, root, runId }) => {
-    // Round 1's reconciler converts one of its two decisions to
-    // cannot_determine outright (no grounding, no claim); the other still
-    // claims the revision, so the revised document still satisfies the
-    // normative accounting. Round 2's panel then sees the REVISED-spec
-    // marker and reports nothing, so its own reconciliation returns zero
-    // decisions — proving the gate still blocks on round 1's alone.
+    // Round 1's reconciler rejects one of its two decisions with a grounding
+    // excerpt the design never contains, so deterministic validation converts
+    // it to cannot_determine — a converted decision carries no question and
+    // still ends the run. The other decision claims the revision, so the
+    // revised document still satisfies the normative accounting. Round 2's
+    // panel then sees the REVISED-spec marker and reports nothing, so its own
+    // reconciliation returns zero decisions — proving the gate still blocks
+    // on round 1's alone.
     const scratch = join(root, "emit-spec-stage-earlier-round-blocks.mjs");
     const source = fixtureSource().replace(
       `  const decisions = ids.map((id, index) => ({
@@ -360,14 +363,20 @@ test("the gate blocks on a cannot_determine decision from an earlier round even 
         : [],
   }));`,
       `  const decisions = ids.map((id, index) => {
-    const disposition = index === 0 ? "cannot_determine" : "addressed";
+    const disposition = index === 0 ? "rejected_with_rationale" : "addressed";
     const base = {
       findingId: id,
       disposition,
-      rationale: index === 0 ? "fixture cannot determine" : "fixture addressed the finding",
+      rationale: index === 0 ? "fixture rejects without support" : "fixture addressed the finding",
     changedLocations: ["AC-001"],
     };
-    if (disposition !== "addressed") return base;
+    if (disposition !== "addressed") {
+      return {
+        ...base,
+        changedLocations: [],
+        grounding: { source: "design", location: "# design", excerpt: "words no design in this suite contains" },
+      };
+    }
     return {
       ...base,
       normativeChanges:
@@ -398,6 +407,8 @@ test("the gate blocks on a cannot_determine decision from an earlier round even 
     const decisions = store.getFindingDecisions(reviewStage.id);
     assert.equal(decisions.length, 2, "round 2 produced no new decisions to report on");
     const blocked = decisions.find((d) => d.disposition === "cannot_determine")!;
+    assert.match(blocked.rationale, /\[deterministic validation: /, "the block is a conversion, not a model choice");
+    assert.equal(store.getDecisionQuestions(reviewStage.id).length, 0, "a converted decision asks the operator nothing");
     assert.match(result.reason, new RegExp(`finding id\\(s\\) ${blocked.finding_id}`));
     assert.equal(store.getProposalsForStage(reviewStage.id).length, 0, "cannot_determine claims no proposal candidate");
     assert.equal(store.getRun(runId)!.status, "blocked");
@@ -499,7 +510,7 @@ test("upstream_follow_up stores a proposal, names every source finding, and does
   });
 });
 
-test("upstream_blocking stores a proposal and blocks, naming both the finding and the proposal", async () => {
+test("upstream_blocking with a question stores a blocking proposal and pauses for the operator instead of blocking", async () => {
   await withRun(async ({ store, root, runId }) => {
     const scratch = join(root, "emit-spec-stage-blocking.mjs");
     const source = fixtureSource().replace(
@@ -536,6 +547,15 @@ test("upstream_blocking stores a proposal and blocks, naming both the finding an
       return {
         ...base,
         proposal: { title: "design gap", problem: "the design never says this", whyUpstream: "the artifact cannot invent it" },
+        question: {
+          text: "Who may see the export?",
+          options: [
+            { label: "Owner only", answer: "Only the owner may see the export." },
+            { label: "Any member", answer: "Any member may see the export." },
+          ],
+          recommended: 1,
+          why: "the design names shared notes",
+        },
       };
     }
     return {
@@ -561,16 +581,41 @@ test("upstream_blocking stores a proposal and blocks, naming both the finding an
     writeFileSync(scratch, source);
     freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
     const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
-    assert.equal(result.ok, false);
-    if (result.ok) return;
-    const reviewStage = store.getStageChain(runId)[1];
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    if (!result.ok) return;
+    assert.equal(result.stageIds.specDecision, null);
+    const chain = store.getStageChain(runId);
+    assert.deepEqual(chain.map((s) => [s.kind, s.status]), [["spec", "passed"], ["spec_review", "passed"]]);
+    assert.equal(store.getRun(runId)!.status, "in_progress", "an open question pauses, it does not block");
+    const reviewStage = chain[1];
     const decisions = store.getFindingDecisions(reviewStage.id);
     const routed = decisions.find((d) => d.disposition === "upstream_blocking")!;
+    // The proposal row keeps its blocking route (hazard 16): the question
+    // changes what the gate does with it, not how it was routed.
     const proposals = store.getProposalsForStage(reviewStage.id);
     assert.equal(proposals.length, 1);
     assert.equal(proposals[0].route, "blocking_dependency");
-    assert.match(result.reason, new RegExp(`${routed.finding_id} \\(proposal ${proposals[0].id}\\)`));
-    assert.equal(store.getRun(runId)!.status, "blocked");
+    const questions = store.getDecisionQuestions(reviewStage.id);
+    assert.equal(questions.length, 1);
+    assert.equal(questions[0].finding_id, routed.finding_id);
+    assert.equal(questions[0].text, "Who may see the export?");
+    assert.equal(questions[0].recommended, 1);
+    assert.deepEqual(JSON.parse(questions[0].options), [
+      { label: "Owner only", answer: "Only the owner may see the export." },
+      { label: "Any member", answer: "Any member may see the export." },
+    ]);
+    assert.equal(store.getDecisionAnswers(reviewStage.id).length, 0);
+    const open = store.query<{ summary: string }>(
+      "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.questions.open'",
+      [runId]
+    );
+    assert.equal(open.length, 1);
+    assert.match(open[0].summary, new RegExp(`questions=${routed.finding_id}\\b`));
+    assert.equal(
+      store.query("SELECT * FROM audit WHERE run_id = ? AND action = 'spec.gate.pass'", [runId]).length,
+      1,
+      "the gate still records the reviewed spec's hash and risk"
+    );
     // The blocking route records the same event contract as the advancing
     // one — the difference is the route it carries, not whether it audits.
     const recorded = store.query<{ summary: string }>(
@@ -1809,4 +1854,368 @@ test("a self-critique revision that declares the run's own plan document blocks 
     },
     { baseDirs: ["src"] }
   );
+});
+
+// --- disclosed open decisions ------------------------------------------------
+
+/** The stock reconcile decisions, the same literal the scratch fixtures above replace. */
+const STOCK_RECONCILE_DECISIONS = `  const decisions = ids.map((id, index) => ({
+    findingId: id,
+    disposition: "addressed",
+    rationale: "fixture addressed the finding",
+    changedLocations: ["AC-001"],
+    normativeChanges:
+      revising && index === 0
+        ? [
+            {
+              artifactLocation: "AC-001",
+              artifactText: "AC-001: the thing works REVISED-spec",
+              grounding: { source: "design", location: "# design", excerpt: "design" },
+            },
+            {
+              artifactLocation: "AC-001",
+              artifactText: supersededCriterion(current),
+              grounding: { source: "design", location: "# design", excerpt: "design" },
+            },
+          ]
+        : [],
+  }));`;
+
+/**
+ * Reads the disclosed finding ids out of the reconcile prompt the stage
+ * rendered, rather than assuming an order, and defines the stock answer for
+ * a reviewer's finding: the first one claims both halves of the revision.
+ */
+const DISCLOSURE_PRELUDE = `  const disclosed = new Set(
+    [...stdin.matchAll(/- finding (\\d+)\\n  - report from spec-author:/g)].map((m) => Number(m[1]))
+  );
+  const firstOwn = ids.find((id) => !disclosed.has(id));
+  const own = (id) => ({
+    findingId: id,
+    disposition: "addressed",
+    rationale: "fixture addressed the finding",
+    changedLocations: ["AC-001"],
+    normativeChanges:
+      revising && id === firstOwn
+        ? [
+            {
+              artifactLocation: "AC-001",
+              artifactText: "AC-001: the thing works REVISED-spec",
+              grounding: { source: "design", location: "# design", excerpt: "design" },
+            },
+            {
+              artifactLocation: "AC-001",
+              artifactText: supersededCriterion(current),
+              grounding: { source: "design", location: "# design", excerpt: "design" },
+            },
+          ]
+        : [],
+  });
+`;
+
+/**
+ * The stock fixture with one open decision in BASE_SPEC, so the draft, the
+ * self-critique, and REVISED_SPEC all carry it, optionally with the reconcile
+ * decisions replaced by `decisions` (which may use `disclosed` and `own`).
+ */
+function disclosureSource(decisions?: string): string {
+  const base = fixtureSource();
+  let source = base.replace(
+    "- AC-001: the thing works\n`;",
+    "- AC-001: the thing works\n\n## Open decisions\n\n- OD-001 (high): who may download the export archive\n`;"
+  );
+  assert.notEqual(source, base, "the open-decision substitution must apply");
+  if (decisions !== undefined) {
+    const replaced = source.replace(STOCK_RECONCILE_DECISIONS, DISCLOSURE_PRELUDE + decisions);
+    assert.notEqual(replaced, source, "the decision substitution must apply");
+    source = replaced;
+  }
+  return source;
+}
+
+function disclosedFindings(store: Store, runId: number) {
+  const reviewStage = store.getStageChain(runId)[1];
+  return store.getCanonicalFindings(reviewStage.id).filter((f) => f.intent_key === "disclosed-open-decision");
+}
+
+test("a disclosed open decision is recorded as a round-1 upstream finding reported by the self-critique dispatch", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-spec-stage-disclosed.mjs");
+    writeFileSync(scratch, disclosureSource());
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+
+    const findings = disclosedFindings(store, runId);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].location, "upstream:design:od-001");
+    assert.equal(findings[0].round, 1);
+    const reports = store.getFindingReports(findings[0].id);
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0].severity, "high");
+    assert.equal(reports[0].classification, "upstream");
+    assert.equal(reports[0].subject, "OD-001: who may download the export archive");
+    // Draft, then self-critique: the disclosure belongs to the dispatch that
+    // produced the specification the panel reviewed.
+    const specStage = store.getStageChain(runId)[0];
+    const authorRuns = store.query<{ id: number }>(
+      "SELECT id FROM agent_run WHERE stage_id = ? AND role = 'author' ORDER BY id",
+      [specStage.id]
+    );
+    assert.equal(reports[0].agent_run_id, authorRuns[1].id);
+
+    const reviewStage = store.getStageChain(runId)[1];
+    assert.ok(
+      store.getFindingDecisions(reviewStage.id).some((d) => d.finding_id === findings[0].id),
+      "the disclosure received a decision"
+    );
+    const events = store.query<{ summary: string }>(
+      "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.disclosure.record'",
+      [runId]
+    );
+    assert.equal(events.length, 1);
+    assert.match(events[0].summary, new RegExp(`OD-001 as finding ${findings[0].id} at upstream:design:od-001 \\(high\\)`));
+    assert.equal(verifyAuditChain(store), null);
+  });
+});
+
+test("a disclosed open decision answered upstream_blocking asks the operator its question", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-spec-stage-disclosed-blocking.mjs");
+    writeFileSync(
+      scratch,
+      disclosureSource(`  const decisions = ids.map((id) =>
+    disclosed.has(id)
+      ? {
+          findingId: id,
+          disposition: "upstream_blocking",
+          rationale: "the design leaves this open",
+          changedLocations: [],
+          proposal: { title: "export access", problem: "the design never says who may download the archive", whyUpstream: "the spec cannot invent it" },
+          question: {
+            text: "Who may download the export archive?",
+            options: [
+              { label: "Owner", answer: "Only the archive owner may download it." },
+              { label: "Admins", answer: "Only administrators may download it." },
+            ],
+            recommended: 0,
+            why: "the design scopes exports to their owner",
+          },
+        }
+      : own(id)
+  );`)
+    );
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const [finding] = disclosedFindings(store, runId);
+    const reviewStage = store.getStageChain(runId)[1];
+    const proposals = store.getProposalsForStage(reviewStage.id);
+    assert.equal(proposals.length, 1);
+    assert.equal(proposals[0].route, "blocking_dependency");
+    const questions = store.getDecisionQuestions(reviewStage.id);
+    assert.deepEqual(questions.map((q) => q.finding_id), [finding.id]);
+    assert.equal(store.getStageChain(runId).length, 2, "no spec_decision while a question is open");
+    assert.equal(store.getRun(runId)!.status, "in_progress");
+  });
+});
+
+test("a reconciliation that leaves a disclosed open decision unanswered is refused as incomplete", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-spec-stage-disclosed-missing.mjs");
+    writeFileSync(scratch, disclosureSource("  const decisions = ids.filter((id) => !disclosed.has(id)).map(own);"));
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    const [finding] = disclosedFindings(store, runId);
+    assert.match(
+      result.reason,
+      new RegExp(`reconciliation is incomplete: no decision for canonical finding id\\(s\\) ${finding.id}\\b`)
+    );
+    const reviewStage = store.getStageChain(runId)[1];
+    assert.equal(store.getFindingDecisions(reviewStage.id).length, 0, "no decision was persisted");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("a reconciliation that adds an open decision is refused before any decision is persisted", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-spec-stage-disclosed-added.mjs");
+    const source = disclosureSource(`  const decisions = ids.map((id) => ({
+    findingId: id,
+    disposition: "addressed",
+    rationale: "fixture addressed the finding",
+    changedLocations: ["## Open decisions"],
+    normativeChanges: [],
+  }));`).replace(
+      "const artifact = revising ? REVISED_SPEC : current;",
+      'const artifact = current + "\\n- OD-002 (low): a newly noticed question\\n";'
+    );
+    assert.ok(source.includes("a newly noticed question"), "the artifact substitution must apply");
+    writeFileSync(scratch, source);
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /spec reconciliation added open decision\(s\) OD-002/);
+    const invalid = store.query<{ summary: string }>(
+      "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.reconcile.invalid'",
+      [runId]
+    );
+    assert.equal(invalid.length, 1);
+    assert.match(invalid[0].summary, /OD-002/);
+    const reviewStage = store.getStageChain(runId)[1];
+    assert.equal(store.getFindingDecisions(reviewStage.id).length, 0, "no decision was persisted");
+    const onDisk = readFileSync(join(root, "docs", "features", "demo", "spec.md"), "utf8");
+    assert.ok(!onDisk.includes("OD-002"), "the refused revision was never written");
+  });
+});
+
+test("a disclosed open decision is recorded in round 1 only, however many rounds run", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // REVISED_SPEC still carries OD-001, so a stage that recorded disclosures
+    // every round would raise a second row in round 2.
+    const scratch = join(root, "emit-spec-stage-disclosed-rounds.mjs");
+    writeFileSync(scratch, disclosureSource());
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    freezePolicyInto(store, root, runId, { specReviewRounds: 2 });
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    if (!result.ok) return;
+    assert.ok(readFileSync(result.specPath, "utf8").includes("- OD-001 (high)"), "round 2 reviewed a spec still carrying the entry");
+    assert.equal(agentRunCounts(store, runId).reviewer, 4, "both rounds ran a panel");
+    const findings = disclosedFindings(store, runId);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].round, 1);
+    assert.equal(
+      store.query("SELECT * FROM audit WHERE run_id = ? AND action = 'spec.disclosure.record'", [runId]).length,
+      1
+    );
+  });
+});
+
+// --- operator questions (spec-operator-decisions Task 4) ---------------------
+
+/**
+ * Select an operator-question mode of the stock fixture by writing its marker
+ * into the design, which every reconcile prompt carries (the env-var route
+ * cannot reach the spawned child).
+ */
+function designWithMarker(root: string, marker: string): void {
+  writeFileSync(join(root, "docs", "features", "demo", "design.md"), `# design\n\n${marker}\n`);
+}
+
+test("a model-chosen cannot_determine with a question pauses the run with spec_review passed and no spec_decision", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    designWithMarker(root, "FIXTURE-ASK-CANNOT");
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    if (!result.ok) return;
+    assert.equal(result.stageIds.specDecision, null);
+    const chain = store.getStageChain(runId);
+    assert.deepEqual(chain.map((s) => [s.kind, s.status]), [["spec", "passed"], ["spec_review", "passed"]]);
+    assert.equal(store.getRun(runId)!.status, "in_progress");
+    const decision = store.getFindingDecisions(chain[1].id).find((d) => d.disposition === "cannot_determine")!;
+    assert.ok(decision, "the model's cannot_determine was stored as chosen");
+    assert.deepEqual(store.getDecisionQuestions(chain[1].id).map((q) => q.finding_id), [decision.finding_id]);
+    assert.equal(store.getProposalsForStage(chain[1].id).length, 0, "cannot_determine claims no proposal");
+    const recorded = store.query<{ summary: string }>(
+      "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.question.record'",
+      [runId]
+    );
+    assert.equal(recorded.length, 1);
+    assert.equal(verifyAuditChain(store), null);
+  });
+});
+
+test("a converted cannot_determine still blocks the run and asks nothing", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    designWithMarker(root, "FIXTURE-UNGROUNDED-REJECTION");
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    const reviewStage = store.getStageChain(runId)[1];
+    const converted = store.getFindingDecisions(reviewStage.id).find((d) => d.disposition === "cannot_determine")!;
+    assert.ok(converted, "the rejection was converted and stored");
+    assert.match(converted.rationale, /\[deterministic validation: /);
+    assert.match(result.reason, new RegExp(`finding id\\(s\\) .*\\b${converted.finding_id}\\b`));
+    assert.equal(store.getDecisionQuestions(reviewStage.id).length, 0);
+    assert.equal(store.getRun(runId)!.status, "blocked");
+    assert.equal(
+      store.query("SELECT * FROM audit WHERE run_id = ? AND action = 'spec.questions.open'", [runId]).length,
+      0
+    );
+  });
+});
+
+test("an upstream_blocking decision without a question is refused as an invalid reconciliation", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    designWithMarker(root, "FIXTURE-ASK-OPERATOR");
+    const scratch = join(root, "emit-spec-stage-ask-no-question.mjs");
+    const base = fixtureSource();
+    const source = base.replace(
+      'changedLocations: [], proposal: PROPOSAL, question: QUESTION }],',
+      "changedLocations: [], proposal: PROPOSAL }],"
+    );
+    assert.notEqual(source, base, "the question substitution must apply");
+    writeFileSync(scratch, source);
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /is upstream_blocking without a question for the operator/);
+    const invalid = store.query("SELECT * FROM audit WHERE run_id = ? AND action = 'spec.reconcile.invalid'", [runId]);
+    assert.equal(invalid.length, 1);
+    const reviewStage = store.getStageChain(runId)[1];
+    assert.equal(store.getFindingDecisions(reviewStage.id).length, 0, "no decision was persisted");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+test("a review with no open question passes three stages and records the spec_decision gate", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    if (!result.ok) return;
+    const chain = store.getStageChain(runId);
+    assert.deepEqual(
+      chain.map((s) => [s.kind, s.status, s.gate_result]),
+      [["spec", "passed", "pass"], ["spec_review", "passed", "pass"], ["spec_decision", "passed", "pass"]]
+    );
+    assert.equal(result.stageIds.specDecision, chain[2].id);
+    assert.equal(chain[2].output_ref, result.specPath);
+    const review = store.query<{ summary: string }>(
+      "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.gate.pass'",
+      [runId]
+    )[0]!;
+    const decision = store.query<{ summary: string; stage_id: number }>(
+      "SELECT summary, stage_id FROM audit WHERE run_id = ? AND action = 'spec_decision.gate.pass'",
+      [runId]
+    );
+    assert.equal(decision.length, 1);
+    assert.equal(decision[0].stage_id, chain[2].id);
+    const onDisk = sha256Hex(normalizeText(readFileSync(result.specPath, "utf8")));
+    const [, hash, risk] = /specHash=([0-9a-f]{64}); risk=(low|standard|high)/.exec(review.summary)!;
+    assert.equal(hash, onDisk);
+    assert.match(decision[0].summary, new RegExp(`specHash=${hash}; risk=${risk}; answers=0; folded=0`));
+    assert.equal(
+      store.query("SELECT * FROM audit WHERE run_id = ? AND action = 'spec.questions.open'", [runId]).length,
+      0
+    );
+    assert.equal(verifyAuditChain(store), null);
+  });
+});
+
+test("an upstream_follow_up decision asks no question and the run reaches spec_decision", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    designWithMarker(root, "FIXTURE-FOLLOW-UP");
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const chain = store.getStageChain(runId);
+    assert.deepEqual(chain.map((s) => s.kind), ["spec", "spec_review", "spec_decision"]);
+    assert.ok(store.getFindingDecisions(chain[1].id).some((d) => d.disposition === "upstream_follow_up"));
+    assert.equal(store.getProposalsForStage(chain[1].id)[0].route, "follow_up");
+    assert.equal(store.getDecisionQuestions(chain[1].id).length, 0);
+  });
 });

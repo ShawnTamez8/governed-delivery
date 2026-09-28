@@ -178,21 +178,22 @@ export async function runPlanStage(
   // edited after approval, and a plan built from an edited spec would carry a
   // signature that never authorized it. Re-verified before anything can be
   // dispatched, with the approval gate's own wording so one defect reads the
-  // same wherever it surfaces.
+  // same wherever it surfaces. The spec_decision gate is the one approval
+  // binds: after a fold, spec.gate.pass still names the reviewed spec.
   const specHash = sha256Hex(normalizeText(specContent));
   const gateEvent = store.query<{ summary: string }>(
-    "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.gate.pass' ORDER BY id DESC LIMIT 1",
+    "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec_decision.gate.pass' ORDER BY id DESC LIMIT 1",
     [runId]
   )[0];
   if (!gateEvent) {
     return {
       ok: false,
-      reason: `run ${runId} has no spec.gate.pass audit event: the spec_review gate never recorded what it approved`,
+      reason: `run ${runId} has no spec_decision.gate.pass audit event: the spec_decision gate never recorded what it passed`,
     };
   }
   const gated = /specHash=([0-9a-f]{64}); risk=(low|standard|high)/.exec(gateEvent.summary);
   if (!gated) {
-    return { ok: false, reason: `run ${runId}'s spec.gate.pass event does not record a spec hash and risk` };
+    return { ok: false, reason: `run ${runId}'s spec_decision.gate.pass event does not record a spec hash and risk` };
   }
   if (gated[1] !== specHash) {
     return { ok: false, reason: `the spec has changed since review: gated ${gated[1]}, on disk ${specHash}` };

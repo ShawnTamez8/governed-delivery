@@ -332,7 +332,11 @@ test("recorded remediation-chain presentation preserves partial telemetry, immut
       round: r.round, commit: r.remediation.resultingCommit, outcome: r.remediation.verification.outcome,
       commands: r.remediation.verification.commands,
     }]));
-    assert.equal(snapshot.phase, "completed");
+    // The recorded run predates spec_decision, so its chain is no longer an
+    // architecture prefix: it reads as inconsistent (no compatibility
+    // handling, hard rule 3) while every recorded fact above stays presented.
+    assert.equal(snapshot.phase, "interrupted_or_inconsistent");
+    assert.ok(snapshot.workflowAction.reasons.some((r) => r.code === "chain_incomplete"));
     assert.equal(snapshot.workflowAction.eligible, false);
     assert.equal(snapshot.delivery.branch, null);
     assert.equal(snapshot.delivery.deliveredCommit, null);
@@ -610,19 +614,21 @@ plan_for: ${specHash}
     };
     if (prefix >= 1) { writeFileSync(specPath, specification); stage("spec", specPath); }
     if (prefix >= 2) audit(stage("spec_review", specPath), "spec.gate.pass", `spec_review gate passed in round 1; specHash=${specHash}; risk=${risk}`);
-    if (prefix >= 3) {
+    if (prefix >= 3) audit(stage("spec_decision", specPath), "spec_decision.gate.pass",
+      `spec_decision gate passed; specHash=${specHash}; risk=${risk}; answers=0; folded=0`);
+    if (prefix >= 4) {
       const approvalStage = stage("awaiting_approval", specPath);
       const approval = store.insertApproval({ runId: run.id, featureId: run.feature_id, specHash, startingCommit,
         profileHash: store.getRun(run.id)!.profile_ref!, risk, scope: canonicalJson(scope),
         expiresAt: new Date(0).toISOString(), signature: "schema-permitted historical approval", signer: "fixture-signer" });
       audit(approvalStage, "approval.granted", `approval ${approval.id} verified for run ${run.id}, signer ${approval.signer}; signer not bound at intake`);
     }
-    if (prefix >= 4) { writeFileSync(planPath, planText); stage("plan", planPath); }
-    if (prefix >= 5) audit(stage("plan_review", planPath), "plan.gate.pass",
+    if (prefix >= 5) { writeFileSync(planPath, planText); stage("plan", planPath); }
+    if (prefix >= 6) audit(stage("plan_review", planPath), "plan.gate.pass",
       `plan_review gate passed in round 1; planHash=${sha256Hex(normalizeText(planText))}; planFor=${specHash}`);
     const worktree = worktreePath(root, run.id);
     let initialCommit: string | null = null;
-    if (prefix >= 6) {
+    if (prefix >= 7) {
       git(root, "worktree", "add", "-q", worktree, "-b", `gov/demo/${run.id}`, startingCommit);
       const docs = join(worktree, "docs", "features", "demo");
       mkdirSync(docs, { recursive: true });
@@ -637,15 +643,15 @@ plan_for: ${specHash}
       initialCommit = commitAll(worktree);
       audit(stage("implementation", worktree), "implementation.gate.pass", formatImplementationGate({ base, head: initialCommit }));
     }
-    if (prefix >= 7) {
+    if (prefix >= 8) {
       const result = await runVerificationStage(store, { runId: run.id, rootDir: root });
       assert.ok(result.ok, result.ok ? "" : result.reason);
     }
-    if (prefix >= 8) {
+    if (prefix >= 9) {
       const result = await runCodeReviewStage(store, profile.executor, { runId: run.id, rootDir: root });
       assert.equal(result.ok, !options.blockedReview, result.ok ? "" : result.reason);
     }
-    if (prefix >= 9) {
+    if (prefix >= 10) {
       const result = runDeliveryStage(store, { runId: run.id, rootDir: root });
       assert.ok(result.ok, result.ok ? "" : result.reason);
     }
@@ -660,9 +666,9 @@ plan_for: ${specHash}
 
 test("every architecture prefix exposes only its exact next group, including the approval pause without a row", async (t) => {
   const expected = [
-    [0, "spec", "ready"], [2, "approval", "awaiting_approval"], [3, "plan", "ready"],
-    [5, "implementation", "ready"], [6, "verification", "ready"], [7, "code_review", "ready"],
-    [8, "delivery_check", "ready"], [9, null, "completed"],
+    [0, "spec", "ready"], [3, "approval", "awaiting_approval"], [4, "plan", "ready"],
+    [6, "implementation", "ready"], [7, "verification", "ready"], [8, "code_review", "ready"],
+    [9, "delivery_check", "ready"], [10, null, "completed"],
   ] as const;
   for (const [prefix, group, phase] of expected) await t.test(`prefix ${prefix}`, async () => {
     await withBoundary(prefix, ({ store, root, runId }) => {
@@ -671,19 +677,83 @@ test("every architecture prefix exposes only its exact next group, including the
       assert.equal(snapshot.workflowAction.group, group);
       assert.equal(snapshot.workflowAction.eligible, group !== null, JSON.stringify(snapshot.workflowAction.reasons));
       assert.equal(snapshot.stages.length, prefix);
-      if (prefix === 2) {
+      if (prefix === 3) {
         assert.equal(store.getApproval(runId), undefined);
         assert.equal(snapshot.approval.state, "missing");
         assert.ok(snapshot.approval.scope!.length > 0);
         assert.equal(store.getStageChain(runId).some((s) => s.kind === "awaiting_approval"), false);
       }
-      if (prefix >= 3) assert.equal(snapshot.approval.expiresAt, new Date(0).toISOString(), "elapsed expiry is not post-grant revocation");
+      if (prefix >= 4) assert.equal(snapshot.approval.expiresAt, new Date(0).toISOString(), "elapsed expiry is not post-grant revocation");
     });
   });
 });
 
+test("two stages pause for open questions, fold once answered, and are inconsistent with none", async () => {
+  await withBoundary(2, ({ store, root, runId }) => {
+    const legacy = readRunSnapshot(store, root, runId).snapshot;
+    assert.equal(legacy.phase, "interrupted_or_inconsistent", "no question and no spec_decision row is not a boundary");
+    assert.ok(legacy.workflowAction.reasons.some((r) => r.code === "chain_incomplete"));
+    const review = store.getStageChain(runId)[1]!;
+    const finding = store.upsertCanonicalFinding(review.id, 1, "retention", "upstream:design:retention");
+    const question = store.insertDecisionQuestion({ findingId: finding.id, text: "Decide retention?",
+      options: [{ label: "A", answer: "thirty days" }, { label: "B", answer: "forever" }], recommended: 0, why: "short-lived" });
+    const open = readRunSnapshot(store, root, runId).snapshot;
+    assert.equal(open.phase, "awaiting_decision");
+    assert.equal(open.workflowAction.group, "decide");
+    assert.deepEqual(open.questions.map((q) => [q.findingId, q.answer]), [[finding.id, null]]);
+    assert.ok(open.operatorActions.some((a) => a.kind === "decision_answer" && a.command === "decide"
+      && a.args.includes(String(finding.id))));
+    store.insertDecisionAnswer({ questionId: question.id, action: "approve", answer: "thirty days" });
+    const answered = readRunSnapshot(store, root, runId).snapshot;
+    assert.equal(answered.phase, "ready");
+    assert.equal(answered.workflowAction.group, "decision");
+    assert.equal(answered.workflowAction.eligible, true, JSON.stringify(answered.workflowAction.reasons));
+    assert.ok(!answered.operatorActions.some((a) => a.kind === "decision_answer"));
+  });
+});
+
+test("status text pairs each question with its own decide command when a finding id equals the run id", async () => {
+  await withBoundary(2, ({ store, root, runId }) => {
+    const review = store.getStageChain(runId)[1]!;
+    // The first question's finding is not the run id; the second one's is, so
+    // a lookup that searched every argument would hand the second question
+    // the first question's command (its args also carry --run <runId>).
+    const ask = (findingId: number, intent: string) => {
+      store.exec("INSERT INTO finding (id, stage_id, round, intent_key, location) VALUES (?, ?, 1, ?, ?)",
+        [findingId, review.id, intent, `upstream:design:${intent}`]);
+      store.insertDecisionQuestion({ findingId, text: `Decide ${intent}?`,
+        options: [{ label: "A", answer: `${intent} A` }, { label: "B", answer: `${intent} B` }], recommended: 0, why: "unstated" });
+    };
+    ask(runId + 100, "retention");
+    ask(runId, "access");
+    const text = snapshotText(readRunSnapshot(store, root, runId).snapshot);
+    const start = text.indexOf(`Finding ${runId}: Decide access?`);
+    assert.ok(start >= 0, text);
+    const deny = text.slice(start).split("\n").find((line) => line.includes("Deny (leave it open)"));
+    assert.ok(deny !== undefined, text);
+    assert.match(deny, new RegExp(`"--finding" "${runId}" --deny$`));
+  });
+});
+
+test("an invalid decision boundary offers no answer commands", async () => {
+  await withBoundary(2, ({ store, root, runId, specPath }) => {
+    const review = store.getStageChain(runId)[1]!;
+    const finding = store.upsertCanonicalFinding(review.id, 1, "retention", "upstream:design:retention");
+    store.insertDecisionQuestion({ findingId: finding.id, text: "Decide retention?",
+      options: [{ label: "A", answer: "thirty days" }, { label: "B", answer: "forever" }], recommended: 0, why: "short-lived" });
+    writeFileSync(specPath, `${readFileSync(specPath, "utf8")}\nEdited.\n`);
+    const snapshot = readRunSnapshot(store, root, runId).snapshot;
+    assert.equal(snapshot.workflowAction.group, "decide");
+    assert.equal(snapshot.workflowAction.eligible, false);
+    const answers = snapshot.operatorActions.filter((a) => a.kind === "decision_answer");
+    assert.ok(answers.length > 0);
+    assert.ok(answers.every((a) => a.eligible === false));
+    assert.doesNotMatch(snapshotText(snapshot), /Deny \(leave it open\)/);
+  });
+});
+
 test("partial document groups and manual, skipped, pending or contradictory row chains never continue", async (t) => {
-  for (const prefix of [1, 4]) await t.test(`partial group ${prefix}`, () => withBoundary(prefix, ({ store, root, runId }) => {
+  for (const prefix of [1, 5]) await t.test(`partial group ${prefix}`, () => withBoundary(prefix, ({ store, root, runId }) => {
     const { snapshot } = readRunSnapshot(store, root, runId);
     assert.equal(snapshot.phase, "interrupted_or_inconsistent");
     assert.equal(snapshot.workflowAction.eligible, false);
@@ -694,12 +764,12 @@ test("partial document groups and manual, skipped, pending or contradictory row 
     ["pending", "UPDATE stage SET status = 'pending' WHERE ordinal = 1"],
     ["in progress", "UPDATE stage SET status = 'in_progress' WHERE ordinal = 1"],
     ["failed", "UPDATE stage SET status = 'failed' WHERE ordinal = 1"],
-    ["skipped", "UPDATE stage SET ordinal = 3 WHERE ordinal = 1"],
+    ["skipped", "UPDATE stage SET ordinal = 4 WHERE ordinal = 1"],
     ["predecessor", "UPDATE stage SET input_stage_id = NULL WHERE ordinal = 1"],
     ["missing output", "UPDATE stage SET output_ref = NULL WHERE ordinal = 1"],
     ["gate", "UPDATE stage SET gate_result = 'block' WHERE ordinal = 1"],
     ["false completed", "UPDATE run SET status = 'completed'"],
-  ]) await t.test(name!, () => withBoundary(2, ({ store, root, runId }) => {
+  ]) await t.test(name!, () => withBoundary(3, ({ store, root, runId }) => {
     store.exec(mutation!);
     const { snapshot } = readRunSnapshot(store, root, runId);
     assert.equal(snapshot.workflowAction.eligible, false);
@@ -709,11 +779,12 @@ test("partial document groups and manual, skipped, pending or contradictory row 
 
 test("each missing stage-create or gate audit window refuses without erasing readable rows", async (t) => {
   const cases = [
-    [2, "spec.stage.create"], [2, "spec_review.stage.create"], [2, "spec.gate.pass"],
-    [3, "approval.stage.create"], [3, "approval.granted"], [5, "plan.stage.create"],
-    [5, "plan_review.stage.create"], [5, "plan.gate.pass"], [6, "implementation.stage.create"],
-    [6, "implementation.gate.pass"], [7, "verification.stage.create"], [7, "verification.gate.pass"],
-    [8, "code_review.stage.create"], [8, "code_review.gate.pass"],
+    [3, "spec.stage.create"], [3, "spec_review.stage.create"], [3, "spec.gate.pass"],
+    [3, "spec_decision.stage.create"], [3, "spec_decision.gate.pass"],
+    [4, "approval.stage.create"], [4, "approval.granted"], [6, "plan.stage.create"],
+    [6, "plan_review.stage.create"], [6, "plan.gate.pass"], [7, "implementation.stage.create"],
+    [7, "implementation.gate.pass"], [8, "verification.stage.create"], [8, "verification.gate.pass"],
+    [9, "code_review.stage.create"], [9, "code_review.gate.pass"],
   ] as const;
   for (const [prefix, omitted] of cases) await t.test(omitted, () => withBoundary(prefix, ({ store, root, runId }) => {
     const { snapshot } = readRunSnapshot(store, root, runId);
@@ -725,21 +796,21 @@ test("each missing stage-create or gate audit window refuses without erasing rea
 
 test("bound specification, plan, approval and retained handoffs reject edits before continuation", async (t) => {
   const changes: [string, number, (ctx: BoundaryContext) => void][] = [
-    ["spec hash", 3, (c) => writeFileSync(c.specPath, `${readFileSync(c.specPath, "utf8")}\nEdited.\n`)],
-    ["plan hash", 5, (c) => writeFileSync(c.planPath, `${readFileSync(c.planPath, "utf8")}\nEdited.\n`)],
-    ["scope", 3, (c) => c.store.exec("UPDATE approval SET scope = ?", [JSON.stringify(["other.ts"])])],
-    ["feature", 3, (c) => c.store.exec("UPDATE approval SET feature_id = 'other'")],
-    ["profile binding", 3, (c) => c.store.exec("UPDATE approval SET profile_hash = ?", [sha256Hex("other")])],
-    ["starting commit", 3, (c) => c.store.exec("UPDATE approval SET starting_commit = ?", [sha256Hex("other")])],
-    ["missing approval", 3, (c) => c.store.exec("DELETE FROM approval")],
-    ["missing verification", 7, (c) => rmSync(resolve(c.root, c.store.getStageChain(c.runId).at(-1)!.output_ref!))],
-    ["verification identity", 7, (c) => {
+    ["spec hash", 4, (c) => writeFileSync(c.specPath, `${readFileSync(c.specPath, "utf8")}\nEdited.\n`)],
+    ["plan hash", 6, (c) => writeFileSync(c.planPath, `${readFileSync(c.planPath, "utf8")}\nEdited.\n`)],
+    ["scope", 4, (c) => c.store.exec("UPDATE approval SET scope = ?", [JSON.stringify(["other.ts"])])],
+    ["feature", 4, (c) => c.store.exec("UPDATE approval SET feature_id = 'other'")],
+    ["profile binding", 4, (c) => c.store.exec("UPDATE approval SET profile_hash = ?", [sha256Hex("other")])],
+    ["starting commit", 4, (c) => c.store.exec("UPDATE approval SET starting_commit = ?", [sha256Hex("other")])],
+    ["missing approval", 4, (c) => c.store.exec("DELETE FROM approval")],
+    ["missing verification", 8, (c) => rmSync(resolve(c.root, c.store.getStageChain(c.runId).at(-1)!.output_ref!))],
+    ["verification identity", 8, (c) => {
       const path = resolve(c.root, c.store.getStageChain(c.runId).at(-1)!.output_ref!);
       const record = JSON.parse(readFileSync(path, "utf8"));
       record.runId++;
       writeFileSync(path, JSON.stringify(record));
     }],
-    ["review final commit", 8, (c) => {
+    ["review final commit", 9, (c) => {
       const path = resolve(c.root, c.store.getStageChain(c.runId).at(-1)!.output_ref!);
       const record = JSON.parse(readFileSync(path, "utf8"));
       record.finalVerifiedCommit = record.patchBase;
@@ -755,7 +826,7 @@ test("bound specification, plan, approval and retained handoffs reject edits bef
 });
 
 test("a legitimately remediated review keeps historical initial and final commit handoffs distinct", async () => {
-  await withBoundary(8, ({ store, root, runId, initialCommit, worktree, profile }) => {
+  await withBoundary(9, ({ store, root, runId, initialCommit, worktree, profile }) => {
     const snapshot = readRunSnapshot(store, root, runId).snapshot;
     assert.equal(snapshot.workflowAction.eligible, true, JSON.stringify(snapshot.workflowAction.reasons));
     assert.equal(snapshot.delivery.initialVerifiedCommit, initialCommit);
@@ -769,7 +840,7 @@ test("a legitimately remediated review keeps historical initial and final commit
 });
 
 test("worktree observations preserve index bytes and match each core boundary's cleanliness policy", async (t) => {
-  for (const prefix of [6, 7, 8]) await t.test(`index at ${prefix}`, () => withBoundary(prefix, ({ store, root, runId, worktree }) => {
+  for (const prefix of [7, 8, 9]) await t.test(`index at ${prefix}`, () => withBoundary(prefix, ({ store, root, runId, worktree }) => {
     const index = git(worktree, "rev-parse", "--git-path", "index");
     const bytes = readFileSync(index);
     const mtime = statSync(index).mtimeMs;
@@ -788,24 +859,24 @@ test("worktree observations preserve index bytes and match each core boundary's 
       else process.env.GIT_OPTIONAL_LOCKS = previous;
     }
   }));
-  for (const prefix of [7, 8]) await t.test(`ignored and untracked at ${prefix}`, () => withBoundary(prefix, ({ store, root, runId, worktree }) => {
+  for (const prefix of [8, 9]) await t.test(`ignored and untracked at ${prefix}`, () => withBoundary(prefix, ({ store, root, runId, worktree }) => {
     writeFileSync(join(worktree, "temporary.scratch"), "ignored fixture\n");
     writeFileSync(join(worktree, "untracked.txt"), "untracked fixture\n");
     const snapshot = readRunSnapshot(store, root, runId).snapshot;
-    assert.equal(snapshot.workflowAction.eligible, prefix === 8, JSON.stringify(snapshot.workflowAction.reasons));
+    assert.equal(snapshot.workflowAction.eligible, prefix === 9, JSON.stringify(snapshot.workflowAction.reasons));
   }));
-  await withBoundary(6, ({ store, root, runId, worktree }) => {
+  await withBoundary(7, ({ store, root, runId, worktree }) => {
     writeFileSync(join(worktree, "src", "a1.ts"), "uncommitted\n");
     assert.equal(readRunSnapshot(store, root, runId).snapshot.workflowAction.eligible, false);
   });
-  await withBoundary(7, ({ store, root, runId, worktree }) => {
+  await withBoundary(8, ({ store, root, runId, worktree }) => {
     writeFileSync(join(worktree, "src", "a1.ts"), "a later committed change\n");
     const later = commitAll(worktree);
     const snapshot = readRunSnapshot(store, root, runId).snapshot;
     assert.equal(snapshot.workflowAction.eligible, false);
     assert.ok(snapshot.workflowAction.reasons.some((r) => r.reason.includes(`the worktree is at ${later}, not the bound commit`)));
   });
-  await withBoundary(7, ({ store, root, runId, worktree }) => {
+  await withBoundary(8, ({ store, root, runId, worktree }) => {
     git(root, "worktree", "remove", "--force", worktree);
     const snapshot = readRunSnapshot(store, root, runId).snapshot;
     assert.equal(snapshot.workflowAction.eligible, false);
@@ -834,7 +905,7 @@ test("guided age uses strict greater-than and observing its own lock requires ex
 });
 
 test("completed records remain terminal when present-day evidence is missing, without invented delivery facts", async () => {
-  await withBoundary(9, ({ store, root, runId }) => {
+  await withBoundary(10, ({ store, root, runId }) => {
     const before = readRunSnapshot(store, root, runId).snapshot;
     assert.equal(before.delivery.deliveredCommit, before.delivery.finalReviewedCommit);
     assert.deepEqual(before.delivery.deliveredPaths, before.approval.scope);
@@ -849,7 +920,7 @@ test("completed records remain terminal when present-day evidence is missing, wi
     assert.equal(missing.delivery.outcome, null);
     assert.ok(missing.evidence.references.some((r) => r.kind === "delivery_result" && r.availability === "missing"));
   });
-  await withBoundary(9, ({ store, root, runId }) => {
+  await withBoundary(10, ({ store, root, runId }) => {
     const snapshot = readRunSnapshot(store, root, runId).snapshot;
     assert.equal(snapshot.phase, "completed");
     assert.equal(snapshot.workflowAction.group, null);
@@ -861,10 +932,10 @@ test("completed records remain terminal when present-day evidence is missing, wi
 test("frozen models, named authors and staffing are checked without an executor probe", async (t) => {
   const cases: [string, number, (profile: Profile) => void][] = [
     ["missing spec review model", 0, (p) => { delete p.modelMap.spec_review; }],
-    ["missing plan author", 3, (p) => { p.agents = p.agents.filter((a) => a.id !== "plan-author"); }],
-    ["missing patch output", 5, (p) => { p.agents.find((a) => a.id === "implementer")!.outputs = []; }],
-    ["missing review capability", 7, (p) => { p.executor.capabilities = p.executor.capabilities.filter((c) => c !== "review"); }],
-    ["unstaffable code panel", 7, (p) => { p.agents = p.agents.filter((a) => !a.outputs.includes("code-findings")); }],
+    ["missing plan author", 4, (p) => { p.agents = p.agents.filter((a) => a.id !== "plan-author"); }],
+    ["missing patch output", 6, (p) => { p.agents.find((a) => a.id === "implementer")!.outputs = []; }],
+    ["missing review capability", 8, (p) => { p.executor.capabilities = p.executor.capabilities.filter((c) => c !== "review"); }],
+    ["unstaffable code panel", 8, (p) => { p.agents = p.agents.filter((a) => !a.outputs.includes("code-findings")); }],
   ];
   for (const [name, prefix, freeze] of cases) await t.test(name, () => withBoundary(prefix, ({ store, root, runId }) => {
     const before = store.query("SELECT id FROM agent_run");
@@ -877,33 +948,33 @@ test("frozen models, named authors and staffing are checked without an executor 
 
 test("current policy affects approval readiness but never revokes an already granted boundary", async () => {
   const freeze = (profile: Profile) => { profile.policy.codeReviewMaxRounds = profile.policy.codeReviewMaxRounds === 1 ? 2 : 1; };
-  await withBoundary(2, ({ store, root, runId }) => {
+  await withBoundary(3, ({ store, root, runId }) => {
     const snapshot = readRunSnapshot(store, root, runId).snapshot;
     assert.equal(snapshot.workflowAction.eligible, false);
     assert.match(snapshot.workflowAction.reasons.find((r) => r.code === "policy_block")!.reason, /policy has changed since intake/);
   }, { freeze });
-  await withBoundary(3, ({ store, root, runId }) => {
+  await withBoundary(4, ({ store, root, runId }) => {
     const snapshot = readRunSnapshot(store, root, runId).snapshot;
     assert.equal(snapshot.workflowAction.eligible, true, JSON.stringify(snapshot.workflowAction.reasons));
   }, { freeze });
 });
 
 test("branch/worktree residue, cross-run predecessors and generic manual audit cannot authorize continuation", async () => {
-  await withBoundary(5, ({ store, root, runId, worktree }) => {
+  await withBoundary(6, ({ store, root, runId, worktree }) => {
     mkdirSync(worktree, { recursive: true });
     assert.ok(readRunSnapshot(store, root, runId).snapshot.workflowAction.reasons.some((r) => /worktree path already exists/.test(r.reason)));
   });
-  await withBoundary(5, ({ store, root, runId }) => {
+  await withBoundary(6, ({ store, root, runId }) => {
     git(root, "branch", `gov/demo/${runId}`);
     assert.ok(readRunSnapshot(store, root, runId).snapshot.workflowAction.reasons.some((r) => /run branch already exists/.test(r.reason)));
   });
-  await withBoundary(2, ({ store, root, runId }) => {
+  await withBoundary(3, ({ store, root, runId }) => {
     const other = store.insertRun("other", "other", "other", "feature");
     const foreign = store.insertStage(other.id, "spec", null);
     store.exec("UPDATE stage SET input_stage_id = ? WHERE run_id = ? AND ordinal = 1", [foreign.id, runId]);
     assert.ok(readRunSnapshot(store, root, runId).snapshot.workflowAction.reasons.some((r) => r.code === "chain_incomplete"));
   });
-  await withBoundary(2, ({ store, root, runId }) => {
+  await withBoundary(3, ({ store, root, runId }) => {
     const first = store.getStageChain(runId)[0]!;
     for (const action of ["stage.add", "stage.complete"]) {
       appendAudit(store, { runId, stageId: first.id, action, actor: "system", actorType: "cli", summary: "manual stage" });
@@ -913,7 +984,7 @@ test("branch/worktree residue, cross-run predecessors and generic manual audit c
 });
 
 test("final code-review findings are labelled from the bound recorded panel, not invented cross-round resolutions", async () => {
-  for (const blocked of [false, true]) await withBoundary(8, ({ store, root, runId, profile }) => {
+  for (const blocked of [false, true]) await withBoundary(9, ({ store, root, runId, profile }) => {
     const snapshot = readRunSnapshot(store, root, runId).snapshot;
     const stage = store.getStageChain(runId).at(-1)!;
     const record = JSON.parse(readFileSync(resolve(root, stage.output_ref!), "utf8"));
@@ -932,7 +1003,7 @@ test("final code-review findings are labelled from the bound recorded panel, not
 });
 
 test("scope metadata reuses the specification reader without requiring unrelated downstream schema fields", async () => {
-  await withBoundary(3, ({ specPath }) => {
+  await withBoundary(4, ({ specPath }) => {
     const original = readFileSync(specPath, "utf8");
     const parsed = validateSpecDoc(original);
     assert.ok(parsed.ok, parsed.ok ? "" : parsed.reason);
@@ -945,7 +1016,7 @@ test("scope metadata reuses the specification reader without requiring unrelated
 });
 
 test("unchecked command projections stay unavailable without silently strengthening the core verification handoff", async () => {
-  await withBoundary(7, ({ root, store, runId }) => {
+  await withBoundary(8, ({ root, store, runId }) => {
     const stage = store.getStageChain(runId).at(-1)!;
     const path = resolve(root, stage.output_ref!);
     const value = JSON.parse(readFileSync(path, "utf8"));

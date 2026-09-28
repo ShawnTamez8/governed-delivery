@@ -33,6 +33,7 @@ test("a valid spec parses with artifacts and criteria extracted", () => {
     assert.deepEqual(result.value.acceptanceCriteria, [
       { id: "AC-001", text: "the parser accepts the documented shapes" },
     ]);
+    assert.deepEqual(result.value.openDecisions, []);
   }
 });
 
@@ -358,4 +359,80 @@ test("writeSpecDoc refuses a declared artifact that names a directory in the sta
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// --- ## Open decisions (docs/features/disclosed-open-decisions/plan.md) -----
+// Expected values come from the section's stated schema: one
+// `- OD-NNN (<severity>): <question>` entry per line, IDs in the criterion
+// shape with an OD prefix, severities from the finding vocabulary.
+
+function withDecisions(...lines: string[]): string {
+  return `${validSpec()}\n## Open decisions\n\n${lines.join("\n")}\n`;
+}
+
+function refusal(spec: string): string {
+  const result = validateSpecDoc(spec);
+  assert.equal(result.ok, false);
+  return result.ok ? "" : result.reason;
+}
+
+test("open decisions parse into id, severity and question, with the list marker optional", () => {
+  const result = validateSpecDoc(
+    withDecisions("- OD-001 (high): who may download the export archive", "OD-002 (low): retention period")
+  );
+  assert.equal(result.ok, true, result.ok ? "" : result.reason);
+  if (!result.ok) return;
+  assert.deepEqual(result.value.openDecisions, [
+    { id: "OD-001", severity: "high", text: "who may download the export archive" },
+    { id: "OD-002", severity: "low", text: "retention period" },
+  ]);
+});
+
+test("an absent or empty open-decisions section means none were disclosed", () => {
+  for (const spec of [validSpec(), `${validSpec()}\n## Open decisions\n`]) {
+    const result = validateSpecDoc(spec);
+    assert.equal(result.ok, true);
+    if (result.ok) assert.deepEqual(result.value.openDecisions, []);
+  }
+});
+
+test("each malformed open decision refuses by the rule it broke", () => {
+  const prose = "These questions are left to design.";
+  assert.equal(
+    refusal(withDecisions(prose)),
+    `every line under ## Open decisions must be one open decision of the form '- OD-NNN (<severity>): <question the design leaves open>'; an explanation belongs in another section; this line is not an open decision: ${prose}`
+  );
+  for (const id of ["OD-1", "OD-000", "od-001"]) {
+    assert.match(refusal(withDecisions(`- ${id} (high): q`)), new RegExp(`^invalid open decision ID ${id}: must match`), id);
+  }
+  assert.equal(
+    refusal(withDecisions("- OD-001 (severe): q")),
+    "open decision OD-001 severity severe is not one of low, medium, high, critical"
+  );
+  for (const line of ["- OD-001 high: x", "- OD-001 (high):"]) {
+    assert.match(refusal(withDecisions(line)), /^open decision must be '<OD-NNN> \(<severity>\): <question>'/, line);
+  }
+  assert.equal(
+    refusal(withDecisions("- OD-001 (high): one", "- OD-001 (low): two")),
+    "duplicate open decision ID OD-001"
+  );
+});
+
+test("a second or differently spelled open-decisions heading refuses instead of hiding its entries", () => {
+  // Only the first exactly spelled heading is parsed, so entries under any
+  // other would be neither recorded as findings nor held to the no-add rule.
+  assert.equal(
+    refusal(`${withDecisions("- OD-001 (high): one")}\n## Open decisions\n\n- OD-002 (low): two\n`),
+    "a specification has at most one ## Open decisions section"
+  );
+  for (const title of ["Open Decisions", "open decisions", "Open decisions (none yet)"]) {
+    assert.equal(
+      refusal(`${validSpec()}\n## ${title}\n\n- OD-001 (high): one\n`),
+      `the open decisions heading must be exactly '## Open decisions'; this heading is not: ## ${title}`,
+      title
+    );
+  }
+  // A heading that only mentions the phrase later is another section.
+  const other = validateSpecDoc(`${validSpec()}\n## Notes on open decisions\n\nprose\n`);
+  assert.equal(other.ok, true);
 });

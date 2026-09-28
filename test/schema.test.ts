@@ -93,12 +93,14 @@ function migrationColumns(sql: string): Map<string, string[]> {
   return cols;
 }
 
-test("architecture block defines exactly the ten tables", () => {
+test("architecture block defines exactly the twelve tables", () => {
   const names = [...architectureTables().keys()].sort();
   assert.deepEqual(names, [
     "agent_run",
     "approval",
     "audit",
+    "decision_answer",
+    "decision_question",
     "finding",
     "finding_decision",
     "finding_report",
@@ -127,9 +129,25 @@ test("every table's columns in the migrations match the architecture block", () 
     "audit",
     "proposal",
     "proposal_source",
+    "decision_question",
+    "decision_answer",
   ]) {
     assert.deepEqual(mig.get(table), arch.get(table), `columns of ${table}`);
   }
+});
+
+// Spec operator decisions: a question carries no stage column of its own —
+// its finding's stage is the one authority — and each question and answer is
+// unique, with the action vocabulary enforced by the schema.
+test("decision_question and decision_answer constraints are present and question stores no stage", () => {
+  const tables = migrationTables(sql);
+  assert.ok(tables.get("decision_question")!.includes("UNIQUE (finding_id)"), "one question per finding");
+  assert.ok(!migrationColumns(sql).get("decision_question")!.includes("stage_id"), "no second stage authority");
+  assert.ok(
+    tables.get("decision_answer")!.includes("CHECK (action IN ('approve', 'deny', 'modify'))"),
+    "decision_answer action"
+  );
+  assert.ok(tables.get("decision_answer")!.includes("UNIQUE (question_id)"), "one answer per question");
 });
 
 test("stage enforces one chain per run", () => {

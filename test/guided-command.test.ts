@@ -138,6 +138,13 @@ function parkForApproval(root: string, run: RunRow): void {
     appendAudit(store, { runId: run.id, stageId: reviewed.id, actor: "system", actorType: "cli",
       action: "spec.gate.pass",
       summary: `spec_review gate passed in round 1; specHash=${sha256Hex(normalizeText(spec))}; risk=low` });
+    const decided = store.insertStage(run.id, "spec_decision", reviewed.id);
+    appendAudit(store, { runId: run.id, stageId: decided.id, actor: "system", actorType: "cli",
+      action: "spec_decision.stage.create", summary: `created spec_decision stage ${decided.id}` });
+    store.completeStage(decided.id, specPath, "pass");
+    appendAudit(store, { runId: run.id, stageId: decided.id, actor: "system", actorType: "cli",
+      action: "spec_decision.gate.pass",
+      summary: `spec_decision gate passed; specHash=${sha256Hex(normalizeText(spec))}; risk=low; answers=0; folded=0` });
   } finally {
     store.close();
   }
@@ -926,6 +933,99 @@ test("guided approval archives an expired handoff and creates fresh canonical by
       /retained approval payload expiry is invalid.*ISO 8601 UTC timestamp/,
     );
     assert.doesNotMatch(malformedOut.text(), /external approval authority/);
+  } finally {
+    if (beforeKey === undefined) delete process.env.BW_APPROVAL_PUBLIC_KEY;
+    else process.env.BW_APPROVAL_PUBLIC_KEY = beforeKey;
+    rmSync(root, { recursive: true, force: true });
+    rmSync(authority, { recursive: true, force: true });
+  }
+});
+
+test("guided decisions pause on exit, then record the recommendation through answerQuestion and fold before approval", { timeout: 120_000 }, async () => {
+  const root = workspace();
+  const authority = `${root}-authority`;
+  const beforeKey = process.env.BW_APPROVAL_PUBLIC_KEY;
+  try {
+    mkdirSync(authority);
+    const keys = generateKeyPairSync("ed25519");
+    const publicPath = join(authority, "approval.pub");
+    writeFileSync(publicPath, keys.publicKey.export({ type: "spki", format: "pem" }));
+    process.env.BW_APPROVAL_PUBLIC_KEY = publicPath;
+    repository(root);
+    writeFileSync(join(root, "docs", "features", "guided-feature", "design.md"),
+      "# guided-feature\n\nOperator-authored design. FIXTURE-ASK-OPERATOR\n");
+    git(root, "add", "-A");
+    git(root, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "ask");
+    const run = createRun(root);
+    useFixtureExecutor(root, run.id);
+
+    const pausedOut = capture();
+    const paused = await runGuidedCommand(root, {
+      stdout: pausedOut.stream,
+      stderr: capture().stream,
+      prompt: async (message) => {
+        if (/Execute every group/.test(message)) return "yes";
+        if (/Action for finding \d+ \(1-4\)/.test(message)) return "4";
+        throw new Error(`unexpected decision prompt: ${message}`);
+      },
+    });
+    assert.equal(paused, 3);
+    assert.match(pausedOut.text(), /How long are exports retained\?/);
+    assert.match(pausedOut.text(), /1\. Thirty days \(recommended\): Exports are retained for thirty days\./);
+    assert.match(pausedOut.text(), /remains paused awaiting operator decisions/);
+    let store = openStore(root, { readOnly: true });
+    try {
+      assert.deepEqual(store.getStageChain(run.id).map((stage) => stage.kind), ["spec", "spec_review"]);
+      assert.equal(readRunSnapshot(store, root, run.id).snapshot.phase, "awaiting_decision");
+    } finally {
+      store.close();
+    }
+
+    // An edited specification invalidates the boundary, so no immutable answer is taken.
+    const specPath = join(root, "docs", "features", "guided-feature", "spec.md");
+    const reviewed = readFileSync(specPath);
+    writeFileSync(specPath, `${reviewed}\nEdited after review.\n`);
+    await assert.rejects(runGuidedCommand(root, {
+      stdout: capture().stream,
+      stderr: capture().stream,
+      prompt: async (message) => { throw new Error(`unexpected decision prompt: ${message}`); },
+    }), /cannot take operator decisions/);
+    store = openStore(root, { readOnly: true });
+    try {
+      assert.equal(store.getAuditEvents(run.id).filter((event) => event.action === "decision.answer").length, 0);
+    } finally {
+      store.close();
+    }
+    writeFileSync(specPath, reviewed);
+
+    const asked: string[] = [];
+    const answered = await runGuidedCommand(root, {
+      stdout: capture().stream,
+      stderr: capture().stream,
+      prompt: async (message) => {
+        asked.push(message);
+        if (/Action for finding \d+ \(1-4\)/.test(message)) return "1";
+        if (/Execute every group/.test(message)) return "yes";
+        if (/Action \(1-4\)/.test(message)) return "4";
+        throw new Error(`unexpected decision prompt: ${message}`);
+      },
+    });
+    assert.equal(answered, 3, "the folded run pauses at the approval handoff");
+    assert.equal(asked.filter((message) => /Execute every group/.test(message)).length, 1);
+    store = openStore(root, { readOnly: true });
+    try {
+      const snapshot = readRunSnapshot(store, root, run.id).snapshot;
+      assert.deepEqual(snapshot.stages.map((stage) => stage.kind), ["spec", "spec_review", "spec_decision"]);
+      assert.equal(snapshot.phase, "awaiting_approval");
+      assert.deepEqual(snapshot.questions.map((question) => question.answer?.action), ["approve"]);
+      assert.equal(snapshot.questions[0]!.answer!.text, "Exports are retained for thirty days.");
+      assert.equal(store.getAuditEvents(run.id).filter((event) => event.action === "decision.answer").length, 1);
+      assert.match(readFileSync(join(root, "docs", "features", "guided-feature", "spec.md"), "utf8"),
+        /Exports are retained for thirty days\./);
+    } finally {
+      store.close();
+    }
+    assert.ok(existsSync(join(approvalHandoffDir(root, run.id), "payload.txt")));
   } finally {
     if (beforeKey === undefined) delete process.env.BW_APPROVAL_PUBLIC_KEY;
     else process.env.BW_APPROVAL_PUBLIC_KEY = beforeKey;
