@@ -41,7 +41,9 @@ export const CLAUDE_CODE: ExecutorDefinition = {
     "claude",
     "-p",
     "--output-format",
-    "json",
+    "stream-json",
+    "--include-partial-messages",
+    "--verbose",
     "--restricted",
     "--safe-mode",
     "--tools",
@@ -59,18 +61,22 @@ export const CLAUDE_CODE: ExecutorDefinition = {
     perInvocationModel: true,
     effectiveModel: true,
     tokenUsage: true,
-    // The recorded real envelope (test/fixtures/harness/claude-code-envelope.json)
-    // carries total_cost_usd, so this harness does report session cost.
+    // The recorded real stream's result line
+    // (test/fixtures/recorded/harness-stream-json-envelope.json) carries
+    // total_cost_usd, so this harness does report session cost.
     sessionCost: true,
   },
   sandbox: {
     allowedPaths: ["docs/features/**"],
     deniedPaths: [`${GOVERNANCE_PREFIX}**`],
     commandAllowlist: [],
-    // The only place the idle budget is decided. `--output-format json` is
-    // non-streaming, so no output arrives until generation completes and the
-    // idle budget is in practice the whole generation time for every stage;
-    // the recorded implementation dispatch ran 780,568 ms. Stages must not
+    // The only place the idle budget is decided. The command streams
+    // (`stream-json` with partial messages), so every text chunk resets the
+    // idle timer: the budget measures inactivity, and a dispatch that is still
+    // writing is not killed for taking long. The absolute ceiling bounds an
+    // active process. The earlier `--output-format json` was non-streaming, so
+    // the idle budget was in practice the whole generation time (the recorded
+    // implementation dispatch ran 780,568 ms; hazard 19). Stages must not
     // pass their own `idleTimeoutSeconds` — `invokeHarness` prefers a
     // call-site value over this one, so a second decision here would let a
     // live constant silently outrank the run's frozen profile (hard rule 6).

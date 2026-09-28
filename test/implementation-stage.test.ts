@@ -19,6 +19,7 @@ import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { parseImplementationGate } from "../src/handoff.ts";
 import { validateAgentResult } from "../src/agent-result.ts";
+import { parseEnvelope } from "../src/harness.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
 
@@ -796,8 +797,8 @@ test("the ok fixture body passes the same contract real output is held to", () =
     delete env.EMIT_MODE;
     const run = spawnSync("node", [FIXTURE], { cwd: scratch, input: prompt, encoding: "utf8", env });
     assert.equal(run.status, 0, run.stderr);
-    const envelope = JSON.parse(run.stdout) as { result: string };
-    const body = JSON.parse(envelope.result) as unknown;
+    const envelope = parseEnvelope(fixtureExecutor(), run.stdout);
+    const body = JSON.parse(envelope.resultText) as unknown;
     const verdict = validateAgentResult("implementer", body);
     assert.equal(verdict.ok, true, verdict.ok ? "" : verdict.reason);
   } finally {

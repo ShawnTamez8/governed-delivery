@@ -1,6 +1,6 @@
 # Streaming Harness Output Implementation Plan
 
-**Status:** Proposed
+**Status:** Implemented
 
 **Goal:** The harness idle timer measures real inactivity. The executor streams output while the model generates, so every text chunk resets the timer. A dispatch that is still writing survives past 30 minutes, and a dispatch that has truly gone silent still dies. The absolute ceiling stays as the backstop.
 
@@ -73,3 +73,40 @@ Items 3, 5-18 do not govern this change: it touches no prompt, delivery check, s
   - `ARCHITECTURE.md` section 11: the executor streams, so the idle budget measures inactivity. Update the executor YAML's command line and its `sessionCost` comment, which cites the old recorded envelope. In `docs/hazards.md` entry 19, add the remedy paragraph with the recording's path.
   - `.claude/sessions/project-learnings.md`: rewrite the diagnostic advice that assumes a single-JSON raw file (reading `num_turns` and the self-critique response from `.governance/raw/<run>/`) for the stream format.
   - Run `npm run typecheck`, the serial full suite, `npm run check:docs`, `git diff --check`. Set this plan `Implemented` with an implementation note: what shipped, what deviated, the break-tests, and that the paid end-to-end run is unmeasured.
+
+## Implementation note (2026-09-28)
+
+**Shipped.** Tasks 0-6.
+- The executor runs `--output-format stream-json --include-partial-messages --verbose`, with every read-only flag unchanged.
+- `parseEnvelope` reads newline-delimited JSON and requires exactly one `type: "result"` line, last. It refuses, by name and with the line number: a line that is not JSON, a line that is JSON but not an object, no result line, more than one, a result line that is not last, and a result line whose `result` is not a string.
+- `STREAM_RETAIN_MAX_BYTES` (64 MiB) bounds retained stdout and kills the process on breach. `RESULT_MAX_BYTES` (1 MiB) now caps the parsed result text.
+- The four stage emitters and `echo-json.mjs` write a reduced form of the recorded line sequence. `test/harness-stream-fixtures.test.ts` holds every emitter's line kinds and result-line fields to the recording.
+- The old `claude-code-envelope.json` is deleted, and its three readers read the recording.
+- `ARCHITECTURE.md` sections 11 and 20, `docs/hazards.md` entry 19, and `.claude/sessions/project-learnings.md` are updated.
+
+**Deviations from the plan.**
+- `src/dispatch.ts` changed. The plan's scope named `executor.ts` and `harness.ts`, but "a result over the cap is refused by name" can only live where the result is parsed. Its overflow message also changed, from "result exceeded the size cap" to a retention-ceiling message; no test pinned the old text.
+- `src/verify-command.ts` changed, a doc comment only: it described `invokeHarness` as spending `RESULT_MAX_BYTES` on stdout.
+- `STREAM_RETAIN_MAX_BYTES` is 64 MiB, the size of `VERIFY_RETENTION_MAX_BYTES`, as a disk-and-memory limit. No measured bound exists, so it is not a fit to the capture. It is a live constant in `src/harness.ts`, not a frozen policy field, matching how `RESULT_MAX_BYTES` is enforced. Freezing it would need a policy-shape change, which this plan did not authorize.
+- A boundary defect surfaced while testing: when a chunk ended exactly on the ceiling, later output was dropped without setting `resultOverflow`, so the stream was silently truncated until the idle timer fired. The check now flags it. The old 1 MiB cap had the same gap.
+- `test/implementation-stage.test.ts` also changed. It parsed emitter stdout as one JSON object and broke in the full suite; it now uses `parseEnvelope`.
+- `test/fixtures/recorded/code-review-web-calculator-powershell-remediation-chain.json` and the other committed recordings are untouched. Their envelopes are one-line JSON objects with `type: "result"`, which are one-line streams under the same schema, not a second shape.
+
+**Break-tests.** Each failed by assertion, and the source was restored by hash:
+- Taking a second result line instead of refusing it failed "refuses two result lines".
+- Pointing the retention check back at `RESULT_MAX_BYTES` failed "a stream longer than the result cap".
+- Removing `resetIdle()` from the stdout handler failed "keeps writing survives the idle budget".
+- Ignoring exact-boundary overflow failed "a stream past the retention ceiling".
+- Removing the parsed-result cap in `dispatchOnce` failed "a result over the size cap is refused".
+- Accepting a non-string `result` failed "refuses a result line whose result is not a string".
+- A repeat-kill guard proposed by the review failed no test on Windows in three runs, so it was reverted rather than kept unproven.
+
+**Verification.**
+- `npm run typecheck` is clean, and `git log -1` is unchanged.
+- The serial full suite ran 1302 tests: 1294 pass, 5 skipped, 3 fail. Two are the baseline failures (dashboard SIGTERM; "nothing under src/ touches a private key"). The third is the `implementation-stage` test above, fixed afterwards.
+- After the last source edit, `harness`, `dispatch`, `implementation-stage`, `harness-stream-fixtures` and `executor` (90 of 92, 2 skipped) and `operator-state`, `code-review-stage` and `plan-stage` (185 of 185) were rerun green. The full suite was not rerun.
+- `npm run check:docs` reports clean with 6 new missing-path warnings. All are references to the deleted fixture in historical plans and this plan's Task 2; the checker already listed 87 such warnings.
+
+**Review.** An in-session subagent reviewed the diff (`2026-09-28-code-review.md`), not a billed `/code-review ultra`. It found no material defects and seven low-severity items. Their dispositions are in that record.
+
+**Unmeasured.** No paid run has gone past `implementation` with streaming, so whether a 24-file implementation now finishes is unknown. The 3600-second absolute ceiling and the 1800-second idle budget are unchanged. Gaps during extended thinking were not sampled, because the capture used none. The capture is one sample.

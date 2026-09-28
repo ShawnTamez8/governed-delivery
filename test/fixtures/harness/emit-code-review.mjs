@@ -13,9 +13,20 @@ import { join } from "node:path";
 const stdin = readFileSync(0, "utf8");
 const mode = process.env.EMIT_MODE ?? "ok";
 
+// The line sequence of test/fixtures/recorded/harness-stream-json-envelope.json,
+// reduced: init, one partial-message chunk, the assistant message, and the
+// result line last. `test/harness-stream-fixtures.test.ts` checks the shape.
 function emitRaw(resultText) {
-  console.log(
-    JSON.stringify({
+  const session_id = "fixture-session";
+  for (const line of [
+    { type: "system", subtype: "init", session_id, model: "fixture-model" },
+    {
+      type: "stream_event",
+      event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: resultText } },
+      session_id,
+    },
+    { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: resultText }] }, session_id },
+    {
       type: "result",
       subtype: "success",
       is_error: false,
@@ -23,8 +34,10 @@ function emitRaw(resultText) {
       total_cost_usd: 0,
       usage: { input_tokens: 1, output_tokens: 1 },
       modelUsage: { "fixture-model": { inputTokens: 1, outputTokens: 1 } },
-    })
-  );
+    },
+  ]) {
+    console.log(JSON.stringify(line));
+  }
 }
 
 function emit(agentResult) {

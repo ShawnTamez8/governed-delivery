@@ -508,3 +508,20 @@ measures real inactivity, and keep the separate absolute ceiling for a process
 that stays active and never finishes. Where an executor cannot stream, call its
 idle budget what it is, a per-dispatch wall-clock limit, and size it to the
 largest response the run will request.
+
+**Remedy, 2026-09-28.** The executor now runs `--output-format stream-json
+--include-partial-messages --verbose` (`src/executor.ts`), so each text chunk
+resets the idle timer. The recorded capture is
+`test/fixtures/recorded/harness-stream-json-envelope.json`: 967 lines over a 45 s
+dispatch, the longest gap between stdout chunks 571 ms, and every field
+`parseEnvelope` reads present on the final `result` line. `parseEnvelope` now
+takes that newline-delimited shape and refuses every other one by name. A killed
+dispatch keeps the stream written before the kill, which run 4's 0-byte file did
+not. The stream is about 25 times the result text (text chunks alone about 18
+times), so the 1 MiB result cap now applies to the parsed result and a separate
+64 MiB ceiling bounds retention
+(`ARCHITECTURE.md` section 20). What this does not show: the idle and absolute
+timeout values are unchanged, whether a 24-file implementation now finishes
+inside the 3600-second ceiling is unmeasured, and gaps during extended thinking
+were not sampled because the capture used none. One paid run past
+`implementation` is the end-to-end check, and it has not been made.

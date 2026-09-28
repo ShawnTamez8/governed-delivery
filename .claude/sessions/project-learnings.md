@@ -1,17 +1,20 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-28, streaming-harness-output proposed; everything since `d2954d9` uncommitted)
+## Current state (2026-09-28, streaming-harness-output implemented and uncommitted; earlier work committed through `2447192`)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
 system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
-**Working state (verified 2026-09-27 with `git log`/`git status`):** Branch
-`dashboard-ux-redesign`, HEAD `d2954d9`, one commit ahead of
-`origin/dashboard-ux-redesign`, not pushed. `CLAUDE.md`/`AGENTS.md` are
-byte-identical. Everything below is **uncommitted** (the operator has not asked
-for a commit):
+**Working state (verified 2026-09-28 with `git log`/`git status`):** Branch
+`streaming-harness-output`, HEAD `2447192` (also the tip of local
+`dashboard-ux-redesign`, three commits ahead of its origin, not pushed).
+`CLAUDE.md`/`AGENTS.md` are byte-identical. The streaming-harness-output
+implementation (last bullet) and the removal of the port-4200 hooks from
+`.claude/settings.json` are **uncommitted**; the operator has not asked for a
+commit. The earlier bullets were uncommitted on 2026-09-27 and are now in
+`bda3b42` and `2447192`; they are kept as a record of what shipped:
 - **disclosed-open-decisions** — `Implemented` 2026-09-27
   (`docs/features/disclosed-open-decisions/plan.md`; in-session subagent
   review). `src/spec-doc.ts`, `src/spec-stage.ts`, `src/prompts.ts`, their
@@ -47,19 +50,31 @@ for a commit):
   `src/dashboard/app.js` and `styles.css`. The operator approved the look.
 - **Hazard 19** (`docs/hazards.md`): a non-streaming executor turns the idle
   budget into a wall clock. `ARCHITECTURE.md` section 22 counts nineteen.
-- **streaming-harness-output** — `Proposed`
-  (`docs/features/streaming-harness-output/plan.md`). Switch the executor to
-  `stream-json` with partial messages so the idle timer measures inactivity.
-  Task 0 ran 2026-09-28 ($0.0926, operator-authorized): `--verbose` is
-  required, the result line keeps every field `parseEnvelope` reads, and the
-  stream is about 25x the result text. Recording at
-  `test/fixtures/recorded/harness-stream-json-envelope.json`. Tasks 1-6 are
-  free and not started.
+- **streaming-harness-output** — `Implemented` 2026-09-28
+  (`docs/features/streaming-harness-output/plan.md`, Tasks 0-6; in-session
+  subagent review, no billed review). The executor runs
+  `stream-json --include-partial-messages --verbose`, so the idle timer sees
+  generation. Task 0 ($0.0926, operator-authorized) recorded
+  `test/fixtures/recorded/harness-stream-json-envelope.json`. `parseEnvelope`
+  takes newline-delimited JSON with exactly one last `result` line;
+  `STREAM_RETAIN_MAX_BYTES` (64 MiB) bounds retention and `RESULT_MAX_BYTES`
+  now caps the parsed result in `src/dispatch.ts`. The four stage emitters and
+  `echo-json.mjs` emit the recorded line kinds; `test/harness-stream-fixtures.test.ts`
+  holds them to it. **The end-to-end effect is unmeasured**: no paid run has
+  gone past `implementation` with streaming, and gaps during extended thinking
+  were not sampled. The executor definition changed, so every run frozen
+  earlier refuses at its next dispatch; a fresh run is the repair.
+- The 2026-09-25 port-4200 HTTP hooks in `.claude/settings.json` (commit
+  `319c9e4`, no listener) were removed 2026-09-28 at the operator's request.
 
-**Full suite at last run (serial, 2026-09-27):** 1283 tests, 1275 pass, 6
-skipped, 2 known failures (dashboard SIGTERM stderr warning; "nothing under
-src/ touches a private key"). Parallel `npm test` crashes on the heap limit,
-at baseline too; see the Windows/Node quick-reference.
+**Full suite (serial, 2026-09-28, with the streaming change):** 1302 tests,
+1294 pass, 5 skipped, 3 failed: the two known ones (dashboard SIGTERM stderr
+warning; "nothing under src/ touches a private key") plus one this change
+caused (`implementation-stage.test.ts` parsed emitter stdout as one JSON
+object). That one was fixed afterwards and the touched test files, plus
+operator-state, code-review-stage and plan-stage, were rerun green; the full
+suite was not rerun. Parallel `npm test` crashes on the heap limit, at baseline
+too; see the Windows/Node quick-reference.
 
 **External target:** `C:\Users\Shawn-work\repositories\testing-repos\team-notes`
 (HEAD `3b73c3d`). Runs 1-3 blocked at `spec_review` ($1.4078, $1.1701,
@@ -81,15 +96,12 @@ otherwise). Earlier runs' specs were moved to session scratchpads.
   review.
 - `test/sign-approval.test.ts:99` false positive: it matches the comment
   "never receives a private key" at `src/dashboard-approval.ts:16`.
-- `.claude/settings.json` HTTP hooks to `http://localhost:4200` have no
-  listener ("Stop hook error: HTTP undefined").
 - `plan_review` has no blocking criterion or operator-question path. This is
   out of scope for both 2026-09-27 plans.
 
-**Next up:** The operator decides on committing, and on authorizing
-streaming-harness-output Task 0 (paid capture). A new live team-notes run
-should wait until that plan is implemented; the executor change refuses runs
-frozen before it.
+**Next up:** The operator decides on committing, and on authorizing a new live
+team-notes run, which is the only end-to-end check of streaming-harness-output
+(the executor change refuses runs frozen before it, so it must be a fresh run).
 
 ## Diagnostics quick-reference
 
@@ -115,6 +127,9 @@ Durable project facts belong here, regardless of whether a host also caches them
 - `insertFindingDecision` requires grounding exactly for `rejected_with_rationale` and normative changes exactly for `addressed`.
 
 ### Evidence, runs and storage
+- A run's retained raw file changed shape on 2026-09-28. Runs dispatched before it hold one JSON object; later runs hold the whole `stream-json` stdout, one JSON object per line, the `type: "result"` line last. Read `num_turns`, `usage`, `total_cost_usd` and the `result` text from that last line (`JSON.parse(lastLine)`), never `JSON.parse` of the whole file. Nothing in `src/` reads retained raw files, but a test that parsed emitter stdout as one object broke (`implementation-stage.test.ts`); use `parseEnvelope`.
+- A byte-ceiling check must flag overflow when data arrives after the ceiling is already reached, not only when one chunk straddles it. `invokeHarness` missed the exact-fit case (the old 1 MiB cap had the same gap), which showed up as silent truncation until the idle timer fired. The flood test covers it only while chunk sizes align with the ceiling.
+- A guard added on a reviewer's hypothesis needs a test that fails without it. A repeat-kill guard on the post-ceiling branch failed no test on Windows in three runs, so it was reverted rather than kept unproven.
 - Identify revisions by hash, not dispatch order; zero audit counters do not prove guards fired.
 - Query before `driver.mjs clean`: it deletes store/raw evidence. Cost joins through `stage_id`; the table is `audit`; finding IDs span document and code review.
 - `Store.exec` forbids audit writes; model a missing gate by not appending its event.
@@ -237,9 +252,10 @@ The lessons that came out of it:
   tree.
 - Read how the test emitter routes prompts before planning a stage change.
 - The self-critique response in `.governance/raw/<run>/` is exactly the spec
-  the panel reviewed.
+  the panel reviewed. (Since 2026-09-28 that file is a stream; take the text
+  from the `result` field of its last line.)
 - `num_turns` and token totals show whether two dispatches received the same
-  input.
+  input. (Read them from the last line of a post-2026-09-28 raw file.)
 
 ### Resume-point audit and undocumented layers (2026-09-15, 2026-09-24)
 

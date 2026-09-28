@@ -36,9 +36,11 @@ export interface RunVerifyCommandOptions {
   /**
    * The in-memory budget, spent **combined across both streams**.
    *
-   * Deliberately unlike `invokeHarness`, which spends `RESULT_MAX_BYTES` on
-   * stdout alone and accumulates stderr unbounded. That is right there — the
-   * envelope it must parse is on stdout — and wrong here, where a command's
+   * Deliberately unlike `invokeHarness`, which retains stdout alone up to
+   * `STREAM_RETAIN_MAX_BYTES`, caps the parsed result text at
+   * `RESULT_MAX_BYTES` in `dispatchOnce`, and accumulates stderr unbounded.
+   * That is right there — the envelope it must parse is on stdout — and wrong
+   * here, where a command's
    * diagnosis is as likely to be on one stream as the other. The difference
    * is named because the two callers read the same policy number, and an
    * unnamed divergence between two enforcers of one value is hazard 12.

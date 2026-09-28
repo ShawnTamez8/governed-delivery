@@ -55,7 +55,22 @@ interface EnvelopeShape {
 // move to configuration when the config loader exists; until then they are
 // the single place to change them.
 export const PROMPT_MAX_BYTES = 1024 * 1024;
+/** Caps the result text the executor reports, not the stream that carries it. */
 export const RESULT_MAX_BYTES = 1024 * 1024;
+/**
+ * The ceiling on how much stdout is kept, separate from and much larger than
+ * `RESULT_MAX_BYTES` (section 20). The stream is the result text plus every
+ * partial-message chunk and every tool call and result: the recorded capture
+ * measured text chunks at about 18 times the result text and tool results at
+ * about 2.3 times the files read
+ * (test/fixtures/recorded/harness-stream-json-envelope.json, one sample). The
+ * result cap does not bound the tool results, because the read-only tools can
+ * open any file in the worktree. No measured bound exists, so this is a
+ * disk-and-memory safety limit sized like `VERIFY_RETENTION_MAX_BYTES`, not a
+ * tight fit: it holds a maximum-size result several times over. On breach the
+ * process is killed and `resultOverflow` is set.
+ */
+export const STREAM_RETAIN_MAX_BYTES = 64 * 1024 * 1024;
 const CLOSE_GRACE_MS = 1000;
 
 const WINDOWS = process.platform === "win32";
@@ -140,20 +155,54 @@ export function buildHarnessEnvironment(
 }
 
 /**
- * Parse the machine-generated outer envelope. Field names come from the one
- * recorded real invocation (hard rule 5), not from documentation memory.
+ * Parse the machine-generated outer envelope: newline-delimited JSON from
+ * `--output-format stream-json`, whose one `type: "result"` line is the last
+ * line and carries the fields read below. The shape and field names come from
+ * the one recorded real invocation
+ * (test/fixtures/recorded/harness-stream-json-envelope.json; hard rule 5),
+ * not from documentation memory. Exactly that shape is accepted: a line that
+ * is not a JSON object, no result line, more than one, or a result line that
+ * is not last is refused by name (hazard 1), never repaired. The inner
+ * `result` text is unchanged and is still parsed by `extractJsonBody`.
+ *
  * The effective model is the unique `modelUsage` entry whose input tokens
- * match the top-level `usage.input_tokens`: the recorded envelope shows
- * auxiliary model queries (a title generation) alongside the real turn, and
- * only the effective model's usage lands in the top-level `usage`. Anything
- * the envelope omits stays `null`, never zero.
+ * match the top-level `usage.input_tokens`. The recording has one entry, so it
+ * shows only that this match still runs on the stream's result line; the
+ * two-entry case (an auxiliary model beside the real turn, whose usage does
+ * not land in the top-level `usage`) is evidenced by the committed recorded
+ * chain fixtures, whose envelopes are one-line streams. A match that finds no
+ * unique entry yields `null`. Anything the envelope omits stays `null`, never
+ * zero.
  */
 export function parseEnvelope(executor: ExecutorDefinition, raw: string): HarnessEnvelope {
-  let parsed: EnvelopeShape;
-  try {
-    parsed = JSON.parse(raw) as EnvelopeShape;
-  } catch (err) {
-    throw new Error(`harness envelope for executor ${executor.id} is not valid JSON: ${(err as Error).message}`);
+  const refuse = (cause: string) => new Error(`harness envelope for executor ${executor.id} ${cause}`);
+  const results: { line: number; shape: EnvelopeShape }[] = [];
+  let lastLine = 0;
+  const physical = raw.split(/\r?\n/);
+  for (let index = 0; index < physical.length; index++) {
+    const text = physical[index];
+    if (text.trim() === "") continue;
+    const line = index + 1;
+    lastLine = line;
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch (err) {
+      throw refuse(`is not valid JSON: line ${line}: ${(err as Error).message}`);
+    }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw refuse(`has a line that is not a JSON object: line ${line}`);
+    }
+    if ((value as { type?: unknown }).type === "result") results.push({ line, shape: value as EnvelopeShape });
+  }
+  if (results.length === 0) throw refuse(`has no result line (expected exactly one line with type "result")`);
+  if (results.length > 1) throw refuse(`has ${results.length} result lines (expected exactly one)`);
+  if (results[0].line !== lastLine) {
+    throw refuse(`result line ${results[0].line} is not the last line (line ${lastLine})`);
+  }
+  const parsed = results[0].shape;
+  if (parsed.result !== undefined && typeof parsed.result !== "string") {
+    throw refuse(`has a result line whose result is not a string: line ${results[0].line}`);
   }
   const usage = parsed.usage ?? {};
   const matches = Object.entries(parsed.modelUsage ?? {}).filter(([, u]) => u.inputTokens === usage.input_tokens);
@@ -254,14 +303,22 @@ export function invokeHarness(executor: ExecutorDefinition, input: InvocationInp
 
     timers.push(setTimeout(fireTimeout, absoluteMs));
     child.stdout!.on("data", (d: Buffer) => {
-      const remaining = RESULT_MAX_BYTES - stdoutBytes;
-      if (remaining <= 0) return;
+      const remaining = STREAM_RETAIN_MAX_BYTES - stdoutBytes;
+      if (remaining <= 0) {
+        // The previous chunk ended exactly on the ceiling, so it did not flag
+        // overflow; more output arriving now is the overflow.
+        resultOverflow = true;
+        fireTimeout();
+        return;
+      }
       const kept = d.subarray(0, remaining);
       stdoutBytes += kept.length;
       stdoutChunks.push(kept);
       if (kept.length < d.length) {
-        // Section 20: cap the result, refuse above the cap, retain the
-        // capped prefix so the refusal is diagnosable.
+        // Section 20: retention is bounded by its own ceiling, far above the
+        // result cap. Kill on breach and retain the capped prefix so the
+        // refusal is diagnosable. The result cap applies to the parsed
+        // result text, in `dispatchOnce`.
         resultOverflow = true;
         fireTimeout();
       }

@@ -11,7 +11,9 @@ test("the command matches section 11's YAML", () => {
     "claude",
     "-p",
     "--output-format",
-    "json",
+    "stream-json",
+    "--include-partial-messages",
+    "--verbose",
     "--restricted",
     "--safe-mode",
     "--tools",
@@ -45,7 +47,9 @@ test("claude_executor_exposes_only_read_tools_in_restricted_safe_mode", () => {
     "claude",
     "-p",
     "--output-format",
-    "json",
+    "stream-json",
+    "--include-partial-messages",
+    "--verbose",
     "--restricted",
     "--safe-mode",
     "--tools",
@@ -61,6 +65,17 @@ test("claude_executor_exposes_only_read_tools_in_restricted_safe_mode", () => {
     assert.ok(CLAUDE_CODE.capabilities.includes(capability), `missing capability ${capability}`);
   }
   assert.deepEqual(CLAUDE_CODE.probe, ["claude", "--version"]);
+});
+
+test("the executor streams partial messages, so the idle timer sees generation (hazard 19)", () => {
+  // The recorded capture (Task 0 of streaming-harness-output) showed the CLI
+  // refuses `stream-json` under `-p` without `--verbose`, and that partial
+  // messages are what make text arrive while the model writes.
+  const command = CLAUDE_CODE.command;
+  assert.equal(command[command.indexOf("--output-format") + 1], "stream-json");
+  assert.ok(command.includes("--include-partial-messages"));
+  assert.ok(command.includes("--verbose"));
+  assert.ok(!command.includes("json"), "the non-streaming output format must be gone");
 });
 
 test("session cost is declared reported, matching the recorded envelope", () => {

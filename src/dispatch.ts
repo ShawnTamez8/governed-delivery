@@ -4,6 +4,8 @@ import {
   parseEnvelope,
   probeExecutor,
   PROMPT_MAX_BYTES,
+  RESULT_MAX_BYTES,
+  STREAM_RETAIN_MAX_BYTES,
   type InvocationInput,
 } from "./harness.ts";
 import type { ExecutorDefinition } from "./executor.ts";
@@ -82,7 +84,7 @@ export async function dispatchOnce(
   }
   if (outcome.resultOverflow) {
     return failed(
-      `dispatched agent ${input.agent} (${input.role}) on stage ${stage.id}: result exceeded the size cap`
+      `dispatched agent ${input.agent} (${input.role}) on stage ${stage.id}: output stream exceeded the ${STREAM_RETAIN_MAX_BYTES}-byte retention ceiling`
     );
   }
   if (outcome.timedOut) {
@@ -102,6 +104,13 @@ export async function dispatchOnce(
   } catch (err) {
     return failed(
       `dispatched agent ${input.agent} (${input.role}) on stage ${stage.id}: envelope parse failed: ${(err as Error).message}`
+    );
+  }
+  // Section 20: the result cap applies to the result text, not the stream that
+  // carried it. The raw stream is already retained above.
+  if (Buffer.byteLength(envelope.resultText) > RESULT_MAX_BYTES) {
+    return failed(
+      `dispatched agent ${input.agent} (${input.role}) on stage ${stage.id}: result exceeded the ${RESULT_MAX_BYTES}-byte size cap`
     );
   }
   const row = store.insertAgentRun({

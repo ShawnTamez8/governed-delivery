@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, readFileSync, existsSync, readdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
 import { dispatchOnce } from "../src/dispatch.ts";
-import { PROMPT_MAX_BYTES } from "../src/harness.ts";
+import { PROMPT_MAX_BYTES, RESULT_MAX_BYTES } from "../src/harness.ts";
 import { verifyAuditChain } from "../src/audit.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 
@@ -177,8 +177,70 @@ test("dispatchOnce forwards the requested model to the harness", async () => {
     assert.equal(result.ok, true);
     if (!result.ok) return;
     const row = store.getAgentRun(result.agentRunId)!;
-    const raw = JSON.parse(readFileSync(join(root, row.raw_output_ref), "utf8")) as { argv: string[] };
+    const stream = readFileSync(join(root, row.raw_output_ref), "utf8");
+    const raw = JSON.parse(stream.trimEnd().split("\n").at(-1)!) as { argv: string[] };
     assert.deepEqual(raw.argv, ["--model", "sonnet"]);
+  });
+});
+
+function scratchExecutor(root: string, name: string, source: string): ExecutorDefinition {
+  const script = join(root, `${name}.mjs`);
+  writeFileSync(script, source);
+  return { ...fixtureExecutor("echo-json"), id: `test-${name}`, command: [process.execPath, script] };
+}
+
+test("a result over the size cap is refused by name while the whole stream is retained", async () => {
+  await withDispatchContext(async (store, root, stageId) => {
+    // The cap bounds the result text, not the stream (section 20). The stream
+    // here is a little over the cap because it carries the result once.
+    const executor = scratchExecutor(root, "big-result", `
+      import { readFileSync } from "node:fs";
+      readFileSync(0);
+      console.log(JSON.stringify({ type: "result", subtype: "success", result: "x".repeat(${RESULT_MAX_BYTES} + 1) }));
+    `);
+    const result = await dispatchOnce(
+      store, executor, { stageId, agent: "a", role: "author", requestedModel: "m", prompt: "x" }, root);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, new RegExp(`result exceeded the ${RESULT_MAX_BYTES}-byte size cap`));
+    const files = rawDirFiles(root);
+    assert.equal(files.length, 1);
+    assert.ok(readFileSync(join(root, ".governance", "raw", files[0]), "utf8").length > RESULT_MAX_BYTES,
+      "the raw stream is retained whole");
+    assert.deepEqual(auditActions(store), ["agent.dispatch.failed"]);
+    assert.equal(store.query("SELECT * FROM agent_run").length, 0);
+  });
+});
+
+test("a result at the size cap is accepted", async () => {
+  await withDispatchContext(async (store, root, stageId) => {
+    const executor = scratchExecutor(root, "cap-result", `
+      import { readFileSync } from "node:fs";
+      readFileSync(0);
+      console.log(JSON.stringify({ type: "result", subtype: "success", result: "x".repeat(${RESULT_MAX_BYTES}) }));
+    `);
+    const result = await dispatchOnce(
+      store, executor, { stageId, agent: "a", role: "author", requestedModel: "m", prompt: "x" }, root);
+    assert.equal(result.ok, true, result.ok ? "" : result.reason);
+  });
+});
+
+test("a dispatch killed for silence retains the partial stream written before the kill (hazard 2)", async () => {
+  await withDispatchContext(async (store, root, stageId) => {
+    const executor = scratchExecutor(root, "goes-silent", `
+      import { readFileSync } from "node:fs";
+      readFileSync(0);
+      console.log(JSON.stringify({ type: "stream_event", text: "written-before-the-kill" }));
+      setInterval(() => {}, 1 << 30);
+    `);
+    const result = await dispatchOnce(
+      store, executor,
+      { stageId, agent: "a", role: "author", requestedModel: "m", prompt: "x", invocation: { idleTimeoutSeconds: 1 } },
+      root);
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /timed out after \d+ms/);
+    const files = rawDirFiles(root);
+    assert.equal(files.length, 1);
+    assert.ok(readFileSync(join(root, ".governance", "raw", files[0]), "utf8").includes("written-before-the-kill"));
   });
 });
 

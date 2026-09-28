@@ -504,14 +504,14 @@ above it until a second harness exists.
 
 ```yaml
 id: claude-code
-command: [claude, -p, --output-format, json, --restricted, --safe-mode, --tools, "Read,Glob,Grep", --disallowedTools, "Write,Edit,NotebookEdit,Bash,mcp__*", --permission-mode, dontAsk, --strict-mcp-config, --no-session-persistence]
+command: [claude, -p, --output-format, stream-json, --include-partial-messages, --verbose, --restricted, --safe-mode, --tools, "Read,Glob,Grep", --disallowedTools, "Write,Edit,NotebookEdit,Bash,mcp__*", --permission-mode, dontAsk, --strict-mcp-config, --no-session-persistence]
 probe: [claude, --version]
 capabilities: [spec, plan, review, implementation]
 telemetry:                  # what this harness can actually report
   perInvocationModel: true
   effectiveModel: true
   tokenUsage: true
-  sessionCost: true         # a recorded real envelope carries total_cost_usd
+  sessionCost: true         # the recorded stream's result line carries total_cost_usd
 sandbox:
   allowedPaths: [docs/features/**]   # document stages; implementation: the signed scope
   deniedPaths: [.governance/**]
@@ -549,6 +549,13 @@ multiple of the idle budget so a chatty hang still terminates. Kill the whole
 process tree, not the immediate child — on Windows that means an explicit tree
 kill.
 
+The executor streams (`stream-json` with partial messages), so every text chunk
+resets the timer and the budget measures inactivity. That is a property of the
+executor, not of the timer: a non-streaming output format writes nothing until
+the response is complete, and the same timer then measures the whole generation
+(hazard 19). `--verbose` is required with `stream-json` under `-p`; the CLI
+refuses without it.
+
 **The sandbox is enforced by the caller, not requested of the agent.** Allowed
 and denied paths, the command allowlist, and an explicit environment passthrough
 list. Pass named variables through; never inherit the whole environment, which
@@ -567,6 +574,12 @@ trusted.
 **Parse the returned body against the shapes in "Parsing model output".** The
 harness returning exit code zero says nothing about whether the body is what was
 asked for.
+
+The outer envelope is newline-delimited JSON with exactly one `result` line, and
+it is last. Cost, token counts and the effective model come from that line. A
+stream with a line that is not a JSON object, no result line, more than one, or
+a result line that is not last is refused by name, never repaired. The body
+inside its `result` field is what "Parsing model output" governs.
 
 **Take cost and model identity from the harness, never from the model.** A model
 asked what it cost will answer plausibly and wrongly. Read token counts, the
@@ -1327,7 +1340,10 @@ price.
   writing to a pipe was measured at roughly a gigabyte a second, which is
   hundreds of gigabytes inside its own time ceiling. On breach the command is
   killed; the result was already refused by the result cap, so nothing is lost
-  but the flood.
+  but the flood. For a harness dispatch the two ceilings apply to different
+  things: the result cap to the parsed result text, and a separate retention
+  ceiling to the whole stream, which carries every partial-message chunk and
+  every tool call and result.
 - **Concurrency.** One writer per repository, enforced by a lock. A second
   invocation fails fast with a clear diagnostic rather than interleaving writes.
 - **Document-review rounds.** A bounded budget for `spec_review` and

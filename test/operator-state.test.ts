@@ -31,8 +31,11 @@ import {
 import { freezeProfile, loadProfile, type Profile } from "../src/profile.ts";
 import { openStore, type AgentRunInput, type RunRow, type StageRow, type Store } from "../src/store.ts";
 
-const recorded = readFileSync(new URL("./fixtures/harness/claude-code-envelope.json", import.meta.url), "utf8");
+// The one real claude-code stream, recorded once (streaming-harness-output Task 0).
+const recorded = (JSON.parse(readFileSync(
+  new URL("./fixtures/recorded/harness-stream-json-envelope.json", import.meta.url), "utf8")) as { stream: string }).stream;
 const envelope = parseEnvelope(CLAUDE_CODE, recorded);
+const recordedDurationMs = (JSON.parse(recorded.trimEnd().split("\n").at(-1)!) as { duration_ms: number }).duration_ms;
 
 test("operator result serializer has one envelope/newline and the plan's exact outcome exits", () => {
   const cases: [OperatorCommand, string, OperatorErrorCode | null, number][] = [
@@ -75,7 +78,7 @@ function agent(store: Store, stageId: number, overrides: Partial<AgentRunInput> 
     requestedModel: envelope.effectiveModel!, effectiveModel: envelope.effectiveModel,
     fallback: envelope.fallback, tokensIn: envelope.tokensIn, tokensOut: envelope.tokensOut,
     cacheRead: envelope.cacheRead, cacheWrite: envelope.cacheWrite, cost: envelope.cost,
-    durationMs: JSON.parse(recorded).duration_ms, inputHash: sha256Hex("schema-bound observation"),
+    durationMs: recordedDurationMs, inputHash: sha256Hex("schema-bound observation"),
     outputHash: sha256Hex(recorded), rawOutputRef: "recorded-response.json",
     independence: "configured_standalone", ...overrides,
   });

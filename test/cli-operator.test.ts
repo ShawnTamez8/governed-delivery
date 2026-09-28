@@ -2472,14 +2472,25 @@ test("Task 4 inspection bypasses a live repository lock and maps exclusive SQLit
   }
 });
 
+/** The one real claude-code stream, recorded once (streaming-harness-output Task 0). */
+function recordedStream(): string {
+  const recording = JSON.parse(readFileSync(
+    new URL("./fixtures/recorded/harness-stream-json-envelope.json", import.meta.url), "utf8")) as { stream: string };
+  return recording.stream;
+}
+
+function recordedResultLine(stream: string): { duration_ms: number; session_id: string; uuid: string } {
+  return JSON.parse(stream.trimEnd().split("\n").at(-1)!);
+}
+
 function recordedAgent(store: Store, stageId: number, agent: string, rawRef: string) {
-  const recorded = readFileSync(new URL("./fixtures/harness/claude-code-envelope.json", import.meta.url), "utf8");
+  const recorded = recordedStream();
   const parsed = parseEnvelope(CLAUDE_CODE, recorded);
   return store.insertAgentRun({
     stageId, agent, role: "reviewer", executor: CLAUDE_CODE.id,
     requestedModel: parsed.effectiveModel!, effectiveModel: parsed.effectiveModel, fallback: parsed.fallback,
     tokensIn: parsed.tokensIn, tokensOut: parsed.tokensOut, cacheRead: parsed.cacheRead, cacheWrite: parsed.cacheWrite,
-    cost: parsed.cost, durationMs: JSON.parse(recorded).duration_ms,
+    cost: parsed.cost, durationMs: recordedResultLine(recorded).duration_ms,
     inputHash: sha256Hex("CLI presentation transport"), outputHash: sha256Hex(recorded), rawOutputRef: rawRef,
     independence: "configured_standalone",
   });
@@ -2492,7 +2503,7 @@ test("Task 4 blocked status preserves complete structured arrays and excludes ra
     const store = openStore(root);
     const selected = store.insertRun("selected project", "selected", "selected", "feature");
     const other = store.insertRun("other project", "other", "other", "feature");
-    const raw = readFileSync(new URL("./fixtures/harness/claude-code-envelope.json", import.meta.url), "utf8");
+    const raw = recordedStream();
     const rawRef = ".governance/retained-response.json";
     writeFileSync(resolve(root, rawRef), raw);
     const stages = [store.insertStage(selected.id, "spec", null)];
@@ -2552,7 +2563,7 @@ test("Task 4 blocked status preserves complete structured arrays and excludes ra
     assert.ok(snapshot.limitations.some((reason) => /profile/i.test(reason)));
     assert.ok(snapshot.evidence.references.some((reference) => reference.ref === rawRef));
     assert.doesNotMatch(result.stdout, /other-run-only/);
-    for (const hidden of [signature, JSON.parse(raw).session_id, JSON.parse(raw).uuid]) {
+    for (const hidden of [signature, recordedResultLine(raw).session_id, recordedResultLine(raw).uuid]) {
       assert.ok(!result.stdout.includes(hidden));
       assert.ok(!result.stderr.includes(hidden));
     }
@@ -2562,7 +2573,7 @@ test("Task 4 blocked status preserves complete structured arrays and excludes ra
     for (const report of expectedReports) assert.ok(text.stdout.includes(report.subject), report.subject);
     assert.ok(text.stdout.includes(rawRef));
     assert.ok(!text.stdout.includes(signature));
-    assert.ok(!text.stdout.includes(JSON.parse(raw).session_id));
+    assert.ok(!text.stdout.includes(recordedResultLine(raw).session_id));
     assert.doesNotMatch(text.stdout, /\u001b\[/);
     assert.deepEqual(inventory(parent), before);
   } finally {
