@@ -1,6 +1,6 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-28, streaming-harness-output implemented and uncommitted; earlier work committed through `2447192`)
+## Current state (2026-09-28, streaming-harness-output implemented and committed in `85fccad`; nothing pushed)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
@@ -8,13 +8,13 @@ system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
 **Working state (verified 2026-09-28 with `git log`/`git status`):** Branch
-`streaming-harness-output`, HEAD `2447192` (also the tip of local
-`dashboard-ux-redesign`, three commits ahead of its origin, not pushed).
-`CLAUDE.md`/`AGENTS.md` are byte-identical. The streaming-harness-output
-implementation (last bullet) and the removal of the port-4200 hooks from
-`.claude/settings.json` are **uncommitted**; the operator has not asked for a
-commit. The earlier bullets were uncommitted on 2026-09-27 and are now in
-`bda3b42` and `2447192`; they are kept as a record of what shipped:
+`streaming-harness-output` holds `85fccad` (streaming implementation and the
+port-4200 hook removal) plus the commit that updated this block, on top of
+`2447192` (also the tip of local `dashboard-ux-redesign`, three commits ahead
+of its origin). Nothing is pushed. `CLAUDE.md`/`AGENTS.md` are byte-identical.
+`base.txt` is untracked, a known test-suite leak, and is in no commit. The
+bullets below record what shipped: the earlier ones in `bda3b42` and
+`2447192`, streaming and the hook removal in `85fccad`.
 - **disclosed-open-decisions** — `Implemented` 2026-09-27
   (`docs/features/disclosed-open-decisions/plan.md`; in-session subagent
   review). `src/spec-doc.ts`, `src/spec-stage.ts`, `src/prompts.ts`, their
@@ -87,7 +87,7 @@ which must be moved aside before the next run (the clean-tree check refuses
 otherwise). Earlier runs' specs were moved to session scratchpads.
 
 **Open — operator decisions; nothing is pending from the assistant:**
-- Commit the uncommitted work above, and push.
+- Push the branch (nothing has been pushed).
 - A live run that reaches a spec_review question needs `bw run` or guided mode
   with the operator answering; `driver.mjs paid` cannot cross a decision pause.
   Old run stores (team-notes, note-keeper) read `interrupted_or_inconsistent`;
@@ -99,7 +99,7 @@ otherwise). Earlier runs' specs were moved to session scratchpads.
 - `plan_review` has no blocking criterion or operator-question path. This is
   out of scope for both 2026-09-27 plans.
 
-**Next up:** The operator decides on committing, and on authorizing a new live
+**Next up:** The operator decides on pushing, and on authorizing a new live
 team-notes run, which is the only end-to-end check of streaming-harness-output
 (the executor change refuses runs frozen before it, so it must be a fresh run).
 
