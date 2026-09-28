@@ -479,3 +479,32 @@ specification, and plan exceed the frozen prompt ceiling is refused rather than
 reviewed in part. A verification configuration that proves nothing about the
 artifact — `node --version` against a calculator — is still accepted: a
 stronger `governed.yaml` is the operator's decision, not the system's.
+
+## 19. An inactivity budget over non-streaming output is a wall clock
+
+An idle timer that resets "on any output" measures inactivity only if the
+process produces output while it works. `claude -p --output-format json`
+writes nothing until the whole response is finished, so the timer sees silence
+for the entire generation. The idle budget then is a hard wall-clock cap on
+every dispatch, and a long response is killed while it is still being written.
+`src/executor.ts` already said so in a comment ("the idle budget is in practice
+the whole generation time"), but nothing measured what that costs.
+
+The kill also defeats entry 2. A process killed before it writes a byte leaves
+nothing to retain. The harness reports no cost for it, so the spend is unknown,
+and nothing records what the model had written by then.
+
+**Measured, 2026-09-27, $4.19 known plus one dispatch of unknown cost.**
+Team-notes run 4 passed spec review, approval, plan, and plan review, then
+dispatched the implementer with a 24-path approved scope. The implementer must
+return every file's complete content in one response. The harness killed it at
+1,800,194 ms, the frozen 1800-second idle budget, with `timedOut`, and the
+retained raw file is 0 bytes. The run blocked at `implementation` and cannot be
+resumed. The largest implementation dispatch recorded before this ran
+780,568 ms.
+
+Require the executor to emit output while it generates, so that the idle timer
+measures real inactivity, and keep the separate absolute ceiling for a process
+that stays active and never finishes. Where an executor cannot stream, call its
+idle budget what it is, a per-dispatch wall-clock limit, and size it to the
+largest response the run will request.

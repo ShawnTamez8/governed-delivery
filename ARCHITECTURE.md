@@ -1382,7 +1382,7 @@ block.
 
 ## 22. Known hazards
 
-`docs/hazards.md` states eighteen failure modes this kind of system is subject
+`docs/hazards.md` states nineteen failure modes this kind of system is subject
 to and what each requires. They are requirements, not an appendix: model output
 in shapes the schema refuses, discarded output being undiagnosable, constrained
 fields whose constraint the prompt never states, fixtures and code agreeing
@@ -1394,7 +1394,8 @@ specifications inventing obligations, independence that cannot be proven,
 proposal subprocesses that are requested rather than enforced to be read-only,
 a remediation loop aimed at the wrong artifact that cannot repair an upstream
 omission, a reconciliation that answers a finding by deleting the obligation,
-and a delivery proven complete that nothing ever read.
+a delivery proven complete that nothing ever read, and an inactivity budget
+that a non-streaming executor turns into a wall clock.
 
 When a new failure mode is found, add it there rather than here. Two lists drift
 apart, and the one that drifts is the one people stop trusting.
