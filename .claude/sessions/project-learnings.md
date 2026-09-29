@@ -1,6 +1,6 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-29, per-agent model/effort plan implemented, uncommitted; streaming committed; nothing pushed)
+## Current state (2026-09-29, per-agent model/effort plan implemented and committed; nothing pushed)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
@@ -8,15 +8,12 @@ system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
 **Working state (verified 2026-09-29 with `git log`/`git status`):** Branch
-`streaming-harness-output`, HEAD `ff61dee`, on top of `85fccad` (streaming
+`streaming-harness-output`, HEAD `c539e59` (the stage-role-model-overrides
+implementation: source, migration 008, `test/uniform-profile.ts`, tests, docs, the plan
+and its review, the probe fixture), on top of `ff61dee`, `85fccad` (streaming
 implementation) and `2447192` (also the tip of local `dashboard-ux-redesign`,
 three ahead of its origin). Nothing is pushed. `CLAUDE.md`/`AGENTS.md` are
-byte-identical. **Uncommitted (about 51 paths):** the whole
-stage-role-model-overrides implementation (source, `src/migrations/008_agent_run_effort.sql`,
-`test/uniform-profile.ts`, tests, docs, `scripts/doc-check.mjs`), the plan and its review
-`docs/features/stage-role-model-overrides/2026-09-29-stage-role-model-overrides-review.md`,
-the fixture `test/fixtures/recorded/claude-effort-flag-probes.json`, and this file.
-`base.txt` is untracked, a known test-suite leak, in no commit.
+byte-identical. `base.txt` is untracked, a known test-suite leak, in no commit.
 
 **Shipped (all committed):**
 - 2026-09-27 (`bda3b42`, `2447192`): disclosed-open-decisions, the
@@ -70,7 +67,7 @@ approval in the dashboard, then `implementation` failed with exit 1.
   `thinking_delta` events with empty text, so the idle timer is fed during heavy
   thinking. Count only; the stream has no timestamps.
 
-**stage-role-model-overrides plan (`Implemented` 2026-09-29, uncommitted; see the
+**stage-role-model-overrides plan (`Implemented` 2026-09-29, committed `c539e59`; see the
 plan's Implementation note for what shipped, deviations (a)-(h) and the independent
 in-session review: no correctness defect, two low findings fixed, one deferred):**
 model **and effort** per setting for the nine registered agents plus one
@@ -128,8 +125,7 @@ was gone when checked.
 - Out of scope, recorded: the store records no cost for a dispatch that failed
   after producing a stream.
 
-**Next up:** Commit the stage-role-model-overrides implementation (nothing is
-committed until the operator asks). The first paid run is the test of the seeded `implementer` default (Sonnet 5.5
+**Next up:** Push the branch when the operator asks. The first paid run is the test of the seeded `implementer` default (Sonnet 5.5
 `medium`); it needs its own authorization, and a completed paid run never authorizes
 another. Deferred: refuse an unknown `--model-for`/`--effort-for` setting name at parse
 time so a typo leaves no blocked run.
