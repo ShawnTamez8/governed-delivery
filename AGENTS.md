@@ -82,8 +82,13 @@ verification commands themselves checked only `node --version` and
 completed all stages including the code-review remediation loop (16 dispatches,
 total cost $2.05854, 2 panel executions, 1 remediation, final commit verified,
 6 declared artifacts delivered, run completed, and audit chain valid), preserved
-in durable target storage under `C:\Users\tamezs\buildWorks_test_repos`. A
-completed paid run never authorizes another spend.
+in durable target storage under `C:\Users\tamezs\buildWorks_test_repos`. The first
+live run under the per-agent settings, operator-authorized on 2026-09-29, completed
+the web-calculator chain in 14 dispatches for $1.66350: one clean code-review panel,
+no remediation, 4 of 4 declared artifacts delivered, run completed, audit chain
+valid. Its scratch target was not preserved; the per-dispatch record is in
+`docs/features/stage-role-model-overrides/plan.md`. A completed paid run never
+authorizes another spend.
 
 ## Windows harness launch
 
@@ -306,9 +311,10 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
 - `node .claude/skills/run-buildworks/driver.mjs smoke` — builds that scratch
   target and drives the CLI against it, spending nothing. `paid --yes` drives
   the full chain against the real `claude` binary and reports what it cost:
-  the historical $1.25–$2.50 range predates the three-reviewer default, so no
-  current dollar range is established. Remediation adds an implementer dispatch
-  and another full three-reviewer panel. The committed default design is the
+  the historical $1.25–$2.50 range predates the three-reviewer default and the
+  per-agent settings. The one measurement under the current defaults is $1.66350
+  in 14 dispatches (2026-09-29, no remediation); one sample is not a range.
+  Remediation adds an implementer dispatch and another full three-reviewer panel. The committed default design is the
   20-requirement `web-calculator-design.md` beside the driver.
   Change what a run exercises with `--design <path>` and `--slug <slug>`
   (such as `.claude/skills/run-buildworks/target-tap-design.md`), or by editing

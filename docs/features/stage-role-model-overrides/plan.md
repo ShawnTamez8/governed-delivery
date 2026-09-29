@@ -936,9 +936,9 @@ recorded in the plan's out-of-scope note, not fixed here.
 
 ## Implementation note
 
-**Implemented 2026-09-29.** Tasks 0-7 are done and nothing is committed. Component
-success only, as the Verification section says: no paid run has exercised the seeded
-defaults.
+**Implemented 2026-09-29.** Tasks 0-7 are done and committed (`c539e59`). Component
+success at implementation, as the Verification section says; the live run recorded
+below then exercised the seeded defaults once.
 
 **What shipped.** `DEFAULT_SETTINGS`, `EFFORT_LEVELS` and `RECONCILER` in `src/policy.ts`;
 `dispatchSettings` replacing `modelMap` in the frozen profile, with `resolveSettings`
@@ -1002,8 +1002,46 @@ help text, the README, `CLAUDE.md`, `AGENTS.md`, the runbook, ARCHITECTURE secti
 the tests that assumed `plan-author` follows `--model` were updated to match; those
 sections are left as written and this note supersedes them.
 
-**Deferred, and unverified.** No seeded level or model is measured for this workload,
-and effective effort cannot be observed. The first paid run is the test of the
-`implementer` default. Failed-dispatch cost stays out of scope. The runbook line "The
-current code-review defaults are two reviewers" is inaccurate (the default is three); it
-predates this work and was left alone.
+**Live verification (operator-authorized paid run, 2026-09-29).** The paid driver
+(`.claude/skills/run-buildworks/driver.mjs paid --yes --model claude-sonnet-5-5`) ran
+the `web-calculator` design under the seeded defaults: 14 dispatches, $1.66350, run
+`completed`, ten stages passed (spec, spec_review, spec_decision, awaiting_approval,
+plan, plan_review, implementation, verification, code_review, delivery_check), 4 of 4
+declared artifacts delivered, audit chain valid, and the driver's 15 steps as expected.
+The scratch target sat in the OS temp directory and is not preserved; its `agent_run`
+rows were read before anything was cleaned. All 14 rows carry `setting` and
+`requested_effort`, and `effective_model` equals `requested_model` on every row:
+- `spec-author`, two rows: `claude-opus-5-5`, `high`. $0.13930 and $0.26410.
+- `spec-reviewer-traceability` and `spec-reviewer-consistency`, in each of the spec and
+  plan reviews (four rows): `claude-haiku-4-5-20251001`, `medium`. $0.30963 together.
+- `plan-author`, two rows: `claude-opus-5-5`, `high`. $0.12441 and $0.36403.
+- The two reconciliation rows: `setting` is `reconciler`, `agent` is `spec-author` and
+  `plan-author`, `claude-sonnet-5-5`, `medium`. $0.09117 and $0.09112.
+- `implementer`: `claude-sonnet-5-5`, `medium`. $0.09017, about 30 seconds.
+- The three code reviewers: `claude-sonnet-5-5`, `medium`. $0.18957 together.
+
+Cost by group: the four Opus author dispatches $0.89184, the Haiku spec reviewers
+$0.30963, the reconciliations $0.18229, the implementer $0.09017, the code-review panel
+$0.18957.
+
+What this shows. The seeded `implementer` default completed a real implementation with no
+output-cap failure, one sample only. The reconciler setting governed both reconciliation
+dispatches while `agent` kept naming the author. The requested effort is recorded;
+effective effort is still unobservable. One code-review panel returned no findings, so
+remediation, the second panel and the blocking gate were not exercised.
+
+The code reviewers did review. Each ran one turn with no tool calls, from the diff in the
+prompt (about 17,000 input tokens each, 3 to 12 seconds, $0.06 each). Their summaries name
+specifics, and the four I checked against the delivered files held: the display writes
+through `textContent` and nothing uses `innerHTML` or `eval`; the stored theme is checked
+against `dark` or `light` before use; every `localStorage` read and write sits in a
+try/catch; the Error state resets on the next digit. That establishes they read the code,
+not that they would catch a subtle defect on a larger change. No independent audit of the
+delivered code was done, and the reviewers are at `medium`.
+
+**Deferred, and unverified.** Neither reviewer quality nor implementer quality is measured
+across levels or models: one run on a small design, one clean panel. A run that attracts
+findings (for example `target-tap-design.md`, or `--effort-for` on a reviewer) is the test
+of that and needs its own authorization. Effective effort cannot be observed. Failed-dispatch
+cost stays out of scope. The runbook line "The current code-review defaults are two
+reviewers" is inaccurate (the default is three); it predates this work and was left alone.

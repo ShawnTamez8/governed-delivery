@@ -104,8 +104,7 @@ node .claude/skills/run-buildworks/driver.mjs clean                 # delete eve
 ```
 
 `--dir <path>` overrides the scratch location, `--model <name>` the model
-frozen for the plan author and the reconciler (every other setting takes its
-seeded default),
+frozen for the reconciler (every other setting takes its seeded default),
 `--design <path>` the requirements document, and `--slug <slug>` the feature
 directory it is written to. The last two are how a run exercises something
 other than the web calculator; see "Driving a custom PRD" below.
@@ -125,15 +124,43 @@ pattern: its throwaway key exists solely to exercise signature verification.
 Never infer authorization for a paid run from this document or retain a real
 private key where target verification can read it.
 
-**Every cost and dispatch count recorded in this section was measured with one
-model, `claude-sonnet-5`, for every dispatch, and none of it is valid for a run
-frozen today.** `new-run` now freezes a model and effort per setting, and the
-driver passes only `--model`, so a paid chain takes the seeded defaults in
-`src/policy.ts`: `claude-opus-5-5` for the spec author, `claude-haiku-4-5-20251001`
-for the spec reviewers, and `claude-sonnet-5-5` for the implementer and the code
-reviewers, with `--model` covering only the plan author and the reconciler. No
-paid run has been measured under those defaults, so no dollar figure here
-predicts one.
+**Every cost and dispatch count recorded in this section, except the 2026-09-29
+run below, was measured with one model, `claude-sonnet-5`, for every dispatch,
+and none of that is valid for a run frozen today.** `new-run` now freezes a
+model and effort per setting, and the driver passes only `--model`, so a paid
+chain takes the seeded defaults in `src/policy.ts`: `claude-opus-5-5` for the
+spec and plan authors, `claude-haiku-4-5-20251001` for the spec reviewers, and
+`claude-sonnet-5-5` for the implementer and the code reviewers, with `--model`
+covering only the reconciler. One paid run has been measured under those
+defaults, and it is one sample, not a range.
+
+Verified run, 2026-09-29, seeded defaults with `--model claude-sonnet-5-5`
+(passed to the driver as `paid --yes --model claude-sonnet-5-5`), all ten stages
+passed, the run completed, 15 of 15 driver steps as expected:
+
+```
+dispatches: 14   total cost: $1.66350
+  spec-author x2 (claude-opus-5-5, high)                     $0.13930 + $0.26410
+  spec and plan panels: 2 Haiku reviewers each (medium)      $0.30963
+  spec-author reconcile (claude-sonnet-5-5, medium)          $0.09117
+  plan-author x2 (claude-opus-5-5, high)                     $0.12441 + $0.36403
+  plan-author reconcile (claude-sonnet-5-5, medium)          $0.09112
+  implementer (claude-sonnet-5-5, medium)                    $0.09017
+  code panel: 3 Sonnet 5.5 reviewers (medium)                $0.18957
+run 1 (web-calculator): completed
+```
+
+It delivered `index.html`, `styles.css`, `calculator.js` and `theme.js`
+(`declared=4 delivered=4`). One code-review panel returned no findings, so no
+remediation ran: this sample did not exercise the remediation path, the second
+panel or the blocking gate. The reviewers ran one turn each from the diff in the
+prompt, and the specifics in their summaries held against the delivered files;
+whether they would catch a subtle defect is untested. The Opus author
+dispatches were 54 percent of the cost. Every `agent_run` row carried its
+`setting` and `requested_effort`; effective effort is still unobservable. The
+scratch target was not preserved. The driver's own `--model` default is still
+`claude-sonnet-5`, which now becomes the reconciler's model; pass `--model
+claude-sonnet-5-5`, as this run did, to keep every dispatch on a current model.
 
 Verified run, 2026-08-31, `claude-sonnet-5`, all seven stages passed. This
 record predates step 8, so the run ends `in_progress` and `deliver` was not
@@ -287,7 +314,7 @@ Two designs are committed beside this file:
 
 | Design | Slug | Size | Status |
 |---|---|---|---|
-| `web-calculator-design.md` | `web-calculator` | 2,813 bytes | Exercised — 2026-09-04 ($1.34097, 11 dispatches) and 2026-09-07 ($1.39473, 13 dispatches) |
+| `web-calculator-design.md` | `web-calculator` | 2,813 bytes | Exercised — 2026-09-04 ($1.34097, 11 dispatches), 2026-09-07 ($1.39473, 13 dispatches) and 2026-09-29 ($1.66350, 14 dispatches, the seeded per-agent defaults) |
 | `target-tap-design.md` | `target-tap` | 18,912 bytes | **Never run.** No cost history |
 
 `target-tap-design.md` is a browser-game PRD in the operator's own format —

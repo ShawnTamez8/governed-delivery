@@ -108,7 +108,10 @@ An operator-authorized live run on 2026-09-11 on the `web-calculator` design
 completed all stages including the code-review remediation loop (16 dispatches,
 total cost $2.05854, 2 panel executions, 1 remediation, final commit verified,
 6 declared artifacts delivered, run completed, and audit chain valid), preserved
-in durable target storage at `C:\Users\tamezs\buildWorks_test_repos`.
+in durable target storage at `C:\Users\tamezs\buildWorks_test_repos`. The first
+live run under the per-agent model and effort settings, on 2026-09-29, completed
+the same design in 14 dispatches for $1.66350 with one clean panel and no
+remediation; see [the milestone](#the-milestone-that-decides-everything).
 
 The code-review controls live together in [`src/policy.ts`](src/policy.ts) and
 are frozen into each new run's profile:
@@ -617,7 +620,9 @@ Effort is what each dispatch requests through `claude --effort`; the provider
 does not report the effort it applied, so BuildWorks records the requested level
 only, in `agent_run.requested_effort`. Changing a seeded default in
 `src/policy.ts` affects later `new-run` commands only. These defaults are
-starting points with no measurement behind them for this workload.
+starting points. One live run completed under them on 2026-09-29, and that is the
+whole measurement: it shows the defaults can complete a small chain, not that any
+level or model reviews or implements better than another.
 
 `run --run` displays the frozen model and effort settings, remaining groups,
 actual verification argv, review budgets, and dispatch ceilings before asking a TTY for explicit
@@ -935,3 +940,17 @@ artifacts (`scopeMatch=yes declared=6 delivered=6 missing=[]`), and verified aud
 chain validity (`exit=0`). The complete run store (`state.db`), keys, and all 16 raw
 dispatch payloads are preserved in durable storage under
 `C:\Users\tamezs\buildWorks_test_repos`.
+
+On 2026-09-29, an operator-authorized paid run on the same design was the first
+under the per-agent settings: seeded Opus 5.5 at `high` for the spec and plan
+authors, Haiku 4.5 at `medium` for the spec reviewers, and Sonnet 5.5 at `medium`
+for the implementer and the three code reviewers, with `claude-sonnet-5-5` frozen
+for the reconciler. It completed in 14 dispatches for $1.66350: ten stages passed,
+one code-review panel returned no findings so no remediation ran, all 4 declared
+artifacts were delivered, and the audit chain validated. Every `agent_run` row
+recorded the setting that governed it and its requested effort. The three code
+reviewers each ran one turn from the diff in the prompt, returned no findings, and
+their specific claims held against the delivered files. This one sample did not
+exercise remediation and cannot show reviewer sensitivity. Its scratch target was
+not preserved; the per-dispatch record is in
+[`docs/features/stage-role-model-overrides/plan.md`](docs/features/stage-role-model-overrides/plan.md).

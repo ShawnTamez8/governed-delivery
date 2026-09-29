@@ -1,6 +1,6 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-29, per-agent model/effort plan implemented and committed; nothing pushed)
+## Current state (2026-09-29, per-agent model/effort plan implemented, committed and run live once; nothing pushed)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
@@ -8,11 +8,13 @@ system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
 **Working state (verified 2026-09-29 with `git log`/`git status`):** Branch
-`streaming-harness-output`, HEAD `c539e59` (the stage-role-model-overrides
-implementation: source, migration 008, `test/uniform-profile.ts`, tests, docs, the plan
-and its review, the probe fixture), on top of `ff61dee`, `85fccad` (streaming
-implementation) and `2447192` (also the tip of local `dashboard-ux-redesign`,
-three ahead of its origin). Nothing is pushed. `CLAUDE.md`/`AGENTS.md` are
+`streaming-harness-output`. `c539e59` is the stage-role-model-overrides
+implementation (source, migration 008, `test/uniform-profile.ts`, tests, docs, the plan
+and its review, the probe fixture), `f04a7a6` the earlier resume-point update, and a
+documentation commit after them records the live run below (read `git log` for its
+hash). Under them sit `ff61dee`, `85fccad` (streaming implementation) and `2447192`
+(also the tip of local `dashboard-ux-redesign`, three ahead of its origin). Nothing is
+pushed. `CLAUDE.md`/`AGENTS.md` are
 byte-identical. `base.txt` is untracked, a known test-suite leak, in no commit.
 
 **Shipped (all committed):**
@@ -106,11 +108,31 @@ model **and effort** per setting for the nine registered agents plus one
   test helper `test/uniform-profile.ts` and a Task 4 Step 0 that routes seven
   dispatching test files through it. Deferred: printing setting sources in `status`.
 
-**Running state:** dashboard background task `bjq5aqd81`, port 54101 (the
-bearer token is minted per start and is not recorded), serving team-notes from
-the session scratchpad's `dashboard-repositories.json`. Session-only; stop with
-TaskStop `bjq5aqd81`. The earlier session's dashboard (`bjutv7qpr`, port 52902)
-was gone when checked.
+**First live run under the per-agent settings (2026-09-29, operator-authorized,
+`driver.mjs paid --yes --model claude-sonnet-5-5`, web-calculator):** 14 dispatches,
+$1.66350, run `completed`, ten stages passed, 4 of 4 artifacts delivered, audit chain
+valid, driver 15/15. The plan's Implementation note carries the per-row table.
+- All 14 `agent_run` rows carry `setting` and `requested_effort`, and `effective_model`
+  equals `requested_model` on each. Both reconciliations ran under `reconciler`
+  (Sonnet 5.5 `medium`) with `agent` still the author.
+- The `implementer` default (Sonnet 5.5 `medium`) completed: 30 s, $0.09, no output-cap
+  failure. One sample.
+- Opus author dispatches were $0.89 of the $1.66; Haiku spec reviewers $0.31;
+  reconciliations $0.18; implementer $0.09; code panel $0.19.
+- One clean code-review panel, so remediation, panel two and the blocking gate were not
+  exercised. Reviewers ran one turn each, no tools, about 17,000 input tokens
+  (diff is in the prompt), 3-12 s. Their cited specifics held against the delivered
+  files (`textContent`, theme allowlist, `localStorage` try/catch, Error reset), so they
+  did read the code; reviewer sensitivity is untested.
+- The scratch target (OS temp `bw-run-skill\1790702965489\target`) is not preserved and
+  `driver.mjs clean` deletes it; the rows are copied into the plan.
+- The driver's own `--model` default is still `claude-sonnet-5` and now sets the
+  reconciler; pass `--model claude-sonnet-5-5`.
+
+**Running state:** dashboard background task `b7970wd79`, restarted after the paid run
+so its repositories file lists team-notes and the scratch target (port 52294; the
+bearer token is minted per start and is not recorded). Session-only; stop with TaskStop
+`b7970wd79`. The earlier tasks (`bjq5aqd81`, `bjutv7qpr`) are gone.
 
 **Open — operator decisions:**
 - Push the branch (nothing has been pushed).
@@ -125,10 +147,12 @@ was gone when checked.
 - Out of scope, recorded: the store records no cost for a dispatch that failed
   after producing a stream.
 
-**Next up:** Push the branch when the operator asks. The first paid run is the test of the seeded `implementer` default (Sonnet 5.5
-`medium`); it needs its own authorization, and a completed paid run never authorizes
-another. Deferred: refuse an unknown `--model-for`/`--effort-for` setting name at parse
-time so a typo leaves no blocked run.
+**Next up:** Push the branch when the operator asks. Reviewer and implementer quality
+across levels is unmeasured; a run on a design that attracts findings (for example
+`target-tap-design.md`, or `--effort-for` on a reviewer) is the test, needs its own
+authorization, and a completed paid run never authorizes another. Deferred: refuse an
+unknown `--model-for`/`--effort-for` setting name at parse time so a typo leaves no
+blocked run.
 
 ## Diagnostics quick-reference
 
