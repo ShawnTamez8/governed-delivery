@@ -125,6 +125,44 @@ interface FindingReportRow {
   subject: string;
 }
 
+// stage-role-model-overrides Task 3: migration 008 adds two nullable columns, so
+// a row written before it (which never set them) survives and reads as null.
+test("migration 008 adds requested_effort and setting, and a pre-008 agent_run row keeps them null", () => {
+  const { root, dir, dbPath } = scratchMigrationsDir();
+  try {
+    for (const f of readdirSync(MIGRATIONS_DIR).filter((name) => /^00[2-7]_.+\.sql$/.test(name))) {
+      copyFileSync(join(MIGRATIONS_DIR, f), join(dir, f));
+    }
+    applyMigrations(dbPath, dir);
+    const seed = new DatabaseSync(dbPath);
+    try {
+      const now = "2026-01-01T00:00:00.000Z";
+      seed.prepare("INSERT INTO run (project, feature_id, slug, change_kind, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run("p", "f-1", "s", "feature", "in_progress", now, now);
+      seed.prepare("INSERT INTO stage (run_id, kind, ordinal) VALUES (?, ?, ?)").run(1, "spec", 0);
+      seed.prepare(
+        `INSERT INTO agent_run (stage_id, agent, role, executor, requested_model, duration_ms, input_hash, output_hash, raw_output_ref, independence)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(1, "spec-author", "author", "claude-code", "sonnet", 100, "h1", "h2", "raw/1/x.json", "configured_standalone");
+    } finally {
+      seed.close();
+    }
+    copyFileSync(join(MIGRATIONS_DIR, "008_agent_run_effort.sql"), join(dir, "008_agent_run_effort.sql"));
+    applyMigrations(dbPath, dir);
+    const after = new DatabaseSync(dbPath);
+    try {
+      const row = after.prepare("SELECT requested_effort, setting FROM agent_run WHERE id = 1").get() as
+        { requested_effort: string | null; setting: string | null };
+      assert.deepEqual({ ...row }, { requested_effort: null, setting: null });
+      assert.equal((after.prepare("PRAGMA user_version").get() as { user_version: number }).user_version, 8);
+    } finally {
+      after.close();
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // Step 5b Task 7: the migration that rebuilds `finding` must carry every
 // existing row forward under round 1, with one finding_report row when the
 // legacy row named a producing agent_run_id — and must not manufacture a

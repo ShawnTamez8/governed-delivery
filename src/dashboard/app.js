@@ -3411,13 +3411,14 @@ function renderConfiguration(projection, application) {
     ["Approval signer", text(configuration.approvalSigner, "Not recorded")],
   ]));
   const models = element("div", null, "subsection");
-  models.append(element("h3", "Model map"));
-  const modelEntries = Object.entries(configuration.modelMap ?? {});
-  if (modelEntries.length === 0) {
-    models.append(element("p", "No model map is recorded for this run.", "empty-state"));
+  models.append(element("h3", "Dispatch settings"));
+  const settingEntries = Object.entries(configuration.dispatchSettings ?? {});
+  if (settingEntries.length === 0) {
+    models.append(element("p", "No dispatch settings are recorded for this run.", "empty-state"));
   } else {
-    models.append(dataTable("Exact frozen model identifier for each stage", ["Stage", "Model"],
-      modelEntries.map(([stage, model]) => [stage, model])));
+    models.append(dataTable("Exact frozen model identifier and requested effort for each setting", ["Setting", "Model", "Effort"],
+      settingEntries.map(([setting, entry]) => [setting, entry.model, entry.effort])));
+    models.append(element("p", "Effort is what each dispatch requested; the provider does not report the effort it applied.", "source-note"));
   }
   section.append(models);
   const verification = element("div", null, "subsection");
@@ -4008,6 +4009,41 @@ function runTarget(application, selected) {
 }
 
 /**
+ * The dispatch settings each recorded stage kind draws on: named settings, a
+ * reviewer panel by agent-id prefix, or both. A reconciliation dispatch is
+ * recorded on the `spec` or `plan` stage row, not on its review stage, and the
+ * code-review remediation dispatch (the implementer) on the `code_review` row.
+ * @type {Record<string, { names?: string[], prefix?: string }>}
+ */
+const STAGE_SETTINGS = {
+  spec: { names: ["spec-author", "reconciler"] },
+  spec_review: { prefix: "spec-reviewer-" },
+  spec_decision: { names: ["reconciler"] },
+  plan: { names: ["plan-author", "reconciler"] },
+  plan_review: { prefix: "spec-reviewer-" },
+  implementation: { names: ["implementer"] },
+  code_review: { names: ["implementer"], prefix: "code-reviewer-" },
+};
+
+/**
+ * "model · effort" for the settings a stage kind draws on, each distinct pair once.
+ * @param {Record<string, { model: string, effort: string }>} settings @param {string} kind
+ */
+export function stageSettingsText(settings, kind) {
+  const spec = STAGE_SETTINGS[kind];
+  if (spec === undefined) return "Not configured";
+  const names = [
+    ...(spec.names ?? []),
+    ...(spec.prefix === undefined ? [] : Object.keys(settings).filter((name) => name.startsWith(spec.prefix ?? ""))),
+  ];
+  const pairs = new Set(names.flatMap((name) => {
+    const entry = settings[name];
+    return entry === undefined ? [] : [`${entry.model} · ${entry.effort}`];
+  }));
+  return pairs.size === 0 ? "Not configured" : [...pairs].join("; ");
+}
+
+/**
  * The Governance view: a categorical status, the policy checks, the
  * auditability timeline, and the frozen configuration. No score is computed.
  * @param {DashboardApplication} application
@@ -4053,10 +4089,10 @@ export function renderGovernanceTab(application) {
 
   const groups = new Map(snapshot.cost.byStage.map((group) => [group.stageId, group]));
   const durations = new Map(segments.map((segment) => [segment.stageId, segment.durationMs]));
-  const models = projection.governance.configuration.modelMap ?? {};
+  const settings = projection.governance.configuration.dispatchSettings ?? {};
   const timeline = region("Auditability timeline", {
     count: plural(snapshot.stages.length, "stage"),
-    sub: "Recorded order. Start is the stage-creation audit time when no start is recorded; the model is the frozen configuration's, per stage.",
+    sub: "Recorded order. Start is the stage-creation audit time when no start is recorded; the model and requested effort are the frozen configuration's, per stage.",
   });
   /** @type {TableColumn<RunSnapshot["stages"][number]>[]} */
   const columns = [
@@ -4076,9 +4112,9 @@ export function renderGovernanceTab(application) {
         return rows === 0 ? element("span", "none", "muted") : String(rows);
       },
     },
-    { label: "Configured model", className: "mono muted", cell: (stage) => models[stage.kind] ?? "Not configured" },
+    { label: "Configured settings", className: "mono muted", cell: (stage) => stageSettingsText(settings, stage.kind) },
   ];
-  timeline.append(sortableTable({ caption: "Recorded stages with result, start, duration, agent runs, and configured model", key: "governance-timeline", rows: snapshot.stages, columns, application }));
+  timeline.append(sortableTable({ caption: "Recorded stages with result, start, duration, agent runs, and configured model and effort", key: "governance-timeline", rows: snapshot.stages, columns, application }));
   container.append(status, timeline,
     collapsibleSection(plural(projection.governance.proposals.length, "proposal"), "",
       () => renderConfiguration(projection, application), badge("Frozen at run start", "neutral")),

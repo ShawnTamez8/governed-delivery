@@ -103,7 +103,9 @@ node .claude/skills/run-buildworks/driver.mjs report --dir <target> # what a fin
 node .claude/skills/run-buildworks/driver.mjs clean                 # delete every scratch target
 ```
 
-`--dir <path>` overrides the scratch location, `--model <name>` the model,
+`--dir <path>` overrides the scratch location, `--model <name>` the model
+frozen for the plan author and the reconciler (every other setting takes its
+seeded default),
 `--design <path>` the requirements document, and `--slug <slug>` the feature
 directory it is written to. The last two are how a run exercises something
 other than the web calculator; see "Driving a custom PRD" below.
@@ -122,6 +124,16 @@ the store. This is a test harness, not the production approval-authority
 pattern: its throwaway key exists solely to exercise signature verification.
 Never infer authorization for a paid run from this document or retain a real
 private key where target verification can read it.
+
+**Every cost and dispatch count recorded in this section was measured with one
+model, `claude-sonnet-5`, for every dispatch, and none of it is valid for a run
+frozen today.** `new-run` now freezes a model and effort per setting, and the
+driver passes only `--model`, so a paid chain takes the seeded defaults in
+`src/policy.ts`: `claude-opus-5-5` for the spec author, `claude-haiku-4-5-20251001`
+for the spec reviewers, and `claude-sonnet-5-5` for the implementer and the code
+reviewers, with `--model` covering only the plan author and the reconciler. No
+paid run has been measured under those defaults, so no dollar figure here
+predicts one.
 
 Verified run, 2026-08-31, `claude-sonnet-5`, all seven stages passed. This
 record predates step 8, so the run ends `in_progress` and `deliver` was not
@@ -407,5 +419,5 @@ verification commands.
 | `run N's last stage is none, not a passed implementation` | `verify` needs a passed implementation stage, not just a run. |
 | `the working tree is not clean` | The target has uncommitted changes — often a previous blocked run's projections. |
 | `governed.yaml is not committed at <sha>` | The config is read from the starting commit, never the working copy. Commit it. |
-| `--model X does not match the model frozen at run start` | Hard rule 6. Start a new run to change the model. |
+| `--model X does not match the model frozen at run start` | Hard rule 6. The message names the model frozen for that stage's setting, which is not always the run's `--model`: `spec-author`, `implementer` and the reviewers have seeded models. Start a new run, with `--model-for` if you need a different one. |
 | `no such column: …` from a `.governance/state.db` query | Read `src/migrations/*.sql` for the real column names — `agent_run` has `effective_model`, not `model_effective`. |

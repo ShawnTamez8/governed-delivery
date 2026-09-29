@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
 import { verifyAuditChain, appendAudit } from "../src/audit.ts";
-import { freezeProfile, loadVerifiedProfile } from "../src/profile.ts";
+import { loadVerifiedProfile } from "../src/profile.ts";
+import { freezeUniformProfile } from "./uniform-profile.ts";
 import { runSpecStage } from "../src/spec-stage.ts";
 import { AGENTS } from "../src/agents.ts";
 import { buildPolicy, policyHash } from "../src/policy.ts";
@@ -118,7 +119,7 @@ function withRun(
     const run = store.insertRun("p", "f-1", "demo", "feature");
     // The stage resolves its model from the frozen profile now, so a run
     // without one cannot reach a dispatch at all.
-    const frozen = freezeProfile(root, run.id, head, "m", VERIFICATION);
+    const frozen = freezeUniformProfile(root, run.id, head, "m", VERIFICATION);
     store.setProfileRef(run.id, frozen.hash);
     // The run's frozen executor *is* the fixture the tests hand by default;
     // scratch-executor tests freeze their own right before the stage call.
@@ -1243,7 +1244,7 @@ test("a missing design document is refused before any dispatch", async () => {
   const root = mkdtempSync(join(tmpdir(), "bw-spec-stage-"));
   const store = openStore(root);
   const run = store.insertRun("p", "f-1", "no-design", "feature");
-  const frozen = freezeProfile(root, run.id, "b".repeat(40), "m", VERIFICATION);
+  const frozen = freezeUniformProfile(root, run.id, "b".repeat(40), "m", VERIFICATION);
   store.setProfileRef(run.id, frozen.hash);
   // This test builds its own run (no design.md exists); like withRun, the
   // frozen executor must be the fixture the test hands.
@@ -1338,14 +1339,15 @@ test("a blocked run is refused before anything can be dispatched", async () => {
   });
 });
 
-test("a stage with no model in the frozen map fails before any dispatch", async () => {
+test("a stage with no settings entry in the frozen profile fails before any dispatch", async () => {
   await withRun(async ({ store, root, runId }) => {
-    // Rewrite the frozen profile with `spec` removed from the map, and re-point
-    // run.profile_ref at the new bytes so the profile stays self-consistent —
-    // the refusal under test is the missing model, not a tampered profile.
+    // Rewrite the frozen profile with `spec-author` removed from the settings,
+    // and re-point run.profile_ref at the new bytes so the profile stays
+    // self-consistent — the refusal under test is the missing entry, not a
+    // tampered profile.
     const path = join(root, ".governance", "profiles", String(runId), "profile.json");
-    const profile = JSON.parse(readFileSync(path, "utf8")) as { modelMap: Record<string, string> };
-    delete profile.modelMap.spec;
+    const profile = JSON.parse(readFileSync(path, "utf8")) as { dispatchSettings: Record<string, unknown> };
+    delete profile.dispatchSettings["spec-author"];
     const serialized = canonicalJson(profile);
     writeFileSync(path, serialized);
     store.setProfileRef(runId, sha256Hex(serialized));
@@ -1357,10 +1359,44 @@ test("a stage with no model in the frozen map fails before any dispatch", async 
     });
     assert.equal(result.ok, false);
     if (result.ok) return;
-    assert.match(result.reason, /no model configured for stage spec/);
+    assert.match(result.reason, /dispatchSettings carries no entry for spec-author/);
     // Section 10 requires this failure to precede the invocation; the absent
     // agent_run row is the proof that it did.
     assert.equal(store.query("SELECT * FROM agent_run").length, 0, "nothing was spent");
+  });
+});
+
+test("each dispatch records the setting it ran under, the reconciler apart from the author", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // Distinct efforts per name, so a stage that read the wrong entry writes a
+    // row that disagrees. The author and the reconciler share one agent id and
+    // are told apart only by the `setting` column.
+    const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+    const profile = JSON.parse(readFileSync(path, "utf8")) as {
+      dispatchSettings: Record<string, { model: string; effort: string }>;
+    };
+    profile.dispatchSettings["spec-author"] = { model: "m", effort: "high" };
+    profile.dispatchSettings["reconciler"] = { model: "m", effort: "low" };
+    profile.dispatchSettings["spec-reviewer-security"] = { model: "m", effort: "max" };
+    profile.dispatchSettings["spec-reviewer-traceability"] = { model: "m", effort: "xhigh" };
+    const serialized = canonicalJson(profile);
+    writeFileSync(path, serialized);
+    store.setProfileRef(runId, sha256Hex(serialized));
+
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const rows = store.query<{ setting: string; requested_effort: string; requested_model: string }>(
+      "SELECT ar.setting, ar.requested_effort, ar.requested_model FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ?",
+      [runId]
+    );
+    const effortsBySetting = (setting: string) => [...new Set(rows.filter((r) => r.setting === setting).map((r) => r.requested_effort))];
+    assert.deepEqual(effortsBySetting("spec-author"), ["high"], "draft and self-critique");
+    assert.deepEqual(effortsBySetting("reconciler"), ["low"], "the reconciliation");
+    assert.deepEqual(effortsBySetting("spec-reviewer-security"), ["max"]);
+    assert.deepEqual(effortsBySetting("spec-reviewer-traceability"), ["xhigh"]);
+    assert.equal(rows.filter((r) => r.setting === "spec-author").length, 2);
+    assert.equal(rows.filter((r) => r.setting === "reconciler").length, 1);
+    assert.ok(rows.every((r) => r.requested_model === "m"));
   });
 });
 

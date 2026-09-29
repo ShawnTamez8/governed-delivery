@@ -53,7 +53,7 @@ export function formatRunPreview(rootDir: string, snapshot: RunSnapshot, groups:
   return [
     `${profile.systemName}: execution preview for run ${snapshot.run.id} (${snapshot.run.slug})`,
     `Canonical target: ${rootDir}`,
-    `Frozen models: ${JSON.stringify(snapshot.configuration.modelMap)}`,
+    `Frozen settings: ${JSON.stringify(snapshot.configuration.dispatchSettings)}`,
     `Remaining groups: ${groups.join(" -> ")}`,
     `Frozen verification commands: ${JSON.stringify(snapshot.configuration.verificationCommands)}`,
     `Document review: panel up to ${policy.panelSizeMax}; spec ${policy.specReviewRounds} round(s), plan ${policy.planReviewRounds} round(s). Each document group permits 1 author + 1 self-critique + rounds * (panel + 1 reconciler) dispatches.`,

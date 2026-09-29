@@ -9,6 +9,7 @@ import {
   CODE_REVIEW_PANEL_SIZE,
   CODE_REVIEW_PANEL_SIZE_CEILING,
   CODE_REVIEW_PANEL_SIZE_FLOOR,
+  DEFAULT_SETTINGS,
   PANEL_SIZE_CEILING,
   PANEL_SIZE_FLOOR,
   PANEL_SIZE_MAX,
@@ -23,6 +24,7 @@ import {
   invalidPolicyReason,
   policyHash,
 } from "../src/policy.ts";
+import { AGENTS } from "../src/agents.ts";
 import { SEVERITIES } from "../src/finding.ts";
 import { PROMPT_MAX_BYTES, RESULT_MAX_BYTES } from "../src/harness.ts";
 import { PROTECTED_PATH_PREFIXES } from "../src/scope.ts";
@@ -111,6 +113,20 @@ test("the configured code-review values lie within their independent bounds", ()
   assert.ok(Number.isInteger(CODE_REVIEW_MAX_ROUNDS));
   assert.ok(CODE_REVIEW_MAX_ROUNDS >= CODE_REVIEW_MAX_ROUNDS_FLOOR);
   assert.ok(CODE_REVIEW_MAX_ROUNDS <= CODE_REVIEW_MAX_ROUNDS_CEILING);
+});
+
+test("no registered reviewer is seeded at an effort of high or above", () => {
+  // Operator statement 3 (2026-09-29): reviewers are "definitely not high". A
+  // run-wide --effort skips reviewers (Task 2), so this seeded value is what a
+  // default run dispatches.
+  for (const agent of AGENTS.filter((a) => a.role === "reviewer")) {
+    const seeded = DEFAULT_SETTINGS[agent.id];
+    assert.ok(seeded, `${agent.id} has no seeded setting`);
+    assert.ok(
+      !["high", "xhigh", "max"].includes(seeded.effort),
+      `${agent.id} is seeded at ${seeded.effort}`
+    );
+  }
 });
 
 test("the policy this code builds is one it accepts", () => {

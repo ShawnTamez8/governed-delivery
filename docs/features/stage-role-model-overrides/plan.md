@@ -1,806 +1,1009 @@
-# Stage Role Model Overrides Implementation Plan
+# Per-Agent Model and Effort Configuration Plan
 
-**Status:** Proposed
+**Status:** Implemented
 
-**Goal:** Let `bw new-run` freeze a different model for the reviewer role,
-and (where the role exists) the reconciler/implementer role, independently
-of the run's base author model, instead of one `--model` value covering
-every dispatch in every stage.
+**Goal:** Make the model and the effort level of every dispatching agent, and of
+the reconciler, a frozen per-run setting, with defaults the operator can change
+in one place and per-run overrides on `bw new-run`. Today one `--model` value
+covers every dispatch, and no effort level is passed at all.
 
-**Source:** Operator request in this conversation, arising from investigating
-why the note-keeper target repository's `spec_review` stage produced a
-different severity verdict on the same disclosed gap (export-archive access
-control, attachment content-type/disposition, password-reset token security)
-across six runs, all on `claude-sonnet-5`. The operator wants to run the
-reviewer role on a cheaper model (e.g. Haiku) while keeping the role that
-acts on findings (reconciler for spec/plan, remediation implementer for
-code_review) on a strong model, and wants this parameterized rather than
-hard-coded. Scope was narrowed twice in conversation:
-1. All three review stages (spec_review, plan_review, code_review) get
-   independently configurable models — not just spec_review.
-2. code_review has no LLM reconciler (disposition there is the deterministic
-   `decideCodeReviewRound`, not a model call) — operator's explicit decision:
-   "If there is no reconciler in the code review, then just leave it. I dont
-   want to add any more models to code review, only to have the models used
-   parameterized." So code_review gets its two *existing* roles (reviewer
-   panel, remediation implementer) split into independently configurable
-   keys; no third slot is invented there.
+**Source:** Three operator statements in this conversation.
+1. Original (2026-09-27): run the reviewer role on a cheaper model (for example
+   Haiku) while a strong model acts on findings, parameterized rather than
+   hard-coded. The first draft of this plan added six per-role model keys beside
+   the existing stage-keyed `modelMap`. Operator scope decision then: code_review
+   has no LLM reconciler, so no third slot is invented there.
+2. Revision (2026-09-29): "All agents should have model and effort
+   configurable. Every one of them in there and we can set defaults." New models
+   shipped the week before. The trigger was team-notes run 5: the `implementer`
+   (Sonnet, default effort `high`) spent four consecutive 64,000-token responses
+   entirely on thinking and the CLI failed with `Claude's response exceeded the
+   64000 output token maximum` (`.claude/sessions/project-learnings.md`, Current
+   state, External target). Effort is the documented control for thinking volume:
+   https://platform.claude.com/docs/en/build-with-claude/effort.
+3. Refinement (2026-09-29, after talking with others): the spec author is its own
+   model, "a model like Opus", at a high or very high effort. Reviewers get a low
+   or medium effort, "definitely not high", to be tuned by trial. Haiku "should be
+   available and is the popular choice for individual reviewers"; if that is a
+   problem, swap to Sonnet at the effort wanted, likely low. The implementer is
+   configurable in model and effort like the others. **The reconciler gets its own
+   model and effort.** "None of that matters now because we can configure to
+   however we want afterwards": the defaults below are starting values the
+   operator changes, not requirements.
+4. Reconciliation of the 2026-09-29 review (2026-09-29): a run must never put a
+   reviewer at `high` or above by accident, so a run-wide `--effort` does not reach
+   reviewers; an explicit `--effort-for` may still set a reviewer to any level up to
+   `max`, but not `ultracode`. `agent_run` records which setting governed each row.
+   The failed-dispatch audit summary names the requested model and effort. The cost
+   of a failed dispatch stays out of scope, stated in the plan.
 
-**Assumptions:**
-- Guided mode (`src/guided-command.ts` / `buildworks [<path>]`) is out of
-  scope. It continues to prompt for one model and pass no overrides, which
-  is unaffected because every new override defaults to the base model when
-  absent — same behavior it has today. Only the low-level `new-run` command
-  gains the new flags. (Not settled with the operator explicitly, but follows
-  directly from "only to have the models used parameterized" plus the fact
-  that every experiment discussed in this conversation used the low-level
-  path.)
-- The self-critique dispatch (author role, same agent as the draft) stays
-  tied to the stage's base author model (`spec` / `plan`), not a new key.
-  The operator's ask was scoped to "reviewer" and "reconciler," not
-  self-critique, and self-critique is the author re-examining its own draft,
-  not an independent lens.
+This revision replaces the first two drafts. Neither had a review record or an
+implementation, so nothing depends on their keys.
 
-**Approach:** Add three brand-new keys to the frozen profile's `modelMap`
-(`spec_reconcile`, `plan_reconcile`, `code_review_implementer`) alongside the
-six that exist today, all defaulting to the run's base `--model` unless an
-operator override is given. None of the three new keys is a `stage.kind`
-value — they are pure model-resolution keys the orchestrator functions
-consult by string literal at the exact dispatch that needs them, so
-`doc-check`'s `PINNED_SEQUENCE` (the real `stage.kind` sequence) and the
-`dispatch` CLI command's `resolveStageModel(profile, stage.kind)` lookup are
-both unaffected — verified in Blast radius below. `new-run` gains six new
-optional flags (`--spec-review-model`, `--spec-reconcile-model`,
-`--plan-review-model`, `--plan-reconcile-model`, `--code-review-model`,
-`--code-review-implementer-model`), each validated with the same
-`validateModelName` the base `--model` already uses, each defaulting to the
-base model when omitted — so an operator who passes none of them gets
-today's exact behavior (one model, six identical entries, now nine).
+## Facts this plan rests on
 
-**Affected areas:** `src/profile.ts` (frozen schema + `freezeProfile`),
-`src/spec-stage.ts` and `src/plan-stage.ts` (resolve and use the new
-`*_reconcile` key for the reconciliation dispatch only — the draft and
-self-critique dispatches are unchanged), `src/code-review-stage.ts` (resolve
-and use the new `code_review_implementer` key for the remediation dispatch
-only — the reviewer panel dispatch keeps using `code_review`),
-`src/operator-state.ts` (extend the pre-flight readiness check to cover the
-new keys), `src/cli-args.ts` and `src/cli.ts` (`new-run`'s new flags),
-`src/run-intake.ts` (thread the overrides through), plus tests and docs.
+- **[Verified 2026-09-29, `claude` 2.1.284]** `claude --help` lists
+  `--effort <level>` with `(low, medium, high, xhigh, max)`. The CLI reference
+  (https://code.claude.com/docs/en/cli-reference) also accepts `ultracode` and
+  says the flag "overrides the `modelSettings` and `effortLevel` settings for
+  this session and does not persist".
+- **[Verified 2026-09-29]** An unknown value is not an error:
+  `claude --effort nonsense --version` printed `Warning: Unknown --effort value
+  'nonsense' — ignoring it and using the default effort. Valid values: low,
+  medium, high, xhigh, max.` and exited normally. That probe ran the flag parser
+  on `--version`; it did not dispatch. A typo therefore runs at the default level
+  with a warning on stderr, which the harness retains but does not read.
+  BuildWorks must refuse a bad level itself, when the run starts.
+- **[Verified from the docs page above, not by running it]** The effort docs list
+  these models as supporting effort: `claude-fable-5-1`, `claude-fable-5`,
+  `claude-opus-5-5`, `claude-opus-5`, `claude-opus-4-8`, `claude-opus-4-7`,
+  `claude-opus-4-6`, `claude-opus-4-5-20251101`, `claude-sonnet-5-5`,
+  `claude-sonnet-5`, `claude-sonnet-4-6` (plus Mythos models). **`claude-haiku-4-5`
+  is not in the list.** `xhigh` is not available on every model that supports
+  `max` (Opus 4.6 and Sonnet 4.6 lack it). Defaults: `high` on every supporting
+  model except Opus 5.5, which defaults to `medium`. Setting the default level
+  explicitly behaves the same as omitting the parameter.
+- **[Verified from the docs]** Effort applies to all output tokens, including
+  thinking and tool calls. It is "a behavioral signal, not a strict token
+  budget". For Sonnet 5.5 the docs suggest starting agentic coding at `medium` for
+  well-specified tasks and `high` for harder or longer ones. Thinking counts
+  toward `max_tokens`.
+- **[Verified in the retained run 5 stream]** The `system` init line carries
+  `per_turn_effort_active` but no effort level, and the result line carries none
+  either. **Effective effort cannot be recorded; only requested effort can.** This
+  mirrors how `agent_run` records requested and effective model, except that the
+  effective half does not exist for effort.
+- **[Verified in the retained run 5 stream, count only]** Thinking still produces
+  stream output. Each of the four 64,000-token thinking messages carried 380-402
+  `thinking_delta` events, every one with an empty `thinking` string (the thinking
+  text is hidden; the events are not). So the idle timer is fed during heavy
+  thinking, which answers the streaming plan's open question for this run. The
+  stream carries no timestamps, so no gap was measured, and the run was never
+  close to the 1,800 s idle budget. The streaming reference
+  (https://platform.claude.com/docs/en/build-with-claude/streaming) describes the
+  API's own events, including mid-stream `error` events such as
+  `overloaded_error` that can follow a 200. The Claude CLI consumes those; this
+  harness sees only the CLI's `stream-json` and its exit code, so the page changes
+  nothing else here.
+- **[Verified 2026-09-29, Task 0, five real dispatches, $0.0349 total, recorded in
+  `test/fixtures/recorded/claude-effort-flag-probes.json`]** With the executor's own
+  flags plus `--model` and `--effort`, a one-word prompt:
+  - `claude-haiku-4-5-20251001` at `low` and at `medium`: exit 0, empty stderr, result
+    `OK`, no error, the requested model was the effective model. **Haiku takes
+    `--effort`.** It wrote 34 and 26 thinking tokens for a one-word answer, so the
+    probe shows the flag is accepted, not that effort changed anything on Haiku.
+  - `claude-opus-5-5` at `high`: exit 0, `OK`. The operator's account can call it.
+  - `claude-sonnet-4-6` at `xhigh`, a level the docs say it lacks: exit 0, empty
+    stderr, `OK`. **The CLI neither errors nor warns.** Whether it clamps or ignores
+    the level is not observable from this probe.
+  - `claude-sonnet-5-5` with `--effort nonsense`: exit 0, `OK`, and stderr held
+    `Warning: Unknown --effort value 'nonsense' — ignoring it and using the default
+    effort.` This confirms in a real dispatch what the `--version` probe showed.
+  - A one-word prompt cannot show whether effort changes model behavior. Nothing here
+    measures review quality.
+- **[Unknown]** Whether `--effort` changes Haiku's behavior at all, and what a level
+  the model does not support does inside the CLI (clamp or ignore). Neither blocks the
+  plan: the harness passes the requested level and records it.
+- **[Inference from the docs, not tested]** `--restricted` (already in the
+  executor command) loads only managed settings and `--settings`, and
+  `envPassthrough` names no effort variable, so ambient user `effortLevel`
+  settings and `CLAUDE_CODE_EFFORT_LEVEL` should not reach a dispatch. The
+  explicit `--effort` flag outranks them regardless; its documented precedence is
+  the guarantee relied on.
 
-**Known blockers:** None found. `governed.yaml`, migrations, and the
-`stage.kind` enum (`docs/hazards.md` hazard 11/12 territory) are untouched —
-confirmed by reading `src/migrations/001_init.sql`'s `stage` table (no
-`CHECK` constraint on `kind`) and `scripts/doc-check.mjs`'s `PINNED_SEQUENCE`
-(lists actual `stage.kind` values only: spec, spec_review, plan, plan_review,
-implementation, code_review — none of the three new keys belongs there,
-since none of them is ever written to the `stage.kind` column).
+## Open decisions for the operator
 
-**Blast radius:** Every caller of `resolveStageModel` was enumerated by
-search (`grep -rn resolveStageModel src`) and each is accounted for below:
-- `src/spec-stage.ts:99,108` — the two existing resolves (`spec`, `spec_review`);
-  Task 2 adds a third (`spec_reconcile`) at the point the reconciliation
-  dispatch is built (currently line ~513-524).
-- `src/plan-stage.ts:117,126` — same shape; Task 3 adds `plan_reconcile` at
-  the reconciliation dispatch (currently line ~618-629).
-- `src/code-review-stage.ts:108` — the one existing resolve (`code_review`,
-  used today by *both* the reviewer dispatch at line ~400-412 and the
-  remediation dispatch at line ~606-613); Task 4 adds a second resolve
-  (`code_review_implementer`) and repoints only the remediation dispatch at
-  it — the reviewer dispatch keeps consuming `code_review`.
-- `src/implementation-stage.ts:93` — resolves `implementation`; untouched,
-  no new role exists in that stage.
-- `src/operator-state.ts:474` (`frozenGroupReasons`) — the pre-flight
-  readiness check that currently checks `[group, "${group}_review"]` for
-  spec/plan and `[group]` for implementation/code_review; Task 5 extends
-  the spec/plan list with the `_reconcile` key and gives code_review its own
-  branch that also checks `code_review_implementer`.
-- `src/cli.ts:278` (`case "dispatch"`) — resolves by `stage.kind` directly,
-  a raw single-agent dispatch tool with no role concept. Confirmed by full
-  read (lines 246-321): it never consults a role-specific key today (the
-  reviewer's `spec_review`/`plan_review`/`code_review` entries are already
-  invisible to it whenever the caller dispatches a `spec`/`plan`-kind stage
-  row), so the three new keys — which are not `stage.kind` values — reach it
-  the same way: never. No change needed here.
-- `requireFrozenBinding`/`requiredCapability` (`src/profile.ts:378-430`) —
-  confirmed by full read that capability binding is checked once per stage
-  kind before *any* of that stage's dispatches (e.g. `spec-stage.ts:127`
-  checks the `spec` capability once, before the draft, self-critique, *and*
-  reconciliation dispatches). The new keys select a model for an
-  already-capability-checked dispatch; they need no new capability and no
-  change to `requiredCapability`.
-- `invalidProfileReason` (`src/profile.ts:268-322`) — checks only that
-  `modelMap` is *an object*, not its specific keys; no change needed.
-- Every test file calling `freezeProfile` (confirmed exhaustive by
-  `grep -rn "freezeProfile(" test/`): `test/profile.test.ts`,
-  `test/spec-stage.test.ts`, `test/plan-stage.test.ts`,
-  `test/code-review-stage.test.ts` (5 or 6 positional args, some with a
-  `deps` object), and `test/dashboard-server.test.ts:129` (5 positional
-  args, no `deps`). Task 1 appends the new overrides parameter *after*
-  `deps`, both new parameters defaulting to `{}`, so every one of these
-  existing calls — 5-argument or 6-argument — needs no change.
-- `createRunIntake` callers (`grep -rn createRunIntake` → `src/cli.ts`,
-  `src/guided-command.ts`, `test/run-intake.test.ts`,
-  `test/guided-command.test.ts`): the new `modelOverrides` field on
-  `RunIntakeInput` is optional; `guided-command.ts` and its test are
-  confirmed unaffected (neither is edited by this plan).
-- Display: `src/operator-output.ts:55` prints
-  `JSON.stringify(snapshot.configuration.modelMap)` — a generic passthrough
-  with no hardcoded key list, confirmed by read; the three new keys appear
-  automatically with no code change.
-- Docs: `README.md:69-71`, `CLAUDE.md` and `AGENTS.md`'s `new-run` bullet
-  (identical wording, confirmed present in both), `ARCHITECTURE.md` section
-  10 ("Model configuration").
+Items 1-3 below carry your 2026-09-29 statements. The rest adopt a recommended
+choice; change the plan before implementation if you choose otherwise.
 
-**Verification:** `npm run typecheck`, `npm test`, `npm run check:docs`, plus
-the concrete per-task checks below (each names the exact assertion and
-expected result).
+1. **Settings names: the nine registered agents plus `reconciler` (your
+   decision).** The agents in `src/agents.ts` are `spec-author`, `plan-author`,
+   `implementer`, `spec-reviewer-traceability`, `spec-reviewer-security`,
+   `spec-reviewer-consistency`, `code-reviewer-correctness`,
+   `code-reviewer-security`, `code-reviewer-state-integrity`. Each has one model
+   and one effort. `reconciler` is a tenth setting, **not** a registered agent:
+   it governs the three reconciliation dispatches, which today run as
+   `spec-author` and `plan-author` with a reconcile prompt (the spec and plan
+   reconciliation in the review round, and the decision fold after an operator
+   answers). Those dispatches still record `agent` as the author agent; the
+   settings name only decides which model and effort they request. An author
+   agent's draft and self-critique dispatches use its own setting. `implementer`
+   covers both the implementation stage and the code-review remediation. **One
+   `reconciler` setting covers spec and plan** (operator decision, 2026-09-29; the
+   first draft had two).
+2. **Seeded defaults, from your statements (final, 2026-09-29).** `spec-author`:
+   `claude-opus-5-5` at `high` (raise to `xhigh` per run). The three spec reviewers:
+   Haiku (`claude-haiku-4-5-20251001`) at `medium`; Task 0 showed Haiku accepts
+   `--effort` at `low` and `medium` and answers. The three code reviewers:
+   `claude-sonnet-5-5` at `medium`. `implementer`: `claude-sonnet-5-5` at `medium`
+   (operator decision, 2026-09-29). `reconciler`: `--model` at `medium` (operator
+   decision, 2026-09-29). Not specified by you, so a guess to confirm: `plan-author`
+   at `--model`, `high`. **None of these levels is measured for this workload, and
+   neither Haiku's nor Sonnet's review quality is.** One risk is recorded rather than
+   argued: run 5's implementer failure happened at `high` effort, on
+   `claude-sonnet-5`. The implementer is now seeded one level lower, at `medium`,
+   which the effort docs suggest for well-specified agentic coding. Sonnet 5.5's
+   levels are documented as recalibrated relative to Sonnet 5, so run 5 is not
+   evidence about 5.5 at either level, and nothing measured shows that `medium`
+   avoids the output-cap failure. Raising it stays a one-line change
+   (`--effort-for implementer=high`, or the constant).
+3. **Reviewers are never seeded at `high`, and a run-wide `--effort` never reaches
+   them (operator decision, 2026-09-29).** The six reviewer settings (every
+   registered agent whose `role` is `reviewer`) start at the seeded `medium` and move
+   only through their own `--effort-for`, to any level in the closed set up to `max`.
+   Enforced by the seeded values, the resolution rule and a test on each. There is no
+   cap on an explicit `--effort-for`: naming a reviewer is the deliberate act.
+4. **Flag shape: three optional flags with comma lists.** `--effort <level>` sets
+   the run-wide effort for every non-reviewer setting without its own value; `--model-for
+   <name>=<model>[,...]` and `--effort-for <name>=<level>[,...]` set one setting
+   each, where `<name>` is an agent id or `reconciler`. `parseArguments` rejects a
+   repeated option (`src/cli-args.ts:215`), so repeatable flags would need a
+   parser change; twenty fixed flags would be unreadable. Model names and setting
+   names contain no `,` or `=`, so the lists parse unambiguously.
+5. **Excluded effort level: `ultracode`.** The CLI accepts it as `xhigh` plus a
+   separate feature. The closed set here is `low`, `medium`, `high`, `xhigh`,
+   `max`, matching the API docs.
+6. **Guided mode is unchanged in what it asks.** `buildworks [<path>]` still
+   prompts for one model and passes no overrides. That one model now covers only
+   the settings whose default model is null (`plan-author` and `reconciler`); the
+   other settings take the seeded defaults, so a guided run dispatches Opus, Sonnet
+   5.5 and Haiku without being asked.
+7. **Stage-command `--model` keeps its meaning as an assertion.** `bw spec`,
+   `plan`, `implement` and `review` accept `--model` today only to confirm it
+   equals the frozen value (`src/spec-stage.ts:145`). It will assert against the
+   stage's author setting (`spec-author`, `plan-author`, `implementer`; `review`
+   asserts against `implementer`). Nothing in the README, runbook or driver passes
+   `--model` to those commands; only `new-run --model` appears there.
+8. **`--model` names only the settings whose seeded model is null.** After seeding
+   that is `plan-author` and `reconciler`. `bw new-run --model claude-sonnet-5`, the
+   form the driver, README and runbook use, dispatches the seeded Opus for
+   `spec-author`, Sonnet 5.5 for `implementer` and the code reviewers, and Haiku for
+   the spec reviewers. The `new-run` help text, README and runbook say which
+   settings `--model` covers (Tasks 5 and 6). Cost moves toward Opus. Task 0 priced
+   one one-word prompt at $0.0125 on Opus 5.5 and $0.0066 on Sonnet 5.5, but the
+   same prompt cost Haiku $0.0042 at `low` and $0.0008 at `medium`, so that noise
+   exceeds the model difference and the real ratio for a spec-author dispatch is
+   unmeasured. The paid driver's recorded costs assume one model and become stale
+   (Task 6). Run 5 ended at 82 percent of both usage windows.
 
-**Hazards considered:** 10 (exact-match model acceptance against moving
-aliases) — not triggered; `validateModelName` checks shape only, and every
-new key is frozen at run start and read back verbatim, exactly like the
-existing six. 11 (a default installation that cannot complete a run) — the
-new keys always default to the already-validated base model, so a default
-installation that passes no override behaves exactly as it does today, and
-Task 1 adds an explicit `freezeProfile` refusal test for an invalid override
-matching the existing pattern for staffing-shortfall refusals. 12
-(configuration divergence between targets, and making effective
-configuration visible) — satisfied by construction: `operator-output.ts`'s
-generic `modelMap` passthrough already surfaces the new keys with no code
-change (see Blast radius). 14 (independence that cannot be proven) —
-considered and not applicable: that hazard is about process separation
-(subagent-in-session vs. separately spawned process), which `dispatchOnce`
-already guarantees per-dispatch regardless of which model string is passed;
-giving the reviewer a different model from the author does not touch that
-guarantee either way.
+## Assumptions
+
+- Precedence when resolving one setting, frozen at `new-run`:
+  model = `--model-for` for that name, else the seeded default model for that name
+  (null for some), else `--model`;
+  effort = `--effort-for` for that name, else (non-reviewer settings only)
+  `--effort`, else the seeded default effort for that name. `--model` stays
+  required.
+- The seeded defaults are code constants in `src/policy.ts`, read only at freeze
+  time. The profile freezes the resolved values, not the defaults, so a later edit
+  to the constants never changes a frozen run (hard rule 6).
+- Model names are validated for shape only, exactly as today. No per-model
+  effort-support table is kept: a table authored now is a moving list
+  (hazard 10). Whether a level works on a model is not knowable from the CLI: Task 0
+  showed it accepts a level the docs say a model lacks, silently.
+- Seeded defaults use full model IDs, not aliases such as `opus` or `haiku`, so the
+  frozen profile names one model. Whether the operator's account can call each
+  seeded model is not checked by `doctor` and is not established here.
+- `ARCHITECTURE.md` section 10 already says a stage names what it needs and
+  configuration resolves it, and requires requested and effective model to be
+  recorded separately. This plan keeps both and adds effort under the same rule,
+  with the stated limit that effective effort is not observable.
+
+## Approach
+
+1. `src/policy.ts` gains `EFFORT_LEVELS` and `DEFAULT_SETTINGS`, one entry per
+   registered agent plus `reconciler`.
+2. The frozen profile's `modelMap` (keyed by stage kind, six entries) is
+   **replaced** by `dispatchSettings` (keyed by setting name, one `{ model,
+   effort }` each). One schema per thing (hard rule 3): the two maps do not
+   coexist. `resolveStageModel` is replaced by `resolveSettings`.
+3. `invokeHarness` appends `--effort <level>` next to `--model`, always,
+   explicitly. The executor definition is unchanged, so runs frozen earlier are
+   not refused by `requireFrozenBinding`. They are refused by `invalidProfileReason`
+   because they carry `modelMap` and no `dispatchSettings`, by name, and a fresh run
+   is the repair (the same consequence the executor comment cites for a changed
+   executor). For the stores of runs already frozen (team-notes runs 1-5 and the
+   older ones), `readRunSnapshot` (`src/operator-state.ts:304-324`) reports the
+   refusal reason as a limitation and shows no configuration, so the dashboard's
+   configuration panel is empty for them; that matches the earlier profile-shape
+   refusals.
+4. Every dispatch site passes the settings its setting name resolves to: the agent's
+   own name for draft, self-critique, review and implementation dispatches, and
+   `reconciler` for the three reconciliation dispatches, and it passes that setting
+   name as well. `agent_run` gains nullable `requested_effort` and `setting`
+   columns (migration 008), so a row says which setting governed it; nothing has to
+   infer that from row order. A failed dispatch writes no `agent_run` row, so its
+   `agent.dispatch.failed` audit summary names the requested model and effort.
+5. `new-run` gains the three flags; status, doctor and the dashboard display
+   `dispatchSettings`.
+
+## Affected areas
+
+`src/policy.ts`, `src/profile.ts`, `src/harness.ts`, `src/dispatch.ts`,
+`src/store.ts`, a new `src/migrations/008_agent_run_effort.sql`,
+`src/spec-stage.ts`, `src/plan-stage.ts`, `src/implementation-stage.ts`,
+`src/code-review-stage.ts`, `src/spec-decision-stage.ts`, `src/operator-state.ts`,
+`src/operator-output.ts`, `src/cli-args.ts`, `src/cli.ts`, `src/run-intake.ts`,
+`src/dashboard/app.js`, a new test helper `test/uniform-profile.ts`, tests, and docs
+(`README.md`, `docs/runbooks/cli-operator.md`, `ARCHITECTURE.md`, `CLAUDE.md`,
+`AGENTS.md`, `.claude/skills/run-buildworks/SKILL.md`). `src/executor.ts` and
+`src/guided-command.ts` are not edited.
+
+## Known blockers
+
+None. Task 0 ran on 2026-09-29 and settled what blocked the defaults: Haiku takes
+`--effort`, so Task 1 seeds Haiku for the reviewers. The remaining unknowns (whether
+effort changes Haiku's behavior, and what the CLI does inside for an unsupported
+level) do not change any task: the harness passes the requested level and records it.
+
+## Blast radius
+
+Enumerated by search on 2026-09-29 (`resolveStageModel|modelMap` under `src/`,
+`test/`, and `*.mjs`). Each site is accounted for.
+
+- `src/profile.ts:45` (`modelMap` field), `:190` (`freezeProfile` literal), `:236`
+  (`resolveStageModel`), `:294-297` (`invalidProfileReason`): replaced (Task 2).
+- `src/spec-stage.ts:130,139` (resolves `spec` and `spec_review`), `:145` (`--model`
+  assertion), `requestedModel` at `:243` (draft) and `:307` (self-critique), both
+  the author's setting; `:494` (per-seat reviewer dispatch), the seat agent's
+  setting; `:578` (reconciliation), the `reconciler` setting: Task 4.
+- `src/plan-stage.ts:117,126` (resolves `plan` and `plan_review`) and
+  `requestedModel` at `:284` (draft) and `:368` (self-critique), the author's
+  setting; `:542` (reviewer seat); `:626` (reconciliation, `reconciler`): Task 4.
+- `src/implementation-stage.ts:93` and `requestedModel` at `:385`: the
+  `implementer` setting, Task 4.
+- `src/code-review-stage.ts:108` (resolves `code_review`), `requestedModel` at
+  `:407` (reviewer dispatch, the seat agent's setting) and `:613` (remediation, the
+  `implementer` setting; `agent: author.id` at `:611`): Task 4. There is no
+  reconciler here.
+- `src/spec-decision-stage.ts:240` (resolves `spec` for the fold) and
+  `requestedModel` at `:309`, with `agent: author!.id` at `:307`: the fold is a
+  reconciliation, so it takes the `reconciler` setting, Task 4.
+- `src/operator-state.ts:83` (type), `:286` (snapshot), `:311` (string check), `:522`
+  (`frozenGroupReasons` loop over stage kinds, with the decision group mapped to
+  `spec`): Task 5. This loop also decides pre-flight readiness, so it must check
+  every setting the group will dispatch.
+- `src/cli.ts:134` (doctor's `frozen_models` check), `:279-287` (`dispatch` case
+  resolves by `stage.kind` and asserts `--model`), and the `--model` pass-throughs at
+  `:338`, `:362`, `:386`, `:430`: Task 5.
+- `src/operator-output.ts:56` prints `JSON.stringify(...modelMap)`: Task 5.
+- `src/dashboard/app.js:3415` and `:4056` read `configuration.modelMap ?? {}`.
+  **After the rename these would silently render an empty model list**, not fail.
+  Task 5 changes both and adds a test.
+- `src/executor.ts`: not edited. `--effort` is added per invocation in
+  `invokeHarness`, as `--model` already is (`src/harness.ts:239`), so it is not part
+  of the frozen executor definition.
+- `src/verification-stage.ts` resolves no model and dispatches nothing: not touched.
+- Tests referencing `resolveStageModel` or `modelMap`: `test/cli-operator.test.ts`
+  (9), `test/profile.test.ts` (5), `test/plan-stage.test.ts` (4),
+  `test/run-command.test.ts` (4), `test/operator-state.test.ts` (3),
+  `test/implementation-stage.test.ts` (2), `test/spec-stage.test.ts` (2),
+  `test/guided-command.test.ts` (1). The recorded fixture
+  `test/fixtures/recorded/doctor-ambient-config-web-calculator-live-chain.json` (four
+  `modelMap` mentions) is read by no test and no source file (searched by its
+  stem 2026-09-29; only session and review notes name it): it is inert, stays as
+  recorded evidence and is not edited.
+- **Tests that encode the single-model contract**, counted 2026-09-29. Seeding
+  changes what `freezeProfile` freezes, so a stage test that freezes model `"m"` and
+  then runs a stage no longer matches the seeded author setting. `test/spec-stage.test.ts`
+  passes `requestedModel: "m"` at 55 sites (56 references to `requestedModel`) and
+  calls `freezeProfile(` twice (`:121`, `:1246`); `test/dispatch.test.ts` passes it at
+  10 sites, but to `dispatchOnce` directly, so it is affected by Task 3's required
+  fields and not by seeding. `freezeProfile(` has 47 call sites in 14 test files:
+  `test/profile.test.ts` (31, Task 2), `test/spec-stage.test.ts` (2),
+  `test/operator-state.test.ts` (3), and one each in `test/spec-decision-stage.test.ts`,
+  `test/plan-stage.test.ts`, `test/implementation-stage.test.ts`,
+  `test/code-review-stage.test.ts`, `test/run-command.test.ts` (these seven files
+  dispatch or read a stage's model and go through the helper in Task 2 Step 5) and
+  `test/approval-stage.test.ts`, `test/delivery-stage.test.ts`,
+  `test/verification-stage.test.ts`, `test/dashboard-server.test.ts`,
+  `test/code-review.test.ts`, `test/relative-evidence.test.ts` (six files that
+  dispatch nothing and stay as they are unless a run shows otherwise). Which
+  individual assertions fail is settled by running the files after Task 4, not by
+  this list.
+- Callers of `freezeProfile(`: `src/run-intake.ts` and the test files that call it
+  positionally. The new parameter is appended after `deps` and defaults to `{}`, so
+  the calls compile unchanged; the seven dispatching test files above still need the
+  helper, because the frozen values change.
+- The `status` and `doctor` `--json` output changes: `configuration.modelMap` becomes
+  `configuration.dispatchSettings` and doctor's `frozen_models` check becomes
+  `frozen_settings`. Hard rule 3 permits it. Searched 2026-09-29 for `modelMap`,
+  `frozen_models` and `resolveStageModel` in `README.md`, `ARCHITECTURE.md`,
+  `docs/runbooks/`, `src/dashboard/` and `.claude/skills/`: the consumers are
+  `README.md:814` (the `configuration` field table names `modelMap`) and the two
+  `src/dashboard/app.js` sites. `docs/runbooks/cli-operator.md:530` and
+  `README.md:205,585` say "frozen models" in prose only.
+- Docs: `README.md:78` and `:814`, `docs/runbooks/cli-operator.md:500` (the `new-run`
+  example stays valid) and `:530`, `CLAUDE.md` and `AGENTS.md` (`new-run` bullet,
+  identical wording), `ARCHITECTURE.md` sections 10, 11, 12 and the `agent_run` column
+  list near line 1140. `scripts/doc-check.mjs:331` pins the table name `agent_run`,
+  not its columns; `npm run check:docs` in Task 6 is what confirms that.
+- The paid driver `.claude/skills/run-buildworks/driver.mjs` passes only
+  `new-run ... --model`; it needs no change and takes the seeded defaults, which
+  means its chains now dispatch the seeded Opus and reviewer models. Its skill file
+  `.claude/skills/run-buildworks/SKILL.md` carries cost records measured under one
+  model (`claude-sonnet-5`, lines 131-187 and 285) and the line "Start a new run to
+  change the model" (`:410`); Task 6 marks the costs stale.
+
+Line numbers were read from the checkout at commit `ff61dee` on 2026-09-29 and will
+drift; find each site by the call, not the number.
+
+**Out of scope, recorded so it is not lost:** the store carries no cost for a
+dispatch that failed after producing a stream (`dispatchOnce` inserts an `agent_run`
+row only on a parsed success). Run 5's failed implementer cost $2.92 by its own
+result line and the store shows "unknown spend". This plan does not change that
+(operator decision, 2026-09-29). The consequence is stated, not fixed: the implementer
+is seeded at `claude-sonnet-5-5` and `medium`, one level below where run 5 failed at
+`high` on `claude-sonnet-5`, and nothing here detects a repeat or shows that `medium`
+avoids it. A repeat would cost about what run 5's did and the store would show
+"unknown spend" again. The first paid run after implementation is the test of that
+default (Task 7).
+
+## Verification
+
+`npm run typecheck`, the serial suite
+`node --test --test-concurrency=1 --test-reporter=tap test/*.test.ts`,
+`npm run check:docs`, and the per-task checks below. A paid run is **not** part of
+this plan: whether `implementer` on Sonnet 5.5 at `medium` avoids the output-cap
+failure, and whether Haiku spec reviewers and Sonnet code reviewers at `medium`
+review well enough, need fresh runs under their own authorization. This plan claims component success only.
+
+**Hazards considered:** 4 (fixtures and code agreeing while both are wrong): the
+expected `--effort` argv comes from the CLI's own help text and the documented
+level names, and Task 0 records real behavior; no hand-written value defines
+correctness, and the argv guard is broken and restored before it is trusted. The
+existing stage tests freeze a hand-written model `"m"`; they go through one helper
+that freezes uniform settings rather than loosening the stage's `--model` assertion,
+and the recorded probe fixture backs an argv test (Task 3). 7
+(retries that vary nothing): run 5's failed dispatch cannot be retried with the same
+prompt, context and model and expected to differ; effort is the axis this plan adds,
+and it is frozen per setting before the retry, not passed ad hoc. 10 (exact-match
+acceptance against moving aliases): the effort set is closed and checked by shape,
+model names stay shape-checked, seeded defaults use full model IDs, and no per-model
+support table is written; the explicit `--effort` flag also removes dependence on a
+model's moving default (Opus 5.5 defaults to `medium`, the others to `high`). 11 (a
+default installation that cannot complete a run): a test asserts `DEFAULT_SETTINGS`
+covers every registered agent and `reconciler`, and that a run with no new flag
+freezes valid settings for all ten. The test uses the fixture executor, so it does
+not prove the account can call the seeded Opus or Haiku models; Task 0 did, for this
+account on 2026-09-29, with single-turn dispatches of Opus 5.5 and of Haiku 4.5 at two
+levels, which is why Haiku could be seeded. A machine without that access still fails
+at its first dispatch of the missing model, and `doctor` does not check it. 12 (configuration
+divergence, effective configuration visible): status, doctor and the dashboard show
+the frozen settings, Task 5 names the dashboard site that would otherwise go
+blank without an error, `--model` no longer means one model and the help text and
+docs say what it covers, `agent_run` records the governing setting, and a failed
+dispatch's audit summary names its requested model and effort. 14 (independence that cannot be proven): considered and not
+applicable; it concerns process separation, which `dispatchOnce` already provides per
+dispatch whatever model and effort are passed.
 
 ---
 
-### Task 1: Extend the frozen profile schema with three new model-map keys
+### Task 0: Record real CLI behavior for effort (operator-authorized spend)
 
 **Depends on:** None
 
 **Files:**
-- Modify: `src/profile.ts` — the `Profile.modelMap` doc comment, a new
-  exported `StageModelOverrides` interface, `freezeProfile`
+- Create: a recorded fixture under `test/fixtures/recorded/` with a `provenance`
+  block (dispatch time, capture date, `claude` version, what was dropped)
+
+**Steps:**
+
+- **Step 1: State the spend and get authorization before running.** Single-turn
+  dispatches of a trivial prompt through `claude -p` with the executor's flags plus
+  `--model` and `--effort`: (a) `claude-haiku-4-5-20251001` at `low`, (b) the same
+  at `medium`, (c) `claude-opus-5-5` at `high`, (d) `claude-sonnet-4-6` at `xhigh`,
+  (e) `claude-sonnet-5-5` with `--effort nonsense`. Expected cost is on the order of
+  cents and is **unmeasured** (the Opus dispatch is the largest); the operator
+  authorizes it first, as for the streaming plan's recording. A completed paid probe
+  never authorizes another.
+- **Step 2: Record what each does:** exit code, stderr text, whether the result line
+  reports an error, and any field that differs. Answer the two [Unknown] items:
+  unsupported level on a model, and Haiku 4.5. (c) also shows that the operator's
+  account can call the seeded Opus model.
+- **Step 3: Decide the reviewer default and the validation rule from the evidence,
+  not from this plan.** If Haiku takes `--effort` and answers, the reviewer default
+  is Haiku at `low`. If Haiku rejects it, errors, or the result shows a problem, the
+  reviewer default is `claude-sonnet-5-5` at `low` (the operator's stated fallback),
+  and the plan records why. If an unsupported level errors or silently clamps, note it
+  in `ARCHITECTURE.md` section 10 as a limit not checked at freeze. If the CLI needs
+  `--effort` omitted for some model, this plan is amended before Task 3.
+  - Verify: the fixture parses and names all five outcomes.
+  - Expected: the two [Unknown] items are resolved or restated as still unknown.
+
+**Task completion evidence:** the committed fixture and a dated note in this plan
+stating the answers and the reviewer default chosen.
+
+**Result (executed 2026-09-29, operator-authorized, $0.0349):** all five dispatches
+exited 0. The fixture is `test/fixtures/recorded/claude-effort-flag-probes.json`, with
+the `system` lines dropped (they carry machine paths and inventories) and recorded in
+its `provenance`. Answers: Haiku takes `--effort` at `low` and `medium`, so Haiku is
+usable as a reviewer default (the operator then chose `medium`, open decision 2). A level the docs say a model lacks
+(`xhigh` on Sonnet 4.6) is accepted with no error and no warning. A nonsense level
+warns on stderr and runs at the default. Opus 5.5 is callable from this account. No
+per-model omission of `--effort` is needed, so Task 3 is unchanged.
+
+---
+
+### Task 1: Add the effort vocabulary and the seeded defaults to `src/policy.ts`
+
+**Depends on:** Task 0
+
+**Files:**
+- Modify: `src/policy.ts`
+- Validate: `test/policy.test.ts`, `test/agents.test.ts`
+
+**Steps:**
+
+- **Step 1: Add the constants.** After `CODE_REVIEW_BLOCKING_SEVERITY`, add:
+  ```ts
+  export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+  export type EffortLevel = (typeof EFFORT_LEVELS)[number];
+
+  export const RECONCILER = "reconciler";
+
+  export interface SettingDefault {
+    /** null means "the run's --model". */
+    model: string | null;
+    effort: EffortLevel;
+  }
+
+  // Task 0 (2026-09-29): Haiku 4.5 accepts --effort at low and medium.
+  const SPEC_REVIEWER: SettingDefault = { model: "claude-haiku-4-5-20251001", effort: "medium" };
+  const CODE_REVIEWER: SettingDefault = { model: "claude-sonnet-5-5", effort: "medium" };
+
+  export const DEFAULT_SETTINGS: Readonly<Record<string, SettingDefault>> = {
+    "spec-author": { model: "claude-opus-5-5", effort: "high" },
+    "plan-author": { model: null, effort: "high" },
+    "implementer": { model: "claude-sonnet-5-5", effort: "medium" },
+    [RECONCILER]: { model: null, effort: "medium" },
+    "spec-reviewer-traceability": SPEC_REVIEWER,
+    "spec-reviewer-security": SPEC_REVIEWER,
+    "spec-reviewer-consistency": SPEC_REVIEWER,
+    "code-reviewer-correctness": CODE_REVIEWER,
+    "code-reviewer-security": CODE_REVIEWER,
+    "code-reviewer-state-integrity": CODE_REVIEWER,
+  };
+  ```
+  A comment states the values are starting points with no measurement behind them,
+  that they are read only at freeze time, and that changing one affects new runs only.
+  These constants are not part of `Policy` or `policyHash`: the profile freezes the
+  resolved values (Task 2).
+  - Verify: `npx tsc --noEmit`
+  - Expected: compiles clean.
+
+- **Step 2: Pin completeness and the reviewer rule.** In `test/agents.test.ts`, add a
+  test that the keys of `DEFAULT_SETTINGS` equal the ids in `AGENTS` plus
+  `"reconciler"` exactly, both directions, so a new agent cannot ship without a
+  default and a removed agent leaves no orphan. In `test/policy.test.ts`, add a test
+  that every registered agent whose `role` is `reviewer` has a default effort other
+  than `high`, `xhigh` or `max` (operator statement 3).
+  (Task 2 pins the other half: a run-wide effort does not reach reviewers.)
+  - Verify: `node --test test/agents.test.ts test/policy.test.ts`
+  - Expected: passes. Break each by deleting one entry, and by setting one reviewer
+    to `high`; confirm the matching test fails by assertion; restore.
+
+**Task completion evidence:** typecheck passes; both tests pass and each fails under
+its break.
+
+---
+
+### Task 2: Replace `modelMap` with `dispatchSettings` in the frozen profile
+
+**Depends on:** Task 1
+
+**Files:**
+- Modify: `src/profile.ts`
 - Validate: `test/profile.test.ts`
 
 **Steps:**
 
-- **Step 1: Add the `StageModelOverrides` type and update the doc comment**
-  - Change: Above the `Profile` interface's `modelMap` field
-    (`src/profile.ts:36-45`), update the comment — it currently says "There
-    is one model to configure, so every entry currently holds it; the shape
-    is what lets that stop being true without a schema change." Replace the
-    second clause: this plan is the moment that stops being true for three
-    of the nine entries. Add a new exported interface directly above
-    `freezeProfile` (near the `MODEL_NAME`/`validateModelName` block, e.g.
-    after line 121):
-    ```ts
-    /**
-     * Optional per-role model overrides, each defaulting to the run's base
-     * model when omitted. `specReconcile`/`planReconcile` select the model
-     * for the reconciliation dispatch only — the draft and self-critique
-     * dispatches always use the base model. `codeReview` selects the
-     * reviewer panel's model; `codeReviewImplementer` selects the
-     * remediation dispatch's model. code_review has no reconciler role
-     * (disposition there is `decideCodeReviewRound`, a deterministic
-     * function, not a dispatch), so there is no third code_review entry.
-     */
-    export interface StageModelOverrides {
-      specReview?: string;
-      specReconcile?: string;
-      planReview?: string;
-      planReconcile?: string;
-      codeReview?: string;
-      codeReviewImplementer?: string;
-    }
-    ```
+- **Step 1: Types.** Replace the `modelMap` field and its comment on `Profile` with:
+  ```ts
+  /** Per-setting model and effort, resolved once at run start (section 10). */
+  dispatchSettings: Record<string, { model: string; effort: EffortLevel }>;
+  ```
+  Add, near `validateModelName`:
+  ```ts
+  export interface SettingsInput {
+    effort?: string;
+    modelFor?: Record<string, string>;
+    effortFor?: Record<string, string>;
+  }
+  export function validateEffort(value: string): string | null {
+    return (EFFORT_LEVELS as readonly string[]).includes(value)
+      ? null
+      : `invalid effort ${JSON.stringify(value)}: allowed values are ${EFFORT_LEVELS.join(", ")}`;
+  }
+  ```
   - Verify: `npx tsc --noEmit`
-  - Expected: compiles clean (new exported type, no consumer yet).
+  - Expected: it fails, and every error is in a consumer listed in Blast radius and
+    names `modelMap` or `resolveStageModel`. An error naming any other symbol is a
+    defect in this step.
 
-- **Step 2: Thread overrides through `freezeProfile` and populate the three new keys**
-  - Change: In `src/profile.ts`, add a new parameter to `freezeProfile`
-    *after* the existing `deps` parameter (so no existing positional call
-    site breaks):
-    ```ts
-    export function freezeProfile(
-      rootDir: string,
-      runId: number,
-      startingCommit: string | null,
-      model: string,
-      verification: VerificationConfig,
-      deps: { agents?: readonly AgentDefinition[] } = {},
-      overrides: StageModelOverrides = {}
-    ): { path: string; hash: string; profile: Profile } {
-    ```
-    Immediately after the existing `validateModelName(model)` check, validate
-    every override value that was actually supplied:
-    ```ts
-    for (const [key, value] of Object.entries(overrides)) {
-      if (value === undefined) continue;
-      const overrideError = validateModelName(value);
-      if (overrideError !== null) {
-        throw new Error(`invalid --${key} override: ${overrideError}`);
-      }
-    }
-    ```
-    Change the `modelMap` literal (currently `spec, spec_review, plan,
-    plan_review, implementation, code_review`) to, in exactly this key
-    order (later tasks' test regexes depend on this order matching
-    `Object.keys(profile.modelMap)`):
-    ```ts
-    modelMap: {
-      spec: model,
-      spec_review: overrides.specReview ?? model,
-      spec_reconcile: overrides.specReconcile ?? model,
-      plan: model,
-      plan_review: overrides.planReview ?? model,
-      plan_reconcile: overrides.planReconcile ?? model,
-      implementation: model,
-      code_review: overrides.codeReview ?? model,
-      code_review_implementer: overrides.codeReviewImplementer ?? model,
-    },
-    ```
+- **Step 2: Resolve and freeze.** Add a `settings: SettingsInput = {}` parameter to
+  `freezeProfile` after `deps`. **Order of refusals**, first to last: the existing
+  model-name check; the spec-panel staffing check; the code-review staffing check
+  (both unchanged, and still before anything here); then, in this order, an invalid
+  `settings.effort`; each `modelFor` entry, then each `effortFor` entry, in argument
+  order, refusing a name that is neither a frozen agent id nor `reconciler` (named
+  refusal: `--model-for names unknown setting <name>: known settings are ...`), an
+  invalid model (`validateModelName`) or an invalid level (`validateEffort`); last,
+  a frozen agent id with no entry in `DEFAULT_SETTINGS` (`no default settings for
+  <name>`). The settings checks sit after both staffing checks so the five existing
+  `deps.agents` refusal tests (`test/profile.test.ts:431`, `:448`, `:462`, `:494`,
+  `:506`, each expecting a staffing or duplicate-id message) refuse before settings
+  resolution and pass unchanged. No existing test freezes a synthetic agent list
+  successfully; a list that passes both staffing checks but holds an id with no
+  default refuses with the named message, and no override supplies a default. Then
+  build `dispatchSettings` for **every** frozen agent and for `reconciler`, applying
+  the precedence in Assumptions: a run-wide `settings.effort` applies to every setting
+  whose agent `role` is not `reviewer` and leaves the six reviewer settings at their
+  seeded effort (open decision 3). Nothing is written when a refusal is thrown, as
+  today.
   - Verify: `npx tsc --noEmit`
-  - Expected: compiles clean.
+  - Expected: the only errors are at the consumers Step 1 lists (they still read
+    `modelMap` or `resolveStageModel`); none is in `src/profile.ts`.
 
-- **Step 3: Update the pinned model-map test and add override coverage**
-  - Change: In `test/profile.test.ts`, update "the profile freezes one
-    model entry per stage kind" (line ~176-189): its `assert.deepEqual`
-    must list all nine keys in the Step 2 order, all equal to
-    `"chosen-model"` (no override was passed). Update "resolveStageModel
-    refuses an unmapped stage kind naming the mapped ones" (line ~191-202):
-    its second `assert.match` currently expects
-    `/spec, spec_review, plan, plan_review, implementation, code_review/` —
-    change it to match the new nine-key joined string in the Step 2 order:
-    `spec, spec_review, spec_reconcile, plan, plan_review, plan_reconcile, implementation, code_review, code_review_implementer`.
-    Add two new tests after it:
-    ```ts
-    test("freezeProfile applies per-role overrides, defaulting the rest to the base model", () => {
-      withRoot((root) => {
-        const { profile } = freezeProfile(root, 1, COMMIT, "base-model", VERIFICATION, {}, {
-          specReview: "review-model",
-          codeReviewImplementer: "implementer-model",
-        });
-        assert.deepEqual(profile.modelMap, {
-          spec: "base-model",
-          spec_review: "review-model",
-          spec_reconcile: "base-model",
-          plan: "base-model",
-          plan_review: "base-model",
-          plan_reconcile: "base-model",
-          implementation: "base-model",
-          code_review: "base-model",
-          code_review_implementer: "implementer-model",
-        });
-      });
-    });
+- **Step 3: Resolver and shape check.** Replace `resolveStageModel` with
+  `resolveSettings(profile, name)` returning
+  `{ ok: true; model; effort } | { ok: false; reason }`; the refusal names the setting
+  and lists the names the frozen profile maps. In `invalidProfileReason` replace the
+  `modelMap` check with: `dispatchSettings` is a non-array object, has an entry for
+  every agent in `p.agents` and for `reconciler`, and each entry has a string `model`
+  that passes `validateModelName` and an `effort` in `EFFORT_LEVELS`. A profile that
+  still carries `modelMap` and no `dispatchSettings` fails with a reason that says it
+  was frozen under a superseded configuration and must be replaced by a fresh run. No
+  default fill, no migration.
+  - Verify: `node --test test/profile.test.ts` after updating it (Step 4).
+  - Expected: passes.
 
-    test("freezeProfile refuses an invalid override model name and writes nothing", () => {
-      withRoot((root) => {
-        assert.throws(
-          () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, {}, { specReview: "bad model" }),
-          /invalid --specReview override: invalid model name "bad model"/
-        );
-        assert.equal(
-          existsSync(join(root, ".governance", "profiles", "1", "profile.json")),
-          false,
-          "nothing may be written when an override is refused"
-        );
-      });
-    });
-    ```
-  - Verify: `npm test -- --test-name-pattern="profile"`
-  - Expected: every `profile.test.ts` test passes, including the two new ones.
+- **Step 4: Tests.** Update the tests that pin `modelMap` (`test/profile.test.ts`,
+  five references) to `dispatchSettings`. Add: (a) no overrides freezes all ten
+  settings, each equal to its seeded default with a null model resolved to `--model`
+  (assert `spec-author` is the seeded Opus, the three spec reviewers Haiku at
+  `medium`, the three code reviewers Sonnet 5.5 at `medium`, `implementer` Sonnet 5.5
+  at `medium`, `plan-author` the `--model` passed at `high` and `reconciler` the
+  `--model` passed at `medium`); (b) `effortFor` and `modelFor` override
+  only the named settings and leave the other nine equal to (a); (c) `--effort` applies
+  to every non-reviewer setting without a per-name value, and a per-name value beats
+  it; (d) an invalid level, invalid model, unknown name, and a registry agent lacking
+  a default each refuse and write no `profile.json`; (e) a frozen profile with
+  `modelMap` and no `dispatchSettings` is refused by name; (f) `reconciler` can be set
+  independently of `spec-author` and `plan-author`; (g) `--effort xhigh` sets the four
+  non-reviewer settings and leaves the six reviewers at their seeded `medium`; (h)
+  `effortFor` can set one reviewer to `max` while the other five stay at `medium`, and
+  `ultracode` is refused as an invalid level; (i) with an invalid effort, an unknown
+  setting name and a depleted registry together, the staffing refusal is the one
+  thrown (the order in Step 2). Case (d) builds its no-default registry as `AGENTS`
+  plus one extra agent with a new id that keeps both staffing checks satisfied.
+  - Verify: `node --test test/profile.test.ts`
+  - Expected: passes. Break the precedence (swap the order of the `--effort` and
+    seeded-default terms), confirm (c) fails, restore. Remove the `role` test that
+    skips reviewers, confirm (g) fails, restore.
 
-**Task completion evidence:** `npm run typecheck` and
-`npm test -- --test-name-pattern="profile"` both pass.
+- **Step 5: The shared test helper.** Create `test/uniform-profile.ts` (no `.test.ts`
+  suffix, so `node --test test/*.test.ts` does not run it as a test; `tsconfig.json`
+  includes `test`, so it is typechecked). It exports one function,
+  `freezeUniformProfile(rootDir, runId, startingCommit, model, verification)`, which
+  calls `freezeProfile` with `modelFor` and `effortFor` set for every key of
+  `DEFAULT_SETTINGS`: the model passed, and `medium`. Every setting therefore equals
+  the model the stage test passes as `requestedModel`. Task 4 routes the seven
+  dispatching test files (Blast radius) through it; `test/profile.test.ts` case (a)
+  stays the only place that freezes the real seeded defaults, and the `--model`
+  assertion in the stages is not loosened.
+  - Verify: `npx tsc --noEmit`, then a call from `test/profile.test.ts` that
+    `Object.keys(profile.dispatchSettings)` has all ten names, each with the model
+    passed and `medium`.
+  - Expected: the helper's own file has no errors; the profile test passes.
+
+**Task completion evidence:** `test/profile.test.ts` passes, each break-test fails by
+assertion before restoration, and `test/uniform-profile.ts` exists. The whole project
+does not compile until Task 5, and that is expected.
 
 ---
 
-### Task 2: Use `spec_reconcile` for the spec stage's reconciliation dispatch
+### Task 3: Pass effort to the harness and record it on `agent_run`
 
-**Depends on:** Task 1
+**Depends on:** Task 0 (done; it changed nothing here), Task 2
 
 **Files:**
-- Modify: `src/spec-stage.ts`
-- Validate: `test/spec-stage.test.ts`
+- Modify: `src/harness.ts`, `src/dispatch.ts`, `src/store.ts`
+- Create: `src/migrations/008_agent_run_effort.sql`
+- Validate: `test/harness.test.ts`, `test/dispatch.test.ts`, `test/store.test.ts`,
+  `test/migrate.test.ts`
 
 **Steps:**
 
-- **Step 1: Resolve the reconcile model alongside the existing two resolves**
-  - Change: In `runSpecStage` (`src/spec-stage.ts`), immediately after the
-    existing `resolvedReviewModel` block (lines 108-111), add:
-    ```ts
-    const resolvedReconcileModel = resolveStageModel(profile, "spec_reconcile");
-    if (!resolvedReconcileModel.ok) {
-      return { ok: false, reason: resolvedReconcileModel.reason };
-    }
-    ```
-    After the line `const reviewModel = resolvedReviewModel.model;` (line
-    121), add `const reconcileModel = resolvedReconcileModel.model;`. No
-    new `requireFrozenBinding` call — the existing `binding` check for
-    `"spec"` (line 127-130) already covers the author capability for every
-    dispatch this stage makes under that stage kind, including
-    reconciliation.
+- **Step 1: Argv.** Add `effort?: string` to `InvocationInput`. In `invokeHarness`
+  (`src/harness.ts:239`), after
+  `if (input.model !== undefined) argv.push("--model", input.model);` add
+  `if (input.effort !== undefined) argv.push("--effort", input.effort);`.
   - Verify: `npx tsc --noEmit`
-  - Expected: compiles clean.
+  - Expected: `src/harness.ts` compiles; the project-wide errors from Task 2 remain and
+    no new one is in `src/harness.ts`.
 
-- **Step 2: Point the reconciliation dispatch at the new model**
-  - Change: The reconciliation dispatch inside the round loop
-    (`src/spec-stage.ts`, currently `requestedModel: model` at line ~520)
-    changes to `requestedModel: reconcileModel`. The draft dispatch (line
-    ~211) and the self-critique dispatch (line ~275) keep
-    `requestedModel: model` — unchanged.
-  - Verify: `npx tsc --noEmit`
-  - Expected: compiles clean.
+- **Step 2: Dispatch and store.** Add `requestedEffort: string` and `setting: string`
+  to `DispatchInput` (both required, so no dispatch can omit them) and pass the effort
+  as `effort` to `invokeHarness`. Add both to the `insertAgentRun` input and the insert
+  statement (`src/store.ts:248`, `:572`). Migration 008 adds two nullable columns,
+  `ALTER TABLE agent_run ADD COLUMN requested_effort TEXT;` and
+  `ALTER TABLE agent_run ADD COLUMN setting TEXT;`, and its last line is
+  `PRAGMA user_version = 8;` (`src/migrate.ts` refuses a migration that does not set
+  it to its own index). Nullable because rows written before this migration exist in
+  old stores; new rows always carry both. Update the `AgentRunRow` type
+  (`src/store.ts:46`). In `dispatchOnce` (`src/dispatch.ts`), the shared `failed`
+  helper appends ` (requested model <model>, effort <effort>)` to every
+  `agent.dispatch.failed` summary and to the returned `reason`, so a failed attempt,
+  which writes no `agent_run` row, still names what it requested.
+  - Verify: `npx tsc --noEmit`, then `node --test test/store.test.ts test/migrate.test.ts`
+  - Expected: `src/harness.ts`, `src/dispatch.ts` and `src/store.ts` compile. The 13
+    `dispatchOnce` callers (`src/cli.ts:309`, `src/code-review-stage.ts:400` and
+    `:606`, `src/implementation-stage.ts:378`, `src/plan-stage.ts:277`, `:361`, `:535`
+    and `:619`, `src/spec-decision-stage.ts:302`, `src/spec-stage.ts:236`, `:300`,
+    `:487` and `:571`) fail with a missing `requestedEffort` and `setting`; that is
+    expected until Task 4 and Task 5 and is not a defect in this step. The store and
+    migrate tests pass after `test/store.test.ts` asserts the two new columns;
+    `test/migrate.test.ts` derives `MIGRATION_COUNT` from the migrations directory and
+    needs no expectation change.
 
-- **Step 3: Add a test proving the reconcile dispatch uses the override**
-  - Change: In `test/spec-stage.test.ts`, add a `refreeze` helper mirroring
-    the one already in `test/code-review-stage.test.ts` (lines 126-137) —
-    add the import `loadProfile, type Profile` to the existing
-    `import { freezeProfile, loadVerifiedProfile } from "../src/profile.ts";`
-    line, then:
-    ```ts
-    function refreeze(root: string, store: Store, runId: number, mutate: (p: Profile) => void): void {
-      const { profile } = loadProfile(root, runId);
-      mutate(profile);
-      profile.policyHash = policyHash(profile.policy);
-      const serialized = canonicalJson(profile);
-      writeFileSync(join(root, ".governance", "profiles", String(runId), "profile.json"), serialized);
-      store.setProfileRef(runId, sha256Hex(serialized));
-    }
-    ```
-    Add a new test using `withRun` (the file's existing helper) that calls
-    `refreeze(root, store, runId, (p) => { p.modelMap.spec_reconcile = "reconcile-model"; })`
-    before invoking `runSpecStage`, runs the stage to a passing gate the
-    way the file's existing happy-path test does (reusing the same `FIXTURE`
-    dispatch script and pattern already used by the surrounding tests in
-    this file), then asserts:
-    ```ts
-    const rows = store.query<{ role: string; requested_model: string }>(
-      "SELECT role, requested_model FROM agent_run WHERE stage_id = ? ORDER BY id", [specStageId]
-    );
-    const authorRows = rows.filter((r) => r.role === "author");
-    assert.equal(authorRows.length, 3); // draft, self-critique, reconciliation
-    assert.equal(authorRows[0].requested_model, "m");
-    assert.equal(authorRows[1].requested_model, "m");
-    assert.equal(authorRows[2].requested_model, "reconcile-model");
-    ```
-    (`specStageId` is the id returned in `result.stageIds.spec` from the
-    stage's `StageResult`.) `"m"` is the base model `withRun` already
-    freezes (`src/... freezeProfile(root, run.id, head, "m", VERIFICATION)`
-    at line 121 of the test file) — unchanged by this test.
-  - Verify: `npm test -- --test-name-pattern="spec"`
-  - Expected: the new test passes; every pre-existing test in the file
-    still passes unchanged (they never set `spec_reconcile`, so it defaults
-    to `"m"`, matching what those tests already assert about `requestedModel`).
+- **Step 3: Tests.** In `test/harness.test.ts`, run `invokeHarness` against a fixture
+  executor that reports the argv it received (find the one the current `--model` argv
+  assertion uses; if none reports argv, add one under `test/fixtures/harness/` that
+  emits the recorded line kinds and echoes `process.argv`), with `model: "m"` and
+  `effort: "medium"`. Assert the argv contains `--model m --effort medium` in that
+  order and no `--effort` when `effort` is omitted. Add a second harness test that reads
+  `test/fixtures/recorded/claude-effort-flag-probes.json` and, for every probe, builds
+  the argv from the probe's recorded `model` and `effort` and asserts it ends with
+  `--model <model> --effort <effort>`, the shape the fixture's `provenance.command`
+  records; the expected values come from the recorded fixture, not from the code. In
+  `test/dispatch.test.ts` (whose 10 `requestedModel: "m"` sites gain `requestedEffort`
+  and `setting`), assert the inserted row's `requested_effort` and `setting`, and that
+  a failed dispatch's audit summary and returned `reason` name the requested model and
+  effort. Update any test that compares an `agent.dispatch.failed` summary exactly;
+  the phrases `dispatched agent`, `exited with code`, `timed out after` and `spawn
+  failed` appear in `test/harness.test.ts`, `test/dispatch.test.ts`,
+  `test/commit-verification.test.ts`, `test/run-command.test.ts`,
+  `test/cli-operator.test.ts`, `test/agent-result.test.ts` and
+  `test/verification-stage.test.ts`; running the files shows which compare exactly.
+  - Verify: `node --test test/harness.test.ts test/dispatch.test.ts`
+  - Expected: passes. Remove the `argv.push("--effort", ...)` line, confirm the harness
+    tests fail by assertion (not by a crash; require the TAP summary line), restore.
+    Remove the suffix from the `failed` helper, confirm the dispatch test fails by
+    assertion, restore.
 
-**Task completion evidence:** `npm run typecheck` and
-`npm test -- --test-name-pattern="spec"` both pass.
+**Task completion evidence:** the four test files pass, the two argv break-tests and the
+summary break-test fail as described, and the callers listed in Step 2 are the only
+compile errors left in `src/dispatch.ts`'s consumers.
 
 ---
 
-### Task 3: Use `plan_reconcile` for the plan stage's reconciliation dispatch
+### Task 4: Every dispatch site uses its setting
 
-**Depends on:** Task 1
+**Depends on:** Tasks 2, 3
 
 **Files:**
-- Modify: `src/plan-stage.ts`
-- Validate: `test/plan-stage.test.ts`
+- Modify: `src/spec-stage.ts`, `src/plan-stage.ts`, `src/implementation-stage.ts`,
+  `src/code-review-stage.ts`, `src/spec-decision-stage.ts`
+- Validate: `test/spec-stage.test.ts`, `test/plan-stage.test.ts`,
+  `test/implementation-stage.test.ts`, `test/code-review-stage.test.ts`,
+  `test/spec-decision-stage.test.ts`
 
 **Steps:**
 
-- **Step 1: Resolve the reconcile model alongside the existing two resolves**
-  - Change: Mirror Task 2 Step 1 exactly, in `runPlanStage`
-    (`src/plan-stage.ts`), after the existing `resolvedReviewModel` block
-    (lines 126-129): add the `resolvedReconcileModel = resolveStageModel(profile, "plan_reconcile")`
-    check, and `const reconcileModel = resolvedReconcileModel.model;` after
-    line 137. No new binding check, for the same reason as Task 2 Step 1
-    (the existing `"plan"` binding at lines 143-146 already covers every
-    author-role dispatch in this stage).
+- **Step 0: Route the dispatching tests through the helper.** In the seven test files
+  the Blast radius names (`test/spec-stage.test.ts` 2 calls, `test/operator-state.test.ts`
+  3, and one each in `test/spec-decision-stage.test.ts`, `test/plan-stage.test.ts`,
+  `test/implementation-stage.test.ts`, `test/code-review-stage.test.ts` and
+  `test/run-command.test.ts`), replace `freezeProfile(root, run.id, head, MODEL,
+  VERIFICATION)` with `freezeUniformProfile(...)` from `test/uniform-profile.ts` (Task 2
+  Step 5), keeping each file's model value. The 55 `requestedModel: "m"` sites in
+  `test/spec-stage.test.ts` then match the frozen author setting and need no edit. No
+  assertion in the stages or in the tests is loosened. The verification for this step
+  is Steps 2 and 3 below: it has no result of its own.
+
+- **Step 1: Resolve per setting, before spend.** In each stage, replace the
+  `resolveStageModel(profile, <kind>)` calls listed in Blast radius with
+  `resolveSettings(profile, <name>)` for the author agent's own name and for
+  `reconciler`, resolved where the stage already resolves at configuration time
+  (before any stage row or paid invocation). For the review panels the seats are
+  chosen after the author proposes specialties, so resolve each seat agent's settings
+  when the panel is selected and **before the first reviewer dispatches**: a missing
+  entry refuses the whole panel, never a single seat after siblings have spent. Every
+  `dispatchOnce` call in the sites listed in Blast radius passes `requestedModel` and
+  `requestedEffort` from the setting that site's row names: the author agent for draft
+  and self-critique, the seat agent for a reviewer, `implementer` for implementation
+  and remediation, and `reconciler` for the reconciliation dispatches and the decision
+  fold. Each call also passes `setting:` with that same name. `agent:` keeps naming the
+  agent that runs.
   - Verify: `npx tsc --noEmit`
-  - Expected: compiles clean.
+  - Expected: the five stage files compile. The errors left are the Task 5 sites
+    (`src/cli.ts`, `src/operator-state.ts`, `src/operator-output.ts`), including the
+    `dispatchOnce` call at `src/cli.ts:309`, and errors in the test files that still call
+    `resolveStageModel` or read `modelMap`.
 
-- **Step 2: Point the reconciliation dispatch at the new model**
-  - Change: The reconciliation dispatch inside the round loop
-    (`src/plan-stage.ts`, currently `requestedModel: model` at line ~625)
-    changes to `requestedModel: reconcileModel`. The draft dispatch (line
-    ~283) and self-critique dispatch (line ~367) keep `requestedModel: model`.
-  - Verify: `npx tsc --noEmit`
-  - Expected: compiles clean.
+- **Step 2: Keep the `--model` assertion.** Where a stage compares `requestedModel`
+  with the frozen model (`src/spec-stage.ts:145` and its plan, implementation and
+  code-review equivalents), compare with the stage's author setting (open decision 7)
+  and keep the message
+  `--model X does not match the model frozen at run start (Y)`.
+  - Verify: `node --test test/spec-stage.test.ts`
+  - Expected: the existing mismatch test passes once Step 0 is done; the assertion
+    itself is untouched.
 
-- **Step 3: Add a test proving the reconcile dispatch uses the override**
-  - Change: Mirror Task 2 Step 3 exactly for `test/plan-stage.test.ts`: add
-    the same `refreeze` helper (import `loadProfile, type Profile` alongside
-    the existing `freezeProfile, loadVerifiedProfile` import), set
-    `p.modelMap.plan_reconcile = "reconcile-model"` before calling
-    `runPlanStage`, then assert the three `role="author"` `agent_run` rows
-    for the plan stage are `[MODEL, MODEL, "reconcile-model"]` in id order
-    (`MODEL` is the file's existing `const MODEL = "m"` at line 20).
-  - Verify: `npm test -- --test-name-pattern="plan"`
-  - Expected: the new test passes; every pre-existing test in the file
-    still passes unchanged.
+- **Step 3: Tests.** For each stage, freeze a profile whose settings differ per name
+  (reuse the `refreeze` helper pattern already in `test/code-review-stage.test.ts`,
+  adding it to the others), run the stage on the fixture executor, and assert from
+  `agent_run` that every row's `requested_model` and `requested_effort` equal the
+  settings its dispatch should have used, identifying each row by its `setting`
+  column and not by id order: for spec and plan, the draft and self-critique rows
+  carry the author's setting and the reconciliation row carries `reconciler`, with
+  `agent` still the author; each reviewer row matches its own seat agent; the code-review
+  remediation row matches `implementer`; the decision-fold row matches `reconciler`
+  and its `agent` is still `spec-author`. Assert that the expected values are distinct
+  per setting so a stage that reads the wrong entry fails. Add one test that a profile
+  missing one reviewer's entry refuses the panel with zero `agent_run` rows written.
+  - Verify: `node --test test/spec-stage.test.ts test/plan-stage.test.ts test/implementation-stage.test.ts test/code-review-stage.test.ts test/spec-decision-stage.test.ts`
+  - Expected: passes. Point the reconciliation dispatch at the author's setting,
+    confirm the matching test fails by assertion, restore.
 
-**Task completion evidence:** `npm run typecheck` and
-`npm test -- --test-name-pattern="plan"` both pass.
+**Task completion evidence:** the five stage test files pass and the wrong-setting
+break-test fails.
 
 ---
 
-### Task 4: Split code_review's reviewer and implementer models
+### Task 5: New-run flags, readiness, display and the dispatch surface
 
-**Depends on:** Task 1
+**Depends on:** Tasks 2-4
 
 **Files:**
-- Modify: `src/code-review-stage.ts`
-- Validate: `test/code-review-stage.test.ts`
+- Modify: `src/cli-args.ts`, `src/cli.ts`, `src/run-intake.ts`, `src/operator-state.ts`,
+  `src/operator-output.ts`, `src/dashboard/app.js`
+- Validate: `test/cli.test.ts`, `test/run-intake.test.ts`, `test/operator-state.test.ts`,
+  `test/cli-operator.test.ts`, `test/run-command.test.ts`, `test/dashboard-ui.test.ts`
 
 **Steps:**
 
-- **Step 1: Resolve the implementer model alongside the existing resolve**
-  - Change: In `runCodeReviewStage` (`src/code-review-stage.ts`),
-    immediately after the existing `resolvedModel`/`model` block (lines
-    108-116), add:
-    ```ts
-    const resolvedImplementerModel = resolveStageModel(profile, "code_review_implementer");
-    if (!resolvedImplementerModel.ok) return { ok: false, reason: resolvedImplementerModel.reason };
-    const implementerModel = resolvedImplementerModel.model;
-    ```
-    No new binding check — the existing `binding` check for `"code_review"`
-    (line 117-118) already covers this stage's one capability requirement
-    (`review`) for every dispatch it makes, reviewer and implementer alike;
-    `requiredCapability` maps all three review kinds to the same `"review"`
-    capability, and the implementer's own agent-shape check (`author.role
-    !== "author"`, etc., lines 263-270) is unrelated to capability binding.
-  - Verify: `npx tsc --noEmit`
-  - Expected: compiles clean.
-
-- **Step 2: Point the remediation dispatch at the new model**
-  - Change: The remediation implementer dispatch (currently
-    `requestedModel: model` at line ~613, inside the `authorDispatch` call)
-    changes to `requestedModel: implementerModel`. The reviewer panel
-    dispatch (line ~407, inside the `reviewerPromises` map) keeps
-    `requestedModel: model` — `model` now means specifically "the reviewer
-    panel's model," which is exactly what `resolveStageModel(profile,
-    "code_review")` already resolves.
-  - Verify: `npx tsc --noEmit`
-  - Expected: compiles clean.
-
-- **Step 3: Add a test proving the remediation dispatch uses the override**
-  - Change: In `test/code-review-stage.test.ts`, using the file's existing
-    `refreeze` helper (lines 126-137, already present — no new helper
-    needed here), find or add a test exercising a round that reaches
-    remediation (one already exists for the remediation path — locate it by
-    searching for `code_review.remediation.pass` or the existing
-    `authorDispatch`-exercising test in this file) and add, right before
-    the stage call, `refreeze(ctx.root, ctx.store, ctx.runId, (p) => { p.modelMap.code_review_implementer = "implementer-model"; })`.
-    After the stage call, assert:
-    ```ts
-    const rows = store.query<{ role: string; requested_model: string }>(
-      "SELECT role, requested_model FROM agent_run WHERE stage_id = ? ORDER BY id", [stageId]
-    );
-    const reviewerRows = rows.filter((r) => r.role === "reviewer");
-    const authorRows = rows.filter((r) => r.role === "author");
-    for (const row of reviewerRows) assert.equal(row.requested_model, MODEL);
-    for (const row of authorRows) assert.equal(row.requested_model, "implementer-model");
-    ```
-    (Use the file's own constant name for the base model in place of
-    `MODEL` above — confirm it by reading the top of the file; Task 4's
-    author must not invent a new constant if one already exists.)
-  - Verify: `npm test -- --test-name-pattern="code review"`
-  - Expected: the new/modified test passes; every pre-existing test in the
-    file still passes unchanged (none of them sets
-    `code_review_implementer`, so it defaults to the base model, matching
-    what those tests already assert).
-
-**Task completion evidence:** `npm run typecheck` and
-`npm test -- --test-name-pattern="code review"` both pass.
-
----
-
-### Task 5: Extend the pre-flight readiness check for the new keys
-
-**Depends on:** Task 1
-
-**Files:**
-- Modify: `src/operator-state.ts` — `frozenGroupReasons`
-- Validate: `test/operator-state.test.ts`
-
-**Steps:**
-
-- **Step 1: Cover the three new keys in `frozenGroupReasons`**
-  - Change: In `src/operator-state.ts` (lines 468-472), the `kinds`
-    computation currently reads:
-    ```ts
-    const kinds = group === "spec" || group === "plan" ? [group, `${group}_review`]
-      : group === "implementation" || group === "code_review" ? [group] : [];
-    ```
-    Change to:
-    ```ts
-    const kinds = group === "spec" || group === "plan" ? [group, `${group}_review`, `${group}_reconcile`]
-      : group === "implementation" ? [group]
-      : group === "code_review" ? [group, "code_review_implementer"] : [];
-    ```
-    This is the only change this function needs: the loop immediately below
-    (lines 473-478) already iterates `kinds` generically, calling
-    `resolveStageModel` and `requireFrozenBinding` for each — no other line
-    in the function references stage kinds by name in a way the new keys
-    would bypass. (`requireFrozenBinding` is still called per new kind here
-    even though Tasks 2-4 established no *new* capability requirement is
-    needed at the dispatch site — `requiredCapability` already returns
-    `null` for an unrecognized kind, so calling it with `"spec_reconcile"`
-    would fail wrongly. Handle this by having the loop call
-    `requireFrozenBinding` only for kinds `requiredCapability` actually
-    recognizes, or — simpler and consistent with the fact these are pure
-    model-resolution keys — only push the new keys into a *second*,
-    model-only check list that skips the binding call. Confirm which reading
-    is correct against `requiredCapability`'s switch (`src/profile.ts:385-400`)
-    before choosing: it recognizes only `spec`, `spec_review`, `plan`,
-    `plan_review`, `implementation`, `code_review` and returns `null` for
-    anything else, and `requireFrozenBinding` treats a `null` capability as
-    a refusal ("no executor capability defined for stage kind ..."). So the
-    new keys must be resolved for a model but **not** passed to
-    `requireFrozenBinding`. Restructure the loop to do exactly that:
-    ```ts
-    for (const kind of kinds) {
-      const model = resolveStageModel(profile, kind);
-      if (!model.ok) fail(model.reason);
-      if (requiredCapability(kind) !== null) {
-        const binding = requireFrozenBinding(profile, profile.executor, kind);
-        if (!binding.ok) fail(binding.reason);
-      }
-    }
-    ```
-    This requires importing `requiredCapability` from `./profile.ts`
-    alongside the file's existing `loadVerifiedProfile, requireFrozenBinding,
-    resolveStageModel` import (line 16).
-  - Verify: `npx tsc --noEmit`
-  - Expected: compiles clean.
-
-- **Step 2: Add a readiness test for a broken new key**
-  - Change: In `test/operator-state.test.ts`, near the existing
-    `setup_required` assertions (lines 873, 972), add a test that freezes a
-    profile, deletes one of the three new keys from `modelMap` (e.g. via the
-    same profile-mutate-and-rewrite pattern used elsewhere in this file —
-    confirm the exact helper name by reading how the tests at lines 873/972
-    construct their broken state before duplicating it), builds the snapshot
-    for the `spec` (or `code_review`) execution group, and asserts
-    `snapshot.workflowAction.reasons.some((r) => r.code === "setup_required" && r.reason.includes("spec_reconcile"))`
-    (or `code_review_implementer` for the code_review-group variant).
-  - Verify: `npm test -- --test-name-pattern="operator-state"`
-  - Expected: the new test passes; every pre-existing test in the file still
-    passes unchanged.
-
-**Task completion evidence:** `npm run typecheck` and
-`npm test -- --test-name-pattern="operator-state"` both pass.
-
----
-
-### Task 6: Add the six new `new-run` flags
-
-**Depends on:** None (parallel with Tasks 2-5; needed before Task 7)
-
-**Files:**
-- Modify: `src/cli-args.ts` — `COMMANDS["new-run"].options`
-
-**Steps:**
-
-- **Step 1: Declare the six new options**
-  - Change: In `src/cli-args.ts`, after the existing `model` shared
-    `OptionDefinition` (line 21), the `"new-run"` entry's `options` array
-    (lines 32-38) currently ends with `{ ...model, required: true }`. Add
-    six new non-required entries, each reusing `validateModelName` (already
-    imported at line 3) directly — there is no shared `model` constant to
-    spread from since each has a distinct `--name`:
-    ```ts
-    { name: "spec-review-model", value: "name", validate: validateModelName },
-    { name: "spec-reconcile-model", value: "name", validate: validateModelName },
-    { name: "plan-review-model", value: "name", validate: validateModelName },
-    { name: "plan-reconcile-model", value: "name", validate: validateModelName },
-    { name: "code-review-model", value: "name", validate: validateModelName },
-    { name: "code-review-implementer-model", value: "name", validate: validateModelName },
-    ```
-    appended to the `"new-run"` options array, after `{ ...model, required: true }`.
-    No changes to `parseArguments`, `synopsis`, or `formatHelp` — all three
-    already iterate `definition.options` generically (confirmed by full
-    read of `src/cli-args.ts`), so the new flags appear in
-    `buildworks help new-run`'s synopsis and are validated by the existing
-    generic loop (lines 225-230) with no further code.
+- **Step 1: Flags.** In `COMMANDS["new-run"].options` (`src/cli-args.ts:30-38`) add
+  three optional entries: `effort` (validated with `validateEffort`), `model-for` and
+  `effort-for`. The last two take `<name>=<value>[,...]`; a shared helper splits on
+  `,`, then on the first `=`, and refuses an empty name or value, a repeated name
+  within one list, and (through `validateModelName` / `validateEffort`) a bad value.
+  Unknown names are refused later, at freeze, where the registry is known.
+  `parseArguments` is not changed: each flag appears once.
+  The `new-run` help text says which settings `--model` covers (only `plan-author` and
+  `reconciler`; every other setting takes its seeded model unless `--model-for` names
+  it) and that `--effort` does not reach reviewers (open decisions 3 and 8).
   - Verify: `node src/cli.ts help new-run`
-  - Expected: the printed usage line includes
-    `[--spec-review-model <name>] [--spec-reconcile-model <name>] [--plan-review-model <name>] [--plan-reconcile-model <name>] [--code-review-model <name>] [--code-review-implementer-model <name>]`
-    after the existing `--model <name>`.
+  - Expected: the usage line lists `[--effort <level>] [--model-for <list>]
+    [--effort-for <list>]` (declare the options' `value` as `level` and `list`), and the
+    help text carries both statements.
 
-**Task completion evidence:** `node src/cli.ts help new-run` shows all six
-new flags; `npx tsc --noEmit` compiles clean.
+- **Step 2: Thread through intake.** `RunIntakeInput` gains an optional
+  `settings?: SettingsInput`; `createRunIntake` passes it as the new `freezeProfile`
+  argument; `case "new-run"` in `src/cli.ts` builds it from the three flags.
+  `src/guided-command.ts` is not edited and passes nothing.
+  - Verify: `node --test test/run-intake.test.ts test/cli.test.ts`
+  - Expected: passes after adding: a `new-run` with `--effort xhigh` freezes the four
+    non-reviewer settings at `xhigh` and the six reviewers at `medium`; a `new-run` with
+    `--effort-for code-reviewer-security=max` freezes that reviewer at `max` and the other
+    five at `medium`; a `new-run` with `--effort-for implementer=low`
+    freezes `implementer` at `low` and the others unchanged; `--model-for
+    reconciler=<a model name>` changes only `reconciler`; a bad level, a bad model, and
+    an unknown name each refuse and create no run row (use the file's existing
+    `assertNoRunRow`).
 
----
+- **Step 3: The raw dispatch command and stage commands.** In `case "dispatch"`
+  (`src/cli.ts:279-287`) resolve by the required `--agent` argument through
+  `resolveSettings` instead of `stage.kind`, assert `--model` against that agent's
+  frozen model, and pass its effort and `setting: <agent id>`. The raw command has no reconciler concept: a
+  reconciliation dispatched through it takes the agent's own setting, and that is
+  stated in its help text. The stage commands' `--model` pass-throughs stay (Task 4
+  Step 2 holds the assertion).
+  - Verify: `node --test test/cli.test.ts`
+  - Expected: passes; the existing dispatch-mismatch test is updated to name the
+    agent's frozen model.
 
-### Task 7: Thread the overrides from `new-run` through `createRunIntake` to `freezeProfile`
+- **Step 4: Readiness.** Replace the `kinds` loop in `frozenGroupReasons`
+  (`src/operator-state.ts:514-526`) so that, in addition to the stage-kind capability
+  checks it makes today through `requireFrozenBinding`, it resolves settings for every
+  name the group will dispatch: for spec and plan, the author agent, `reconciler` and
+  the reviewer agents the frozen profile could seat; for decision, `reconciler`; for
+  implementation, `implementer`; for code_review, `implementer` and the code reviewers.
+  A missing entry is a `setup_required` reason naming the setting, so an unstaffed run
+  is refused before it spends. Update `:83`, `:286` and `:311` to carry
+  `dispatchSettings`.
+  - Verify: `node --test test/operator-state.test.ts`
+  - Expected: passes after adding a test that deleting one entry (once an agent, once
+    `reconciler`) from a frozen profile yields a `setup_required` reason naming it.
 
-**Depends on:** Task 1, Task 6
+- **Step 5: Display.** `src/cli.ts:134` renames the doctor check `frozen_models` to
+  `frozen_settings` and prints `dispatchSettings`; `src/operator-output.ts:56` prints
+  `Frozen settings:` with the same value; `src/dashboard/app.js:3415` and `:4056` read
+  `configuration.dispatchSettings` and show effort beside model. Assets are read once
+  at startup, so the dashboard must be restarted to show the change.
+  - Verify: `node --test test/cli-operator.test.ts test/run-command.test.ts test/dashboard-ui.test.ts`
+  - Expected: passes after updating the references to `modelMap` and
+    `resolveStageModel` in `test/cli-operator.test.ts` (9) and `test/run-command.test.ts`
+    (4). Add one dashboard test that a snapshot carrying `dispatchSettings` renders a
+    row per setting with its model and effort, and confirm by removing the `app.js`
+    change that this test fails (an empty list is the failure mode being guarded).
 
-**Files:**
-- Modify: `src/run-intake.ts` — `RunIntakeInput`, `createRunIntake`
-- Modify: `src/cli.ts` — `case "new-run"`
-- Validate: `test/run-intake.test.ts`, `test/cli.test.ts`
-
-**Steps:**
-
-- **Step 1: Add the optional field to `RunIntakeInput`**
-  - Change: In `src/run-intake.ts`, import `type StageModelOverrides`
-    alongside the existing `freezeProfile` import (line 4), and add one
-    optional field to `RunIntakeInput` (lines 7-13):
-    ```ts
-    export interface RunIntakeInput {
-      project: string;
-      featureId: string;
-      slug: string;
-      changeKind: ChangeKind;
-      model: string;
-      modelOverrides?: StageModelOverrides;
-    }
-    ```
-  - Verify: `npx tsc --noEmit`
-  - Expected: compiles clean.
-
-- **Step 2: Pass the overrides to `freezeProfile`**
-  - Change: In `createRunIntake` (`src/run-intake.ts`), the `freezeProfile`
-    call (lines 61-67) currently passes five positional arguments. Add the
-    `deps` placeholder and the overrides:
-    ```ts
-    const frozen = freezeProfile(
-      rootDir,
-      run.id,
-      intake.startingCommit!,
-      input.model,
-      intake.verification!,
-      {},
-      input.modelOverrides ?? {},
-    );
-    ```
-  - Verify: `npx tsc --noEmit`
-  - Expected: compiles clean.
-
-- **Step 3: Read the six new flags in `new-run` and pass them through**
-  - Change: In `src/cli.ts`'s `case "new-run"` (lines 184-201), the
-    `createRunIntake` call's object literal currently ends after `model:
-    args.get("model")!,`. Add:
-    ```ts
-    modelOverrides: {
-      specReview: args.get("spec-review-model"),
-      specReconcile: args.get("spec-reconcile-model"),
-      planReview: args.get("plan-review-model"),
-      planReconcile: args.get("plan-reconcile-model"),
-      codeReview: args.get("code-review-model"),
-      codeReviewImplementer: args.get("code-review-implementer-model"),
-    },
-    ```
-    (`args.get(name)` returns `string | undefined`, matching the optional
-    fields on `StageModelOverrides` exactly — `exactOptionalPropertyTypes`
-    is not set in `tsconfig.json`, confirmed by reading it, so assigning
-    `undefined` here type-checks.)
-  - Verify: `npx tsc --noEmit`
-  - Expected: compiles clean.
-
-- **Step 4: Add an end-to-end test through the real CLI**
-  - Change: In `test/cli.test.ts`, add a test using the file's existing
-    `tempCwd`/`runCli` helpers (see the pattern at lines 81-107): run
-    `new-run` with the base `NEW_RUN_ARGS`-style flags plus
-    `"--spec-review-model", "cheap-model"`, then read
-    `.governance/profiles/<runId>/profile.json` (as the existing test "new-run
-    freezes a profile and records its hash on the run", lines 300-330,
-    already does) and assert
-    `profile.modelMap.spec_review === "cheap-model"` while
-    `profile.modelMap.spec === "test-model"` (the base model the test
-    passes). Add a second test passing an invalid value for one new flag
-    (e.g. `"--code-review-implementer-model", "bad model"`) and assert via
-    the file's existing `assertNoRunRow` helper (lines 340-347) that the
-    command refuses and creates no run row — matching how the file already
-    tests the base `--model`'s validation.
-  - Verify: `npm test -- --test-name-pattern="new-run"`
-  - Expected: both new tests pass; every pre-existing `new-run`-related test
-    in the file still passes unchanged (none of them passes the new flags,
-    so every entry defaults to the base model, exactly as before this plan).
-
-**Task completion evidence:** `npm run typecheck`,
-`npm test -- --test-name-pattern="new-run"`, and
-`npm test -- --test-name-pattern="run-intake"` (confirm `run-intake.test.ts`
-needs no change since `modelOverrides` is optional and no existing call site
-sets it — if a test author finds a reason to add direct
-`createRunIntake`-level coverage beyond the CLI-level test in Step 4, add it
-here following the file's existing pattern, but it is not required for this
-task's completion) all pass.
+**Task completion evidence:** `npx tsc --noEmit` is clean for the first time since Task 2
+(this task closes the compile gap, and `npm run typecheck` also covers the dashboard
+assets); the six test files pass; `node src/cli.ts help new-run` shows the three flags
+and the two coverage statements; the dashboard test fails without the `app.js` change.
 
 ---
 
-### Task 8: Update documentation
+### Task 6: Documentation
 
-**Depends on:** Tasks 1-7 (documents the shipped behavior, not a design still in flux)
+**Depends on:** Tasks 1-5
 
 **Files:**
-- Modify: `README.md`
-- Modify: `CLAUDE.md`
-- Modify: `AGENTS.md`
-- Modify: `ARCHITECTURE.md`
+- Modify: `README.md`, `CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md`,
+  `docs/runbooks/cli-operator.md`, `.claude/skills/run-buildworks/SKILL.md`
 
 **Steps:**
 
-- **Step 1: README.md**
-  - Change: At `README.md:69-71`, the sentence "The model each stage uses is
-    frozen at `bw new-run --model` and every spend entry point checks it."
-    becomes: "The model each stage uses is frozen at `bw new-run --model`,
-    with six optional per-role overrides
-    (`--spec-review-model`, `--spec-reconcile-model`, `--plan-review-model`,
-    `--plan-reconcile-model`, `--code-review-model`,
-    `--code-review-implementer-model`) that default to `--model` when
-    omitted, and every spend entry point checks whichever entry the dispatch
-    resolves to." Leave the PowerShell example at `README.md:546` unchanged
-    — it demonstrates the base flow, and the doc-checker's "current" tier
-    requires accuracy, not that every example show every optional flag.
-  - Verify: `npm run check:docs`
-  - Expected: exit 0.
+- **Step 1: README and the two instruction files.** `README.md:78` and the `new-run`
+  bullet in `CLAUDE.md` and `AGENTS.md` say one model is frozen at `new-run`. Replace
+  with: each agent's, and the reconciler's, model and effort are frozen at `new-run`
+  (`--model` required and covering only `plan-author` and `reconciler`; optional
+  `--effort`, which does not reach reviewers, `--model-for`, `--effort-for`), the seeded
+  defaults live in `src/policy.ts`, and every spend entry point checks the frozen
+  setting for its dispatch. In `README.md:814` (the `configuration` field table) replace
+  `modelMap` with `dispatchSettings`. Edit `CLAUDE.md`, copy to `AGENTS.md`, then
+  compare hashes.
+  - Verify: `npm run check:docs`; compare the file hashes of `CLAUDE.md` and `AGENTS.md`.
+  - Expected: clean; hashes equal.
 
-- **Step 2: CLAUDE.md and AGENTS.md (identical wording, both files)**
-  - Change: Both files carry the identical sentence "`new-run` requires
-    project, feature, slug, change-kind and model; it never selects these
-    implicitly." (verified present verbatim in both — `CLAUDE.md`'s
-    "Commands" section and `AGENTS.md:276-278`). Append, in both files, in
-    the same place: ", plus six optional per-role overrides
-    (`--spec-review-model`, `--spec-reconcile-model`, `--plan-review-model`,
-    `--plan-reconcile-model`, `--code-review-model`,
-    `--code-review-implementer-model`) that default to `--model` when
-    omitted."
+- **Step 1b: The operator runbook and the run skill.** In `docs/runbooks/cli-operator.md`,
+  state at the `new-run` example (`:500`) which settings `--model` covers and how the
+  other flags work, and at `:530` say the preview shows frozen settings, not one model.
+  In `.claude/skills/run-buildworks/SKILL.md`, mark the recorded costs (lines 131-187
+  and the range near `:285`) as measured with one model (`claude-sonnet-5`) and not
+  valid for the seeded defaults, and change the line at `:410` so it names the frozen
+  setting for the stage. `.claude/skills/**` is reference tier: write any placeholder
+  path in prose, not backticks.
   - Verify: `npm run check:docs`
-  - Expected: exit 0; `diff <(sed -n ...)` is unnecessary, but confirm by
-    eye that both files read identically at this sentence, matching this
-    repository's stated requirement that they "remain in sync."
+  - Expected: clean.
 
-- **Step 3: ARCHITECTURE.md section 10**
-  - Change: Section 10 ("Model configuration", lines 446-468) already says
-    "A stage names what it needs; the configuration resolves that to a
-    concrete model" — this remains true and needs no correction. Add one
-    sentence after the existing "Map stages to models in configuration"
-    paragraph (after line 453) making explicit that a stage's roles are
-    named independently: "A stage that dispatches more than one role — an
-    author, a reviewer panel, and, where the stage has one, a role that acts
-    on findings — names each role it needs, and configuration may resolve
-    each to a different model; a role that is not overridden resolves to
-    the stage's base model." This is a clarifying addition, not a change to
-    an existing claim — `derive()` in `scripts/doc-check.mjs` does not parse
-    this section's prose (confirmed: `PINNED_SEQUENCE`/`PINNED_DEFERRED` are
-    the only structured facts `derive()` pulls from `ARCHITECTURE.md`, and
-    neither concerns section 10's text), so this edit cannot trip a
-    structural check.
+- **Step 2: ARCHITECTURE.md.** Section 10: state that configuration is per agent plus
+  the reconciler (a stage still names what it needs), that requested effort is recorded
+  and effective effort is not observable, and the Task 0 findings on Haiku and on
+  unsupported levels. Section 11: the invocation adds `--effort`, passed per dispatch
+  and not part of the frozen executor definition. Section 12: the profile freezes
+  `dispatchSettings`. The `agent_run` column list near line 1140: add `requested_effort`
+  and `setting`. `ARCHITECTURE.md` does not name the `agent.dispatch.failed` event
+  (searched 2026-09-29), so the summary change needs no edit there.
   - Verify: `npm run check:docs`
-  - Expected: exit 0.
+  - Expected: clean.
 
-**Task completion evidence:** `npm run check:docs` exits 0 after all four
-files are edited.
+**Task completion evidence:** `npm run check:docs` exits 0 and the two instruction files
+are byte-identical.
 
 ---
 
-### Task 9: Full verification pass
+### Task 7: Full verification and a free end-to-end check
 
-**Depends on:** Tasks 1-8
-
-**Files:**
-- Validate: whole repository
+**Depends on:** Tasks 1-6
 
 **Steps:**
 
-- **Step 1: Full typecheck and test suite**
-  - Change: None — verification only.
-  - Verify: `npm run typecheck && npm test`
-  - Expected: both exit 0, including every pre-existing test (this plan
-    changed no default behavior — every new key defaults to the base model
-    when no override is given, so a caller that passes no new flag gets
-    exactly today's frozen `modelMap` values on the six original keys, plus
-    three new keys equal to the same base model).
+- **Step 1:** `npm run typecheck`, then the serial suite
+  `node --test --test-concurrency=1 --test-reporter=tap test/*.test.ts`, then
+  `git log -1` to confirm the suite left no stray "moved" commit.
+  - Expected: typecheck clean; the two known baseline failures only (the dashboard
+    SIGTERM stderr warning and the private-key comment match); no new failure.
+- **Step 2:** `node .claude/skills/run-buildworks/driver.mjs smoke` (no dispatches, no
+  spend).
+  - Expected: `13/13 steps as expected`.
+- **Step 3:** In a scratch target, `new-run` with `--effort-for implementer=low
+  --model-for reconciler=<a model name>` and read `status --json`:
+  `configuration.dispatchSettings` shows those two settings changed and the other eight
+  at their seeded values. Then a second `new-run` with `--effort xhigh`: the four
+  non-reviewer settings read `xhigh` and the six reviewers still read `medium`.
 
-- **Step 2: Documentation check**
-  - Change: None — verification only.
-  - Verify: `npm run check:docs`
-  - Expected: exit 0.
+**Task completion evidence:** all three steps pass. A paid run is a separate,
+operator-authorized step and is not part of completion. The first paid run after this
+plan is implemented is the test of the seeded `implementer` default (`claude-sonnet-5-5`
+at `medium`), one level below where run 5 failed at `high` on `claude-sonnet-5`. If it fails the same way
+the spend is about run 5's ($2.92) and the store shows "unknown spend"; that is
+recorded in the plan's out-of-scope note, not fixed here.
 
-**Task completion evidence:** All three commands in Steps 1-2 exit 0.
+---
+
+## Implementation note
+
+**Implemented 2026-09-29.** Tasks 0-7 are done and nothing is committed. Component
+success only, as the Verification section says: no paid run has exercised the seeded
+defaults.
+
+**What shipped.** `DEFAULT_SETTINGS`, `EFFORT_LEVELS` and `RECONCILER` in `src/policy.ts`;
+`dispatchSettings` replacing `modelMap` in the frozen profile, with `resolveSettings`
+replacing `resolveStageModel`; `--effort` on every dispatch; migration 008
+(`agent_run.requested_effort`, `agent_run.setting`); the `new-run` flags `--effort`,
+`--model-for`, `--effort-for`; every stage dispatching under its own setting, with
+reconciliation and the decision fold under `reconciler`; status, doctor and the dashboard
+showing the frozen settings; and the docs. A failed dispatch's audit summary and returned
+reason name the requested model and effort.
+
+**Verification.** `npm run typecheck` and `npm run check:docs` are clean, and `CLAUDE.md`
+and `AGENTS.md` are byte-identical. The serial suite ran 1341 tests: 1333 pass, 5 skipped
+and 3 fail. Two failures are the known baseline (the dashboard SIGTERM stderr warning;
+the private-key comment match in `src/dashboard-approval.ts`). The third,
+`test/schema.test.ts` "every table's columns", was a real gap this work introduced and is
+fixed (deviation h); the file passes. `driver.mjs smoke` printed `13/13 steps as expected`.
+Two scratch `new-run` calls froze the expected tables: `--effort-for implementer=low
+--model-for reconciler=<model>` changed exactly those two settings, and `--effort xhigh`
+set the four non-reviewers to `xhigh` and left the six reviewers at `medium`. `git log -1`
+showed no stray commit. Break-it checks were run for the profile precedence, the new-run
+tests, the dashboard tests and the fold's setting.
+
+**Independent review (in-session subagent, operator's choice under hazard 14).** It found
+no correctness defect in precedence, dispatch sites, profile validation, argument parsing,
+migration or docs, and three low findings:
+- Unknown `--model-for` / `--effort-for` name leaves a blocked run: **deferred**, not
+  fixed. It is deviation (c); the setting names are a static set, so a parse-time refusal
+  would need no run row. Trigger: an operator loses a run to a typo.
+- No test for the `spec_decision` fold's setting (Task 4 Step 3 required one):
+  **fixed**. `test/spec-decision-stage.test.ts` gives `reconciler` values no other setting
+  has and asserts the fold row; it fails when the fold resolves `spec-author`.
+- The dashboard's per-stage "Configured settings" column omitted the reconciler on the
+  `spec` and `plan` rows and the implementer on the `code_review` row: **fixed** in
+  `src/dashboard/app.js`, with the dashboard test and ARCHITECTURE section 10 updated.
+
+**Deviations from the plan.**
+- (a) No per-group settings check in readiness. `loadVerifiedProfile` refuses a profile
+  missing any entry (`evidence_invalid`, naming the entry), before any group can run, so
+  Task 5 Step 4's `setup_required` reason was not added.
+- (b) The per-seat `resolveSettings` checks in the stages are defense in depth: the
+  profile door makes them unreachable, and the missing-reviewer-entry tests pass through it.
+- (c) An unknown setting name in `--model-for` / `--effort-for` is refused at freeze, so
+  it leaves a blocked run row, not "no run row". A bad level or model is refused at parse
+  and creates no row. README and the runbook say so.
+- (d) The refusal text for a missing entry is the loader's "dispatchSettings carries no
+  entry for X".
+- (e) `scripts/doc-check.mjs` pinned table columns, not only names, so it now folds in
+  `ALTER TABLE ... ADD COLUMN`, and the ARCHITECTURE `agent_run` list carries the added
+  columns last.
+- (f) `test/dashboard-ui.test.ts` is excluded from `tsc`, so its `insertAgentRun` calls
+  needed the two new fields by hand, and `stageSettingsText` is exported for testing.
+- (g) `test/fixtures/harness/emit-cli-run.mjs` accepts `--effort`.
+- (h) `test/schema.test.ts` also compares migration columns to the ARCHITECTURE block and
+  needed the same `ALTER TABLE` fold; the plan's Task 3 did not list it.
+
+**Change after implementation (operator decision, 2026-09-29).** The `plan-author`
+default is `claude-opus-5-5` at `high`, not the `--model`-at-`high` guess the sections
+above describe (open decisions 2, 6 and 8, the Task 1 constants and the Task 2 test
+cases). `--model` therefore covers only `reconciler`. `src/policy.ts`, the `new-run`
+help text, the README, `CLAUDE.md`, `AGENTS.md`, the runbook, ARCHITECTURE section 10 and
+the tests that assumed `plan-author` follows `--model` were updated to match; those
+sections are left as written and this note supersedes them.
+
+**Deferred, and unverified.** No seeded level or model is measured for this workload,
+and effective effort cannot be observed. The first paid run is the test of the
+`implementer` default. Failed-dispatch cost stays out of scope. The runbook line "The
+current code-review defaults are two reviewers" is inaccurate (the default is three); it
+predates this work and was left alone.

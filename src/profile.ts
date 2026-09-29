@@ -6,10 +6,14 @@ import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { CLAUDE_CODE, type ExecutorDefinition } from "./executor.ts";
 import { profileDir, profilePath } from "./paths.ts";
 import {
+  DEFAULT_SETTINGS,
+  EFFORT_LEVELS,
+  RECONCILER,
   SYSTEM_NAME,
   buildPolicy,
   invalidPolicyReason,
   policyHash,
+  type EffortLevel,
   type Policy,
 } from "./policy.ts";
 import { codeReviewStaffingShortfall, staffingShortfall } from "./select.ts";
@@ -20,8 +24,8 @@ import type { VerificationConfig } from "./governed-config.ts";
  * section 12), stored under `.governance/profiles/<run>/` with its hash on
  * the run row.
  *
- * The model map and the verification configuration are both frozen per run.
- * The verification commands are read from `governed.yaml` **as committed at
+ * The per-setting model and effort and the verification configuration are both
+ * frozen per run. The verification commands are read from `governed.yaml` **as committed at
  * the starting commit** and validated by the caller before they reach here,
  * so the profile records what the run will actually verify against rather
  * than what the working copy happened to say.
@@ -35,14 +39,13 @@ export interface Profile {
   systemName: string;
   startingCommit: string | null;
   /**
-   * The model each stage kind resolves to, frozen at run start (section 10).
-   *
-   * A map because section 10 requires a stage to name what it needs and
-   * configuration to resolve it — not because the values differ today. There
-   * is one model to configure, so every entry currently holds it; the shape is
-   * what lets that stop being true without a schema change.
+   * The model and effort each dispatch setting resolves to, frozen at run start
+   * (section 10). Keyed by setting name: every registered agent's id, plus
+   * `reconciler`, which governs the reconciliation dispatches. The values are
+   * the resolved ones, not the seeded defaults in `src/policy.ts`, so a later
+   * edit to a default never changes a run already frozen (hard rule 6).
    */
-  modelMap: Record<string, string>;
+  dispatchSettings: Record<string, { model: string; effort: EffortLevel }>;
   /**
    * The fingerprint of the approval public key configured at run start, or
    * null when no usable key was configured then.
@@ -121,6 +124,85 @@ export function validateModelName(model: string): string | null {
 }
 
 /**
+ * Per-run overrides of the seeded model and effort settings, as `new-run`
+ * parses them. `effort` is the run-wide level; `modelFor` and `effortFor` name
+ * one setting each (an agent id or `reconciler`).
+ */
+export interface SettingsInput {
+  effort?: string;
+  modelFor?: Record<string, string>;
+  effortFor?: Record<string, string>;
+}
+
+/**
+ * Return a named refusal for an effort level outside the closed set, or null
+ * when it is valid. The CLI itself only warns about an unknown `--effort` and
+ * runs at its default, so this is the only place a typo is caught.
+ */
+export function validateEffort(value: string): string | null {
+  return (EFFORT_LEVELS as readonly string[]).includes(value)
+    ? null
+    : `invalid effort ${JSON.stringify(value)}: allowed values are ${EFFORT_LEVELS.join(", ")}`;
+}
+
+/**
+ * Resolve the model and effort of every dispatch setting: each agent in the
+ * registry being frozen, and `reconciler`.
+ *
+ * Refusals, in this order: an invalid run-wide effort; each `modelFor` entry,
+ * then each `effortFor` entry, in argument order (an unknown setting name, an
+ * invalid model, an invalid level); last, an agent with no seeded default.
+ *
+ * Precedence for one setting. Model: its `modelFor` entry, else its seeded
+ * model, else the run's `--model` (a null seeded model means "the run's").
+ * Effort: its `effortFor` entry, else the run-wide `effort` (never for a
+ * reviewer, so `--effort high` cannot put a reviewer at `high`), else its
+ * seeded effort.
+ */
+function resolveDispatchSettings(
+  agents: readonly AgentDefinition[],
+  runModel: string,
+  settings: SettingsInput
+): Record<string, { model: string; effort: EffortLevel }> {
+  const names = [...agents.map((a) => a.id), RECONCILER];
+  if (settings.effort !== undefined) {
+    const error = validateEffort(settings.effort);
+    if (error !== null) throw new Error(error);
+  }
+  const modelFor = settings.modelFor ?? {};
+  const effortFor = settings.effortFor ?? {};
+  for (const [flag, entries, validate] of [
+    ["--model-for", modelFor, validateModelName],
+    ["--effort-for", effortFor, validateEffort],
+  ] as const) {
+    for (const [name, value] of Object.entries(entries)) {
+      if (!names.includes(name)) {
+        throw new Error(
+          `${flag} names unknown setting ${name}: known settings are ${names.join(", ")}`
+        );
+      }
+      const error = validate(value);
+      if (error !== null) throw new Error(error);
+    }
+  }
+  const reviewers = new Set(agents.filter((a) => a.role === "reviewer").map((a) => a.id));
+  const resolved: Record<string, { model: string; effort: EffortLevel }> = {};
+  for (const name of names) {
+    const seeded = DEFAULT_SETTINGS[name];
+    if (seeded === undefined) {
+      throw new Error(`no default settings for ${name}`);
+    }
+    const effort =
+      effortFor[name] ?? (reviewers.has(name) ? undefined : settings.effort) ?? seeded.effort;
+    resolved[name] = {
+      model: modelFor[name] ?? seeded.model ?? runModel,
+      effort: effort as EffortLevel,
+    };
+  }
+  return resolved;
+}
+
+/**
  * Freeze the profile and return its hash. The file written is the canonical
  * serialization, so re-reading the bytes and hashing them reproduces this
  * hash exactly — which is what makes tampering detectable at the gate.
@@ -137,7 +219,8 @@ export function freezeProfile(
   // never be proven by breaking it. Callers pass nothing. The override feeds
   // both the check and the frozen agent list, because a refusal has to be
   // about the registry the run would actually work with.
-  deps: { agents?: readonly AgentDefinition[] } = {}
+  deps: { agents?: readonly AgentDefinition[] } = {},
+  settings: SettingsInput = {}
 ): { path: string; hash: string; profile: Profile } {
   const agents = deps.agents ?? AGENTS;
   const modelError = validateModelName(model);
@@ -176,6 +259,11 @@ export function freezeProfile(
   if (codeReviewShortfall !== null) {
     throw new Error(`cannot freeze a profile for run ${runId}: ${codeReviewShortfall}`);
   }
+  // Model and effort settings resolve only after both staffing checks, so a
+  // registry that cannot staff a panel is refused for that reason first. Each
+  // refusal is a configuration-time error: nothing is written and nothing has
+  // been spent.
+  const dispatchSettings = resolveDispatchSettings(agents, model, settings);
   // A missing or unreadable key at run start is normal — most machines have
   // none — so this records null rather than failing run creation.
   const key = loadPublicKey(rootDir);
@@ -183,18 +271,10 @@ export function freezeProfile(
     runId,
     systemName: SYSTEM_NAME,
     startingCommit,
-    // One entry per stage kind that exists today. `new-run --model` is the
-    // only point at which this can be resolved, which is what makes hard
-    // rule 6 — config is frozen at run start — enforceable rather than
-    // advisory.
-    modelMap: {
-      spec: model,
-      spec_review: model,
-      plan: model,
-      plan_review: model,
-      implementation: model,
-      code_review: model,
-    },
+    // `new-run` is the only point at which this can be resolved, which is what
+    // makes hard rule 6 — config is frozen at run start — enforceable rather
+    // than advisory.
+    dispatchSettings,
     approvalSigner: key.ok ? key.signer : null,
     verification,
     frozenAt: new Date().toISOString(),
@@ -227,26 +307,56 @@ export function loadProfile(rootDir: string, runId: number): { profile: Profile;
 }
 
 /**
- * The model a stage kind resolves to, from the profile frozen at run start.
+ * The model and effort a dispatch setting resolves to, from the profile frozen
+ * at run start. `name` is a registered agent's id or `reconciler`.
  *
  * Section 10 requires this to fail at configuration time — before any
- * invocation — rather than at dispatch, so an unmapped stage kind is a
- * refusal here and never a spawn that spends first and fails after.
+ * invocation — rather than at dispatch, so an unmapped setting is a refusal
+ * here and never a spawn that spends first and fails after.
  */
-export function resolveStageModel(
+export function resolveSettings(
   profile: Profile,
-  stageKind: string
-): { ok: true; model: string } | { ok: false; reason: string } {
-  const model = profile.modelMap?.[stageKind];
-  if (typeof model !== "string" || model === "") {
+  name: string
+): { ok: true; model: string; effort: EffortLevel } | { ok: false; reason: string } {
+  const entry = profile.dispatchSettings?.[name];
+  if (
+    entry === undefined ||
+    entry === null ||
+    typeof entry.model !== "string" ||
+    entry.model === "" ||
+    !(EFFORT_LEVELS as readonly string[]).includes(entry.effort)
+  ) {
     return {
       ok: false,
-      reason: `no model configured for stage ${stageKind}: the profile frozen at run start maps ${Object.keys(
-        profile.modelMap ?? {}
+      reason: `no dispatch settings configured for ${name}: the profile frozen at run start maps ${Object.keys(
+        profile.dispatchSettings ?? {}
       ).join(", ")}`,
     };
   }
-  return { ok: true, model };
+  return { ok: true, model: entry.model, effort: entry.effort };
+}
+
+/**
+ * Is the frozen `dispatchSettings` one the stages can read? It must name every
+ * agent the profile froze and `reconciler`, each with a model that passes the
+ * name rule and an effort from the closed set. Returns the reason, or null.
+ */
+function invalidDispatchSettingsReason(settings: Record<string, unknown>, agents: unknown[]): string | null {
+  const required = [...agents.map((a) => (a as { id?: unknown }).id), RECONCILER];
+  for (const name of required) {
+    const entry = typeof name === "string" ? settings[name] : undefined;
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      return `the frozen profile's dispatchSettings carries no entry for ${String(name)}`;
+    }
+    const { model, effort } = entry as { model?: unknown; effort?: unknown };
+    if (typeof model !== "string" || validateModelName(model) !== null) {
+      return `the frozen profile's dispatchSettings model for ${String(name)} must be a valid model name, found ${JSON.stringify(model)}`;
+    }
+    if (typeof effort !== "string" || validateEffort(effort) !== null) {
+      return `the frozen profile's dispatchSettings effort for ${String(name)} must be one of ${EFFORT_LEVELS.join(", ")}, found ${JSON.stringify(effort)}`;
+    }
+  }
+  return null;
 }
 
 /**
@@ -291,13 +401,25 @@ export function invalidProfileReason(profile: unknown): string | null {
   if (typeof p.policyHash !== "string" || p.policyHash === "") {
     return `the frozen profile policyHash must be a non-empty string, found ${JSON.stringify(p.policyHash)}`;
   }
-  const modelMap = p.modelMap;
-  if (modelMap === null || typeof modelMap !== "object" || Array.isArray(modelMap)) {
-    return "the frozen profile carries no modelMap";
+  if (!("dispatchSettings" in p) && "modelMap" in p) {
+    return "the frozen profile carries a modelMap and no dispatchSettings: it was frozen under a superseded configuration that set one model for every stage";
+  }
+  const dispatchSettings = p.dispatchSettings;
+  if (
+    dispatchSettings === null ||
+    typeof dispatchSettings !== "object" ||
+    Array.isArray(dispatchSettings)
+  ) {
+    return "the frozen profile carries no dispatchSettings";
   }
   if (!Array.isArray(p.agents) || p.agents.length === 0) {
     return "the frozen profile carries no agents";
   }
+  const settingsReason = invalidDispatchSettingsReason(
+    dispatchSettings as Record<string, unknown>,
+    p.agents
+  );
+  if (settingsReason !== null) return settingsReason;
   if (p.executor === null || typeof p.executor !== "object") {
     return "the frozen profile carries no executor";
   }

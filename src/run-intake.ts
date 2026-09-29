@@ -1,7 +1,7 @@
 import { loadPublicKey } from "./approval.ts";
 import { appendAudit } from "./audit.ts";
 import { checkIntakeRepository, type IntakeRepositoryResult } from "./readiness.ts";
-import { freezeProfile } from "./profile.ts";
+import { freezeProfile, type SettingsInput } from "./profile.ts";
 import type { ChangeKind, RunRow, Store } from "./store.ts";
 
 export interface RunIntakeInput {
@@ -10,6 +10,8 @@ export interface RunIntakeInput {
   slug: string;
   changeKind: ChangeKind;
   model: string;
+  /** Per-setting model and effort overrides; guided mode passes none and takes the seeded defaults. */
+  settings?: SettingsInput;
 }
 
 export interface RunIntakeResult {
@@ -64,6 +66,8 @@ export function createRunIntake(
       intake.startingCommit!,
       input.model,
       intake.verification!,
+      {},
+      input.settings,
     );
     if (options.requireApprovalSigner && frozen.profile.approvalSigner === null) {
       throw new Error("guided run creation requires a configured external approval public key");

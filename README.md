@@ -73,9 +73,12 @@ record and the code-review record it is handed, cross-checks the two, re-reads
 the retained worktree, diffs the patch range between the recorded
 base and the final reviewed, verified commit, and completes the run only when every declared
 artifact the operator signed for appears there as an exact changed path —
-otherwise it blocks the run naming what is missing). The model each stage
-uses is frozen
-at `bw new-run --model` and every spend entry point checks it. Plus the
+otherwise it blocks the run naming what is missing). Each agent's, and the
+reconciler's, model and effort are frozen at `bw new-run` (`--model` is required
+and covers only `reconciler`; the other settings take the
+seeded defaults in [`src/policy.ts`](src/policy.ts), and `--effort`,
+`--model-for` and `--effort-for` override them per run) and every spend entry
+point checks the frozen setting for its dispatch. Plus the
 documentation checker. Commands: see [`CLAUDE.md`](CLAUDE.md) / [`AGENTS.md`](AGENTS.md).
 
 Step 5b shipped: an author-led correction to the two review stages.
@@ -202,8 +205,10 @@ identity tuples or multiple matching terminal/nonterminal runs refuse with
 their IDs instead of selecting the newest.
 
 Guided mode is interactive only. Redirected input refuses before mutation or
-spend. Each paid range displays the frozen models, verification commands,
-review budgets, and dispatch ceilings and requires its own explicit `yes`.
+spend. Each paid range displays the frozen model and effort settings,
+verification commands, review budgets, and dispatch ceilings and requires its
+own explicit `yes`. Guided mode passes no per-setting overrides, so every
+setting except `reconciler` takes its seeded default.
 The first accepted range stops at approval with exit 3.
 
 If spec review asked the operator questions, the range stops earlier, at the
@@ -301,9 +306,9 @@ verify:
 Choose real project verification commands before creating a run. Their names
 must be unique and filename-safe; command tokens cannot contain spaces,
 quotes, or shell metacharacters. A target directory can contain spaces even
-though a command token cannot. Configuration, models, agent definitions,
-review limits, and verification commands freeze at `new-run`, not at each
-continuation.
+though a command token cannot. Configuration, per-setting models and efforts,
+agent definitions, review limits, and verification commands freeze at
+`new-run`, not at each continuation.
 
 ### Inspect without spending
 
@@ -582,8 +587,40 @@ Use `defect_fix` instead of `feature` for a defect run. A freeze failure can
 leave a blocked run; its diagnostic names the ID. Inspect it rather than
 assuming no state was created.
 
-`run --run` displays the frozen models, remaining groups, actual verification
-argv, review budgets, and dispatch ceilings before asking a TTY for explicit
+Model and effort are frozen per setting: each of the nine agents and the
+reconciler (the reconciliation dispatches of spec review, plan review and the
+decision fold). `--model` is required and names the model for `reconciler`
+only. Every other setting takes its seeded value from
+`DEFAULT_SETTINGS` in [`src/policy.ts`](src/policy.ts):
+
+| Setting | Seeded model | Seeded effort |
+| --- | --- | --- |
+| `spec-author` | `claude-opus-5-5` | `high` |
+| `plan-author` | `claude-opus-5-5` | `high` |
+| `implementer` | `claude-sonnet-5-5` | `medium` |
+| `reconciler` | `--model` | `medium` |
+| the three spec reviewers | `claude-haiku-4-5-20251001` | `medium` |
+| the three code reviewers | `claude-sonnet-5-5` | `medium` |
+
+Three optional flags change one run's settings:
+- `--effort <level>` sets the four non-reviewer settings and never reaches a
+  reviewer.
+- `--model-for <setting>=<model>[,...]` sets the model of the named settings.
+- `--effort-for <setting>=<level>[,...]` sets the effort of the named settings,
+  and beats `--effort`. It is the only way to change a reviewer's effort, up to
+  `max`.
+
+Levels are `low`, `medium`, `high`, `xhigh` and `max`. A bad level or model name
+is a usage error before any run exists. An unknown setting name is refused when
+the profile is frozen and leaves a blocked run, like any other freeze failure.
+Effort is what each dispatch requests through `claude --effort`; the provider
+does not report the effort it applied, so BuildWorks records the requested level
+only, in `agent_run.requested_effort`. Changing a seeded default in
+`src/policy.ts` affects later `new-run` commands only. These defaults are
+starting points with no measurement behind them for this workload.
+
+`run --run` displays the frozen model and effort settings, remaining groups,
+actual verification argv, review budgets, and dispatch ceilings before asking a TTY for explicit
 `yes`. Redirected stdin or `--json` requires `--yes` and never waits for a
 prompt. Decline, EOF, or prompt cancellation executes nothing.
 
@@ -811,7 +848,7 @@ are complete, with no silent truncation or pagination:
 | `workflowAction` | `group`, `eligible`, all `reasons` (`code`, `reason`), `command`, `args`. The existing next group only, not a recovery instruction. |
 | `operatorActions` | Separate action `kind`, command/args, eligibility/reason, proposal ID/route/title, and evidence ref. |
 | `proposals` | Stored proposal identity, source run/stage/finding IDs, title/problem/upstream rationale, route, evidence ref, and creation time. |
-| `configuration` | `systemName`, `profileHash`, `policyHash`, `startingCommit`, `modelMap`, `verificationCommands`, `documentReview`, `codeReview`, `deadline`, `approvalSigner`; unavailable values are null. |
+| `configuration` | `systemName`, `profileHash`, `policyHash`, `startingCommit`, `dispatchSettings` (per setting `model` and `effort`), `verificationCommands`, `documentReview`, `codeReview`, `deadline`, `approvalSigner`; unavailable values are null. |
 | `approval` | `missing`/`granted` state, ID, feature/signer, scope/risk, spec/start/profile bindings, expiry and creation time. |
 | `cost` | USD known subtotal, agent-row and reported/unreported coverage, token coverage, recorded failed attempts, `byStage`, `byAgent`. |
 | `activity` | `lastRecordedAt` and nullable `lastEvent` with ID/action/summary/time. |

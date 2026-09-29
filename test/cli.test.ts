@@ -272,10 +272,10 @@ test("dispatch with an unreadable prompt file exits 2 naming the option", () => 
       "spec-author",
       "--role",
       "author",
-      // Must match the model frozen at run start, or the frozen-map check
-      // refuses first and the prompt-file read is never reached.
+      // Must match spec-author's frozen (seeded) model, or the frozen-settings
+      // check refuses first and the prompt-file read is never reached.
       "--model",
-      "test-model",
+      "claude-opus-5-5",
       "--prompt-file",
       "missing.txt"
     );
@@ -660,9 +660,11 @@ test("spec --model disagreeing with the frozen model is refused before any dispa
     assert.equal(newRun.status, 0, newRun.stderr);
     const r = runCli(cwd, "spec", "--run", newRun.stdout.trim(), "--model", "some-other-model");
     assert.equal(r.status, 1);
+    // spec-author's frozen model is its seeded one, not the run's --model:
+    // `--model` reaches only the reconciler.
     assert.match(
       r.stderr,
-      /--model some-other-model does not match the model frozen at run start \(frozen-model\): config is frozen at run start/
+      /--model some-other-model does not match the model frozen at run start \(claude-opus-5-5\): config is frozen at run start/
     );
     const store = openStore(cwd);
     try {
@@ -682,14 +684,15 @@ test("dispatch --model disagreeing with the frozen model is refused before any s
     assert.equal(newRun.status, 0, newRun.stderr);
     const stage = runCli(cwd, "stage-add", "--run", newRun.stdout.trim(), "--kind", "spec");
     assert.equal(stage.status, 0, stage.stderr);
+    // plan-author's frozen model is its seeded one, not the run's --model.
     const r = runCli(
-      cwd, "dispatch", "--stage", stage.stdout.trim(), "--agent", "a", "--role", "author",
+      cwd, "dispatch", "--stage", stage.stdout.trim(), "--agent", "plan-author", "--role", "author",
       "--model", "some-other-model", "--prompt-file", "whatever.txt"
     );
     assert.equal(r.status, 1);
     assert.match(
       r.stderr,
-      /--model some-other-model does not match the model frozen at run start \(frozen-model\): config is frozen at run start/
+      /--model some-other-model does not match the model frozen at run start \(claude-opus-5-5\): config is frozen at run start/
     );
     // The raw dispatch surface is the escape hatch beside `bw spec`; if hard
     // rule 6 did not hold here it would not hold at all.
@@ -1024,6 +1027,143 @@ test("new-run refuses a model name the spawn cannot carry, before creating the r
     } finally {
       store.close();
     }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+/** The seeded model and effort for every setting, from the operator's table in the stage-role-model-overrides plan. */
+const SEEDED_WITH_MODEL_FLAG = (model: string): Record<string, { model: string; effort: string }> => ({
+  "spec-author": { model: "claude-opus-5-5", effort: "high" },
+  "plan-author": { model: "claude-opus-5-5", effort: "high" },
+  "implementer": { model: "claude-sonnet-5-5", effort: "medium" },
+  "reconciler": { model, effort: "medium" },
+  "spec-reviewer-traceability": { model: "claude-haiku-4-5-20251001", effort: "medium" },
+  "spec-reviewer-security": { model: "claude-haiku-4-5-20251001", effort: "medium" },
+  "spec-reviewer-consistency": { model: "claude-haiku-4-5-20251001", effort: "medium" },
+  "code-reviewer-correctness": { model: "claude-sonnet-5-5", effort: "medium" },
+  "code-reviewer-security": { model: "claude-sonnet-5-5", effort: "medium" },
+  "code-reviewer-state-integrity": { model: "claude-sonnet-5-5", effort: "medium" },
+});
+
+const REVIEWERS = [
+  "spec-reviewer-traceability", "spec-reviewer-security", "spec-reviewer-consistency",
+  "code-reviewer-correctness", "code-reviewer-security", "code-reviewer-state-integrity",
+];
+
+function frozenSettings(cwd: string, runId: string): Record<string, { model: string; effort: string }> {
+  return JSON.parse(
+    readFileSync(join(cwd, ".governance", "profiles", runId, "profile.json"), "utf8")
+  ).dispatchSettings;
+}
+
+test("new-run freezes the seeded model and effort for every setting, and --model reaches only the reconciler", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, ...NEW_RUN_ARGS);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(frozenSettings(cwd, r.stdout.trim()), SEEDED_WITH_MODEL_FLAG("test-model"));
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("new-run --effort sets the four non-reviewer settings and never a reviewer", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, ...NEW_RUN_ARGS, "--effort", "xhigh");
+    assert.equal(r.status, 0, r.stderr);
+    const expected = SEEDED_WITH_MODEL_FLAG("test-model");
+    for (const name of ["spec-author", "plan-author", "implementer", "reconciler"]) expected[name]!.effort = "xhigh";
+    assert.deepEqual(frozenSettings(cwd, r.stdout.trim()), expected);
+    for (const name of REVIEWERS) assert.equal(frozenSettings(cwd, r.stdout.trim())[name]!.effort, "medium", name);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("new-run --effort-for beats --effort, and may raise one reviewer to max", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, ...NEW_RUN_ARGS, "--effort", "xhigh", "--effort-for", "implementer=low,code-reviewer-security=max");
+    assert.equal(r.status, 0, r.stderr);
+    const expected = SEEDED_WITH_MODEL_FLAG("test-model");
+    for (const name of ["spec-author", "plan-author", "reconciler"]) expected[name]!.effort = "xhigh";
+    expected["implementer"]!.effort = "low";
+    expected["code-reviewer-security"]!.effort = "max";
+    assert.deepEqual(frozenSettings(cwd, r.stdout.trim()), expected);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("new-run --model-for changes only the named setting, including the reconciler", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, ...NEW_RUN_ARGS, "--model-for", "reconciler=claude-opus-5-5,implementer=other-model");
+    assert.equal(r.status, 0, r.stderr);
+    const expected = SEEDED_WITH_MODEL_FLAG("test-model");
+    expected["reconciler"]!.model = "claude-opus-5-5";
+    expected["implementer"]!.model = "other-model";
+    assert.deepEqual(frozenSettings(cwd, r.stdout.trim()), expected);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("new-run refuses a bad effort or model value at parse time, before any run row exists", () => {
+  const cwd = tempCwd();
+  try {
+    for (const [extra, pattern] of [
+      [["--effort", "ultracode"], /invalid effort "ultracode": allowed values are low, medium, high, xhigh, max/],
+      [["--effort-for", "code-reviewer-security=ultracode"], /--effort-for code-reviewer-security: invalid effort "ultracode"/],
+      [["--model-for", "implementer=bad model"], /--model-for implementer: invalid model name "bad model"/],
+      [["--model-for", "implementer=a,implementer=b"], /implementer/],
+      [["--effort-for", "implementer"], /--effort-for/],
+    ] as const) {
+      const r = runCli(cwd, ...NEW_RUN_ARGS, ...extra);
+      assert.equal(r.status, 2, `${extra.join(" ")}: ${r.stderr}`);
+      assert.match(r.stderr, pattern);
+    }
+    const store = openStore(cwd);
+    try {
+      assert.equal(store.query("SELECT * FROM run").length, 0, "no run row may be created");
+    } finally {
+      store.close();
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("new-run names an unknown setting and leaves a blocked run, as any other freeze failure does", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, ...NEW_RUN_ARGS, "--model-for", "nonexistent=some-model");
+    assert.equal(r.status, 1, r.stderr);
+    assert.equal(r.stdout.trim(), "");
+    assert.match(r.stderr, /run 1 created but blocked: profile freeze failed/);
+    assert.match(r.stderr, /--model-for names unknown setting nonexistent: known settings are spec-author, plan-author, implementer,/);
+    const store = openStore(cwd);
+    try {
+      assert.equal(store.getRun(1)!.status, "blocked");
+    } finally {
+      store.close();
+    }
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("help new-run lists the three setting flags and what --model and --effort reach", () => {
+  const cwd = tempCwd();
+  try {
+    const r = runCli(cwd, "help", "new-run");
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /\[--effort <level>\] \[--model-for <list>\] \[--effort-for <list>\]/);
+    assert.match(r.stdout, /--model is required and covers only the reconciler/);
+    assert.match(r.stdout, /--effort sets every non-reviewer setting and never reaches a reviewer/);
+    assert.match(r.stdout, /--model-for and --effort-for take <setting>=<value>/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

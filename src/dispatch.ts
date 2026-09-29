@@ -18,6 +18,10 @@ export interface DispatchInput {
   agent: string;
   role: string;
   requestedModel: string;
+  /** The effort level requested for this dispatch, from the frozen setting. */
+  requestedEffort: string;
+  /** The dispatch setting that governs this call: an agent id, or `reconciler`. */
+  setting: string;
   prompt: string;
   invocation?: Partial<InvocationInput>;
 }
@@ -59,6 +63,7 @@ export async function dispatchOnce(
   const outcome = await invokeHarness(executor, {
     prompt: input.prompt,
     model: input.requestedModel,
+    effort: input.requestedEffort,
     ...(input.invocation ?? {}),
   });
   // Hazard 2: retain before any parsing or branching.
@@ -66,7 +71,11 @@ export async function dispatchOnce(
   if (outcome.stderr !== "") {
     writeRawOutput(rootDir, stage.run_id, `--- stderr ---\n${outcome.stderr}`);
   }
-  const failed = (summary: string): DispatchResult => {
+  // A failed dispatch writes no `agent_run` row, so its audit summary is the
+  // only per-attempt record of what was requested. It names the model and
+  // effort so a failure is diagnosable without loading the frozen profile.
+  const failed = (detail: string): DispatchResult => {
+    const summary = `${detail} (requested model ${input.requestedModel}, effort ${input.requestedEffort})`;
     appendAudit(store, {
       runId: stage.run_id,
       stageId: stage.id,
@@ -119,6 +128,8 @@ export async function dispatchOnce(
     role: input.role,
     executor: executor.id,
     requestedModel: input.requestedModel,
+    requestedEffort: input.requestedEffort,
+    setting: input.setting,
     effectiveModel: envelope.effectiveModel,
     fallback: envelope.fallback,
     tokensIn: envelope.tokensIn,

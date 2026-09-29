@@ -480,6 +480,34 @@ configuration resolves that to a concrete model. Keep this out of agent
 selection — a selection function that also routes models has two unrelated
 reasons to fail.
 
+**Configuration is per agent, plus one setting for reconciliation.** The profile
+freezes a model and an effort for every registered agent and for `reconciler`,
+the setting that governs the reconciliation dispatches that follow `spec_review`
+and `plan_review` (recorded on the `spec` and `plan` stage rows) and the
+`spec_decision` fold. Those dispatches run as the author agent, so
+the `reconciler` setting exists to give them a model and effort of their own; the
+`agent_run.setting` column records which setting governed each row. Seeded
+defaults live in `src/policy.ts`; a new run may override them (`--model-for`,
+`--effort`, `--effort-for`), and `--model` covers only the one setting with no
+seeded model, `reconciler`. Nothing is seeded above `medium`
+for a reviewer, and a run-wide effort never reaches a reviewer: only that
+reviewer's own `--effort-for` moves it, up to `max` (operator decisions,
+2026-09-29). The seeded values are starting points with no measurement behind
+them for this workload; changing one affects later runs only.
+
+**Requested effort is recorded; effective effort cannot be.** Every agent run
+records the effort it requested in `requested_effort`. The harness's stream
+carries no effective effort, only a `per_turn_effort_active` flag, so nothing here
+can say what effort the provider applied. Measured on 2026-09-29 (five dispatches,
+`test/fixtures/recorded/claude-effort-flag-probes.json`): `claude-haiku-4-5-20251001`
+accepts `--effort` at `low` and `medium` although the effort documentation's model
+list omits it; an unknown level only prints a warning and runs at the default; and
+a level the documentation says a model lacks (`xhigh` on `claude-sonnet-4-6`) is
+accepted with no warning. BuildWorks therefore validates the level itself, against
+one closed set (`low`, `medium`, `high`, `xhigh`, `max`), at argument parsing and
+again when the profile is frozen, and it keeps no per-model table of supported
+levels.
+
 **If you use semantic tiers, resolve them at run start and snapshot the
 resolution.** A tier like `fast` or `balanced` that resolves at call time is a
 moving target: validating the effective model against a list authored earlier
@@ -493,7 +521,9 @@ and the difference is exactly what a cost model needs.
 
 **A stage whose model cannot be resolved fails at configuration time**, before
 any invocation. Discovering it at dispatch means discovering it after earlier
-stages have already been paid for.
+stages have already been paid for. The profile loader refuses a frozen profile
+that lacks an entry for any agent or for `reconciler`, or whose model or effort is
+not a valid value, so no stage reaches a dispatch with a missing setting.
 
 ## 11. Harness invocation
 
@@ -536,6 +566,11 @@ Windows; do not put `cmd.exe` or PowerShell between the harness and the binary.
 A shell concatenates arguments without escaping them, creating a second parser
 for fixed executor flags without helping stdin. Write the prompt to stdin and
 close it.
+
+**Model and effort are per invocation.** Each invocation appends `--model <name>`
+and `--effort <level>`, both taken from the frozen setting that governs that
+dispatch (section 10). Neither is part of the frozen executor definition above,
+which is why that definition names no model.
 
 **Probe before any run.** Run the probe command at setup and refuse to proceed
 if the executable does not resolve in the environment that will actually spawn
@@ -752,8 +787,9 @@ binding are recomputed under the repository lock before `approveRun` accepts
 the detached signature; changed bytes require a new external signing decision.
 
 The **profile** is the frozen record of everything the run resolved at start —
-model map, limits, policy, agent definitions, verification config, review panel
-bounds and round counts, and system name — stored under
+`dispatchSettings` (the model and effort for each agent and for `reconciler`),
+limits, policy, agent definitions, verification config, review panel bounds and
+round counts, and system name — stored under
 `.governance/profiles/<run>/` with its hash on the run row. Policy is
 the subset of the profile that gates consult; the re-check compares the
 profile's policy hash against the policy in force. The **scope** the operator
@@ -1139,7 +1175,8 @@ run(id, project, feature_id, slug, change_kind, status, profile_ref, created_at,
 stage(id, run_id, kind, ordinal, input_stage_id, output_ref, status, gate_result, started_at, ended_at)
 agent_run(id, stage_id, agent, role, executor, requested_model, effective_model,
           fallback, tokens_in, tokens_out, cache_read, cache_write, cost,
-          duration_ms, input_hash, output_hash, raw_output_ref, independence)
+          duration_ms, input_hash, output_hash, raw_output_ref, independence,
+          requested_effort, setting)
 finding(id, stage_id, round, intent_key, location)
 finding_report(id, finding_id, agent_run_id, severity, classification, subject)
 finding_decision(id, finding_id, agent_run_id, disposition, rationale, changed_locations,

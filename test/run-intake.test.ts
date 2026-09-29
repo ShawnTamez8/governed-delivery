@@ -64,6 +64,33 @@ test("shared intake writes the existing run, audit, and frozen-profile contract"
   }
 });
 
+test("shared intake passes per-setting overrides to the freeze, and omitting them takes the seeded defaults", () => {
+  const root = workspace();
+  const beforeKey = process.env.BW_APPROVAL_PUBLIC_KEY;
+  process.env.BW_APPROVAL_PUBLIC_KEY = join(root, "missing-public.pem");
+  try {
+    repository(root);
+    const store = openStore(root);
+    try {
+      const base = { project: "project", featureId: "feature-1", slug: "feature-one", changeKind: "feature" as const, model: "test-model" };
+      const seeded = createRunIntake(store, root, base);
+      const overridden = createRunIntake(store, root, { ...base, featureId: "feature-2", slug: "feature-two",
+        settings: { effort: "xhigh", modelFor: { implementer: "override-model" }, effortFor: { "code-reviewer-security": "max" } } });
+      const read = (id: number) => JSON.parse(readFileSync(profilePath(root, id), "utf8")).dispatchSettings;
+      assert.deepEqual(read(seeded.run.id)["implementer"], { model: "claude-sonnet-5-5", effort: "medium" });
+      assert.deepEqual(read(overridden.run.id)["implementer"], { model: "override-model", effort: "xhigh" });
+      assert.deepEqual(read(overridden.run.id)["code-reviewer-security"], { model: "claude-sonnet-5-5", effort: "max" });
+      assert.deepEqual(read(overridden.run.id)["code-reviewer-correctness"], { model: "claude-sonnet-5-5", effort: "medium" });
+    } finally {
+      store.close();
+    }
+  } finally {
+    if (beforeKey === undefined) delete process.env.BW_APPROVAL_PUBLIC_KEY;
+    else process.env.BW_APPROVAL_PUBLIC_KEY = beforeKey;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("guided intake requires a usable public key before inserting a run", () => {
   const root = workspace();
   const beforeKey = process.env.BW_APPROVAL_PUBLIC_KEY;

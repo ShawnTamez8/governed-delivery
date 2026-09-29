@@ -62,13 +62,15 @@ test("a successful dispatch records row, raw output, and a success audit event",
     const result = await dispatchOnce(
       store,
       fixtureExecutor("echo-json"),
-      { stageId, agent: "a", role: "author", requestedModel: "m", prompt: "hello" },
+      { stageId, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt: "hello" },
       root
     );
     assert.equal(result.ok, true);
     const row = store.getAgentRun(result.agentRunId);
     assert.ok(row);
     assert.equal(row.requested_model, "m");
+    assert.equal(row.requested_effort, "medium");
+    assert.equal(row.setting, "a");
     assert.equal(row.independence, "configured_standalone");
     assert.ok(existsSync(join(root, row.raw_output_ref)));
     assert.deepEqual(auditActions(store), ["agent.dispatch"]);
@@ -83,7 +85,7 @@ test("three concurrent dispatches retain distinct evidence and one valid audit c
         dispatchOnce(
           store,
           executor,
-          { stageId, agent, role: "reviewer", requestedModel: "m", prompt: `review ${agent}` },
+          { stageId, agent, role: "reviewer", requestedModel: "m", requestedEffort: "medium", setting: agent, prompt: `review ${agent}` },
           root
         )
       )
@@ -106,7 +108,7 @@ test("a non-zero exit retains raw bytes, retains stderr, audits the failure, and
     const result = await dispatchOnce(
       store,
       fixtureExecutor("exit-nonzero"),
-      { stageId, agent: "a", role: "author", requestedModel: "m", prompt: "x" },
+      { stageId, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt: "x" },
       root
     );
     assert.equal(result.ok, false);
@@ -125,7 +127,7 @@ test("a timeout retains raw bytes, audits the failure, and inserts no row", asyn
     const result = await dispatchOnce(
       store,
       fixtureExecutor("hang"),
-      { stageId, agent: "a", role: "author", requestedModel: "m", prompt: "x", invocation: { idleTimeoutSeconds: 1 } },
+      { stageId, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt: "x", invocation: { idleTimeoutSeconds: 1 } },
       root
     );
     assert.equal(result.ok, false);
@@ -141,7 +143,7 @@ test("an unparseable envelope audits the failure and inserts no row", async () =
     const result = await dispatchOnce(
       store,
       fixtureExecutor("emit-bad-json"),
-      { stageId, agent: "a", role: "author", requestedModel: "m", prompt: "x" },
+      { stageId, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt: "x" },
       root
     );
     assert.equal(result.ok, false);
@@ -157,7 +159,7 @@ test("a nonexistent stage fails without spawning", async () => {
     const result = await dispatchOnce(
       store,
       fixtureExecutor("exit-nonzero"),
-      { stageId: 9999, agent: "a", role: "author", requestedModel: "m", prompt: "x" },
+      { stageId: 9999, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt: "x" },
       root
     );
     assert.equal(result.ok, false);
@@ -166,12 +168,12 @@ test("a nonexistent stage fails without spawning", async () => {
   });
 });
 
-test("dispatchOnce forwards the requested model to the harness", async () => {
+test("dispatchOnce forwards the requested model and effort to the harness", async () => {
   await withDispatchContext(async (store, root, stageId) => {
     const result = await dispatchOnce(
       store,
       fixtureExecutor("echo-json"),
-      { stageId, agent: "a", role: "author", requestedModel: "sonnet", prompt: "x" },
+      { stageId, agent: "a", role: "author", requestedModel: "sonnet", requestedEffort: "low", setting: "a", prompt: "x" },
       root
     );
     assert.equal(result.ok, true);
@@ -179,7 +181,46 @@ test("dispatchOnce forwards the requested model to the harness", async () => {
     const row = store.getAgentRun(result.agentRunId)!;
     const stream = readFileSync(join(root, row.raw_output_ref), "utf8");
     const raw = JSON.parse(stream.trimEnd().split("\n").at(-1)!) as { argv: string[] };
-    assert.deepEqual(raw.argv, ["--model", "sonnet"]);
+    assert.deepEqual(raw.argv, ["--model", "sonnet", "--effort", "low"]);
+  });
+});
+
+test("the row records the governing setting apart from the agent that ran", async () => {
+  // A reconciliation runs as the author agent but under the `reconciler`
+  // setting; only the `setting` column tells the two rows apart.
+  await withDispatchContext(async (store, root, stageId) => {
+    const executor = fixtureExecutor("echo-json");
+    const draft = await dispatchOnce(
+      store, executor,
+      { stageId, agent: "spec-author", role: "author", requestedModel: "opus", requestedEffort: "high", setting: "spec-author", prompt: "d" },
+      root);
+    const reconcile = await dispatchOnce(
+      store, executor,
+      { stageId, agent: "spec-author", role: "author", requestedModel: "opus", requestedEffort: "high", setting: "reconciler", prompt: "r" },
+      root);
+    assert.ok(draft.ok && reconcile.ok);
+    if (!draft.ok || !reconcile.ok) return;
+    assert.equal(store.getAgentRun(draft.agentRunId)!.setting, "spec-author");
+    assert.equal(store.getAgentRun(reconcile.agentRunId)!.setting, "reconciler");
+    assert.equal(store.getAgentRun(reconcile.agentRunId)!.agent, "spec-author");
+  });
+});
+
+test("a failed dispatch's audit summary and reason name the requested model and effort", async () => {
+  // No agent_run row exists for a failure, so the summary is the only
+  // per-attempt record of what was requested.
+  await withDispatchContext(async (store, root, stageId) => {
+    const result = await dispatchOnce(
+      store,
+      fixtureExecutor("exit-nonzero"),
+      { stageId, agent: "a", role: "author", requestedModel: "claude-opus-5-5", requestedEffort: "xhigh", setting: "a", prompt: "x" },
+      root
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /exited with code 3 \(requested model claude-opus-5-5, effort xhigh\)$/);
+    const audited = store.query<{ summary: string }>("SELECT summary FROM audit WHERE action = 'agent.dispatch.failed'");
+    assert.equal(audited.length, 1);
+    assert.equal(audited[0]!.summary, result.reason);
   });
 });
 
@@ -199,7 +240,7 @@ test("a result over the size cap is refused by name while the whole stream is re
       console.log(JSON.stringify({ type: "result", subtype: "success", result: "x".repeat(${RESULT_MAX_BYTES} + 1) }));
     `);
     const result = await dispatchOnce(
-      store, executor, { stageId, agent: "a", role: "author", requestedModel: "m", prompt: "x" }, root);
+      store, executor, { stageId, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt: "x" }, root);
     assert.equal(result.ok, false);
     assert.match(result.reason, new RegExp(`result exceeded the ${RESULT_MAX_BYTES}-byte size cap`));
     const files = rawDirFiles(root);
@@ -219,7 +260,7 @@ test("a result at the size cap is accepted", async () => {
       console.log(JSON.stringify({ type: "result", subtype: "success", result: "x".repeat(${RESULT_MAX_BYTES}) }));
     `);
     const result = await dispatchOnce(
-      store, executor, { stageId, agent: "a", role: "author", requestedModel: "m", prompt: "x" }, root);
+      store, executor, { stageId, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt: "x" }, root);
     assert.equal(result.ok, true, result.ok ? "" : result.reason);
   });
 });
@@ -234,7 +275,7 @@ test("a dispatch killed for silence retains the partial stream written before th
     `);
     const result = await dispatchOnce(
       store, executor,
-      { stageId, agent: "a", role: "author", requestedModel: "m", prompt: "x", invocation: { idleTimeoutSeconds: 1 } },
+      { stageId, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt: "x", invocation: { idleTimeoutSeconds: 1 } },
       root);
     assert.equal(result.ok, false);
     assert.match(result.reason, /timed out after \d+ms/);
@@ -249,7 +290,7 @@ test("an oversized prompt is refused before any invocation", async () => {
     const result = await dispatchOnce(
       store,
       fixtureExecutor("exit-nonzero"),
-      { stageId, agent: "a", role: "author", requestedModel: "m", prompt: "x".repeat(PROMPT_MAX_BYTES + 1) },
+      { stageId, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt: "x".repeat(PROMPT_MAX_BYTES + 1) },
       root
     );
     assert.equal(result.ok, false);

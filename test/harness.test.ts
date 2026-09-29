@@ -399,6 +399,36 @@ test("the model override reaches the child argv", async () => {
   assert.deepEqual(parsed.argv, ["--model", "sonnet"]);
 });
 
+test("the effort override follows the model on the child argv, and is absent when omitted", async () => {
+  const executor = testExecutor(["node", join(FIXTURES, "echo-json.mjs")]);
+  const both = await invokeHarness(executor, { prompt: "", model: "m", effort: "medium" });
+  assert.deepEqual((JSON.parse(lastLine(both.raw)) as { argv: string[] }).argv, ["--model", "m", "--effort", "medium"]);
+  const neither = await invokeHarness(executor, { prompt: "" });
+  assert.deepEqual((JSON.parse(lastLine(neither.raw)) as { argv: string[] }).argv, []);
+});
+
+test("the argv built for each recorded effort probe ends with the model and effort the probe ran with", async () => {
+  // The expected shape comes from the recorded capture, not from this code: each
+  // probe ran the executor command followed by `--model <model> --effort <effort>`
+  // (test/fixtures/recorded/claude-effort-flag-probes.json, 2026-09-29, claude
+  // 2.1.284). The harness passes what it is given, so the probe that ran an
+  // unknown level is included; refusing a bad level is freeze time's job.
+  const recorded = JSON.parse(
+    readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "claude-effort-flag-probes.json"), "utf8")
+  ) as { provenance: { command: string }; probes: { id: string; model: string; effort: string }[] };
+  assert.ok(recorded.provenance.command.endsWith("--model <model> --effort <effort>"));
+  assert.ok(recorded.probes.length >= 5);
+  const executor = testExecutor(["node", join(FIXTURES, "echo-json.mjs")]);
+  for (const probe of recorded.probes) {
+    const outcome = await invokeHarness(executor, { prompt: "", model: probe.model, effort: probe.effort });
+    assert.deepEqual(
+      (JSON.parse(lastLine(outcome.raw)) as { argv: string[] }).argv,
+      ["--model", probe.model, "--effort", probe.effort],
+      probe.id
+    );
+  }
+});
+
 test("stderr is captured alongside stdout", async () => {
   const executor = testExecutor(["node", join(FIXTURES, "exit-nonzero.mjs")]);
   const outcome = await invokeHarness(executor, { prompt: "x" });

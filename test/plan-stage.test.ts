@@ -6,7 +6,8 @@ import { dirname, join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
 import { runPlanStage } from "../src/plan-stage.ts";
 import { AGENTS } from "../src/agents.ts";
-import { freezeProfile, loadVerifiedProfile } from "../src/profile.ts";
+import { loadVerifiedProfile } from "../src/profile.ts";
+import { freezeUniformProfile } from "./uniform-profile.ts";
 import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { policyHash } from "../src/policy.ts";
@@ -157,7 +158,7 @@ function withApprovedRun(
   const spec = opts.spec ?? SPEC;
   try {
     const run = store.insertRun("p", "f-1", SLUG, opts.changeKind ?? "feature");
-    const frozen = freezeProfile(root, run.id, COMMIT, MODEL, VERIFICATION);
+    const frozen = freezeUniformProfile(root, run.id, COMMIT, MODEL, VERIFICATION);
     store.setProfileRef(run.id, frozen.hash);
     // The run's frozen executor *is* the fixture the tests hand by default;
     // scratch-executor tests freeze their own right before the stage call.
@@ -1350,13 +1351,15 @@ test("an unexpected throw mid-review lands in the terminal machinery", async () 
 
 test("a profile tampered with since intake is refused before any dispatch", async () => {
   await withApprovedRun(async ({ store, root, runId }) => {
-    // The frozen profile is what makes the model map binding. Reading it
-    // without comparing its hash to run.profile_ref means the map is
-    // enforced but not tamper-evident: editing the file on disk changes
-    // which model the run may use, and nothing objects.
+    // The frozen profile is what makes the dispatch settings binding. Reading
+    // it without comparing its hash to run.profile_ref means the settings are
+    // enforced but not tamper-evident: editing the file on disk changes which
+    // model the run may use, and nothing objects.
     const path = join(root, ".governance", "profiles", String(runId), "profile.json");
-    const profile = JSON.parse(readFileSync(path, "utf8")) as { modelMap: Record<string, string> };
-    profile.modelMap.plan = "tampered-model";
+    const profile = JSON.parse(readFileSync(path, "utf8")) as {
+      dispatchSettings: Record<string, { model: string; effort: string }>;
+    };
+    profile.dispatchSettings["plan-author"]!.model = "tampered-model";
     writeFileSync(path, canonicalJson(profile));
     // run.profile_ref is deliberately NOT updated — that is the tampering.
 
@@ -1368,24 +1371,80 @@ test("a profile tampered with since intake is refused before any dispatch", asyn
   });
 });
 
-test("a profile with no plan_review model fails at configuration time", async () => {
+/** Rewrite the frozen dispatch settings and re-point run.profile_ref, so the refusal under test is the missing entry, not tampering. */
+function removeSettingsEntry(store: Store, root: string, runId: number, name: string): void {
+  const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+  const profile = JSON.parse(readFileSync(path, "utf8")) as { dispatchSettings: Record<string, unknown> };
+  assert.ok(name in profile.dispatchSettings, `${name} is frozen before the test removes it`);
+  delete profile.dispatchSettings[name];
+  const serialized = canonicalJson(profile);
+  writeFileSync(path, serialized);
+  store.setProfileRef(runId, sha256Hex(serialized));
+}
+
+test("a profile with no reconciler settings fails at configuration time", async () => {
   await withApprovedRun(async ({ store, root, runId }) => {
-    // The review panel is a different stage kind. If the stage reused the
-    // author's model, this entry would never be consulted here — while
-    // `bw dispatch`, which resolves by stage.kind, would enforce it. The two
-    // surfaces must not disagree about the same stage.
+    // The reconciler is a setting of its own, run under the author agent. A
+    // stage that resolved it lazily would draft and self-critique first;
+    // configuration time is before any stage row or paid invocation.
+    removeSettingsEntry(store, root, runId, "reconciler");
+
+    const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /dispatchSettings carries no entry for reconciler/);
+    assert.equal(agentRunCounts(store, runId).author, 0, "the failure precedes the invocation");
+  });
+});
+
+test("a profile missing one seated reviewer's settings refuses the whole panel before any reviewer spends", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    // The fixture asks for `security`, which seats spec-reviewer-security and
+    // spec-reviewer-traceability. Removing one seat's entry must refuse the
+    // panel as a whole, not dispatch its sibling first.
+    removeSettingsEntry(store, root, runId, "spec-reviewer-security");
+
+    const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /dispatchSettings carries no entry for spec-reviewer-security/);
+    // The profile door refuses the whole profile, so not even the author was
+    // dispatched: an unstaffed seat never costs a draft first.
+    assert.equal(store.query("SELECT * FROM agent_run").length, 0, "nothing was spent");
+  });
+});
+
+test("each dispatch records the setting it ran under, the reconciler apart from the author", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    // Distinct settings per name, so a stage that read the wrong entry writes
+    // a row that disagrees. The author and the reconciler share one agent id
+    // and are told apart only by the `setting` column.
     const path = join(root, ".governance", "profiles", String(runId), "profile.json");
-    const profile = JSON.parse(readFileSync(path, "utf8")) as { modelMap: Record<string, string> };
-    delete profile.modelMap.plan_review;
+    const profile = JSON.parse(readFileSync(path, "utf8")) as {
+      dispatchSettings: Record<string, { model: string; effort: string }>;
+    };
+    profile.dispatchSettings["plan-author"] = { model: "m", effort: "high" };
+    profile.dispatchSettings["reconciler"] = { model: "m", effort: "low" };
+    profile.dispatchSettings["spec-reviewer-security"] = { model: "m", effort: "max" };
+    profile.dispatchSettings["spec-reviewer-traceability"] = { model: "m", effort: "xhigh" };
     const serialized = canonicalJson(profile);
     writeFileSync(path, serialized);
     store.setProfileRef(runId, sha256Hex(serialized));
 
     const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
-    assert.equal(result.ok, false);
-    if (result.ok) return;
-    assert.match(result.reason, /no model configured for stage plan_review/);
-    assert.equal(agentRunCounts(store, runId).author, 0, "the failure precedes the invocation");
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const rows = store.query<{ setting: string; requested_effort: string; requested_model: string }>(
+      "SELECT ar.setting, ar.requested_effort, ar.requested_model FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ?",
+      [runId]
+    );
+    const effortsBySetting = (setting: string) => [...new Set(rows.filter((r) => r.setting === setting).map((r) => r.requested_effort))];
+    assert.deepEqual(effortsBySetting("plan-author"), ["high"], "draft and self-critique");
+    assert.deepEqual(effortsBySetting("reconciler"), ["low"], "the reconciliation");
+    assert.deepEqual(effortsBySetting("spec-reviewer-security"), ["max"]);
+    assert.deepEqual(effortsBySetting("spec-reviewer-traceability"), ["xhigh"]);
+    assert.equal(rows.filter((r) => r.setting === "plan-author").length, 2);
+    assert.equal(rows.filter((r) => r.setting === "reconciler").length, 1);
+    assert.ok(rows.every((r) => r.requested_model === "m"));
   });
 });
 

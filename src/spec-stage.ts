@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExecutorDefinition } from "./executor.ts";
 import { requireRunInProgress, type CanonicalFindingRow, type FindingDecisionRow, type Store } from "./store.ts";
-import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
+import { loadVerifiedProfile, requireFrozenBinding, resolveSettings } from "./profile.ts";
+import { RECONCILER } from "./policy.ts";
 import { dispatchOnce } from "./dispatch.ts";
 import { validateAgentResult } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
@@ -119,42 +120,40 @@ export async function runSpecStage(
   if (blocked !== null) {
     return { ok: false, reason: blocked };
   }
-  // Section 10: the model is resolved from the profile frozen at run start,
-  // and an unmapped stage kind fails here — at configuration time, before any
-  // invocation — rather than after a spawn has already cost something.
+  // Section 10: the model and effort are resolved from the profile frozen at
+  // run start, and an unmapped setting fails here — at configuration time,
+  // before any invocation — rather than after a spawn has already cost
+  // something. The author's own setting covers its draft and self-critique;
+  // the reconciliation dispatch takes the `reconciler` setting, though the
+  // author agent still runs it. Each reviewer seat resolves its own setting
+  // once the panel is chosen, below.
   const verified = loadVerifiedProfile(rootDir, run);
   if (!verified.ok) {
     return { ok: false, reason: verified.reason };
   }
   const profile = verified.profile;
-  const resolvedModel = resolveStageModel(profile, "spec");
-  if (!resolvedModel.ok) {
-    return { ok: false, reason: resolvedModel.reason };
+  const authorSettings = resolveSettings(profile, "spec-author");
+  if (!authorSettings.ok) {
+    return { ok: false, reason: authorSettings.reason };
   }
-  // The review panel is a different stage kind and resolves its own entry.
-  // Reusing the author's model would leave the `spec_review` entry never
-  // consulted here while `bw dispatch` — which resolves by `stage.kind` —
-  // enforced it, so the two surfaces would disagree about one stage the
-  // moment the values stopped coinciding.
-  const resolvedReviewModel = resolveStageModel(profile, "spec_review");
-  if (!resolvedReviewModel.ok) {
-    return { ok: false, reason: resolvedReviewModel.reason };
+  const reconcilerSettings = resolveSettings(profile, RECONCILER);
+  if (!reconcilerSettings.ok) {
+    return { ok: false, reason: reconcilerSettings.reason };
   }
   // Hard rule 6: a flag that silently overrode the snapshot would make the
   // frozen profile a decoration. Supplying it is allowed; disagreeing is not.
-  if (requestedModel !== undefined && requestedModel !== resolvedModel.model) {
+  // It is asserted against the stage's author setting.
+  if (requestedModel !== undefined && requestedModel !== authorSettings.model) {
     return {
       ok: false,
-      reason: `--model ${requestedModel} does not match the model frozen at run start (${resolvedModel.model}): config is frozen at run start`,
+      reason: `--model ${requestedModel} does not match the model frozen at run start (${authorSettings.model}): config is frozen at run start`,
     };
   }
-  const model = resolvedModel.model;
-  const reviewModel = resolvedReviewModel.model;
   // Hard rule 6 and section 11: the run executes against the executor it
   // froze, and a stage requiring a capability no frozen executor declares
   // fails at configuration time — before any stage row or paid invocation.
   // This stage dispatches under two stage kinds, so both required
-  // capabilities are checked here, mirroring the two model resolutions.
+  // capabilities are checked here.
   const binding = requireFrozenBinding(profile, executor, "spec");
   if (!binding.ok) {
     return { ok: false, reason: binding.reason };
@@ -240,7 +239,9 @@ export async function runSpecStage(
         stageId: specStage.id,
         agent: author.id,
         role: "author",
-        requestedModel: model,
+        requestedModel: authorSettings.model,
+        requestedEffort: authorSettings.effort,
+        setting: author.id,
         prompt: buildSpecAuthorPrompt(author, design),
       },
       rootDir
@@ -282,7 +283,7 @@ export async function runSpecStage(
 
     // --- self-critique: the author's own pass, before any reviewer sees it ---
     // One dispatch per artifact, under the author's frozen definition and the
-    // author's model mapping, recorded as its own agent_run. It is never a
+    // author's own setting, recorded as its own agent_run. It is never a
     // panel seat and never contributes to an independence claim (hazard 14).
     // The lenses the frozen registry can actually seat on the frozen
     // executor, which is what the prompt names. The Task 1 prototype recorded
@@ -304,7 +305,9 @@ export async function runSpecStage(
         stageId: specStage.id,
         agent: author.id,
         role: "author",
-        requestedModel: model,
+        requestedModel: authorSettings.model,
+        requestedEffort: authorSettings.effort,
+        setting: author.id,
         prompt: buildSpecSelfCritiquePrompt(author, design, specContent, {
           sizeMin: profile.policy.panelSizeMin,
           sizeMax: profile.policy.panelSizeMax,
@@ -437,6 +440,17 @@ export async function runSpecStage(
         );
       }
     }
+    // Each seat's own setting, resolved before the first reviewer dispatches: a
+    // missing entry refuses the whole panel here, never one seat after its
+    // siblings have already spent.
+    const seatSettings = new Map<string, { model: string; effort: string }>();
+    for (const reviewer of panel) {
+      const seat = resolveSettings(profile, reviewer.id);
+      if (!seat.ok) {
+        return abort(reviewStage.id, "spec.reviewer.failed", seat.reason);
+      }
+      seatSettings.set(reviewer.id, { model: seat.model, effort: seat.effort });
+    }
 
     // The configured round count (section 12, as amended 2026-09-01): one
     // complete panel -> reconciliation cycle per round, gated once over every
@@ -484,6 +498,7 @@ export async function runSpecStage(
         if (!reviewer.outputs.includes("findings")) {
           return abort(reviewStage.id, "spec.reviewer.failed", `configured agent ${reviewer.id} does not allow findings output`);
         }
+        const seat = seatSettings.get(reviewer.id)!;
         const dispatch = await dispatchOnce(
           store,
           executor,
@@ -491,7 +506,9 @@ export async function runSpecStage(
             stageId: reviewStage.id,
             agent: reviewer.id,
             role: "reviewer",
-            requestedModel: reviewModel,
+            requestedModel: seat.model,
+            requestedEffort: seat.effort,
+            setting: reviewer.id,
             prompt: buildSpecReviewPrompt(reviewer, design, specContent),
           },
           rootDir
@@ -575,7 +592,9 @@ export async function runSpecStage(
           stageId: specStage.id,
           agent: author.id,
           role: "author",
-          requestedModel: model,
+          requestedModel: reconcilerSettings.model,
+          requestedEffort: reconcilerSettings.effort,
+          setting: RECONCILER,
           prompt: buildSpecReconcilePrompt(author, design, specContent, reconcileFindings),
         },
         rootDir

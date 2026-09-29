@@ -283,6 +283,8 @@ function agentRunInput(stageId: number, overrides: Partial<import("../src/store.
     role: "author",
     executor: "claude-code",
     requestedModel: "sonnet",
+    requestedEffort: "medium",
+    setting: "planner",
     effectiveModel: "claude-sonnet",
     fallback: null,
     tokensIn: 100,
@@ -310,6 +312,9 @@ test("insertAgentRun persists all fields, null ones included", () => {
     assert.equal(row.fallback, null);
     assert.equal(row.tokens_in, 100);
     assert.equal(row.duration_ms, 3742);
+    assert.equal(row.requested_model, "sonnet");
+    assert.equal(row.requested_effort, "medium");
+    assert.equal(row.setting, "planner");
     assert.deepEqual(store.getAgentRun(row.id), row);
   });
 });

@@ -537,7 +537,10 @@ test("guided intake creates one exact prompted tuple, freezes the signer, and st
         assert.deepEqual(store.getStageChain(runs[0]!.id), []);
         const profile = JSON.parse(readFileSync(join(root, ".governance", "profiles", String(runs[0]!.id), "profile.json"), "utf8"));
         assert.ok(profile.approvalSigner);
-        assert.ok(Object.values(profile.modelMap).every((model) => model === "explicit-model"));
+        // Guided mode passes no per-setting overrides: the prompted model reaches only the one setting with no seeded model.
+        assert.deepEqual(Object.entries(profile.dispatchSettings as Record<string, { model: string }>)
+          .filter(([, setting]) => setting.model === "explicit-model").map(([name]) => name).sort(),
+        ["reconciler"]);
       } finally {
         store.close();
       }

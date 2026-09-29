@@ -1,6 +1,6 @@
 import { isAbsolute } from "node:path";
 import { GATE_RESULTS, ROLES, validateRunIdentity } from "./store.ts";
-import { validateModelName } from "./profile.ts";
+import { validateEffort, validateModelName } from "./profile.ts";
 
 interface OptionDefinition {
   name: string;
@@ -11,6 +11,8 @@ interface OptionDefinition {
 
 interface CommandDefinition {
   description: string;
+  /** Printed by `help <command>` only, so the one-line command table stays one line per command. */
+  notes?: string;
   options: readonly OptionDefinition[];
   exclusive?: readonly string[];
   requireExclusive?: boolean;
@@ -25,16 +27,69 @@ const slug: OptionDefinition = {
 const json: OptionDefinition = { name: "json" };
 const help: OptionDefinition = { name: "help" };
 
+/**
+ * Split `<name>=<value>[,...]` on `,` and then on the first `=`. Returns the
+ * entries in argument order, or a refusal for an empty name or value or a name
+ * given twice. Whether a name is a real setting is decided at freeze, where the
+ * registry is known.
+ */
+function splitSettingList(list: string): [string, string][] | string {
+  const entries: [string, string][] = [];
+  for (const item of list.split(",")) {
+    const eq = item.indexOf("=");
+    const name = eq < 0 ? item : item.slice(0, eq);
+    const value = eq < 0 ? "" : item.slice(eq + 1);
+    if (name === "" || value === "") return `entry ${JSON.stringify(item)} must be <name>=<value>`;
+    if (entries.some(([seen]) => seen === name)) return `${name} is given more than once`;
+    entries.push([name, value]);
+  }
+  return entries;
+}
+
+function settingListOption(name: string, validateValue: (value: string) => string | null): OptionDefinition {
+  return {
+    name,
+    value: "list",
+    validate: (list) => {
+      const entries = splitSettingList(list);
+      if (typeof entries === "string") return `--${name}: ${entries}`;
+      for (const [setting, value] of entries) {
+        const reason = validateValue(value);
+        if (reason !== null) return `--${name} ${setting}: ${reason}`;
+      }
+      return null;
+    },
+  };
+}
+
+/** A `--model-for` or `--effort-for` list already accepted by `parseArguments`, as name to value. */
+export function parseSettingList(list: string | undefined): Record<string, string> | undefined {
+  if (list === undefined) return undefined;
+  const entries = splitSettingList(list);
+  if (typeof entries === "string") throw new UsageError(entries);
+  return Object.fromEntries(entries);
+}
+
 export const COMMANDS: Readonly<Record<string, CommandDefinition>> = {
   migrate: { description: "apply pending migrations", options: [] },
   "new-run": {
     description: "create a run and freeze its configuration",
+    notes: "Model and effort are frozen per setting: each of the nine agents and the reconciler.\n"
+      + "--model is required and covers only the reconciler; every other setting\n"
+      + "takes its seeded model unless --model-for names it.\n"
+      + "--effort sets every non-reviewer setting and never reaches a reviewer; a reviewer's\n"
+      + "effort changes only through its own --effort-for.\n"
+      + "--model-for and --effort-for take <setting>=<value>[,...]; a setting is an agent id\n"
+      + "or reconciler. Levels: low, medium, high, xhigh, max.\n",
     options: [
       { name: "project", value: "p", required: true },
       { name: "feature", value: "f", required: true, validate: (value) => validateRunIdentity({ featureId: value }) },
       { ...slug, value: "s", required: true },
       { name: "change-kind", value: "k", required: true, validate: (value) => validateRunIdentity({ changeKind: value }) },
       { ...model, required: true },
+      { name: "effort", value: "level", validate: validateEffort },
+      settingListOption("model-for", validateModelName),
+      settingListOption("effort-for", validateEffort),
     ],
   },
   "stage-add": {
@@ -56,6 +111,8 @@ export const COMMANDS: Readonly<Record<string, CommandDefinition>> = {
   },
   dispatch: {
     description: "dispatch one frozen agent",
+    notes: "The model and effort come from the agent's own frozen setting. This command has no\n"
+      + "reconciler concept: a reconciliation dispatched here takes the agent's setting.\n",
     options: [
       { name: "stage", value: "id", required: true, validate: validateNumber },
       { name: "agent", value: "id", required: true },
@@ -264,7 +321,7 @@ export function formatHelp(command: string | null = null): string {
   const help = "  --help         show help without opening state";
   if (command !== null) {
     const definition = COMMANDS[command];
-    return `usage: buildworks ${synopsis(command)}\n${definition.description}\n${definition.exclusive
+    return `usage: buildworks ${synopsis(command)}\n${definition.description}\n${definition.notes ?? ""}${definition.exclusive
       ? `Options ${definition.exclusive.map((name) => `--${name}`).join(" and ")} are mutually exclusive.\n` : ""}\nGlobal options:\n${definition.acceptsRepo === false ? help : target + help}\n`;
   }
   return `usage: buildworks [<path>]\n       buildworks <command> [options]\n\nGuided mode:\n  buildworks                continue the project in the current directory\n  buildworks <path>         create or continue one local project\n\nAdvanced commands:\n${Object.entries(COMMANDS)

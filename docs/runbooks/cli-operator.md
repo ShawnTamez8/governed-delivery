@@ -190,7 +190,10 @@ BuildWorks shows and commits only the selected `design.md`. If no persisted
 identity tuple exists for that slug, it asks explicitly for project, feature
 ID, change kind (`feature` or `defect_fix`), and model. Suggested values are
 not silently accepted. Existing tuples are displayed and selected exactly by
-project, feature ID, slug, and change kind.
+project, feature ID, slug, and change kind. The model you enter applies to the
+`reconciler` setting only; guided mode passes no other
+override, so every other setting takes its seeded model and effort. The paid
+range preview lists all of them.
 
 One nonterminal run resumes even if older terminal records exist. More than one
 matching nonterminal run refuses. With no nonterminal run, one terminal record
@@ -509,11 +512,33 @@ Use `defect_fix` instead of `feature` for defect work. Project, feature, slug,
 change kind, and model are explicit inputs; `runs` never picks one for you.
 Record the target path, checkout revision, and numeric run ID.
 
+`--model` names the model for `reconciler` only. The other
+settings (`spec-author`, `plan-author`, `implementer`, the three spec reviewers and the three
+code reviewers) take the seeded models and efforts in `DEFAULT_SETTINGS` in
+[the policy source](../../src/policy.ts); the table in the
+[README](../../README.md#create-an-explicit-run-and-consent-to-execution) lists
+them. Add any of these to `new-run` to change one run's settings:
+
+```powershell
+& node $BwCli new-run --repo $Target --project $Project --feature $FeatureId `
+    --slug $Slug --change-kind feature --model $Model `
+    --effort xhigh --model-for implementer=$ImplementerModel `
+    --effort-for implementer=medium,code-reviewer-security=high
+```
+
+`--effort` sets the four non-reviewer settings and never reaches a reviewer.
+`--model-for` and `--effort-for` take `<setting>=<value>` pairs separated by
+commas, and `--effort-for` beats `--effort`. It is the only way to change a
+reviewer's effort. Levels are `low`, `medium`, `high`, `xhigh` and `max`. A bad
+level or model name is a usage error before any run exists; an unknown setting
+name is refused at freeze and leaves a blocked run. Effort is what each dispatch
+requests: the provider does not report the effort it applied.
+
 `new-run` initializes the local store as needed. A separate initial `migrate`
-command is not required. Creation freezes the starting commit, model map,
-agent definitions, policy/review limits, and verification commands; it does
-not dispatch agents. A freeze failure may leave a blocked run whose ID is
-printed in the diagnostic.
+command is not required. Creation freezes the starting commit, per-setting
+models and efforts, agent definitions, policy/review limits, and verification
+commands; it does not dispatch agents. A freeze failure may leave a blocked run
+whose ID is printed in the diagnostic.
 
 Always pass `--repo $Target`: omitting it selects the invocation worktree,
 which in these examples is BuildWorks itself.
@@ -527,8 +552,9 @@ This step spends provider money after consent:
 if ($LASTEXITCODE -ne 3) { throw 'Expected the approval pause; inspect the returned result before proceeding.' }
 ```
 
-The CLI previews the frozen models, remaining groups, verification argv, review
-budgets, and dispatch ceilings, then asks for `yes` in an interactive terminal.
+The CLI previews the frozen model and effort settings (one entry per setting,
+not a single model), remaining groups, verification argv, review budgets, and
+dispatch ceilings, then asks for `yes` in an interactive terminal.
 Declining or ending the prompt starts no work. Once consented, it runs the
 specification authoring/review group and, on success, returns control at
 `awaiting_approval` with exit 3 and no held writer lock.

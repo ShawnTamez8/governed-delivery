@@ -13,7 +13,7 @@ import {
   loadProfile,
   requireFrozenBinding,
   requiredCapability,
-  resolveStageModel,
+  resolveSettings,
   resolveStartingCommit,
 } from "../src/profile.ts";
 import { AGENTS } from "../src/agents.ts";
@@ -27,6 +27,7 @@ import {
 } from "../src/policy.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
 import { canonicalJson, sha256Hex } from "../src/canonical.ts";
+import { freezeUniformProfile } from "./uniform-profile.ts";
 
 const COMMIT = "b".repeat(40);
 const MODEL = "test-model";
@@ -173,31 +174,238 @@ test("the profile freezes the approval key fingerprint, or null when none is con
   }
 });
 
-test("the profile freezes one model entry per stage kind", () => {
+// --- per-setting model and effort (stage-role-model-overrides Task 2) --------
+
+const HAIKU = "claude-haiku-4-5-20251001";
+const SONNET = "claude-sonnet-5-5";
+const REVIEWER_IDS = AGENTS.filter((a) => a.role === "reviewer").map((a) => a.id);
+const NON_REVIEWER_SETTINGS = ["spec-author", "plan-author", "implementer", "reconciler"];
+
+function profilePathOf(root: string, runId: number): string {
+  return join(root, ".governance", "profiles", String(runId), "profile.json");
+}
+
+/** The seeded defaults, spelled out here rather than read back from `DEFAULT_SETTINGS`. */
+function seededFor(runModel: string) {
+  return {
+    "spec-author": { model: "claude-opus-5-5", effort: "high" },
+    "plan-author": { model: "claude-opus-5-5", effort: "high" },
+    implementer: { model: SONNET, effort: "medium" },
+    reconciler: { model: runModel, effort: "medium" },
+    "spec-reviewer-traceability": { model: HAIKU, effort: "medium" },
+    "spec-reviewer-security": { model: HAIKU, effort: "medium" },
+    "spec-reviewer-consistency": { model: HAIKU, effort: "medium" },
+    "code-reviewer-correctness": { model: SONNET, effort: "medium" },
+    "code-reviewer-security": { model: SONNET, effort: "medium" },
+    "code-reviewer-state-integrity": { model: SONNET, effort: "medium" },
+  };
+}
+
+test("with no overrides the profile freezes all ten settings at their seeded defaults", () => {
   withRoot((root) => {
     const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION);
-    assert.deepEqual(profile.modelMap, {
-      spec: "chosen-model",
-      spec_review: "chosen-model",
-      plan: "chosen-model",
-      plan_review: "chosen-model",
-      implementation: "chosen-model",
-      code_review: "chosen-model",
+    assert.deepEqual(profile.dispatchSettings, seededFor("chosen-model"));
+    assert.deepEqual(resolveSettings(profile, "plan-author"), {
+      ok: true,
+      model: "claude-opus-5-5",
+      effort: "high",
     });
-    assert.deepEqual(resolveStageModel(profile, "plan"), { ok: true, model: "chosen-model" });
+    assert.deepEqual(resolveSettings(profile, "reconciler"), {
+      ok: true,
+      model: "chosen-model",
+      effort: "medium",
+    });
+    assert.deepEqual(resolveSettings(profile, "spec-author"), {
+      ok: true,
+      model: "claude-opus-5-5",
+      effort: "high",
+    });
   });
 });
 
-test("resolveStageModel refuses an unmapped stage kind naming the mapped ones", () => {
+test("modelFor and effortFor override only the named settings", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, {}, {
+      modelFor: { "spec-reviewer-security": "other-model" },
+      effortFor: { implementer: "low" },
+    });
+    const expected = seededFor("chosen-model");
+    expected["spec-reviewer-security"] = { model: "other-model", effort: "medium" };
+    expected.implementer = { model: SONNET, effort: "low" };
+    assert.deepEqual(profile.dispatchSettings, expected);
+  });
+});
+
+test("the reconciler is set independently of the spec and plan authors", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, {}, {
+      modelFor: { reconciler: "recon-model" },
+      effortFor: { reconciler: "xhigh" },
+    });
+    const expected = seededFor("chosen-model");
+    expected.reconciler = { model: "recon-model", effort: "xhigh" };
+    assert.deepEqual(profile.dispatchSettings, expected);
+  });
+});
+
+test("a run-wide effort reaches every non-reviewer setting, and a per-name value beats it", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, {}, {
+      effort: "low",
+      effortFor: { implementer: "max" },
+    });
+    const efforts = Object.fromEntries(
+      Object.entries(profile.dispatchSettings).map(([name, s]) => [name, s.effort])
+    );
+    assert.equal(efforts.implementer, "max");
+    for (const name of NON_REVIEWER_SETTINGS.filter((n) => n !== "implementer")) {
+      assert.equal(efforts[name], "low", `${name} must take the run-wide effort`);
+    }
+  });
+});
+
+test("a run-wide effort never reaches a reviewer", () => {
+  // Operator decision 2026-09-29: `--effort high` must not put a reviewer at
+  // high. The six reviewers keep their seeded effort.
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, {}, {
+      effort: "xhigh",
+    });
+    assert.equal(REVIEWER_IDS.length, 6);
+    for (const id of REVIEWER_IDS) {
+      assert.equal(profile.dispatchSettings[id]!.effort, "medium", `${id} must stay at its seeded effort`);
+    }
+    for (const name of NON_REVIEWER_SETTINGS) {
+      assert.equal(profile.dispatchSettings[name]!.effort, "xhigh", `${name} must take the run-wide effort`);
+    }
+  });
+});
+
+test("an explicit effortFor can raise one reviewer to max and leaves the other five alone", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, {}, {
+      effortFor: { "code-reviewer-security": "max" },
+    });
+    assert.equal(profile.dispatchSettings["code-reviewer-security"]!.effort, "max");
+    for (const id of REVIEWER_IDS.filter((r) => r !== "code-reviewer-security")) {
+      assert.equal(profile.dispatchSettings[id]!.effort, "medium");
+    }
+  });
+});
+
+test("an invalid level, invalid model, unknown setting, or agent with no default is refused and writes nothing", () => {
+  withRoot((root) => {
+    const extraAuthor = { ...AGENTS.find((a) => a.id === "spec-author")!, id: "extra-author" };
+    const cases: Array<[string, () => unknown, RegExp]> = [
+      ["run-wide effort", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, {}, { effort: "ultracode" }),
+        /invalid effort "ultracode": allowed values are low, medium, high, xhigh, max/],
+      ["per-name effort", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, {}, { effortFor: { implementer: "hi" } }),
+        /invalid effort "hi"/],
+      ["per-name model", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, {}, { modelFor: { implementer: "bad model" } }),
+        /invalid model name "bad model"/],
+      ["unknown model-for name", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, {}, { modelFor: { nobody: "m" } }),
+        /--model-for names unknown setting nobody: known settings are .*reconciler/],
+      ["unknown effort-for name", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, {}, { effortFor: { nobody: "low" } }),
+        /--effort-for names unknown setting nobody/],
+      ["agent with no default", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, { agents: [...AGENTS, extraAuthor] }),
+        /no default settings for extra-author/],
+    ];
+    for (const [label, run, message] of cases) {
+      assert.throws(run, message, label);
+      assert.equal(existsSync(profilePathOf(root, 1)), false, `${label}: nothing may be written`);
+    }
+  });
+});
+
+test("the shared stage-test helper freezes all ten settings at the model passed and medium", () => {
+  withRoot((root) => {
+    const { profile } = freezeUniformProfile(root, 1, COMMIT, "m", VERIFICATION);
+    assert.equal(Object.keys(profile.dispatchSettings).length, 10);
+    for (const [name, setting] of Object.entries(profile.dispatchSettings)) {
+      assert.deepEqual(setting, { model: "m", effort: "medium" }, name);
+    }
+  });
+});
+
+test("staffing refusals come before any settings refusal", () => {
+  withRoot((root) => {
+    const depleted = AGENTS.filter((a) => a.role !== "reviewer");
+    assert.throws(
+      () =>
+        freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, { agents: depleted }, {
+          effort: "ultracode",
+          modelFor: { nobody: "m" },
+        }),
+      /cannot freeze a profile for run 1: the agent registry has no reviewer for required specialty/
+    );
+  });
+});
+
+test("resolveSettings refuses an unmapped setting naming the mapped ones", () => {
   withRoot((root) => {
     const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
-    const result = resolveStageModel(profile, "verification");
+    const result = resolveSettings(profile, "verification");
     assert.equal(result.ok, false);
     if (result.ok) return;
     // Section 10: the failure is at configuration time and must name what the
     // frozen profile does map, so the operator can see what is missing.
-    assert.match(result.reason, /no model configured for stage verification/);
-    assert.match(result.reason, /spec, spec_review, plan, plan_review, implementation, code_review/);
+    assert.match(result.reason, /no dispatch settings configured for verification/);
+    assert.match(result.reason, /implementer/);
+    assert.match(result.reason, /reconciler/);
+  });
+});
+
+test("a profile with modelMap and no dispatchSettings is refused by name", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { dispatchSettings, ...rest } = profile;
+    const superseded = { ...rest, modelMap: { spec: MODEL } };
+    assert.match(
+      String(invalidProfileReason(superseded)),
+      /carries a modelMap and no dispatchSettings: it was frozen under a superseded configuration/
+    );
+    // Through the verified door, with a matching hash, so the shape is what refuses it.
+    const serialized = canonicalJson(superseded);
+    writeFileSync(profilePathOf(root, 1), serialized);
+    const verified = loadVerifiedProfile(root, { id: 1, profile_ref: sha256Hex(serialized) });
+    assert.equal(verified.ok, false);
+    if (verified.ok) return;
+    assert.match(verified.reason, /superseded configuration/);
+    assert.match(verified.reason, /must be replaced by a fresh one/);
+  });
+});
+
+test("a profile whose dispatchSettings lacks an entry or holds a bad value is refused", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const without = (name: string) => {
+      const { [name]: _dropped, ...kept } = profile.dispatchSettings;
+      return { ...profile, dispatchSettings: kept };
+    };
+    assert.match(String(invalidProfileReason(without("reconciler"))), /no entry for reconciler/);
+    assert.match(String(invalidProfileReason(without("implementer"))), /no entry for implementer/);
+    assert.match(
+      String(
+        invalidProfileReason({
+          ...profile,
+          dispatchSettings: { ...profile.dispatchSettings, implementer: { model: SONNET, effort: "ultracode" } },
+        })
+      ),
+      /effort for implementer must be one of/
+    );
+    assert.match(
+      String(
+        invalidProfileReason({
+          ...profile,
+          dispatchSettings: { ...profile.dispatchSettings, implementer: { model: "bad model", effort: "low" } },
+        })
+      ),
+      /model for implementer must be a valid model name/
+    );
+    assert.match(
+      String(invalidProfileReason({ ...profile, dispatchSettings: [] })),
+      /carries no dispatchSettings/
+    );
   });
 });
 

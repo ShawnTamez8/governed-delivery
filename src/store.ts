@@ -44,6 +44,10 @@ export interface AgentRunRow {
   role: "author" | "reviewer";
   executor: string;
   requested_model: string;
+  /** Null only on rows written before migration 008. */
+  requested_effort: string | null;
+  /** The dispatch setting that governed the row; null only before migration 008. */
+  setting: string | null;
   effective_model: string | null;
   fallback: string | null;
   tokens_in: number | null;
@@ -246,6 +250,8 @@ export interface AgentRunInput {
   role: string;
   executor: string;
   requestedModel: string;
+  requestedEffort: string;
+  setting: string;
   effectiveModel: string | null;
   fallback: string | null;
   tokensIn: number | null;
@@ -569,10 +575,10 @@ export class Store {
     const result = this.#withRetry(() =>
       this.#db
         .prepare(
-          `INSERT INTO agent_run (stage_id, agent, role, executor, requested_model, effective_model,
-             fallback, tokens_in, tokens_out, cache_read, cache_write, cost, duration_ms,
+          `INSERT INTO agent_run (stage_id, agent, role, executor, requested_model, requested_effort, setting,
+             effective_model, fallback, tokens_in, tokens_out, cache_read, cache_write, cost, duration_ms,
              input_hash, output_hash, raw_output_ref, independence)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           input.stageId,
@@ -580,6 +586,8 @@ export class Store {
           input.role,
           input.executor,
           input.requestedModel,
+          input.requestedEffort,
+          input.setting,
           input.effectiveModel,
           input.fallback,
           input.tokensIn,

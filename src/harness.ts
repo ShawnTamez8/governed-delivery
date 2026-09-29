@@ -8,6 +8,12 @@ export interface InvocationInput {
   absoluteTimeoutSeconds?: number;
   model?: string;
   /**
+   * The effort level passed as `--effort`, next to `--model` and per
+   * invocation, so it is not part of the frozen executor definition. The CLI
+   * only warns about an unknown level, so callers validate it at freeze time.
+   */
+  effort?: string;
+  /**
    * The working directory the harness process starts in. The implementation
    * stage runs the harness inside the run's worktree so the implementer
    * reads the repository it patches. Raw output retention is unaffected:
@@ -237,6 +243,7 @@ export function invokeHarness(executor: ExecutorDefinition, input: InvocationInp
   const env = buildHarnessEnvironment(executor);
   const argv = [...executor.command.slice(1)];
   if (input.model !== undefined) argv.push("--model", input.model);
+  if (input.effort !== undefined) argv.push("--effort", input.effort);
   const child: ChildProcess = spawn(executor.command[0], argv, {
     // The installed Claude Code launcher is a native executable. Spawn it
     // directly, as PowerShell does, so argv has one parser and no cmd.exe

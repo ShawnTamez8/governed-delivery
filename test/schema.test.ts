@@ -90,6 +90,15 @@ function migrationColumns(sql: string): Map<string, string[]> {
     }
     cols.set(name, names);
   }
+  // A column added later by `ALTER TABLE ... ADD COLUMN` (migration 008) sits
+  // after the CREATE TABLE columns, in migration order.
+  const alter = /^ALTER TABLE (\w+) ADD COLUMN (\w+)/gm;
+  let am: RegExpExecArray | null;
+  while ((am = alter.exec(sql)) !== null) {
+    const existing = cols.get(am[1]);
+    assert.ok(existing, `a migration alters ${am[1]}, which no migration creates`);
+    existing.push(am[2]);
+  }
   return cols;
 }
 

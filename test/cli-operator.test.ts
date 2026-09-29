@@ -1189,7 +1189,10 @@ test("Task 8 external CLI journey delivers every declared artifact without GitHu
     assert.equal(run.feature_id, actionValue(NEW_RUN, "--feature"));
     assert.equal(run.slug, actionValue(NEW_RUN, "--slug"));
     assert.equal(run.change_kind, actionValue(NEW_RUN, "--change-kind"));
-    assert.ok(Object.values(profile.modelMap).every((model) => model === actionValue(NEW_RUN, "--model")));
+    // --model reaches only the one setting with no seeded model.
+    assert.deepEqual(Object.entries(profile.dispatchSettings)
+      .filter(([, setting]) => setting.model === actionValue(NEW_RUN, "--model")).map(([name]) => name).sort(),
+    ["reconciler"]);
     assert.equal(git(root, "rev-parse", "HEAD"), profile.startingCommit);
     assert.equal(git(root, "show", `${profile.startingCommit}:base.txt`), readFileSync(join(root, "base.txt"), "utf8").trim());
     const beforeInspection = inventory(root);
@@ -1319,7 +1322,13 @@ test("Task 8 external CLI journey delivers every declared artifact without GitHu
     assert.equal(snapshot.cost.knownUsd, 0);
     const persisted = durableCliRun(root, run.id);
     assert.deepEqual(persisted.approval, accepted.approval);
-    assert.ok(persisted.agents.every((row) => row.requested_model === actionValue(NEW_RUN, "--model")));
+    assert.ok(persisted.agents.length > 0);
+    for (const row of persisted.agents) {
+      const frozen = profile.dispatchSettings[row.setting!];
+      assert.ok(frozen, `agent row ${row.id} names a frozen setting: ${row.setting}`);
+      assert.equal(row.requested_model, frozen.model, `${row.setting} model`);
+      assert.equal(row.requested_effort, frozen.effort, `${row.setting} effort`);
+    }
     assert.equal(persisted.run!.profile_ref, sha256Hex(profileBytes));
     assert.deepEqual(readFileSync(profilePath), profileBytes);
     const beforeRepeat = inventory(root);
@@ -1670,7 +1679,7 @@ test("Task 6 run requires explicit consent for JSON and redirected input and pri
     profile.policy.specReviewRounds += 1;
     profile.policy.codeReviewMaxRounds = 1;
     profile.policyHash = policyHash(profile.policy);
-    profile.modelMap.spec = "frozen-preview-model";
+    profile.dispatchSettings["spec-author"]!.model = "frozen-preview-model";
     freezeDoctorProfile(root, run.id, profile);
     const before = inventory(parent);
     for (const json of [true, false]) {
@@ -1689,7 +1698,7 @@ test("Task 6 run requires explicit consent for JSON and redirected input and pri
           unstartedExecution(result, "required", ["spec"]);
           assert.equal(result.snapshot!.workflowAction.eligible, true);
           assert.equal(result.snapshot!.phase, "ready");
-          assert.deepEqual(result.snapshot!.configuration.modelMap, profile.modelMap);
+          assert.deepEqual(result.snapshot!.configuration.dispatchSettings, profile.dispatchSettings);
         } else {
           assert.match(called.stdout, /^run: consent_required\r?\n/);
           assert.match(called.stdout, /"consent": "required"/);
@@ -1698,7 +1707,7 @@ test("Task 6 run requires explicit consent for JSON and redirected input and pri
         }
         assert.doesNotMatch(called.stdout, /execution preview|Canonical target:|Dispatch ceilings|group spec start/);
         assert.ok(called.stderr.includes(`Canonical target: ${realpathSync(root)}`));
-        assert.ok(called.stderr.includes(`Frozen models: ${JSON.stringify(profile.modelMap)}`));
+        assert.ok(called.stderr.includes(`Frozen settings: ${JSON.stringify(profile.dispatchSettings)}`));
         assert.ok(called.stderr.includes(`Frozen verification commands: ${JSON.stringify(
           profile.verification.commands.map((command) => ({ name: command.name, argv: command.command })))}`));
         assert.match(called.stderr, /Remaining groups: spec\r?\n/);
@@ -1869,7 +1878,7 @@ test("Task 5 doctor --run keeps frozen configuration separate from current defau
     profile.policy.specReviewRounds += 1;
     profile.policy.codeReviewMaxRounds = 1;
     profile.policyHash = policyHash(profile.policy);
-    profile.modelMap.spec = "frozen-spec-model";
+    profile.dispatchSettings["spec-author"]!.model = "frozen-spec-model";
     freezeDoctorProfile(root, run.id, profile);
     writeFileSync(join(root, "governed.yaml"), 'verify:\n  - name: current-only\n    command: ["npm", "--version"]\n');
     git(root, "add", "-A");
@@ -1889,7 +1898,7 @@ test("Task 5 doctor --run keeps frozen configuration separate from current defau
     const policy = profile.policy;
     assert.deepEqual(report.frozen, {
       systemName: profile.systemName, profileHash: sha256Hex(canonicalJson(profile)),
-      policyHash: profile.policyHash, startingCommit: profile.startingCommit, modelMap: profile.modelMap,
+      policyHash: profile.policyHash, startingCommit: profile.startingCommit, dispatchSettings: profile.dispatchSettings,
       verificationCommands: profile.verification.commands.map((command) => ({ name: command.name, argv: command.command })),
       documentReview: { panelSizeMin: policy.panelSizeMin, panelSizeMax: policy.panelSizeMax,
         specReviewRounds: policy.specReviewRounds, planReviewRounds: policy.planReviewRounds,
@@ -1904,7 +1913,7 @@ test("Task 5 doctor --run keeps frozen configuration separate from current defau
     assert.notEqual(report.current.startingCommit, report.frozen!.startingCommit);
     assert.notEqual(report.current.approvalSigner, report.frozen!.approvalSigner);
     assert.deepEqual(report.current.verification, { commands: [{ name: "current-only", command: ["npm", "--version"] }] });
-    for (const name of ["run_state", "frozen_profile", "frozen_models", "frozen_verification",
+    for (const name of ["run_state", "frozen_profile", "frozen_settings", "frozen_verification",
       "frozen_deadline", "frozen_approval_signer", "frozen_executor_probe"]) {
       assert.equal(report.checks.find((check) => check.name === name)!.status, "pass", name);
     }
@@ -2000,13 +2009,13 @@ test("Task 5 doctor --run preserves readable state and original invalid-profile 
           if (condition === "unreadable") mkdirSync(profilePath);
           if (condition === "malformed_json") writeFileSync(profilePath, "{");
           if (condition === "malformed_shape") {
-            const malformed = { ...profile, modelMap: null };
+            const malformed = { ...profile, dispatchSettings: null };
             const serialized = canonicalJson(malformed);
             writeFileSync(profilePath, serialized);
             store.setProfileRef(run.id, sha256Hex(serialized));
           }
           if (condition === "hash_invalid") {
-            profile.modelMap.spec = "not-the-frozen-model";
+            profile.dispatchSettings["spec-author"]!.model = "not-the-frozen-model";
             writeFileSync(profilePath, canonicalJson(profile));
           }
           const loaded = loadVerifiedProfile(root, store.getRun(run.id)!);
@@ -2027,7 +2036,7 @@ test("Task 5 doctor --run preserves readable state and original invalid-profile 
         assert.ok(body.reason!.includes(reason));
         const report = body.result as DoctorResult;
         assert.deepEqual(report.frozen, { systemName: null, profileHash: null, policyHash: null,
-          startingCommit: null, modelMap: null, verificationCommands: null, documentReview: null,
+          startingCommit: null, dispatchSettings: null, verificationCommands: null, documentReview: null,
           codeReview: null, deadline: null, approvalSigner: null });
         assert.equal(report.current.startingCommit, profile.startingCommit);
         assert.deepEqual(report.current.verification, profile.verification);
@@ -2039,7 +2048,7 @@ test("Task 5 doctor --run preserves readable state and original invalid-profile 
         assert.equal(failedProfile.status, "fail");
         assert.equal(failedProfile.evidence, reason);
         assert.ok(failedProfile.repair);
-        for (const name of ["frozen_models", "frozen_verification", "frozen_deadline",
+        for (const name of ["frozen_settings", "frozen_verification", "frozen_deadline",
           "frozen_approval_signer", "frozen_executor_probe"]) {
           const check = report.checks.find((entry) => entry.name === name)!;
           assert.equal(check.status, "not_checked", name);
@@ -2057,7 +2066,7 @@ test("Task 5 doctor --run preserves readable state and original invalid-profile 
           const text = doctor.invoke(root, "--run", String(run.id));
           assert.equal(text.status, 1);
           assert.match(text.stdout, /^FAIL frozen_profile:/m);
-          assert.match(text.stdout, /^NOT CHECKED frozen_models:/m);
+          assert.match(text.stdout, /^NOT CHECKED frozen_settings:/m);
           assert.match(text.stdout, /^PASS run_state:/m);
           assert.ok(text.stdout.includes(reason));
         }
@@ -2488,7 +2497,8 @@ function recordedAgent(store: Store, stageId: number, agent: string, rawRef: str
   const parsed = parseEnvelope(CLAUDE_CODE, recorded);
   return store.insertAgentRun({
     stageId, agent, role: "reviewer", executor: CLAUDE_CODE.id,
-    requestedModel: parsed.effectiveModel!, effectiveModel: parsed.effectiveModel, fallback: parsed.fallback,
+    requestedModel: parsed.effectiveModel!, requestedEffort: "medium", setting: agent,
+    effectiveModel: parsed.effectiveModel, fallback: parsed.fallback,
     tokensIn: parsed.tokensIn, tokensOut: parsed.tokensOut, cacheRead: parsed.cacheRead, cacheWrite: parsed.cacheWrite,
     cost: parsed.cost, durationMs: recordedResultLine(recorded).duration_ms,
     inputHash: sha256Hex("CLI presentation transport"), outputHash: sha256Hex(recorded), rawOutputRef: rawRef,
@@ -3011,7 +3021,8 @@ test("readiness uses the selected absolute probe while dispatch retains bare inh
       const stage = store.insertStage(run.id, "spec", null);
       const executor = { ...CLAUDE_CODE, command: [process.execPath, resolve("test", "fixtures", "harness", "echo-json.mjs")] };
       const result = await dispatchOnce(store, executor, {
-        stageId: stage.id, agent: "spec-author", role: "author", requestedModel: "test-model", prompt: "transport only",
+        stageId: stage.id, agent: "spec-author", role: "author", requestedModel: "test-model",
+        requestedEffort: "high", setting: "spec-author", prompt: "transport only",
       }, root);
       assert.ok(result.ok, result.ok ? "" : result.reason);
       const probes = mocked.calls.filter((args) => args[0] === CLAUDE_CODE.probe[0] || args[0] === mocked.executablePath);

@@ -25,7 +25,7 @@ import {
   codeReviewEvidenceRef,
   codeReviewVerificationDir,
 } from "./paths.ts";
-import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
+import { loadVerifiedProfile, requireFrozenBinding, resolveSettings } from "./profile.ts";
 import { buildCodeReviewPrompt, buildCodeReviewRemediationPrompt } from "./prompts.ts";
 import {
   upstreamPrefixFor,
@@ -105,15 +105,18 @@ export async function runCodeReviewStage(
   const verified = loadVerifiedProfile(rootDir, run);
   if (!verified.ok) return { ok: false, reason: verified.reason };
   const profile = verified.profile;
-  const resolvedModel = resolveStageModel(profile, "code_review");
-  if (!resolvedModel.ok) return { ok: false, reason: resolvedModel.reason };
-  if (requestedModel !== undefined && requestedModel !== resolvedModel.model) {
+  // Remediation runs the `implementer`; each reviewer seat resolves its own
+  // setting once the panel is chosen, below, before the stage row exists.
+  const implementerSettings = resolveSettings(profile, "implementer");
+  if (!implementerSettings.ok) return { ok: false, reason: implementerSettings.reason };
+  // Asserted against the implementer setting: `--model` never named a
+  // reviewer, and this stage's only author-side dispatch is remediation.
+  if (requestedModel !== undefined && requestedModel !== implementerSettings.model) {
     return {
       ok: false,
-      reason: `--model ${requestedModel} does not match the model frozen at run start (${resolvedModel.model}): config is frozen at run start`,
+      reason: `--model ${requestedModel} does not match the model frozen at run start (${implementerSettings.model}): config is frozen at run start`,
     };
   }
-  const model = resolvedModel.model;
   const binding = requireFrozenBinding(profile, executor, "code_review");
   if (!binding.ok) return { ok: false, reason: binding.reason };
 
@@ -259,6 +262,15 @@ export async function runCodeReviewStage(
       return { ok: false, reason: `configured agent ${reviewer.id} does not allow code-findings output` };
     }
   }
+  // Every seat's setting is resolved before the stage row or any dispatch: a
+  // missing entry refuses the whole panel here, never one seat after its
+  // siblings have already spent.
+  const seatSettings = new Map<string, { model: string; effort: string }>();
+  for (const reviewer of panel) {
+    const seat = resolveSettings(profile, reviewer.id);
+    if (!seat.ok) return { ok: false, reason: seat.reason };
+    seatSettings.set(reviewer.id, { model: seat.model, effort: seat.effort });
+  }
 
   const author = profile.agents.find((agent) => agent.id === "implementer");
   if (!author) return { ok: false, reason: "configured agent implementer is not in the frozen profile" };
@@ -397,6 +409,7 @@ export async function runCodeReviewStage(
           reason,
           durationMs: Date.now() - startedAt,
         });
+        const seat = seatSettings.get(reviewer.id)!;
         const dispatch = await dispatchOnce(
           store,
           executor,
@@ -404,7 +417,9 @@ export async function runCodeReviewStage(
             stageId: stage.id,
             agent: reviewer.id,
             role: "reviewer",
-            requestedModel: model,
+            requestedModel: seat.model,
+            requestedEffort: seat.effort,
+            setting: reviewer.id,
             prompt: buildCodeReviewPrompt(reviewer, specContent, planContent, changedPaths, diff, currentCommit),
             invocation: { cwd: worktreePath },
           },
@@ -610,7 +625,9 @@ export async function runCodeReviewStage(
           stageId: stage.id,
           agent: author.id,
           role: "author",
-          requestedModel: model,
+          requestedModel: implementerSettings.model,
+          requestedEffort: implementerSettings.effort,
+          setting: author.id,
           prompt: buildCodeReviewRemediationPrompt(
             author,
             specContent,

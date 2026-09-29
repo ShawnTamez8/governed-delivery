@@ -75,8 +75,8 @@ function withStore(fn: (store: Store, root: string) => void): void {
 function agent(store: Store, stageId: number, overrides: Partial<AgentRunInput> = {}) {
   return store.insertAgentRun({
     stageId, agent: "reviewer", role: "reviewer", executor: CLAUDE_CODE.id,
-    requestedModel: envelope.effectiveModel!, effectiveModel: envelope.effectiveModel,
-    fallback: envelope.fallback, tokensIn: envelope.tokensIn, tokensOut: envelope.tokensOut,
+    requestedModel: envelope.effectiveModel!, requestedEffort: "medium", setting: overrides.agent ?? "reviewer",
+    effectiveModel: envelope.effectiveModel, fallback: envelope.fallback, tokensIn: envelope.tokensIn, tokensOut: envelope.tokensOut,
     cacheRead: envelope.cacheRead, cacheWrite: envelope.cacheWrite, cost: envelope.cost,
     durationMs: recordedDurationMs, inputHash: sha256Hex("schema-bound observation"),
     outputHash: sha256Hex(recorded), rawOutputRef: "recorded-response.json",
@@ -441,7 +441,7 @@ test("profile and approval projections preserve original bindings while missing 
       startingCommit: sha256Hex("commit"), profileHash: frozen.hash, risk: "low", scope: JSON.stringify(["src/"]),
       expiresAt: new Date(0).toISOString(), signature: "approval-signature-must-not-be-displayed", signer: "public-fingerprint" });
     const snapshot = readRunSnapshot(store, root, run.id).snapshot;
-    assert.deepEqual(snapshot.configuration.modelMap, frozen.profile.modelMap);
+    assert.deepEqual(snapshot.configuration.dispatchSettings, frozen.profile.dispatchSettings);
     assert.deepEqual(snapshot.configuration.verificationCommands,
       configuration.commands.map((c) => ({ name: c.name, argv: c.command })));
     assert.equal(snapshot.configuration.profileHash, frozen.hash);
@@ -458,7 +458,7 @@ test("profile and approval projections preserve original bindings while missing 
     rmSync(frozen.path);
     const missing = readRunSnapshot(store, root, run.id).snapshot;
     assert.equal(missing.configuration.profileHash, null);
-    assert.equal(missing.configuration.modelMap, null);
+    assert.equal(missing.configuration.dispatchSettings, null);
     assert.equal(missing.configuration.verificationCommands, null);
     assert.equal(missing.approval.id, approved.id);
     assert.equal(missing.stages[0]!.id, stage.id);
@@ -932,9 +932,31 @@ test("completed records remain terminal when present-day evidence is missing, wi
   }, { omitAudit: "delivery.gate.pass" });
 });
 
-test("frozen models, named authors and staffing are checked without an executor probe", async (t) => {
+test("a missing frozen dispatch setting makes the boundary ineligible by name and spends nothing", async (t) => {
+  // `loadVerifiedProfile` is the only door to a frozen profile, so a missing
+  // entry surfaces as the profile refusal (evidence_invalid), before any
+  // group-level readiness check could see it. Once for an agent, once for the
+  // reconciler, at a document group and at a review group.
+  const cases: [string, number, string][] = [
+    ["spec author", 0, "spec-author"], ["reconciler at spec", 0, "reconciler"],
+    ["reconciler at plan", 4, "reconciler"], ["implementer", 6, "implementer"],
+    // Prefix 7 is the last boundary reached without running a stage, and a
+    // stage refuses the very profile this test breaks.
+    ["code reviewer", 7, "code-reviewer-security"],
+  ];
+  for (const [name, prefix, setting] of cases) await t.test(name, () => withBoundary(prefix, ({ store, root, runId }) => {
+    const before = store.query("SELECT id FROM agent_run");
+    const snapshot = readRunSnapshot(store, root, runId).snapshot;
+    assert.equal(snapshot.workflowAction.eligible, false);
+    assert.ok(snapshot.workflowAction.reasons.some((r) => r.code === "evidence_invalid"
+      && r.reason.includes(`dispatchSettings carries no entry for ${setting}`)), JSON.stringify(snapshot.workflowAction.reasons));
+    assert.equal(snapshot.configuration.dispatchSettings, null, "an unreadable profile projects no settings");
+    assert.deepEqual(store.query("SELECT id FROM agent_run"), before);
+  }, { freeze: (p) => { delete p.dispatchSettings[setting]; } }));
+});
+
+test("frozen named authors and staffing are checked without an executor probe", async (t) => {
   const cases: [string, number, (profile: Profile) => void][] = [
-    ["missing spec review model", 0, (p) => { delete p.modelMap.spec_review; }],
     ["missing plan author", 4, (p) => { p.agents = p.agents.filter((a) => a.id !== "plan-author"); }],
     ["missing patch output", 6, (p) => { p.agents.find((a) => a.id === "implementer")!.outputs = []; }],
     ["missing review capability", 8, (p) => { p.executor.capabilities = p.executor.capabilities.filter((c) => c !== "review"); }],

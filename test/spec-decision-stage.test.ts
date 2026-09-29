@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
 import { verifyAuditChain } from "../src/audit.ts";
-import { freezeProfile } from "../src/profile.ts";
+import { freezeUniformProfile } from "./uniform-profile.ts";
 import { runSpecStage } from "../src/spec-stage.ts";
 import { answerQuestion, DECISION_ANSWER_MAX_CHARS, runSpecDecisionStage } from "../src/spec-decision-stage.ts";
 import { validateSpecDoc } from "../src/spec-doc.ts";
@@ -72,7 +72,7 @@ function withRun(marker: string, fn: (ctx: Ctx) => Promise<void>): Promise<void>
     assert.equal(git(["-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "-m", "base"]).status, 0);
     const head = git(["rev-parse", "HEAD"]).stdout.trim();
     const run = store.insertRun("p", "f-1", "demo", "feature");
-    const frozen = freezeProfile(root, run.id, head, "m", VERIFICATION);
+    const frozen = freezeUniformProfile(root, run.id, head, "m", VERIFICATION);
     store.setProfileRef(run.id, frozen.hash);
     freezeExecutorIntoProfile(store, root, run.id, fixtureExecutor(FIXTURE));
     mkdirSync(join(root, "docs", "features", "demo"), { recursive: true });
@@ -332,6 +332,31 @@ test("an approved answer is folded into the spec, grounded in that answer, and t
     assert.ok(lastSummary(ctx.store, ctx.runId, "spec_decision.fold.record"));
     assert.equal(ctx.store.getRun(ctx.runId)!.status, "in_progress");
     assert.equal(verifyAuditChain(ctx.store), null);
+  });
+});
+
+test("the fold dispatches under the reconciler setting while recording the author agent", async () => {
+  await withRun("FIXTURE-ASK-OPERATOR", async (ctx) => {
+    // Give the reconciler values no other setting has, so a fold that resolved
+    // spec-author's setting would record different ones.
+    const path = join(ctx.root, ".governance", "profiles", String(ctx.runId), "profile.json");
+    const profile = JSON.parse(readFileSync(path, "utf8")) as { dispatchSettings: Record<string, { model: string; effort: string }> };
+    profile.dispatchSettings.reconciler = { model: "reconciler-model", effort: "high" };
+    const serialized = canonicalJson(profile);
+    writeFileSync(path, serialized);
+    ctx.store.setProfileRef(ctx.runId, sha256Hex(serialized));
+
+    const { questions } = await paused(ctx);
+    answer(ctx, questions[0].finding_id, "approve");
+    const result = await runSpecDecisionStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+    assert.ok(result.ok, result.ok ? "" : result.reason);
+    const rows = ctx.store.query<{ agent: string; setting: string; requested_model: string; requested_effort: string }>(
+      "SELECT ar.agent, ar.setting, ar.requested_model, ar.requested_effort FROM agent_run ar JOIN stage s ON s.id = ar.stage_id WHERE s.run_id = ? AND s.kind = 'spec_decision'",
+      [ctx.runId]
+    );
+    assert.deepEqual(rows.map((r) => ({ ...r })), [
+      { agent: "spec-author", setting: "reconciler", requested_model: "reconciler-model", requested_effort: "high" },
+    ]);
   });
 });
 

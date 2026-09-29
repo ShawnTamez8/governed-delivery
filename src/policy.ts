@@ -89,6 +89,58 @@ export const CODE_REVIEW_MAX_ROUNDS = 2;
  */
 export const CODE_REVIEW_BLOCKING_SEVERITY = "high";
 
+/**
+ * The effort levels `claude --effort` takes, as the CLI's own help lists them.
+ * `ultracode` is left out on purpose: the CLI treats it as `xhigh` plus a
+ * separate feature, and the API docs' set is these five. A level outside this
+ * list is refused when the run is frozen, because the CLI itself only warns
+ * about an unknown value and then runs at its default.
+ */
+export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type EffortLevel = (typeof EFFORT_LEVELS)[number];
+
+/**
+ * The setting that governs the three reconciliation dispatches: the spec and
+ * plan reconciliations in a review round, and the decision fold after an
+ * operator answers. It is a setting name, not a registered agent; those
+ * dispatches still record the author agent that ran them.
+ */
+export const RECONCILER = "reconciler";
+
+export interface SettingDefault {
+  /** null means "the run's --model". */
+  model: string | null;
+  effort: EffortLevel;
+}
+
+// Task 0 (2026-09-29): Haiku 4.5 accepts --effort at low and medium.
+const SPEC_REVIEWER: SettingDefault = { model: "claude-haiku-4-5-20251001", effort: "medium" };
+const CODE_REVIEWER: SettingDefault = { model: "claude-sonnet-5-5", effort: "medium" };
+
+/**
+ * Seeded model and effort per dispatch setting: one entry per registered agent
+ * plus `RECONCILER`. These are starting points with no measurement behind them
+ * for this workload. They are read only when a run is frozen, so changing one
+ * affects new runs only; the profile freezes the resolved values, not these
+ * constants (hard rule 6). They are deliberately not part of `Policy` or
+ * `policyHash`.
+ *
+ * No reviewer is seeded at `high` or above, and a run-wide `--effort` never
+ * reaches a reviewer; only that reviewer's own `--effort-for` moves it.
+ */
+export const DEFAULT_SETTINGS: Readonly<Record<string, SettingDefault>> = {
+  "spec-author": { model: "claude-opus-5-5", effort: "high" },
+  "plan-author": { model: "claude-opus-5-5", effort: "high" },
+  "implementer": { model: "claude-sonnet-5-5", effort: "medium" },
+  [RECONCILER]: { model: null, effort: "medium" },
+  "spec-reviewer-traceability": SPEC_REVIEWER,
+  "spec-reviewer-security": SPEC_REVIEWER,
+  "spec-reviewer-consistency": SPEC_REVIEWER,
+  "code-reviewer-correctness": CODE_REVIEWER,
+  "code-reviewer-security": CODE_REVIEWER,
+  "code-reviewer-state-integrity": CODE_REVIEWER,
+};
+
 export const REQUIRED_SPECIALTIES = ["requirements-traceability"];
 
 /**

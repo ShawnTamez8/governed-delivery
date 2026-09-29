@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { acquireLock } from "./lock.ts";
 import { requireRunInProgress, openStore, StoreStateError, type ChangeKind, type Store } from "./store.ts";
-import { formatHelp, parseArguments, UsageError } from "./cli-args.ts";
+import { formatHelp, parseArguments, parseSettingList, UsageError } from "./cli-args.ts";
 import { resolveRepositoryRoot, TargetUnavailableError } from "./repo-root.ts";
 import { appendAudit, verifyAuditChain } from "./audit.ts";
 import { dispatchOnce } from "./dispatch.ts";
@@ -13,7 +13,7 @@ import { runImplementationStage } from "./implementation-stage.ts";
 import { runVerificationStage } from "./verification-stage.ts";
 import { runCodeReviewStage } from "./code-review-stage.ts";
 import { runDeliveryStage } from "./delivery-stage.ts";
-import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
+import { loadVerifiedProfile, requireFrozenBinding, resolveSettings } from "./profile.ts";
 import { approvalPayload, validateExpiry } from "./approval.ts";
 import { approveRun, buildBinding } from "./approval-stage.ts";
 import { answerQuestion } from "./spec-decision-stage.ts";
@@ -131,7 +131,7 @@ async function main(): Promise<void> {
           evidence: profileReason ?? `Hash-verified frozen profile ${snapshot.configuration.profileHash} for run ${selectedRun}.`,
           repair: profile === null ? "Retain this run's evidence and create a fresh run; do not rebuild or silently substitute its profile." : null });
         for (const [name, value] of [
-          ["frozen_models", frozen.modelMap], ["frozen_verification", frozen.verificationCommands],
+          ["frozen_settings", frozen.dispatchSettings], ["frozen_verification", frozen.verificationCommands],
           ["frozen_deadline", frozen.deadline], ["frozen_approval_signer", frozen.approvalSigner],
         ] as const) {
           readiness.checks.push({ name, status: profile === null ? "not_checked" : "pass",
@@ -190,6 +190,11 @@ async function main(): Promise<void> {
             slug: args.get("slug")!,
             changeKind: args.get("change-kind")! as ChangeKind,
             model: args.get("model")!,
+            settings: {
+              effort: args.get("effort"),
+              modelFor: parseSettingList(args.get("model-for")),
+              effortFor: parseSettingList(args.get("effort-for")),
+            },
           });
           console.log(String(created.run.id));
         } catch (error) {
@@ -270,19 +275,21 @@ async function main(): Promise<void> {
           throw new Error(dispatchBlocked);
         }
         // Hard rule 6 has to hold on the raw dispatch surface too, or the
-        // frozen map governs `bw spec` and `bw plan` while the documented
-        // escape hatch beside them spends against any model it is handed.
+        // frozen settings govern `bw spec` and `bw plan` while the documented
+        // escape hatch beside them spends against any model it is handed. The
+        // setting is the dispatched agent's own: a raw dispatch carries no
+        // stage-role information that could select the reconciler's.
         const dispatchProfile = loadVerifiedProfile(rootDir, dispatchRun);
         if (!dispatchProfile.ok) {
           throw new Error(dispatchProfile.reason);
         }
-        const frozenModel = resolveStageModel(dispatchProfile.profile, stage.kind);
-        if (!frozenModel.ok) {
-          throw new Error(frozenModel.reason);
+        const frozenSettings = resolveSettings(dispatchProfile.profile, agent);
+        if (!frozenSettings.ok) {
+          throw new Error(frozenSettings.reason);
         }
-        if (requestedModel !== undefined && requestedModel !== frozenModel.model) {
+        if (requestedModel !== undefined && requestedModel !== frozenSettings.model) {
           throw new Error(
-            `--model ${requestedModel} does not match the model frozen at run start (${frozenModel.model}): config is frozen at run start`
+            `--model ${requestedModel} does not match the model frozen at run start (${frozenSettings.model}): config is frozen at run start`
           );
         }
         // The raw surface gets the same frozen-binding rule the stages get:
@@ -309,7 +316,10 @@ async function main(): Promise<void> {
         const result = await dispatchOnce(
           store,
           dispatchProfile.profile.executor,
-          { stageId, agent, role, requestedModel: frozenModel.model, prompt },
+          {
+            stageId, agent, role, requestedModel: frozenSettings.model,
+            requestedEffort: frozenSettings.effort, setting: agent, prompt,
+          },
           rootDir
         );
         if (result.ok) {

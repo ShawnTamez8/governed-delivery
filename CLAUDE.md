@@ -284,7 +284,12 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
   `decide --run --finding (--approve | --deny | --answer-file <path>)` records
   one operator answer to a spec-review question and dispatches nothing. `new-run` requires
   project, feature, slug, change-kind and model; it never selects these
-  implicitly. All of these commands accept one `--repo`, defaulting to the
+  implicitly. Each agent's, and the reconciler's, model and effort are frozen at
+  `new-run`: `--model` is required and covers only `reconciler`,
+  the other settings take the seeded defaults in `src/policy.ts`, and optional
+  `--effort` (never reaches a reviewer), `--model-for` and `--effort-for` override
+  them per run. Every spend entry point checks the frozen setting for its
+  dispatch. All of these commands accept one `--repo`, defaulting to the
   invocation worktree, so omitting it here targets BuildWorks itself.
 - Approval transport: `approval-request --out` exclusively creates canonical
   bytes; `approve --signature-file` accepts an external UTF-8 signature file.

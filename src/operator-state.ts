@@ -13,7 +13,7 @@ import {
   codeReviewEvidenceRef, deliveryEvidenceRef, rawOutputDir, worktreePath,
 } from "./paths.ts";
 import { APPROVAL_DEFAULT_LIFETIME_SECONDS, buildPolicy, policyHash } from "./policy.ts";
-import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel, type Profile } from "./profile.ts";
+import { loadVerifiedProfile, requireFrozenBinding, type Profile } from "./profile.ts";
 import { computeScope } from "./scope.ts";
 import { codeReviewPanel, codeReviewStaffingShortfall, staffingShortfall } from "./select.ts";
 import { readSpecDeclaredArtifacts, validateSpecDoc } from "./spec-doc.ts";
@@ -80,7 +80,7 @@ export interface RunConfiguration {
   profileHash: string | null;
   policyHash: string | null;
   startingCommit: string | null;
-  modelMap: Record<string, string> | null;
+  dispatchSettings: Record<string, { model: string; effort: string }> | null;
   verificationCommands: { name: string; argv: string[] }[] | null;
   documentReview: {
     panelSizeMin: number; panelSizeMax: number; specReviewRounds: number;
@@ -283,7 +283,7 @@ export function runConfiguration(profile: Profile | null, hash: string | null, c
   const deadline = p ? Date.parse(createdAt) + p.runDurationLimitSeconds * 1000 : NaN;
   return {
     systemName: profile?.systemName ?? null, profileHash: hash, policyHash: profile?.policyHash ?? null,
-    startingCommit: profile?.startingCommit ?? null, modelMap: profile?.modelMap ?? null,
+    startingCommit: profile?.startingCommit ?? null, dispatchSettings: profile?.dispatchSettings ?? null,
     verificationCommands: profile?.verification.commands.map((c) => ({ name: c.name, argv: c.command })) ?? null,
     documentReview: p ? { panelSizeMin: p.panelSizeMin, panelSizeMax: p.panelSizeMax,
       specReviewRounds: p.specReviewRounds, planReviewRounds: p.planReviewRounds, requiredSpecialties: p.requiredSpecialties } : null,
@@ -308,8 +308,9 @@ export function readRunSnapshot(store: Store, rootDir: string, runId: number,
   if (profile !== null) {
     try {
       if (profile.runId !== runId) throw new Error(`the frozen profile identifies run ${profile.runId}, not run ${runId}`);
-      if (!Object.values(profile.modelMap).every((model) => typeof model === "string")) {
-        throw new Error("the frozen model map contains a non-string model");
+      if (!Object.values(profile.dispatchSettings).every((entry) =>
+          object(entry) && typeof entry.model === "string" && typeof entry.effort === "string")) {
+        throw new Error("the frozen dispatch settings contain an entry without a string model and effort");
       }
       if (!profile.verification.commands.every((command) => object(command) &&
           typeof command.name === "string" && strings(command.command))) {
@@ -514,13 +515,14 @@ function inspectGit(cwd: string, ...args: string[]) {
 function frozenGroupReasons(profile: Profile, group: ExecutionGroup): ActionReason[] {
   const reasons: ActionReason[] = [];
   const fail = (reason: string) => reasons.push({ code: "setup_required", reason });
-  // The decision fold is one spec-author dispatch under the spec model.
+  // The decision fold is one spec-author dispatch. Every dispatch setting the
+  // group reads (each agent and the reconciler) is already guaranteed present
+  // by `loadVerifiedProfile`, the only door to a `profile` here, so a missing
+  // entry never reaches this function; it surfaces as the profile reason.
   const kinds = group === "spec" || group === "plan" ? [group, `${group}_review`]
     : group === "decision" ? ["spec"]
       : group === "implementation" || group === "code_review" ? [group] : [];
   for (const kind of kinds) {
-    const model = resolveStageModel(profile, kind);
-    if (!model.ok) fail(model.reason);
     const binding = requireFrozenBinding(profile, profile.executor, kind);
     if (!binding.ok) fail(binding.reason);
   }

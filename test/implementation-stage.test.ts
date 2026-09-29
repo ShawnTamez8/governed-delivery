@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
 import { runImplementationStage } from "../src/implementation-stage.ts";
-import { freezeProfile } from "../src/profile.ts";
+import { freezeUniformProfile } from "./uniform-profile.ts";
 import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { parseImplementationGate } from "../src/handoff.ts";
@@ -176,7 +176,7 @@ function withApprovedRun(
 
     const spec = opts.spec ?? SPEC;
     const run = store.insertRun("p", "f-1", SLUG, "feature");
-    const frozen = freezeProfile(root, run.id, head, MODEL, VERIFICATION);
+    const frozen = freezeUniformProfile(root, run.id, head, MODEL, VERIFICATION);
     store.setProfileRef(run.id, frozen.hash);
     // The run's frozen executor *is* the fixture: the stage refuses an
     // executor the profile never froze, and a test run is not exempt from
@@ -726,11 +726,11 @@ test("a second patch touching a path the first applied is refused by the head-mo
 
 // --- config-time failure and the fixture contract ----------------------------
 
-test("a profile with no implementation model fails at configuration time, before dispatch", async () => {
+test("a profile with no implementer settings fails at configuration time, before dispatch", async () => {
   await withApprovedRun(async ({ store, root, runId }) => {
     const path = join(root, ".governance", "profiles", String(runId), "profile.json");
-    const profile = JSON.parse(readFileSync(path, "utf8")) as { modelMap: Record<string, string> };
-    delete profile.modelMap.implementation;
+    const profile = JSON.parse(readFileSync(path, "utf8")) as { dispatchSettings: Record<string, unknown> };
+    delete profile.dispatchSettings["implementer"];
     const serialized = canonicalJson(profile);
     writeFileSync(path, serialized);
     store.setProfileRef(runId, sha256Hex(serialized));
@@ -738,8 +738,34 @@ test("a profile with no implementation model fails at configuration time, before
     const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
     assert.equal(result.ok, false);
     if (result.ok) return;
-    assert.match(result.reason, /no model configured for stage implementation/);
+    assert.match(result.reason, /dispatchSettings carries no entry for implementer/);
     assert.equal(agentRunCount(store, runId), 0, "the failure precedes the invocation");
+  });
+});
+
+test("the implementer dispatch records the frozen effort and its setting", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    // A value the seeded default never produces, so a stage that ignored the
+    // frozen entry and used any default would write a different row.
+    const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+    const profile = JSON.parse(readFileSync(path, "utf8")) as {
+      dispatchSettings: Record<string, { model: string; effort: string }>;
+    };
+    profile.dispatchSettings["implementer"] = { model: MODEL, effort: "xhigh" };
+    const serialized = canonicalJson(profile);
+    writeFileSync(path, serialized);
+    store.setProfileRef(runId, sha256Hex(serialized));
+
+    const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const rows = store.query<{ setting: string; requested_effort: string; requested_model: string }>(
+      "SELECT ar.setting, ar.requested_effort, ar.requested_model FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ?",
+      [runId]
+    );
+    assert.deepEqual(
+      rows.map((r) => ({ ...r })),
+      [{ setting: "implementer", requested_effort: "xhigh", requested_model: MODEL }]
+    );
   });
 });
 

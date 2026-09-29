@@ -26,7 +26,8 @@ import { runVerificationStage } from "../src/verification-stage.ts";
 import { extractJsonBody } from "../src/parse-output.ts";
 import { validateAgentResult } from "../src/agent-result.ts";
 import { upstreamPrefixFor, validateReviewerReports } from "../src/reconciliation.ts";
-import { freezeProfile, loadProfile, type Profile } from "../src/profile.ts";
+import { loadProfile, type Profile } from "../src/profile.ts";
+import { freezeUniformProfile } from "./uniform-profile.ts";
 import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { policyHash } from "../src/policy.ts";
@@ -220,7 +221,7 @@ async function withVerifiedRun(fn: (ctx: Ctx) => Promise<void>, opts: Opts = {})
     const head = git(root, ["rev-parse", "HEAD"]).stdout.trim();
 
     const run = store.insertRun("p", "f-1", SLUG, "feature");
-    const frozen = freezeProfile(root, run.id, head, MODEL, VERIFICATION);
+    const frozen = freezeUniformProfile(root, run.id, head, MODEL, VERIFICATION);
     store.setProfileRef(run.id, frozen.hash);
     freezeExecutorIntoProfile(store, root, run.id, opts.executor ?? fixtureExecutor(FIXTURE));
 
@@ -714,6 +715,60 @@ test("high-then-clean remediates once, verifies, and passes the full second pane
       assert.equal(git(ctx.worktreePath, ["rev-parse", "HEAD"]).stdout.trim(), record.finalVerifiedCommit);
       assert.equal(verifyAuditChain(ctx.store), null);
     }, "high-then-clean");
+  });
+});
+
+test("each reviewer and the remediation implementer dispatch under their own frozen setting", async () => {
+  await withVerifiedRun(async (ctx) => {
+    // One distinct effort per name, so a stage that read another seat's entry
+    // (or one shared value) writes a row that disagrees. Read back by the
+    // `setting` column, never by insertion order: the panel launches
+    // concurrently and rows land in completion order.
+    const efforts: Record<string, string> = {
+      implementer: "low",
+      "code-reviewer-correctness": "medium",
+      "code-reviewer-security": "high",
+      "code-reviewer-state-integrity": "max",
+    };
+    refreeze(ctx.root, ctx.store, ctx.runId, (profile) => {
+      for (const [name, effort] of Object.entries(efforts)) {
+        profile.dispatchSettings[name] = { model: `${MODEL}-${name}`, effort: effort as never };
+      }
+    });
+    await withMode(async () => {
+      const result = await review(ctx);
+      assert.equal(result.ok, true, result.ok ? "" : result.reason);
+      const rows = ctx.store.query<{ setting: string; agent: string; requested_model: string; requested_effort: string }>(
+        "SELECT ar.setting, ar.agent, ar.requested_model, ar.requested_effort FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ?",
+        [ctx.runId]
+      );
+      assert.equal(rows.length, 7, "two full panels and one remediation");
+      for (const [name, effort] of Object.entries(efforts)) {
+        const own = rows.filter((r) => r.setting === name);
+        assert.equal(own.length, name === "implementer" ? 1 : 2, `${name} dispatches`);
+        assert.ok(own.every((r) => r.agent === name), `${name} ran as its own agent`);
+        assert.ok(own.every((r) => r.requested_effort === effort), `${name} carries its own effort`);
+        assert.ok(own.every((r) => r.requested_model === `${MODEL}-${name}`), `${name} carries its own model`);
+      }
+    }, "high-then-clean");
+  });
+});
+
+test("a profile missing one reviewer's settings is refused before the stage row and any spend", async () => {
+  await withVerifiedRun(async (ctx) => {
+    const path = join(ctx.root, ".governance", "profiles", String(ctx.runId), "profile.json");
+    const profile = JSON.parse(readFileSync(path, "utf8")) as { dispatchSettings: Record<string, unknown> };
+    delete profile.dispatchSettings["code-reviewer-security"];
+    const serialized = canonicalJson(profile);
+    writeFileSync(path, serialized);
+    ctx.store.setProfileRef(ctx.runId, sha256Hex(serialized));
+
+    const result = await review(ctx);
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /dispatchSettings carries no entry for code-reviewer-security/);
+    assertNoStage(ctx);
+    assert.equal(ctx.store.query("SELECT id FROM agent_run").length, 0, "no sibling reviewer was dispatched");
   });
 });
 

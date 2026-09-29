@@ -36,9 +36,9 @@ function options(argv) {
   for (let i = 0; i < argv.length; i += 2) {
     const name = argv[i];
     const value = argv[i + 1];
-    if (!["--implementation-mode", "--code-review-mode", "--delay-ms", "--model"].includes(name) ||
+    if (!["--implementation-mode", "--code-review-mode", "--delay-ms", "--model", "--effort"].includes(name) ||
         seen.has(name) || value === undefined || value === "" || value.startsWith("--")) {
-      throw new Error("emit-cli-run: expected unique --implementation-mode, --code-review-mode, --delay-ms, or harness --model value pairs");
+      throw new Error("emit-cli-run: expected unique --implementation-mode, --code-review-mode, --delay-ms, or harness --model or --effort value pairs");
     }
     seen.add(name);
     if (name === "--implementation-mode") result.implementationMode = value;

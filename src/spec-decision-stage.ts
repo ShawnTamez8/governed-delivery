@@ -4,7 +4,8 @@ import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
 import { DECISION_ACTIONS, requireRunInProgress, type DecisionQuestionRow, type StageRow, type Store } from "./store.ts";
 import type { ExecutorDefinition } from "./executor.ts";
-import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
+import { loadVerifiedProfile, requireFrozenBinding, resolveSettings } from "./profile.ts";
+import { RECONCILER } from "./policy.ts";
 import { dispatchOnce } from "./dispatch.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import { validateAgentResult } from "./agent-result.ts";
@@ -233,13 +234,14 @@ export async function runSpecDecisionStage(
   }
   const folds = questions.filter((q) => answers.get(q.id)!.action !== "deny");
   // Configuration failures precede the stage row and any spend, as in
-  // `runSpecStage`: the fold is a spec-author dispatch under the spec model.
-  let model: string | null = null;
+  // `runSpecStage`: the fold is a reconciliation, so it runs as the spec author
+  // under the `reconciler` setting.
+  let foldSettings: { model: string; effort: string } | null = null;
   const author = profile.agents.find((a) => a.id === "spec-author");
   if (folds.length > 0) {
-    const resolved = resolveStageModel(profile, "spec");
+    const resolved = resolveSettings(profile, RECONCILER);
     if (!resolved.ok) return { ok: false, reason: resolved.reason };
-    model = resolved.model;
+    foldSettings = { model: resolved.model, effort: resolved.effort };
     const binding = requireFrozenBinding(profile, executor, "spec");
     if (!binding.ok) return { ok: false, reason: binding.reason };
     if (!author) return { ok: false, reason: "configured agent spec-author is not in the frozen profile" };
@@ -306,7 +308,9 @@ export async function runSpecDecisionStage(
         stageId: stage.id,
         agent: author!.id,
         role: "author",
-        requestedModel: model!,
+        requestedModel: foldSettings!.model,
+        requestedEffort: foldSettings!.effort,
+        setting: RECONCILER,
         prompt: buildSpecDecisionFoldPrompt(author!, design, reviewedContent, foldInputs),
       },
       rootDir

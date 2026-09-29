@@ -224,9 +224,19 @@ function derive() {
   // one table instead of the whole concatenated file.
   const migrationTableBodies = new Map();
   const migrationColumns = new Map();
-  const tableRe = /^CREATE TABLE (\w+) \(/gm;
+  // `ALTER TABLE <name> ADD COLUMN <col>` appends a column to the table's
+  // current shape, in migration order, so a column a later migration adds is
+  // part of what the document must list. It is applied in the same pass as the
+  // `CREATE TABLE`s, so a table rebuilt afterwards starts from its new body.
+  const tableRe = /^(?:CREATE TABLE (\w+) \(|ALTER TABLE (\w+) ADD COLUMN (\w+))/gm;
   let m;
   while ((m = tableRe.exec(migrationSql)) !== null) {
+    if (m[2] !== undefined) {
+      const existing = migrationColumns.get(m[2]);
+      if (existing === undefined) throw new Error(`a migration alters table ${m[2]}, which no earlier migration creates`);
+      existing.push(m[3]);
+      continue;
+    }
     const name = m[1];
     let depth = 1;
     let i = tableRe.lastIndex;

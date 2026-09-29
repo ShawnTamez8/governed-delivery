@@ -1,6 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AGENTS, agentById } from "../src/agents.ts";
+import { DEFAULT_SETTINGS, RECONCILER } from "../src/policy.ts";
+
+test("the seeded default settings cover every registered agent and the reconciler, and nothing else", () => {
+  // Both directions: a new agent cannot ship without a default, and a removed
+  // agent leaves no orphan entry behind (hazard 11: a default installation
+  // must be able to freeze a profile and complete a run).
+  assert.deepEqual(
+    Object.keys(DEFAULT_SETTINGS).sort(),
+    [...AGENTS.map((a) => a.id), RECONCILER].sort()
+  );
+});
 
 test("no reviewer allows spec output", () => {
   for (const agent of AGENTS.filter((a) => a.role === "reviewer")) {

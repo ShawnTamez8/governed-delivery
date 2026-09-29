@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { type ExecutorDefinition } from "./executor.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
-import { loadVerifiedProfile, requireFrozenBinding, resolveStageModel } from "./profile.ts";
+import { loadVerifiedProfile, requireFrozenBinding, resolveSettings } from "./profile.ts";
 import { dispatchOnce } from "./dispatch.ts";
 import { validateAgentResult, type ProposedPatch } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
@@ -83,24 +83,25 @@ export async function runImplementationStage(
     };
   }
 
-  // Section 10: the model comes from the profile frozen at run start, and an
-  // unmapped stage kind fails here rather than after a spawn has spent.
+  // Section 10: the model and effort come from the profile frozen at run
+  // start, and an unmapped setting fails here rather than after a spawn has
+  // spent. The `implementer` setting covers this stage and code-review
+  // remediation.
   const verified = loadVerifiedProfile(rootDir, run);
   if (!verified.ok) {
     return { ok: false, reason: verified.reason };
   }
   const profile = verified.profile;
-  const resolvedModel = resolveStageModel(profile, "implementation");
-  if (!resolvedModel.ok) {
-    return { ok: false, reason: resolvedModel.reason };
+  const implementerSettings = resolveSettings(profile, "implementer");
+  if (!implementerSettings.ok) {
+    return { ok: false, reason: implementerSettings.reason };
   }
-  if (requestedModel !== undefined && requestedModel !== resolvedModel.model) {
+  if (requestedModel !== undefined && requestedModel !== implementerSettings.model) {
     return {
       ok: false,
-      reason: `--model ${requestedModel} does not match the model frozen at run start (${resolvedModel.model}): config is frozen at run start`,
+      reason: `--model ${requestedModel} does not match the model frozen at run start (${implementerSettings.model}): config is frozen at run start`,
     };
   }
-  const model = resolvedModel.model;
   // Hard rule 6 and section 11: the run executes against the executor it
   // froze, and a stage requiring a capability no frozen executor declares
   // fails at configuration time — before the stage row, the worktree, or any
@@ -382,7 +383,9 @@ export async function runImplementationStage(
         stageId: stage.id,
         agent: author.id,
         role: "author",
-        requestedModel: model,
+        requestedModel: implementerSettings.model,
+        requestedEffort: implementerSettings.effort,
+        setting: author.id,
         prompt: buildImplementationAuthorPrompt(author, planContent, specContent, scope, headAtProposal),
         invocation: { cwd: worktreePath },
       },

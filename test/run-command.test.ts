@@ -173,7 +173,7 @@ test("guided preview requires invocation consent without writing, opening a lock
       assert.equal(inspectLock(root).status, "absent");
       assert.match(output.text(), /Consent covers EVERY listed group/);
       assert.match(output.text(), /no intermediate voluntary stop control or hard monetary cap/);
-      assert.ok(output.text().includes(JSON.stringify(profile.modelMap)));
+      assert.ok(output.text().includes(JSON.stringify(profile.dispatchSettings)));
       const ceiling = 2 + profile.policy.specReviewRounds * (profile.policy.panelSizeMax + 1);
       assert.ok(output.text().includes(`spec=${ceiling}; total ${ceiling}`));
       assert.doesNotMatch(output.text(), /Type yes|group spec start/);
@@ -228,7 +228,7 @@ test("an injected consent callback receives the frozen preview without a lock an
   assert.deepEqual(data(result).execution.groupsAttempted, []);
   assert.deepEqual(durable(store, runId), before);
   assert.equal(previews.length, 1);
-  assert.ok(previews[0]!.includes(JSON.stringify(profile.modelMap)));
+  assert.ok(previews[0]!.includes(JSON.stringify(profile.dispatchSettings)));
   assert.match(previews[0]!, /Remaining groups: spec/);
   assert.equal(inspectLock(root).status, "absent");
 }));
@@ -245,7 +245,7 @@ test("consent rechecks exact schema, observed boundary, profile, age, and writer
         if (change === "schema") store.exec("PRAGMA user_version = 0");
         if (change === "audit") appendAudit(store, { runId, stageId: null, actor: "operator", actorType: "human", action: "fixture.observation", summary: "changed while consent was pending" });
         if (change === "profile") {
-          profile.modelMap.spec = "changed-model";
+          profile.dispatchSettings["spec-author"]!.model = "changed-model";
           const bytes = canonicalJson(profile);
           writeFileSync(profilePath(root, runId), bytes);
           store.setProfileRef(runId, sha256Hex(bytes));
@@ -421,7 +421,7 @@ test("one frozen executor advances the real chain across separate approval and n
   assert.deepEqual(snapshot.delivery.missingPaths, []);
   assert.equal(snapshot.delivery.deliveredCommit, git(snapshot.delivery.worktreePath!, "rev-parse", "HEAD"));
   assert.equal(snapshot.delivery.branch, git(snapshot.delivery.worktreePath!, "symbolic-ref", "--short", "HEAD"));
-  assert.ok(output.text().includes(JSON.stringify(profile.modelMap)));
+  assert.ok(output.text().includes(JSON.stringify(profile.dispatchSettings)));
   assert.match(output.text(), /group delivery_check start/);
   assert.match(output.text(), /group delivery_check end; passed boundary recorded/);
   assert.doesNotMatch(output.text(), /group delivery_check elapsed/);

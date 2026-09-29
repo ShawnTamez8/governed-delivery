@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
   ALLOWED_TABS,
+  stageSettingsText,
   applyRefresh, bootstrapToken, emptyResourceState, ensureSlot, isEditableTarget,
   isCurrentRefresh, parseRoute, repositoryViews, routeHash, routeWithoutToken,
   shortcutDestination, validatedLimit,
@@ -97,21 +98,21 @@ function seedPartialRun(root: string, parent: string, slug: string): RunSnapshot
   const spec = store.insertStage(runId, "spec", null);
   store.insertAgentRun({
     stageId: spec.id, agent: "alpha-author", role: "author", executor: "claude_code",
-    requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+    requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model", fallback: null,
     tokensIn: 120, tokensOut: 40, cacheRead: null, cacheWrite: null, cost: 0.25,
     durationMs: 900, inputHash: "in-a", outputHash: "out-a", rawOutputRef: "raw/a.json",
     independence: "unverified_self_attestation",
   });
   store.insertAgentRun({
     stageId: spec.id, agent: "zulu-reviewer", role: "reviewer", executor: "claude_code",
-    requestedModel: "test-model", effectiveModel: null, fallback: null,
+    requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: null, fallback: null,
     tokensIn: null, tokensOut: null, cacheRead: null, cacheWrite: null, cost: null,
     durationMs: 700, inputHash: "in-b", outputHash: "out-b", rawOutputRef: "raw/b.json",
     independence: "configured_standalone",
   });
   const reviewer = store.insertAgentRun({
     stageId: spec.id, agent: "zulu-reviewer", role: "reviewer", executor: "claude_code",
-    requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+    requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model", fallback: null,
     tokensIn: 10, tokensOut: 5, cacheRead: null, cacheWrite: null, cost: null,
     durationMs: 100, inputHash: "in-c", outputHash: "out-c", rawOutputRef: "raw/c.json",
     independence: "configured_standalone",
@@ -584,7 +585,7 @@ test("a run that reported zero tokens is distinguished from a run that reported 
     const spec = store.insertStage(runId, "spec", null);
     store.insertAgentRun({
       stageId: spec.id, agent: "alpha-author", role: "author", executor: "claude_code",
-      requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+      requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model", fallback: null,
       tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, cost: 0,
       durationMs: 5, inputHash: "in", outputHash: "out", rawOutputRef: "raw/zero.json",
       independence: "unverified_self_attestation",
@@ -637,14 +638,14 @@ test("monetary, identity, and timestamp presentation narrow without altering a r
     // per-agent rounding assertion below needs two separate recorded groups.
     store.insertAgentRun({
       stageId: spec.id, agent: "alpha-author", role: "author", executor: "claude_code",
-      requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+      requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model", fallback: null,
       tokensIn: 120, tokensOut: 40, cacheRead: 8, cacheWrite: 4, cost: 0.5452318,
       durationMs: 900, inputHash: "in-a", outputHash: "out-a", rawOutputRef: "raw/a.json",
       independence: "unverified_self_attestation",
     });
     store.insertAgentRun({
       stageId: spec.id, agent: "zulu-reviewer", role: "reviewer", executor: "claude_code",
-      requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+      requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model", fallback: null,
       tokensIn: 10, tokensOut: 5, cacheRead: 1, cacheWrite: 1, cost: 0.26745660000000004,
       durationMs: 100, inputHash: "in-b", outputHash: "out-b", rawOutputRef: "raw/b.json",
       independence: "configured_standalone",
@@ -730,7 +731,7 @@ test("constant columns collapse per render and coverage qualifiers appear only w
     for (const agent of ["alpha-author", "zulu-reviewer"]) {
       store.insertAgentRun({
         stageId: spec.id, agent, role: "author", executor: "claude_code",
-        requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+        requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model", fallback: null,
         tokensIn: 10, tokensOut: 5, cacheRead: 2, cacheWrite: 1, cost: 0.1,
         durationMs: 10, inputHash: `in-${agent}`, outputHash: `out-${agent}`,
         rawOutputRef: `raw/${agent}.json`, independence: "configured_standalone",
@@ -753,7 +754,7 @@ test("constant columns collapse per render and coverage qualifiers appear only w
       for (let index = 0; index < rows; index++) {
         store.insertAgentRun({
           stageId: spec.id, agent, role: "reviewer", executor: "claude_code",
-          requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+          requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model", fallback: null,
           tokensIn: 10, tokensOut: 5, cacheRead: 2, cacheWrite: 1, cost: 0.1,
           durationMs: 10, inputHash: `in-${agent}-${index}`, outputHash: `out-${agent}-${index}`,
           rawOutputRef: `raw/${agent}-${index}.json`, independence: "configured_standalone",
@@ -813,7 +814,7 @@ test("a decision field the recorded disposition forbids is never reported as mis
     const spec = store.insertStage(runId, "spec", null);
     const agent = store.insertAgentRun({
       stageId: spec.id, agent: "zulu-reviewer", role: "reviewer", executor: "claude_code",
-      requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+      requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model", fallback: null,
       tokensIn: 10, tokensOut: 5, cacheRead: 1, cacheWrite: 1, cost: 0.1,
       durationMs: 100, inputHash: "in", outputHash: "out", rawOutputRef: "raw/a.json",
       independence: "configured_standalone",
@@ -910,7 +911,7 @@ test("findings order blocking first, then severity, then recorded identifier", (
     const spec = store.insertStage(runId, "spec", null);
     const agent = store.insertAgentRun({
       stageId: spec.id, agent: "zulu-reviewer", role: "reviewer", executor: "claude_code",
-      requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+      requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model", fallback: null,
       tokensIn: 10, tokensOut: 5, cacheRead: 1, cacheWrite: 1, cost: 0.1,
       durationMs: 100, inputHash: "in", outputHash: "out", rawOutputRef: "raw/a.json",
       independence: "configured_standalone",
@@ -988,7 +989,7 @@ test("the executive summary is derived from projected records, never from the el
     const spec = store.insertStage(runId, "spec", null);
     const agent = store.insertAgentRun({
       stageId: spec.id, agent: "zulu-reviewer", role: "reviewer", executor: "claude_code",
-      requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+      requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model", fallback: null,
       tokensIn: 120, tokensOut: 40, cacheRead: 8, cacheWrite: 4, cost: 0.5452318,
       durationMs: 100, inputHash: "in", outputHash: "out", rawOutputRef: "raw/a.json",
       independence: "configured_standalone",
@@ -1091,7 +1092,7 @@ test("an executive summary with no finding, no cost, and no token row states eac
     const spec = store.insertStage(runId, "spec", null);
     store.insertAgentRun({
       stageId: spec.id, agent: "alpha-author", role: "author", executor: "claude_code",
-      requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+      requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model", fallback: null,
       tokensIn: null, tokensOut: null, cacheRead: null, cacheWrite: null, cost: null,
       durationMs: 10, inputHash: "in", outputHash: "out", rawOutputRef: "raw/a.json",
       independence: "configured_standalone",
@@ -1127,7 +1128,7 @@ test("an executive summary with no finding, no cost, and no token row states eac
     const zeroSpec = zeroStore.insertStage(zeroId, "spec", null);
     zeroStore.insertAgentRun({
       stageId: zeroSpec.id, agent: "alpha-author", role: "author", executor: "claude_code",
-      requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+      requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model", fallback: null,
       tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0, cost: 0,
       durationMs: 10, inputHash: "in", outputHash: "out", rawOutputRef: "raw/z.json",
       independence: "configured_standalone",
@@ -1751,7 +1752,7 @@ function seedDecidedRun(root: string, parent: string, slug: string) {
   const store = openStore(root);
   const agentRow = (stageId: number, agent: string) => store.insertAgentRun({
     stageId, agent, role: "reviewer", executor: "claude_code",
-    requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+    requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model", fallback: null,
     tokensIn: 10, tokensOut: 5, cacheRead: 1, cacheWrite: 1, cost: 0.1,
     durationMs: 100, inputHash: `in-${agent}`, outputHash: `out-${agent}`, rawOutputRef: `raw/${agent}.json`,
     independence: "configured_standalone",
@@ -2079,7 +2080,7 @@ test("telemetry coverage and agent rows state what agent rows reported", () => {
     let store = openStore(root);
     const spec = store.insertStage(runId, "spec", null);
     const row = (agent: string, requestedModel: string, cost: number, durationMs: number) => store.insertAgentRun({
-      stageId: spec.id, agent, role: "author", executor: "claude_code", requestedModel, effectiveModel: "test-model",
+      stageId: spec.id, agent, role: "author", executor: "claude_code", requestedModel, requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model",
       fallback: null, tokensIn: 10, tokensOut: 5, cacheRead: 1, cacheWrite: 1, cost, durationMs,
       inputHash: `in-${agent}-${cost}`, outputHash: `out-${agent}-${cost}`, rawOutputRef: `raw/${agent}.json`,
       independence: "configured_standalone",
@@ -2114,7 +2115,7 @@ test("stage usage ranks stages by known cost and names each stage that ran no ag
     const runId = newRun(root, parent, "usage");
     const store = openStore(root);
     const row = (stageId: number, agent: string, cost: number, tokensOut: number) => store.insertAgentRun({
-      stageId, agent, role: "author", executor: "claude_code", requestedModel: "test-model", effectiveModel: "test-model",
+      stageId, agent, role: "author", executor: "claude_code", requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model",
       fallback: null, tokensIn: 10, tokensOut, cacheRead: 1, cacheWrite: 1, cost, durationMs: 100,
       inputHash: `in-${agent}`, outputHash: `out-${agent}`, rawOutputRef: `raw/${agent}.json`,
       independence: "configured_standalone",
@@ -2306,7 +2307,7 @@ test("a run paused for operator decisions projects its questions and reads await
     store.completeStage(review.id, "spec.md", "pass");
     const reconciler = store.insertAgentRun({
       stageId: review.id, agent: "spec-author", role: "author", executor: "claude_code",
-      requestedModel: "test-model", effectiveModel: "test-model", fallback: null,
+      requestedModel: "test-model", requestedEffort: "medium", setting: "spec-author", effectiveModel: "test-model", fallback: null,
       tokensIn: 10, tokensOut: 5, cacheRead: 1, cacheWrite: 1, cost: 0.1,
       durationMs: 100, inputHash: "in", outputHash: "out", rawOutputRef: "raw/a.json",
       independence: "configured_standalone",
@@ -2374,7 +2375,46 @@ test("the question card shows the options, the recommendation, and the reason, a
   assert.match(card, /await postDecision\(/);
 });
 
+test("the run view shows each frozen setting's model and effort, and each stage's configured settings", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const created = spawnSync(process.execPath, [
+      CLI, "new-run", "--repo", root, "--project", "project", "--feature", "feature", "--slug", "settings",
+      "--change-kind", "feature", "--model", "test-model", "--effort-for", "code-reviewer-security=max,implementer=low",
+    ], { cwd: parent, encoding: "utf8" });
+    assert.equal(created.status, 0, created.stderr);
+    const snapshot = readSnapshot(root, parent, Number(created.stdout.trim()));
+    const settings = snapshotProjection(snapshot, "C:\\cli.ts").governance.configuration.dispatchSettings!;
+    assert.deepEqual(Object.keys(settings).sort(), [
+      "code-reviewer-correctness", "code-reviewer-security", "code-reviewer-state-integrity", "implementer", "plan-author",
+      "reconciler", "spec-author", "spec-reviewer-consistency", "spec-reviewer-security", "spec-reviewer-traceability",
+    ]);
+    assert.deepEqual(settings["code-reviewer-security"], { model: "claude-sonnet-5-5", effort: "max" });
 
+    // The expected text is the operator's seeded table plus the two overrides above.
+    // A reconciliation dispatch is recorded on the spec and plan rows, and the
+    // remediation dispatch (the implementer) on the code_review row, so each row
+    // lists those settings beside its own.
+    assert.equal(stageSettingsText(settings, "spec"), "claude-opus-5-5 · high; test-model · medium");
+    assert.equal(stageSettingsText(settings, "spec_review"), "claude-haiku-4-5-20251001 · medium");
+    assert.equal(stageSettingsText(settings, "spec_decision"), "test-model · medium");
+    assert.equal(stageSettingsText(settings, "plan"), "claude-opus-5-5 · high; test-model · medium");
+    assert.equal(stageSettingsText(settings, "plan_review"), "claude-haiku-4-5-20251001 · medium");
+    assert.equal(stageSettingsText(settings, "implementation"), "claude-sonnet-5-5 · low");
+    assert.equal(stageSettingsText(settings, "code_review"),
+      "claude-sonnet-5-5 · low; claude-sonnet-5-5 · medium; claude-sonnet-5-5 · max",
+      "the remediation setting and the panel's distinct pairs each appear once");
+    assert.equal(stageSettingsText(settings, "awaiting_approval"), "Not configured");
+    assert.equal(stageSettingsText({}, "spec"), "Not configured", "a missing setting is stated, not guessed");
 
-
-
+    const script = dashboardScript();
+    const configuration = functionSource(script, "renderConfiguration");
+    assert.match(configuration, /Object\.entries\(configuration\.dispatchSettings \?\? \{\}\)/);
+    assert.match(configuration, /\["Setting", "Model", "Effort"\]/);
+    assert.match(configuration, /settingEntries\.map\(\(\[setting, entry\]\) => \[setting, entry\.model, entry\.effort\]\)/);
+    assert.doesNotMatch(script, /modelMap/);
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
