@@ -1,6 +1,6 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-29, per-agent model/effort plan implemented, committed and run live once; nothing pushed)
+## Current state (2026-09-29, per-agent model/effort plan implemented, committed, run live once, and pushed to `origin/master`)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
@@ -13,9 +13,10 @@ implementation (source, migration 008, `test/uniform-profile.ts`, tests, docs, t
 and its review, the probe fixture), `f04a7a6` the earlier resume-point update, and a
 documentation commit after them records the live run below (read `git log` for its
 hash). Under them sit `ff61dee`, `85fccad` (streaming implementation) and `2447192`
-(also the tip of local `dashboard-ux-redesign`, three ahead of its origin). Nothing is
-pushed. `CLAUDE.md`/`AGENTS.md` are
-byte-identical. `base.txt` is untracked, a known test-suite leak, in no commit.
+(also the tip of local `dashboard-ux-redesign`, three ahead of its origin). The operator
+asked for the push on 2026-09-29 and `git push origin HEAD:master` fast-forwarded
+`origin/master` from `3415032` to `1a3400c` (18 commits, no force). Local `master` is
+still at the old `e0d7ca6`, and no feature branch was pushed. `CLAUDE.md`/`AGENTS.md` are byte-identical. `base.txt` is untracked, a known test-suite leak, in no commit.
 
 **Shipped (all committed):**
 - 2026-09-27 (`bda3b42`, `2447192`): disclosed-open-decisions, the
@@ -135,7 +136,9 @@ bearer token is minted per start and is not recorded). Session-only; stop with T
 `b7970wd79`. The earlier tasks (`bjq5aqd81`, `bjutv7qpr`) are gone.
 
 **Open — operator decisions:**
-- Push the branch (nothing has been pushed).
+- Local `master` is 37 commits behind `origin/master`; `streaming-harness-output` has no
+  remote branch and `origin/dashboard-ux-redesign` is three commits behind its local
+  branch. Fast-forward local `master` and push the branches only if wanted.
 - A live run that reaches a spec_review question needs `bw run` or guided mode
   with the operator answering; `driver.mjs paid` cannot cross a decision pause.
   Old run stores (team-notes, note-keeper) read `interrupted_or_inconsistent`; a
@@ -147,7 +150,7 @@ bearer token is minted per start and is not recorded). Session-only; stop with T
 - Out of scope, recorded: the store records no cost for a dispatch that failed
   after producing a stream.
 
-**Next up:** Push the branch when the operator asks. Reviewer and implementer quality
+**Next up:** Reviewer and implementer quality
 across levels is unmeasured; a run on a design that attracts findings (for example
 `target-tap-design.md`, or `--effort-for` on a reviewer) is the test, needs its own
 authorization, and a completed paid run never authorizes another. Deferred: refuse an
