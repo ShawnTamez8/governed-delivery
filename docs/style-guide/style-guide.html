@@ -1,0 +1,1758 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Snitch — Rush Style Guide</title>
+<meta name="description" content="Rush: The Snitch black-and-gold system. Tokens, component classes, symbols, responsive rules, and a small script. No framework.">
+<script>
+  // Apply the stored theme before first paint so there is no flash.
+  // Storage access is wrapped: it can throw on file:// and in sandboxed frames,
+  // and an uncaught throw here would kill every listener bound later in the body.
+  try {
+    var t = localStorage.getItem('rush-theme');
+    document.documentElement.dataset.theme = t
+      || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  } catch (e) {
+    document.documentElement.dataset.theme = 'dark';
+  }
+</script>
+<style>
+  /* ==========================================================
+     1 · TOKENS
+     Five groups: surface, line, ink, accent, status.
+     Every other rule in this file composes from these.
+     ========================================================== */
+  :root {
+    color-scheme: dark;
+
+    /* surface — elevation is lightness, not shadow */
+    --bg: #07080A;
+    --bg-2: #0B0C0E;
+    --panel: #0E0F12;
+    --panel-2: #121418;
+    --raise: #191B20;
+    --slab-top: #19160D;
+    --slab-bot: #0C0D10;
+
+    /* line — three weights, no more */
+    --line: #23262C;
+    --line-2: #2E3138;
+    --line-3: #3A3D44;
+
+    /* ink — assigned by role, not by size */
+    --text: #ECEAE4;
+    --muted: #9A988F;
+    --dim: #63625D;
+
+    /* accent — the fill is theme-invariant; only its context remaps */
+    --accent: #D4AF37;
+    --accent-ink: #F2D168;
+    --accent-dim: #6E5B22;
+    --on-accent: #0B0C0E;
+
+    /* status — hue only; severity is the four-tier rubric */
+    --ok: #7FB99A;
+    --info: #74A9E0;
+    --warn: #E8943F;
+    --danger: #E5534B;
+
+    /* tints — plain alpha, remapped with the theme. No color-mix. */
+    --accent-a7: rgba(212, 175, 55, .07);
+    --accent-a10: rgba(212, 175, 55, .10);
+    --accent-a12: rgba(212, 175, 55, .12);
+    --accent-a16: rgba(212, 175, 55, .16);
+    --accent-a20: rgba(212, 175, 55, .20);
+    --accent-lift: #E2C355;
+    --accent-press: #C5A059;
+    --ok-a7: rgba(127, 185, 154, .07);
+    --ok-a12: rgba(127, 185, 154, .12);
+    --ok-a45: rgba(127, 185, 154, .45);
+    --info-a7: rgba(116, 169, 224, .07);
+    --info-a12: rgba(116, 169, 224, .12);
+    --info-a45: rgba(116, 169, 224, .45);
+    --warn-a7: rgba(232, 148, 63, .07);
+    --warn-a10: rgba(232, 148, 63, .10);
+    --warn-a12: rgba(232, 148, 63, .12);
+    --warn-a45: rgba(232, 148, 63, .45);
+    --danger-a7: rgba(229, 83, 75, .07);
+    --danger-a10: rgba(229, 83, 75, .10);
+    --danger-a12: rgba(229, 83, 75, .12);
+    --danger-a18: rgba(229, 83, 75, .18);
+    --danger-a20: rgba(229, 83, 75, .20);
+    --danger-a45: rgba(229, 83, 75, .45);
+    --panel-a70: rgba(14, 15, 18, .70);
+    --panel-a75: rgba(14, 15, 18, .75);
+    --panel-2-a88: rgba(18, 20, 24, .88);
+    --raise-a55: rgba(25, 27, 32, .55);
+
+    /* ambient */
+    --grid: rgba(255,255,255,.018);
+    --glow: rgba(212,175,55,.10);
+
+    /* space — a 4px grid, eight steps */
+    --s-1: 4px;   --s-2: 8px;   --s-3: 12px;  --s-4: 16px;
+    --s-5: 24px;  --s-6: 32px;  --s-7: 48px;  --s-8: 64px;
+
+    /* radius — six steps, nested values subtract 2 */
+    --r-1: 2px;   --r-2: 4px;   --r-3: 6px;
+    --r-4: 8px;   --r-5: 10px;  --r-6: 999px;
+
+    /* motion — two durations, one easing */
+    --dur-1: 150ms; --dur-2: 220ms; --ease: ease;
+
+    --sans: "Segoe UI Variable Text", "Segoe UI", Inter, -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
+    --mono: "Cascadia Code", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  }
+
+  /* Light theme: same structure, remapped values. Brand fills and the
+     mark's gradient are deliberately theme-invariant. */
+  html[data-theme="light"] {
+    color-scheme: light;
+    --bg: #F6F4EF;
+    --bg-2: #FFFFFF;
+    --panel: #FFFFFF;
+    --panel-2: #FBFAF6;
+    --raise: #F0EDE4;
+    --slab-top: #FFFDF7;
+    --slab-bot: #F1EDDF;
+
+    --line: #E3DFD4;
+    --line-2: #D2CCBD;
+    --line-3: #B4AC99;
+
+    --text: #15171B;
+    --muted: #55565A;
+    --dim: #85867F;
+
+    --accent: #D4AF37;
+    --accent-ink: #7A5F0E;
+    --accent-dim: #C0A551;
+    --on-accent: #15171B;
+
+    --ok: #2E6B4F;
+    --info: #1F5C99;
+    --warn: #A2540B;
+    --danger: #B3261E;
+    --ok-a7: rgba(46, 107, 79, .07);
+    --ok-a12: rgba(46, 107, 79, .12);
+    --ok-a45: rgba(46, 107, 79, .45);
+    --info-a7: rgba(31, 92, 153, .07);
+    --info-a12: rgba(31, 92, 153, .12);
+    --info-a45: rgba(31, 92, 153, .45);
+    --warn-a7: rgba(162, 84, 11, .07);
+    --warn-a10: rgba(162, 84, 11, .10);
+    --warn-a12: rgba(162, 84, 11, .12);
+    --warn-a45: rgba(162, 84, 11, .45);
+    --danger-a7: rgba(179, 38, 30, .07);
+    --danger-a10: rgba(179, 38, 30, .10);
+    --danger-a12: rgba(179, 38, 30, .12);
+    --danger-a18: rgba(179, 38, 30, .18);
+    --danger-a20: rgba(179, 38, 30, .20);
+    --danger-a45: rgba(179, 38, 30, .45);
+    --panel-a70: rgba(255, 255, 255, .70);
+    --panel-a75: rgba(255, 255, 255, .75);
+    --panel-2-a88: rgba(251, 250, 246, .88);
+    --raise-a55: rgba(240, 237, 228, .55);
+
+    --grid: rgba(0,0,0,.028);
+    --glow: rgba(212,175,55,.16);
+  }
+
+  /* ==========================================================
+     2 · BASE
+     ========================================================== */
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1100px 620px at 50% -8%, var(--glow), transparent 70%),
+      linear-gradient(var(--grid) 1px, transparent 1px) 0 0 / 100% 48px,
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0 / 48px 100%,
+      var(--bg);
+    background-attachment: fixed;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  svg text { font-family: var(--sans); }
+  svg .mono { font-family: var(--mono); }
+  a { color: var(--accent-ink); }
+  code { font-family: var(--mono); font-size: .92em; color: var(--accent-ink); }
+
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 0 48px; }
+  section { padding: 104px 0 24px; scroll-margin-top: 24px; }
+  section:first-of-type { padding-top: 40px; }
+
+  /* ==========================================================
+     3 · TYPOGRAPHY
+     ========================================================== */
+  .mast { display: flex; align-items: center; gap: 14px; padding: 28px 0 0; }
+  .mark-tile {
+    background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-4);
+    padding: 7px; display: inline-flex;
+  }
+  .mark-tile svg { display: block; }
+  .mast span { font-size: 17px; font-weight: 600; letter-spacing: .02em; }
+  .mast .ver {
+    font-family: var(--mono); font-size: 12.5px; color: var(--dim);
+    border: 1px solid var(--line); border-radius: var(--r-6); padding: 3px 9px; letter-spacing: .04em;
+  }
+
+  h1 {
+    font-size: clamp(38px, 4.6vw, 62px);
+    line-height: 1.04;
+    letter-spacing: -.025em;
+    font-weight: 600;
+    margin: 64px 0 18px;
+    max-width: 940px;
+  }
+  h1 em { font-style: normal; color: var(--accent-ink); }
+  h2 { font-size: clamp(30px, 3.2vw, 42px); letter-spacing: -.02em; font-weight: 600; margin: 0 0 12px; }
+  h3 { font-size: 19px; font-weight: 600; letter-spacing: -.01em; margin: 0; }
+  .lede { font-size: 19px; line-height: 1.5; color: var(--muted); max-width: 700px; margin: 0; }
+  .note { margin: 14px 0 0; font-size: 13.5px; line-height: 1.55; color: var(--muted); max-width: 880px; }
+  .note:first-child { margin-top: 0; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 12.5px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--accent-ink); margin: 0 0 10px;
+  }
+  kbd {
+    font: 600 12.5px var(--mono); border: 1px solid var(--line-2); border-bottom-width: 2px;
+    border-radius: var(--r-1); padding: 2px 6px; background: var(--panel-2); color: var(--muted);
+  }
+
+  /* ==========================================================
+     4 · LAYOUT PRIMITIVES
+     ========================================================== */
+  .panel {
+    margin-top: 28px;
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--line); border-radius: var(--r-5);
+    padding: 28px 28px 22px;
+  }
+  .panel svg { width: 100%; height: auto; display: block; }
+  .plate { background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--r-3); padding: 18px; }
+
+  .spec {
+    margin-top: 20px;
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--line); border-radius: var(--r-5);
+    padding: 24px 26px 22px;
+  }
+  .spec-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .spec-head .tag {
+    margin-left: auto; font-family: var(--mono); font-size: 12.5px; color: var(--dim);
+    border: 1px solid var(--line); border-radius: var(--r-6); padding: 3px 10px; white-space: nowrap;
+  }
+
+  .demo {
+    margin-top: 16px; border: 1px solid var(--line); border-radius: var(--r-3);
+    background: var(--bg-2); padding: 20px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  }
+  .demo.col { flex-direction: column; align-items: stretch; }
+  .demo-label {
+    font-family: var(--mono); font-size: 12.5px; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--dim); margin: 18px 0 -4px;
+  }
+  .demo-label:first-child { margin-top: 0; }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 40px; }
+  .grid.two { grid-template-columns: repeat(2, 1fr); }
+  .card {
+    background: linear-gradient(180deg, var(--panel-2), var(--panel));
+    border: 1px solid var(--line); border-radius: var(--r-5); padding: 22px;
+    display: flex; flex-direction: column;
+  }
+  .card-head { display: flex; align-items: center; gap: 14px; }
+  .ring {
+    width: 42px; height: 42px; flex: none; border-radius: 50%;
+    border: 1px solid var(--accent-dim);
+    background: radial-gradient(circle at 50% 35%, var(--accent-a16), transparent 70%);
+    display: grid; place-items: center; color: var(--accent-ink);
+  }
+  .ring svg { width: 20px; height: 20px; }
+  .card h3 + p { margin: 3px 0 0; font-size: 13.5px; color: var(--muted); }
+  .card .viz { margin: 16px 0 12px; }
+  .card .viz svg { width: 100%; height: auto; display: block; }
+  .card .cap {
+    margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line);
+    font-family: var(--mono); font-size: 12.5px; color: var(--dim);
+  }
+
+  .readouts {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    border: 1px solid var(--line); border-radius: var(--r-4);
+    background: var(--panel-a70);
+    margin-top: 28px;
+  }
+  .readout { padding: 22px 26px; display: flex; align-items: baseline; gap: 14px; }
+  .readout + .readout { border-left: 1px solid var(--line); }
+  .readout b {
+    font-size: 34px; font-weight: 600; color: var(--accent-ink); letter-spacing: -.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .readout span { font-size: 14px; color: var(--muted); line-height: 1.35; }
+
+  .principles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-top: 40px; }
+  .principle { border: 1px solid var(--line); border-radius: var(--r-5); padding: 24px; background: var(--panel-a75); }
+  .principle .ring { margin-bottom: 18px; }
+  .principle h4 { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
+  .principle p { margin: 0; font-size: 14px; line-height: 1.45; color: var(--muted); }
+
+  .closing { text-align: center; padding: 120px 0 56px; }
+  .closing h2 { font-size: clamp(34px, 4vw, 52px); }
+  .closing h2 em { font-style: normal; color: var(--accent-ink); }
+  .closing .mark-tile { display: inline-flex; margin-bottom: 24px; }
+  .source { text-align: center; font-family: var(--mono); font-size: 12.5px; color: var(--dim); padding-bottom: 48px; }
+
+  /* ==========================================================
+     5 · FIGURE COLOR CLASSES
+     Diagrams read the same tokens as the UI. No hex in markup.
+     ========================================================== */
+  .f-line    { fill: none; stroke: var(--line);   stroke-width: 1.2; }
+  .f-line-2  { fill: none; stroke: var(--line-2); stroke-width: 1.4; }
+  .f-line-3  { fill: none; stroke: var(--line-3); stroke-width: 1.6; }
+  .f-acc     { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+  .f-acc-2   { fill: none; stroke: var(--accent); stroke-width: 2; }
+  .f-acc-soft{ fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-opacity: .7; }
+  .f-ok      { fill: none; stroke: var(--ok);     stroke-width: 1.6; }
+  .f-warn    { fill: none; stroke: var(--warn);   stroke-width: 1.6; }
+  .f-danger  { fill: none; stroke: var(--danger); stroke-width: 1.6; }
+  .f-dash    { stroke-dasharray: 4 4; }
+  .f-fill    { fill: var(--bg-2); }
+  .f-panel   { fill: var(--panel); }
+  .f-raise   { fill: var(--raise); }
+  .f-txt     { fill: var(--text); }
+  .f-mut     { fill: var(--muted); }
+  .f-dim     { fill: var(--dim); }
+  .f-accf    { fill: var(--accent); }
+  .f-tint    { fill: var(--accent-a12); }
+  .f-tint-2  { fill: var(--panel-2-a88); }
+  .f-done    { fill: var(--ok-a12); stroke: var(--ok); stroke-opacity: .7; }
+
+  /* Dashes travel in the direction data moves. */
+  .flow { stroke-dasharray: 2 10; }
+  @media (prefers-reduced-motion: no-preference) {
+    .flow { animation: flow 1.6s linear infinite; }
+    .flow.slow { animation-duration: 3.2s; }
+    @keyframes flow { to { stroke-dashoffset: -24; } }
+  }
+
+  /* ==========================================================
+     6 · SWATCHES, SCALES, VERDICTS
+     ========================================================== */
+  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(172px, 1fr)); gap: 14px; margin-top: 22px; }
+  .swatch { border: 1px solid var(--line); border-radius: var(--r-4); overflow: hidden; background: var(--panel); }
+  .swatch .fill { height: 58px; border-bottom: 1px solid var(--line); }
+  .swatch .info { padding: 10px 12px; }
+  .swatch .info b { display: block; font-size: 13px; font-weight: 600; }
+  .swatch .info span { font-family: var(--mono); font-size: 12.5px; color: var(--dim); }
+
+  .scale-row {
+    display: grid; grid-template-columns: 92px 1fr 132px; gap: 16px; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid var(--line);
+  }
+  .scale-row:last-child { border-bottom: 0; }
+  .scale-bar { height: 14px; border-radius: var(--r-1); background: linear-gradient(90deg, var(--accent-dim), var(--accent)); }
+  .scale-key { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  .scale-use { font-family: var(--mono); font-size: 12.5px; color: var(--dim); }
+
+  .type-row {
+    display: grid; grid-template-columns: 190px 1fr; gap: 28px; align-items: baseline;
+    padding: 18px 0; border-bottom: 1px solid var(--line);
+  }
+  .type-row:last-child { border-bottom: 0; }
+  .type-meta { font-family: var(--mono); font-size: 12.5px; color: var(--dim); line-height: 1.65; }
+  .type-spec { min-width: 0; overflow-wrap: anywhere; }
+
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
+  .verdict { border: 1px solid var(--line); border-radius: var(--r-4); padding: 18px; background: var(--panel); }
+  .verdict.good { border-top: 2px solid var(--ok); }
+  .verdict.bad { border-top: 2px solid var(--danger); }
+  .verdict h4 { margin: 0 0 10px; font: 600 12px var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+  .verdict.good h4 { color: var(--ok); }
+  .verdict.bad h4 { color: var(--danger); }
+  .verdict p { margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--muted); }
+
+  /* ==========================================================
+     7 · COMPONENTS
+     ========================================================== */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    border-radius: var(--r-2); border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text);
+    font: 600 14px/1 var(--sans); padding: 11px 16px; cursor: pointer;
+    transition: background var(--dur-1) var(--ease), border-color var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+  }
+  .btn:hover { background: var(--raise); border-color: var(--line-3); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn.primary {
+    background: linear-gradient(180deg, var(--accent-lift), var(--accent));
+    color: var(--on-accent); border-color: transparent;
+  }
+  .btn.primary:hover { background: linear-gradient(180deg, var(--accent), var(--accent-press)); }
+  .btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+  .btn.ghost:hover { color: var(--text); background: var(--panel-2); }
+  .btn.danger { color: var(--danger); border-color: var(--danger-a45); background: var(--danger-a10); }
+  .btn.danger:hover { background: var(--danger-a18); border-color: var(--danger); }
+  .btn.sm { padding: 7px 11px; font-size: 12.5px; border-radius: var(--r-1); }
+  .btn.lg { padding: 14px 22px; font-size: 15px; border-radius: var(--r-4); }
+  .btn[disabled] { opacity: .45; cursor: not-allowed; }
+  .btn .ico { width: 15px; height: 15px; flex: none; }
+  .spinner {
+    width: 14px; height: 14px; border-radius: 50%; flex: none;
+    border: 2px solid var(--line-3); border-top-color: currentColor;
+  }
+  @media (prefers-reduced-motion: no-preference) { .spinner { animation: spin .8s linear infinite; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .field { display: flex; flex-direction: column; gap: 6px; min-width: 230px; }
+  .field > label { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+  .input {
+    height: 40px; border-radius: var(--r-2); border: 1px solid var(--line-2); background: var(--bg-2);
+    color: var(--text); padding: 0 12px; font: 400 14px var(--sans); width: 100%;
+  }
+  .input::placeholder { color: var(--dim); }
+  .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-a20); }
+  .input.bad { border-color: var(--danger); }
+  .input.bad:focus { box-shadow: 0 0 0 3px var(--danger-a20); }
+  .input:disabled, .input[readonly] { opacity: .5; cursor: not-allowed; }
+  textarea.input { height: auto; padding: 10px 12px; line-height: 1.5; resize: vertical; }
+  .help { font-size: 12px; color: var(--dim); }
+  .err { font-size: 12px; color: var(--danger); display: flex; align-items: center; gap: 6px; }
+  .err svg { width: 13px; height: 13px; flex: none; }
+
+  .check { display: flex; align-items: center; gap: 4px; min-height: 40px; font-size: 13.5px; color: var(--text); cursor: pointer; }
+  .check input {
+    appearance: none; position: relative; width: 40px; height: 40px; margin: 0; flex: none;
+    border: 0; background: transparent; display: grid; place-items: center; cursor: pointer; color: var(--on-accent);
+  }
+  .check input::before {
+    content: ""; width: 17px; height: 17px; border-radius: var(--r-1);
+    border: 1px solid var(--line-3); background: var(--bg-2);
+  }
+  .check input:checked::before { background: var(--accent); border-color: var(--accent); }
+  .check input:checked::after {
+    content: ""; position: absolute; width: 8px; height: 4px; border-left: 2px solid var(--on-accent);
+    border-bottom: 2px solid var(--on-accent); transform: translateY(-1px) rotate(-45deg);
+  }
+  .check input[type="radio"]::before { border-radius: 50%; }
+  .check input[type="radio"]:checked::before { background: var(--bg-2); border: 5px solid var(--accent); }
+  .check input[type="radio"]:checked::after { content: none; }
+  .check input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .check input:disabled { opacity: .45; cursor: not-allowed; }
+  .switch { display: inline-flex; align-items: center; min-width: 40px; min-height: 40px; }
+  .switch input {
+    appearance: none; position: relative; width: 40px; height: 40px; margin: 0; border: 0;
+    background: transparent; cursor: pointer;
+  }
+  .switch input::before {
+    content: ""; position: absolute; left: 1px; top: 9px; width: 38px; height: 22px;
+    border-radius: var(--r-6); background: var(--line-2);
+  }
+  .switch input::after {
+    content: ""; position: absolute; top: 12px; left: 4px; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--muted); transition: transform var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
+  }
+  .switch input:checked::before { background: var(--accent); }
+  .switch input:checked::after { transform: translateX(16px); background: var(--on-accent); }
+  .switch input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: var(--r-1); background: var(--line-2); }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg-2); }
+  input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg-2); }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px; height: 27px; padding: 0 11px;
+    border-radius: var(--r-6); border: 1px solid var(--line-2); background: var(--panel-2);
+    font-size: 12.5px; color: var(--muted); white-space: nowrap;
+  }
+  .chip .pips { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+  .chip svg { width: 13px; height: 13px; flex: none; }
+  .chip.ok     { color: var(--ok);     border-color: var(--ok-a45);     background: var(--ok-a12); }
+  .chip.info   { color: var(--info);   border-color: var(--info-a45);   background: var(--info-a12); }
+  .chip.warn   { color: var(--warn);   border-color: var(--warn-a45);   background: var(--warn-a12); }
+  .chip.danger { color: var(--danger); border-color: var(--danger-a45); background: var(--danger-a12); }
+  .chip.acc    { color: var(--accent-ink); border-color: var(--accent-dim); background: var(--accent-a12); }
+  .chip.x { padding-right: 6px; }
+
+  .sev {
+    display: inline-flex; align-items: center; gap: 9px; height: 30px; padding: 0 12px 0 10px;
+    border-radius: var(--r-1); border: 1px solid var(--line); background: var(--panel-2);
+    font-family: var(--mono); font-size: 12.5px; letter-spacing: .04em; color: var(--muted);
+  }
+  .sev i { width: 3px; height: 15px; border-radius: var(--r-1); background: currentColor; flex: none; }
+  .sev.critical { color: var(--danger);    border-color: var(--danger-a45); background: var(--danger-a10); }
+  .sev.high     { color: var(--warn);      border-color: var(--warn-a45);   background: var(--warn-a10); }
+  .sev.medium   { color: var(--accent-ink); border-color: var(--accent-dim); background: var(--accent-a10); }
+  .sev.low      { color: var(--muted); }
+
+  .callout {
+    --c: var(--info);
+    --tint: var(--info-a7);
+    display: flex; gap: 12px; border: 1px solid var(--line); border-left: 2px solid var(--c);
+    border-radius: var(--r-4); background: linear-gradient(var(--tint), var(--tint)), var(--panel); padding: 14px 16px;
+  }
+  .callout.ok { --c: var(--ok); --tint: var(--ok-a7); }
+  .callout.warn { --c: var(--warn); --tint: var(--warn-a7); }
+  .callout.danger { --c: var(--danger); --tint: var(--danger-a7); }
+  .callout.acc { --c: var(--accent); --tint: var(--accent-a7); }
+  .callout > svg { width: 18px; height: 18px; flex: none; color: var(--c); margin-top: 2px; }
+  .callout b { display: block; font-size: 13.5px; margin-bottom: 3px; }
+  .callout p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
+
+  table.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .tbl th {
+    text-align: left; font: 600 12.5px var(--mono); letter-spacing: .08em; text-transform: uppercase;
+    color: var(--dim); padding: 10px 12px; border-bottom: 1px solid var(--line-2); white-space: nowrap;
+  }
+  .tbl td { padding: 11px 12px; border-bottom: 1px solid var(--line); }
+  .tbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .tbl td.mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .tbl tbody tr:hover { background: var(--raise-a55); }
+  .table-scroll { max-width: 100%; overflow-x: auto; }
+  .grid > *, .grid.two > * { min-width: 0; }
+  .tbl.dense td { padding: 6px 12px; }
+  .tbl caption { caption-side: top; text-align: left; font: 400 12.5px var(--mono); color: var(--dim); padding-bottom: 8px; }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+  .tab {
+    appearance: none; background: none; border: 0; border-bottom: 2px solid transparent;
+    padding: 10px 14px; font: 600 13.5px var(--sans); color: var(--muted);
+    margin-bottom: -1px; cursor: pointer; white-space: nowrap;
+  }
+  .tab.on { color: var(--text); border-bottom-color: var(--accent); }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .tab .count { font-family: var(--mono); font-size: 12.5px; color: var(--dim); margin-left: 6px; }
+
+  .navlist { display: flex; flex-direction: column; gap: 2px; width: 240px; }
+  .navrow {
+    display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 9px 12px;
+    border: 0; border-radius: var(--r-2); background: none; font: 600 13.5px var(--sans);
+    color: var(--muted); text-align: left; text-decoration: none; cursor: pointer;
+  }
+  .navrow svg { width: 17px; height: 17px; flex: none; }
+  .navrow:hover { background: var(--panel-2); color: var(--text); }
+  .navrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .navrow.on { background: var(--accent-a12); color: var(--text); }
+  .navrow.on svg { color: var(--accent-ink); }
+  .navrow .tail { margin-left: auto; font-family: var(--mono); font-size: 12.5px; color: var(--dim); }
+
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 16px; }
+  .kpi { border: 1px solid var(--line); border-radius: var(--r-3); background: var(--panel-2); padding: 16px 18px; }
+  .kpi .k { font: 400 12.5px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+  .kpi .v { font-size: 30px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; margin-top: 6px; }
+  .kpi .d { font-size: 12px; font-weight: 600; margin-top: 4px; display: flex; align-items: center; gap: 5px; color: var(--dim); }
+  .kpi .d svg { width: 13px; height: 13px; }
+  .kpi .d.up { color: var(--ok); }
+  .kpi .d.down { color: var(--danger); }
+
+  .meter { height: 8px; border-radius: var(--r-1); background: var(--line); overflow: hidden; }
+  .meter i { display: block; height: 100%; border-radius: var(--r-1); background: var(--accent); }
+  .meter i.warn { background: var(--warn); }
+  .meter i.danger { background: var(--danger); }
+  .meter i.ok { background: var(--ok); }
+
+  .skel { background: var(--line); border-radius: var(--r-1); height: 12px; }
+  .empty { text-align: center; padding: 40px 20px; border: 1px dashed var(--line-2); border-radius: var(--r-3); }
+  .empty svg { width: 26px; height: 26px; color: var(--dim); }
+  .empty b { display: block; margin: 12px 0 4px; font-size: 14.5px; }
+  .empty p { margin: 0 0 16px; font-size: 13px; color: var(--muted); }
+
+  .toast {
+    display: flex; gap: 12px; align-items: flex-start; width: 330px;
+    border: 1px solid var(--line-2); border-radius: var(--r-4); background: var(--raise); padding: 13px 15px;
+    box-shadow: 0 18px 40px rgba(0,0,0,.45);
+  }
+  .toast svg { width: 17px; height: 17px; flex: none; color: var(--ok); margin-top: 2px; }
+  .toast b { display: block; font-size: 13.5px; }
+  .toast p { margin: 2px 0 0; font-size: 12.5px; color: var(--muted); }
+
+  /* Application-shape mockups */
+  .mock { border: 1px solid var(--line); border-radius: var(--r-3); background: var(--bg-2); padding: 12px; display: grid; gap: 8px; min-height: 172px; align-content: start; }
+  .mock .bar { height: 9px; border-radius: var(--r-1); background: var(--line-2); }
+  .mock .bar.acc { background: var(--accent-dim); }
+  .mock .blk { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-1); padding: 8px; display: grid; gap: 6px; }
+  .mock .row { display: flex; gap: 8px; }
+  .mock .row > * { flex: 1; }
+  .mock .ph { font: 400 9.5px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+  .mock .line { height: 7px; border-radius: var(--r-1); background: var(--line); }
+  .mock .line.acc { background: var(--accent-dim); }
+  .mock .side { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-1); padding: 8px; display: grid; gap: 6px; align-content: start; }
+  .mock .foot { height: 9px; border-radius: var(--r-1); background: var(--line-2); width: 42%; }
+
+  .code {
+    margin: 0; padding: 18px 20px; background: var(--bg-2); border: 1px solid var(--line);
+    border-radius: var(--r-3); overflow-x: auto; font: 400 12.5px/1.7 var(--mono); color: var(--text);
+  }
+  .code .c { color: var(--dim); }
+  .code .k { color: var(--accent-ink); }
+  .code-wrap { position: relative; margin-top: 16px; }
+  .copy {
+    position: absolute; top: 10px; right: 10px; z-index: 1;
+    border: 1px solid var(--line-2); background: var(--raise); color: var(--muted);
+    font: 600 12.5px var(--sans); border-radius: var(--r-1); padding: 6px 10px; cursor: pointer;
+  }
+  .copy:hover { color: var(--text); border-color: var(--line-3); }
+
+  .checks { list-style: none; margin: 16px 0 0; padding: 0; display: grid; gap: 11px; }
+  .checks li { display: flex; gap: 11px; font-size: 14px; line-height: 1.5; color: var(--muted); }
+  .checks svg { width: 17px; height: 17px; flex: none; margin-top: 2px; }
+  .checks .yes svg { color: var(--ok); }
+  .checks .no svg { color: var(--danger); }
+
+  /* Section rail */
+  .nav { position: fixed; right: 22px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 13px; z-index: 5; }
+  .nav a { width: 9px; height: 9px; border-radius: 50%; border: 1px solid var(--accent-dim); display: block; position: relative; }
+  .nav a.on { background: var(--accent); border-color: var(--accent); }
+  .nav a::after {
+    content: attr(data-label); position: absolute; right: 18px; top: 50%; transform: translateY(-50%);
+    white-space: nowrap; font-size: 12px; color: var(--muted); opacity: 0; transition: opacity var(--dur-1) var(--ease); pointer-events: none;
+  }
+  .nav a:hover::after, .nav a:focus-visible::after { opacity: 1; }
+
+  /* Theme toggle */
+  .theme {
+    position: fixed; left: 22px; bottom: 22px; z-index: 6; width: 40px; height: 40px;
+    display: grid; place-items: center; cursor: pointer;
+    border: 1px solid var(--line-2); background: var(--panel-2); color: var(--muted); border-radius: var(--r-4);
+  }
+  .theme:hover { color: var(--text); border-color: var(--line-3); }
+  .theme svg { width: 18px; height: 18px; }
+  html[data-theme="dark"] .theme .i-light { display: none; }
+  html[data-theme="light"] .theme .i-dark { display: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { transition-duration: .01ms !important; }
+  }
+
+  /* ==========================================================
+     8 · RESPONSIVE
+     ========================================================== */
+  @media (max-width: 1100px) {
+    .grid, .principles { grid-template-columns: repeat(2, 1fr); }
+    .readouts { grid-template-columns: repeat(2, 1fr); }
+    .readout:nth-child(3) { border-left: 0; }
+    .readout:nth-child(n+3) { border-top: 1px solid var(--line); }
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+    .pair { grid-template-columns: 1fr; }
+    .type-row { grid-template-columns: 150px 1fr; gap: 20px; }
+    .nav { display: none; }
+  }
+  @media (max-width: 720px) {
+    .wrap { padding: 0 20px; }
+    .grid, .principles, .readouts, .grid.two, .kpis { grid-template-columns: 1fr; }
+    .readout + .readout { border-left: 0; border-top: 1px solid var(--line); }
+    .type-row { grid-template-columns: 1fr; gap: 8px; }
+    .scale-row { grid-template-columns: 78px 1fr; }
+    .scale-use { display: none; }
+    .panel, .spec { padding: 20px 16px 16px; }
+    .tbl.dense thead {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
+    .tbl.dense { position: relative; }
+    .tbl.dense, .tbl.dense tbody, .tbl.dense tr, .tbl.dense td { display: block; width: 100%; }
+    .tbl.dense tr { margin: 0 0 12px; padding: 4px 0; border: 1px solid var(--line); border-radius: var(--r-2); }
+    .tbl.dense td {
+      display: flex; justify-content: space-between; align-items: center; gap: 12px;
+      border-bottom: 0; text-align: right;
+    }
+    .tbl.dense td::before {
+      content: attr(data-label); font: 600 12.5px var(--mono); letter-spacing: .08em;
+      text-transform: uppercase; color: var(--dim); text-align: left;
+    }
+  }
+  @media print {
+    body { background: #fff; color: #000; }
+    .nav, .theme, .copy { display: none; }
+    section { padding: 24px 0; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Shared symbols. Kept out of layout without display:none so gradients still resolve. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFE05A"/><stop offset="0.38" stop-color="#f9c735"/><stop offset="0.72" stop-color="#E9A91B"/><stop offset="1" stop-color="#CF8B08"/></linearGradient>
+  </defs>
+
+  <!-- Snitch mark. Official four-stop gold. Do not redraw it in CSS. -->
+  <symbol id="mark" viewBox="68 82 442 448">
+    <path d="M 70 308 L 70 399 L 72 407 L 78 419 L 91 430 L 192 486 L 259 525 L 265 527 L 280 527 L 297 519 L 440 439 L 481 418 L 491 411 L 498 404 L 504 393 L 507 380 L 506 363 L 504 357 L 498 347 L 487 337 L 476 332 L 453 318 L 445 315 L 422 332 L 411 337 L 404 342 L 379 355 L 286 408 L 273 411 L 259 410 L 246 405 L 241 401 L 173 364 L 152 351 L 141 346 L 131 339 L 113 330 L 87 314 L 72 306 Z M 351 278 L 356 296 L 355 312 L 373 312 L 374 311 L 391 311 L 392 310 L 428 310 L 429 309 L 429 304 L 426 302 L 361 281 L 355 278 Z M 272 248 L 271 249 L 261 250 L 247 256 L 240 261 L 229 272 L 220 290 L 218 299 L 218 314 L 222 328 L 228 339 L 244 355 L 253 360 L 263 363 L 285 364 L 297 361 L 305 357 L 316 349 L 322 343 L 328 334 L 333 322 L 334 297 L 332 288 L 327 277 L 312 260 L 304 255 L 292 250 L 282 249 L 281 248 Z M 70 226 L 71 248 L 78 263 L 87 272 L 131 297 L 133 297 L 144 284 L 159 273 L 165 271 L 183 260 L 193 256 L 213 244 L 236 233 L 271 213 L 290 204 L 310 203 L 315 204 L 337 215 L 504 307 L 506 307 L 507 304 L 507 214 L 503 199 L 496 188 L 483 179 L 427 149 L 422 145 L 398 133 L 393 129 L 366 115 L 354 107 L 337 99 L 323 90 L 310 85 L 301 85 L 290 88 L 207 133 L 169 152 L 162 157 L 152 161 L 94 192 L 88 196 L 79 205 L 73 215 Z" fill="url(#gold)" fill-rule="evenodd"/>
+  </symbol>
+
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-check-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-x-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5l5 5M14.5 9.5l-5 5"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-alert" viewBox="0 0 24 24"><path d="M12 4.5l8.5 15h-17z"/><path d="M12 10v4"/><path d="M12 17h.01"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-person" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5"/><path d="M16 5.2a3.5 3.5 0 0 1 0 6.6"/><path d="M18 14.2c2.1.7 3.5 2.8 3.5 5.3"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.5"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18M3 15h18M9.5 9.5V20"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-form" viewBox="0 0 24 24"><rect x="3.5" y="3" width="17" height="18" rx="2.5"/><path d="M7.5 8h9M7.5 12h9M7.5 16h5"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-mobile" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M10.5 5.5h3M10.5 18.5h3"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-doc" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-folder" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4l2 2.5h9A1.5 1.5 0 0 1 21 9v8.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-filter" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-sort" viewBox="0 0 24 24"><path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-chevron" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-arrow-right" viewBox="0 0 24 24"><path d="M4 12h15M13 6l6 6-6 6"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-arrow-up" viewBox="0 0 24 24"><path d="M12 20V5M6 11l6-6 6 6"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-14 5.3L4 15M4 9V4h5M4 12a8 8 0 0 1 14-5.3L20 9M20 15v5h-5"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="12" r="4"/><path d="M12 12h9M18 12v3.5"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-code" viewBox="0 0 24 24"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M13.5 4.5l-3 15"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M12.5 15H17"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-cloud" viewBox="0 0 24 24"><path d="M7 18h10.5a3.5 3.5 0 0 0 .3-7A5.5 5.5 0 0 0 7.2 12 3 3 0 0 0 7 18z"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6.5" rx="2"/><rect x="3" y="13.5" width="18" height="6.5" rx="2"/><path d="M7 7.2h.01M7 16.8h.01"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v13c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-13M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-branch" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10M18 9c0 4.5-7 3.5-11 8"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-commit" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><path d="M2 12h6.5M15.5 12H22"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-layers" viewBox="0 0 24 24"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-stack" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="6" rx="1.5"/><rect x="3" y="12" width="18" height="9" rx="1.5"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 0 0 0 18c1.2 0 1.8-.8 1.8-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.8-1.6 1.7-1.6H16a5 5 0 0 0 5-5c0-4-4-7.3-9-7.3z"/><circle cx="8" cy="11" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16" cy="9" r="1"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-ruler" viewBox="0 0 24 24"><rect x="2.5" y="8" width="19" height="8" rx="2"/><path d="M7 8v3M11 8v4M15 8v3M19 8v4"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-type" viewBox="0 0 24 24"><path d="M4 6.5V4.5h16v2M12 4.5V19M8.5 19h7"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-gauge" viewBox="0 0 24 24"><path d="M3.5 18a8.5 8.5 0 1 1 17 0M12 18l4.5-6M7 14.5h.01M12 9.5h.01M17 14.5h.01"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-coin" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="2.8"/><path d="M5 6v6c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8V6M5 12v6c0 1.5 3.1 2.8 7 2.8s7-1.3 7-2.8v-6"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-loop" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5.3L20 9M20 4v5h-5M20 12a8 8 0 0 1-14 5.3L4 15M4 20v-5h5"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5.5l3.5 2"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5l8.5 6 8.5-6"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-chat" viewBox="0 0 24 24"><path d="M20 15.5V6A1.5 1.5 0 0 0 18.5 4.5h-13A1.5 1.5 0 0 0 4 6v9a1.5 1.5 0 0 0 1.5 1.5H9l4 4 4-4h1.5A1.5 1.5 0 0 0 20 15.5z"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 5.5A1.5 1.5 0 0 0 13.5 4h-8A1.5 1.5 0 0 0 4 5.5v8A1.5 1.5 0 0 0 5.5 15"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8.5 8.5M18 14v5.5A1.5 1.5 0 0 1 16.5 21h-11A1.5 1.5 0 0 1 4 19.5v-11A1.5 1.5 0 0 1 5.5 7H11"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 11L12 15.5 16.5 11M4.5 19.5h15"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6"/></symbol>
+  <symbol fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></symbol>
+</svg>
+
+<button class="theme" type="button" aria-label="Toggle color theme">
+  <svg class="i-dark" aria-hidden="true"><use href="#i-moon"/></svg>
+  <svg class="i-light" aria-hidden="true"><use href="#i-sun"/></svg>
+</button>
+
+<nav class="nav" aria-label="Sections">
+  <a href="#system" data-label="The system" class="on"></a>
+  <a href="#color" data-label="Color"></a>
+  <a href="#type" data-label="Typography"></a>
+  <a href="#space" data-label="Space &amp; grid"></a>
+  <a href="#components" data-label="Components"></a>
+  <a href="#status" data-label="Status &amp; data"></a>
+  <a href="#motion" data-label="Motion &amp; icons"></a>
+  <a href="#patterns" data-label="App recipes"></a>
+  <a href="#adopt" data-label="Adoption"></a>
+</nav>
+
+<main class="wrap">
+
+  <!-- 1 · The system -->
+  <section id="system">
+    <div class="mast">
+      <span class="mark-tile"><svg width="30" height="30" viewBox="68 82 442 448" aria-hidden="true">
+            <defs><linearGradient id="mark-gold-30" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFE05A"/><stop offset="0.38" stop-color="#f9c735"/><stop offset="0.72" stop-color="#E9A91B"/><stop offset="1" stop-color="#CF8B08"/></linearGradient></defs>
+            <path d="M 70 308 L 70 399 L 72 407 L 78 419 L 91 430 L 192 486 L 259 525 L 265 527 L 280 527 L 297 519 L 440 439 L 481 418 L 491 411 L 498 404 L 504 393 L 507 380 L 506 363 L 504 357 L 498 347 L 487 337 L 476 332 L 453 318 L 445 315 L 422 332 L 411 337 L 404 342 L 379 355 L 286 408 L 273 411 L 259 410 L 246 405 L 241 401 L 173 364 L 152 351 L 141 346 L 131 339 L 113 330 L 87 314 L 72 306 Z M 351 278 L 356 296 L 355 312 L 373 312 L 374 311 L 391 311 L 392 310 L 428 310 L 429 309 L 429 304 L 426 302 L 361 281 L 355 278 Z M 272 248 L 271 249 L 261 250 L 247 256 L 240 261 L 229 272 L 220 290 L 218 299 L 218 314 L 222 328 L 228 339 L 244 355 L 253 360 L 263 363 L 285 364 L 297 361 L 305 357 L 316 349 L 322 343 L 328 334 L 333 322 L 334 297 L 332 288 L 327 277 L 312 260 L 304 255 L 292 250 L 282 249 L 281 248 Z M 70 226 L 71 248 L 78 263 L 87 272 L 131 297 L 133 297 L 144 284 L 159 273 L 165 271 L 183 260 L 193 256 L 213 244 L 236 233 L 271 213 L 290 204 L 310 203 L 315 204 L 337 215 L 504 307 L 506 307 L 507 304 L 507 214 L 503 199 L 496 188 L 483 179 L 427 149 L 422 145 L 398 133 L 393 129 L 366 115 L 354 107 L 337 99 L 323 90 L 310 85 L 301 85 L 290 88 L 207 133 L 169 152 L 162 157 L 152 161 L 94 192 L 88 196 L 79 205 L 73 215 Z" fill="url(#mark-gold-30)" fill-rule="evenodd"/>
+          </svg></span>
+      <span>The Snitch</span>
+      <span class="ver">Rush · v1</span>
+    </div>
+
+    <h1>Black and gold for<br><em>dense engineering</em> work.</h1>
+    <p class="lede">The Rush system behind The Snitch. Five token groups, eighteen component patterns, four status tiers, six application shapes. Tokens are the source of truth, but a working screen also needs the component classes, the mark and icon symbols, the responsive rules, and the small script in this file.</p>
+
+    <figure class="panel" role="img" aria-label="System anatomy: application shapes sit on patterns, patterns on components, components on primitives, primitives on tokens. Tokens are the only place color is defined, and three rules govern everything above them.">
+      <svg viewBox="0 0 1380 620">
+        <defs>
+          <linearGradient id="slabFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--slab-top)"/><stop offset="1" style="stop-color:var(--slab-bot)"/></linearGradient>
+          <radialGradient id="coreGlow"><stop offset="0" style="stop-color:var(--accent);stop-opacity:.26"/><stop offset="1" style="stop-color:var(--accent);stop-opacity:0"/></radialGradient>
+        </defs>
+
+        <!-- Application shapes -->
+        <rect x="240" y="20" width="900" height="86" rx="8" fill="url(#slabFill)" stroke="var(--accent)" stroke-width="1.4"/>
+        <text x="268" y="52" font-size="11" letter-spacing="3.4" class="f-accf" font-weight="600">APPLICATION SHAPES</text>
+        <g class="f-acc" stroke-opacity=".8"><path d="M276 66h30M440 66h30M610 66h30M775 66h30M940 66h30"/></g>
+        <g font-size="14.5" class="f-txt" text-anchor="middle">
+          <text x="330" y="86">Console</text><text x="500" y="86">Marketing</text>
+          <text x="670" y="86">Wizard</text><text x="845" y="86">Admin</text>
+          <text x="1010" y="86">PWA</text>
+        </g>
+        <path d="M690 106v34" class="f-acc-soft flow" fill="none"/>
+
+        <!-- Patterns -->
+        <rect x="240" y="140" width="900" height="86" rx="8" class="f-panel" stroke="var(--line-2)" stroke-width="1.2"/>
+        <text x="268" y="172" font-size="11" letter-spacing="3.4" class="f-mut" font-weight="600">PATTERNS</text>
+        <g class="f-line-2" stroke-opacity=".8"><path d="M276 186h30M456 186h30M636 186h30M816 186h30"/></g>
+        <g font-size="14.5" class="f-txt" text-anchor="middle">
+          <text x="360" y="206">KPI row</text><text x="540" y="206">Prose page</text>
+          <text x="720" y="206">Step group</text><text x="900" y="206">Data grid</text>
+        </g>
+        <path d="M690 226v34" class="f-acc-soft flow" fill="none"/>
+
+        <!-- Components -->
+        <rect x="240" y="260" width="900" height="96" rx="8" class="f-panel" stroke="var(--line-2)" stroke-width="1.2"/>
+        <text x="268" y="292" font-size="11" letter-spacing="3.4" class="f-mut" font-weight="600">COMPONENTS · 18</text>
+        <g font-size="14" class="f-txt" text-anchor="middle">
+          <text x="330" y="328">Button</text><text x="450" y="328">Field</text>
+          <text x="570" y="328">Select</text><text x="700" y="328">Chip</text>
+          <text x="820" y="328">Table</text><text x="950" y="328">Callout</text>
+          <text x="1080" y="328">Toast</text>
+        </g>
+        <path d="M690 356v34" class="f-acc-soft flow" fill="none"/>
+
+        <!-- Primitives -->
+        <rect x="240" y="390" width="900" height="86" rx="8" class="f-panel" stroke="var(--line-2)" stroke-width="1.2"/>
+        <text x="268" y="422" font-size="11" letter-spacing="3.4" class="f-mut" font-weight="600">PRIMITIVES</text>
+        <g font-size="14" class="f-txt" text-anchor="middle">
+          <text x="360" y="456">4px grid</text><text x="560" y="456">6 radii</text>
+          <text x="770" y="456">2 type ramps</text><text x="990" y="456">4 elevations</text>
+        </g>
+        <path d="M690 476v34" class="f-acc-soft flow" fill="none"/>
+
+        <!-- Tokens -->
+        <rect x="240" y="510" width="900" height="90" rx="8" fill="url(#slabFill)" stroke="var(--accent)" stroke-width="1.4"/>
+        <ellipse cx="690" cy="556" rx="160" ry="46" fill="url(#coreGlow)"/>
+        <text x="268" y="546" font-size="11" letter-spacing="3.4" class="f-accf" font-weight="600">TOKENS · the only place color is defined</text>
+        <g stroke="var(--line-3)" stroke-width="1.2">
+          <path d="M300 570h60M440 570h60M545 570h70M645 570h70M765 570h70M925 570h70"/>
+        </g>
+        <g font-size="13.5" class="f-txt" text-anchor="middle">
+          <text x="330" y="580">surface</text><text x="470" y="580">line</text>
+          <text x="580" y="580">ink</text><text x="680" y="580">accent</text>
+          <text x="800" y="580">status</text><text x="960" y="580">type</text>
+        </g>
+
+        <!-- Governing rules -->
+        <text x="1190" y="40" font-size="11" letter-spacing="3.4" class="f-accf" font-weight="600">RULES</text>
+        <g>
+          <circle cx="1196" cy="96" r="15" class="f-fill" stroke="var(--accent-dim)"/>
+          <use href="#i-palette" x="1188" y="88" width="16" height="16" style="color:var(--accent-ink)"/>
+          <text x="1224" y="92" font-size="13.5" class="f-txt">Color comes from</text>
+          <text x="1224" y="110" font-size="13.5" class="f-txt">tokens only</text>
+        </g>
+        <g>
+          <circle cx="1196" cy="206" r="15" class="f-fill" stroke="var(--accent-dim)"/>
+          <use href="#i-layers" x="1188" y="198" width="16" height="16" style="color:var(--accent-ink)"/>
+          <text x="1224" y="202" font-size="13.5" class="f-txt">Density is a</text>
+          <text x="1224" y="220" font-size="13.5" class="f-txt">decision, not an</text>
+          <text x="1224" y="238" font-size="13.5" class="f-txt">accident</text>
+        </g>
+        <g>
+          <circle cx="1196" cy="326" r="15" class="f-fill" stroke="var(--accent-dim)"/>
+          <use href="#i-eye" x="1188" y="318" width="16" height="16" style="color:var(--accent-ink)"/>
+          <text x="1224" y="322" font-size="13.5" class="f-txt">Every state is</text>
+          <text x="1224" y="340" font-size="13.5" class="f-txt">designed — empty,</text>
+          <text x="1224" y="358" font-size="13.5" class="f-txt">error, loading</text>
+        </g>
+      </svg>
+    </figure>
+
+    <div class="readouts">
+      <div class="readout"><b>5</b><span>token groups<br>one source of truth</span></div>
+      <div class="readout"><b>18</b><span>component patterns<br>every state specified</span></div>
+      <div class="readout"><b>4</b><span>status tiers,<br>one rubric everywhere</span></div>
+      <div class="readout"><b>6</b><span>application shapes<br>one visual language</span></div>
+    </div>
+  </section>
+
+  <!-- 2 · Color -->
+  <section id="color">
+    <p class="eyebrow">02 · Foundations</p>
+    <h2>Color, from tokens only.</h2>
+    <p class="lede">Five groups, each with a job. A value has no meaning until the group it belongs to is known — which is why raw hex never appears in markup, and why a theme is one block of remaps.</p>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Surface</h3><span class="tag">bg · bg-2 · panel · panel-2 · raise</span></div>
+      <p class="note">Elevation is a step in lightness, not a shadow. Shadows are reserved for things that genuinely float: toasts, popovers, drag handles.</p>
+      <div class="swatches">
+        <div class="swatch"><div class="fill" style="background:var(--bg)"></div><div class="info"><b>--bg</b><span>page canvas</span></div></div>
+        <div class="swatch"><div class="fill" style="background:var(--bg-2)"></div><div class="info"><b>--bg-2</b><span>inset wells</span></div></div>
+        <div class="swatch"><div class="fill" style="background:var(--panel)"></div><div class="info"><b>--panel</b><span>card floor</span></div></div>
+        <div class="swatch"><div class="fill" style="background:var(--panel-2)"></div><div class="info"><b>--panel-2</b><span>card top · chips</span></div></div>
+        <div class="swatch"><div class="fill" style="background:var(--raise)"></div><div class="info"><b>--raise</b><span>hover · floating</span></div></div>
+      </div>
+      <p class="note">Panels use <code>linear-gradient(180deg, var(--panel-2), var(--panel))</code> — a 2% lift that reads as a lit surface without a shadow.</p>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Line</h3><span class="tag">three weights only</span></div>
+      <div class="swatches">
+        <div class="swatch"><div class="fill" style="background:var(--line)"></div><div class="info"><b>--line</b><span>1px dividers</span></div></div>
+        <div class="swatch"><div class="fill" style="background:var(--line-2)"></div><div class="info"><b>--line-2</b><span>control borders</span></div></div>
+        <div class="swatch"><div class="fill" style="background:var(--line-3)"></div><div class="info"><b>--line-3</b><span>hover · emphasis</span></div></div>
+      </div>
+      <p class="note">If a layout seems to need a fourth weight, the fix is hierarchy or spacing — not another hex.</p>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Ink</h3><span class="tag">text · muted · dim</span></div>
+      <div class="plate" style="margin-top: 16px">
+        <p style="margin: 0 0 12px;font-size:17px">Primary — <code>--text</code> · the only color for content you must not miss</p>
+        <p style="margin: 0 0 12px;color:var(--muted);font-size:15px">Secondary — <code>--muted</code> · supporting copy, table cells, the floor for body text</p>
+        <p style="margin: 0;color:var(--dim);font-size:13px">Tertiary — <code>--dim</code> · non-essential labels only; never the sole carrier of meaning</p>
+      </div>
+      <p class="note">Assign ink by role, not by size. Metadata is 12.5px <code>mono</code> in <code>--dim</code>; nothing smaller than 12.5px, ever.</p>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Accent</h3><span class="tag">one brand hue</span></div>
+      <div class="swatches">
+        <div class="swatch"><div class="fill" style="background:var(--accent)"></div><div class="info"><b>--accent</b><span>fills · one per view</span></div></div>
+        <div class="swatch"><div class="fill" style="background:var(--accent-ink)"></div><div class="info"><b>--accent-ink</b><span>accent text · icons</span></div></div>
+        <div class="swatch"><div class="fill" style="background:var(--accent-dim)"></div><div class="info"><b>--accent-dim</b><span>borders · inactive</span></div></div>
+        <div class="swatch"><div class="fill" style="background:var(--on-accent)"></div><div class="info"><b>--on-accent</b><span>text on the fill</span></div></div>
+      </div>
+      <p class="note">The flat accent is <code>#D4AF37</code>, the Rush console gold. The mark uses a separate four-stop metallic gradient and is not a second brand color. The fill is theme-invariant; only its contrast context remaps per theme. Gradients stay on the mark: never on a data mark, never to fake elevation.</p>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Status</h3><span class="tag">ok · info · warn · danger</span></div>
+      <p class="note">Status colors carry hue. Severity is a separate, four-tier rubric, and it always pairs color with a written label.</p>
+      <div class="demo">
+        <span class="chip ok"><span class="pips"></span>passing</span>
+        <span class="chip info"><span class="pips"></span>queued</span>
+        <span class="chip warn"><span class="pips"></span>degraded</span>
+        <span class="chip danger"><span class="pips"></span>failing</span>
+        <span class="chip"><span class="pips"></span>neutral</span>
+        <span class="chip acc"><span class="pips"></span>featured</span>
+      </div>
+      <p class="note">Tints are plain alpha tokens — <code>12%</code> fills and <code>45%</code> borders — remapped in the light theme. No <code>color-mix</code>.</p>
+    </div>
+
+    <div class="pair">
+      <div class="verdict good">
+        <h4>Do</h4>
+        <p>Let a surface get quieter as data gets denser. Put the accent on the single most important action, metric, or threshold and let everything else be line and ink.</p>
+      </div>
+      <div class="verdict bad">
+        <h4>Don't</h4>
+        <p>Add a sixth status hue, tint a whole panel with a status color, or use the accent for destructive actions. Danger owns destruction; the accent never does.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 · Typography -->
+  <section id="type">
+    <p class="eyebrow">03 · Foundations</p>
+    <h2>Two ramps, one measure.</h2>
+    <p class="lede">A display ramp for structure and a UI ramp for work. Everything is 600 weight or lighter — density comes from size and color, never from bold.</p>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Scale</h3><span class="tag">fluid only at the top two steps</span></div>
+      <div class="type-row">
+        <div class="type-meta">display · clamp(38, 4.6vw, 62)<br>lh 1.04 · ls -.025em · 600</div>
+        <div class="type-spec" style="font-size:clamp(30px,4vw,46px);line-height:1.04;letter-spacing:-.025em;font-weight:600">One idea per headline</div>
+      </div>
+      <div class="type-row">
+        <div class="type-meta">title · clamp(30, 3.2vw, 42)<br>lh 1.1 · ls -.02em · 600</div>
+        <div class="type-spec" style="font-size:clamp(24px,2.6vw,32px);line-height:1.1;letter-spacing:-.02em;font-weight:600">Section titles carry the argument</div>
+      </div>
+      <div class="type-row">
+        <div class="type-meta">subtitle · 21px<br>lh 1.25 · 600</div>
+        <div class="type-spec" style="font-size:21px;line-height:1.25;font-weight:600">Card, panel, and dialog titles</div>
+      </div>
+      <div class="type-row">
+        <div class="type-meta">lede · 19px<br>lh 1.5 · --muted</div>
+        <div class="type-spec" style="font-size:19px;line-height:1.5;color:var(--muted)">A lede is one sentence that lets a reader decide whether to keep going.</div>
+      </div>
+      <div class="type-row">
+        <div class="type-meta">body · 15px<br>lh 1.55</div>
+        <div class="type-spec" style="font-size:15px;line-height:1.55">Body copy runs at 15px on a 1.55 line height. Anything tighter and descenders start colliding in tables and long forms.</div>
+      </div>
+      <div class="type-row">
+        <div class="type-meta">small · 13.5px<br>lh 1.45 · --muted</div>
+        <div class="type-spec" style="font-size:13.5px;line-height:1.45;color:var(--muted)">Supporting copy, table cells, secondary button labels, help text.</div>
+      </div>
+      <div class="type-row">
+        <div class="type-meta">label · 12.5px<br>mono · ls .14em · caps</div>
+        <div class="type-spec" style="font:600 12.5px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--dim)">Metadata, eyebrows, column heads</div>
+      </div>
+      <div class="type-row">
+        <div class="type-meta">data · 12px mono<br>tabular numerals</div>
+        <div class="type-spec" style="font-family:var(--mono);font-size:12px;font-variant-numeric:tabular-nums">node-7f3a91c4 · 20:29:41 · exit 1 · 1,284 tok · 99.94%</div>
+      </div>
+      <p class="note"><code>font-variant-numeric: tabular-nums</code> on every number that can change in place — KPIs, counters, table numerics, timers. Proportional digits make live values jitter, and jitter reads as instability.</p>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Measure &amp; families</h3><span class="tag">prose 700px · 60–72ch</span></div>
+      <div class="grid two" style="margin-top: 16px">
+        <div>
+          <p class="note">Prose caps at 700px (≈72ch). Past that, line breaks stop being predictable and scanning cost climbs.</p>
+          <p class="note">Mono is for code, IDs, timestamps, counts, and uppercase labels — never for paragraphs. Two families, both system stacks, so nothing blocks first paint.</p>
+        </div>
+        <div class="plate">
+          <p class="eyebrow" style="margin-bottom: 8px">Display &amp; UI</p>
+          <p style="margin: 0 0 16px;font-size:19px">Segoe UI Variable · Segoe UI · Inter</p>
+          <p class="eyebrow" style="margin-bottom: 8px">Code · IDs · data</p>
+          <p style="margin: 0;font-family:var(--mono);font-size:14px">Cascadia Code · SF Mono · Consolas</p>
+        </div>
+      </div>
+      <p class="note">Sentence case everywhere except mono labels. Numbers get units, not decoration: <code>84 ms</code>, <code>412 / 600 GB</code>, <code>99.94%</code> — a space before the unit, no space before <code>%</code>.</p>
+    </div>
+  </section>
+
+<!-- 4 · Space & grid -->
+  <section id="space">
+    <p class="eyebrow">04 · Foundations</p>
+    <h2>A 4px grid, six radii.</h2>
+    <p class="lede">Every value is a multiple of 4. Whitespace is a token, not a taste — which is the only way spacing stays consistent across four people building the same screens.</p>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Scale</h3><span class="tag">steps are tokens, not literals</span></div>
+      <div class="scale-row"><span class="scale-key">--s-1 · 4</span><span class="scale-bar" style="width:8px"></span><span class="scale-use">icon ↔ label gap</span></div>
+      <div class="scale-row"><span class="scale-key">--s-2 · 8</span><span class="scale-bar" style="width:16px"></span><span class="scale-use">chip padding-y</span></div>
+      <div class="scale-row"><span class="scale-key">--s-3 · 12</span><span class="scale-bar" style="width:24px"></span><span class="scale-use">table cell x · grid gap</span></div>
+      <div class="scale-row"><span class="scale-key">--s-4 · 16</span><span class="scale-bar" style="width:32px"></span><span class="scale-use">field padding · block gap</span></div>
+      <div class="scale-row"><span class="scale-key">--s-5 · 24</span><span class="scale-bar" style="width:48px"></span><span class="scale-use">card padding · prose rhythm</span></div>
+      <div class="scale-row"><span class="scale-key">--s-6 · 32</span><span class="scale-bar" style="width:64px"></span><span class="scale-use">panel padding</span></div>
+      <div class="scale-row"><span class="scale-key">--s-7 · 48</span><span class="scale-bar" style="width:96px"></span><span class="scale-use">section rhythm · page gutter</span></div>
+      <div class="scale-row"><span class="scale-key">--s-8 · 64</span><span class="scale-bar" style="width:128px"></span><span class="scale-use">major splits</span></div>
+      <p class="note">Off-grid values are allowed only in two places: hairline borders (1px) and optical nudges. Every padding, gap, and margin in this file is a <code>--s-*</code> step.</p>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Radii</h3><span class="tag">inner &lt; outer, always</span></div>
+      <div class="swatches">
+        <div class="swatch"><div class="fill" style="height:74px;background:var(--panel);display:grid;place-items:center"><span style="border:1px solid var(--line-2);border-radius:2px;padding: 8px 16px;font:600 12px var(--mono);color:var(--muted)">--r-1 · 2</span></div><div class="info"><b>micro</b><span>kbd · skeleton · small buttons</span></div></div>
+        <div class="swatch"><div class="fill" style="height:74px;background:var(--panel);display:grid;place-items:center"><span style="border:1px solid var(--line-2);border-radius:4px;padding: 8px 16px;font:600 12px var(--mono);color:var(--muted)">--r-2 · 4</span></div><div class="info"><b>control</b><span>inputs, buttons, selects</span></div></div>
+        <div class="swatch"><div class="fill" style="height:74px;background:var(--panel);display:grid;place-items:center"><span style="border:1px solid var(--line-2);border-radius:6px;padding: 8px 16px;font:600 12px var(--mono);color:var(--muted)">--r-3 · 6</span></div><div class="info"><b>plate</b><span>wells · kpi · code · empty</span></div></div>
+        <div class="swatch"><div class="fill" style="height:74px;background:var(--panel);display:grid;place-items:center"><span style="border:1px solid var(--line-2);border-radius:8px;padding: 8px 16px;font:600 12px var(--mono);color:var(--muted)">--r-4 · 8</span></div><div class="info"><b>card</b><span>callouts · toasts · swatches</span></div></div>
+        <div class="swatch"><div class="fill" style="height:74px;background:var(--panel);display:grid;place-items:center"><span style="border:1px solid var(--line-2);border-radius:10px;padding: 8px 16px;font:600 12px var(--mono);color:var(--muted)">--r-5 · 10</span></div><div class="info"><b>panel</b><span>cards · specs · panels</span></div></div>
+        <div class="swatch"><div class="fill" style="height:74px;background:var(--panel);display:grid;place-items:center"><span style="border:1px solid var(--line-2);border-radius:999px;padding: 8px 16px;font:600 12px var(--mono);color:var(--muted)">--r-6 · 999</span></div><div class="info"><b>pill</b><span>chips · tags · switches</span></div></div>
+      </div>
+      <p class="note">Nested radii subtract 2 at each level — a <code>--r-5</code> panel containing an <code>--r-3</code> well reads as concentric. Circles stay <code>50%</code>. Every other corner uses these tokens.</p>
+    </div>
+
+    <div class="grid two">
+      <div class="plate">
+        <p class="eyebrow" style="margin-bottom: 12px">Layout grid</p>
+        <p style="margin: 0;font-size:15px;line-height:1.55">Content caps at <code>1320px</code> with a <code>48px</code> gutter. Columns are 3-up on desktop, 2-up at <code>1100px</code>, 1-up at <code>720px</code>. Prose never exceeds <code>700px</code>, so reading measure stays comfortable even when the grid widens.</p>
+      </div>
+      <div class="plate">
+        <p class="eyebrow" style="margin-bottom: 12px">Density</p>
+        <p style="margin: 0;font-size:15px;line-height:1.55">Control height is fixed at three sizes: <code>32px</code> small, <code>40px</code> default, <code>48px</code> large. Dense tables drop to <code>28px</code> rows via <code>.tbl.dense</code>. Density is chosen per surface, never inherited by accident.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 · Components -->
+  <section id="components">
+    <p class="eyebrow">05 · Components</p>
+    <h2>Every pattern includes states.</h2>
+    <p class="lede">These are the minimal building blocks for dense work — buttons, inputs, choices, chips, severity, callouts, tables, navigation, KPIs, meters, empty/loading, toast, and the mark slot. Every control has focus, disabled/readonly, and error/loading specified.</p>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Buttons</h3><span class="tag">4 variants · 3 sizes</span></div>
+      <div class="demo">
+        <button class="btn">Default</button>
+        <button class="btn primary">Primary</button>
+        <button class="btn ghost">Ghost</button>
+        <button class="btn danger">Danger</button>
+        <button class="btn" disabled>Disabled</button>
+        <button class="btn sm">Small</button>
+        <button class="btn lg">Large</button>
+      </div>
+      <p class="note">Focus ring is a 2px outline in <code>--accent</code> with 2px offset. Primary buttons use a small top-to-bottom gradient over the accent to preserve legibility; never a brand rainbow. Destructive actions are only <code>.danger</code>, never primary.</p>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Fields, select, textarea</h3><span class="tag">labels above · help &amp; error</span></div>
+      <div class="grid two" style="margin-top: 16px">
+        <div class="field">
+          <label for="e1">Name</label>
+          <input id="e1" class="input" placeholder="Start typing" />
+          <div class="help">Help text explains why you're asked for this.</div>
+        </div>
+        <div class="field">
+          <label for="e2">Name (error)</label>
+          <input id="e2" class="input bad" placeholder="Start typing" value="Acme, Inc." />
+          <div class="err"><svg><use href="#i-x-circle"/></svg>A valid name is required.</div>
+        </div>
+        <div class="field">
+          <label for="e3">Status</label>
+          <select id="e3" class="input">
+            <option>Queued</option>
+            <option>Running</option>
+            <option>Passed</option>
+            <option>Failed</option>
+          </select>
+          <div class="help">Use native <code>&lt;select&gt;</code> where possible — it matches platform a11y and density with no JS.</div>
+        </div>
+        <div class="field">
+          <label for="e4">Notes</label>
+          <textarea id="e4" class="input" rows="3" placeholder="Optional context"></textarea>
+          <div class="help">Textarea respects line height and wraps at the prose measure in forms.</div>
+        </div>
+      </div>
+      <p class="note">Controls are 40px default height, bordered in <code>--line-2</code>, filled <code>--panel-2</code>, with focus state moving border to <code>--line-3</code> and outline on focus-visible. <code>.bad</code> uses <code>--danger</code> for border and text.</p>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Choice controls</h3><span class="tag">checkbox · radio · switch</span></div>
+      <div class="demo">
+        <label class="check"><input type="checkbox"><span>One option</span></label>
+        <label class="check"><input type="checkbox" checked><span>Selected</span></label>
+        <label class="check"><input type="checkbox" checked disabled><span>Disabled selected</span></label>
+        <label class="check"><input type="radio" name="demo-radio"><span>Radio</span></label>
+        <label class="check"><input type="radio" name="demo-radio" checked><span>Radio selected</span></label>
+        <label class="switch"><input type="checkbox" role="switch" checked aria-label="Enabled"></label>
+        <label class="switch"><input type="checkbox" role="switch" aria-label="Off"></label>
+      </div>
+      <p class="note">These are native checkbox, radio, and switch inputs. The accent fills the checked state. The switch animates the thumb only. The visual mark stays 16–18px; the hit target is 40px.</p>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Chips, severity, callouts</h3><span class="tag">6 chip tones · 4 severity tiers</span></div>
+      <div class="demo">
+        <span class="chip"><span class="pips"></span>neutral</span>
+        <span class="chip acc"><span class="pips"></span>featured</span>
+        <span class="chip ok"><span class="pips"></span>ok</span>
+        <span class="chip info"><span class="pips"></span>info</span>
+        <span class="chip warn"><span class="pips"></span>warn</span>
+        <span class="chip danger"><span class="pips"></span>danger</span>
+        <span class="chip x"><svg><use href="#i-x"/></svg>removable</span>
+      </div>
+      <div class="grid two" style="margin-top: 16px">
+        <div>
+          <div class="sev critical"><i></i>Critical — immediate intervention</div>
+          <div class="sev high"><i></i>High — needs attention soon</div>
+          <div class="sev medium"><i></i>Medium — watch list</div>
+          <div class="sev low"><i></i>Low — informational</div>
+          <p class="note">Severity is a four-tier rubric applied to findings, incidents, and alerts. It always pairs color with a written label (never color alone). Chips are compact status pills for lists and filters.</p>
+        </div>
+        <div>
+          <div class="callout ok"><svg><use href="#i-check-circle"/></svg><div><b>Success</b><p>Action completed as expected. One line is enough.</p></div></div>
+          <div class="callout acc" style="margin-top: 12px"><svg><use href="#i-info"/></svg><div><b>Info</b><p>Context that clarifies what changed and why.</p></div></div>
+          <div class="callout warn" style="margin-top: 12px"><svg><use href="#i-alert"/></svg><div><b>Warning</b><p>Something needs attention but isn't blocking yet.</p></div></div>
+          <div class="callout danger" style="margin-top: 12px"><svg><use href="#i-x-circle"/></svg><div><b>Danger</b><p>Blocking error. State the fix or next step.</p></div></div>
+        </div>
+      </div>
+      <p class="note">Chips use the <code>12%</code> and <code>45%</code> alpha tokens. Callouts lay a <code>7%</code> status tint over <code>--panel</code>. Both themes define those tokens in plain CSS.</p>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Table</h3><span class="tag">dense &amp; comfortable · tabular numerics</span></div>
+      <div class="code-wrap" style="margin-top: 16px">
+        <button class="copy" data-copy="markup-table">Copy</button>
+        <pre class="code" id="markup-table"><span class="c">&lt;!-- .tbl.dense for compact data rows --&gt;</span>
+<span class="k">&lt;table</span> class="tbl<span class="k">"&gt;</span>
+  <span class="k">&lt;thead&gt;</span>
+    <span class="k">&lt;tr&gt;</span><span class="k">&lt;th&gt;</span>Resource<span class="k">&lt;/th&gt;&lt;th&gt;</span>Status<span class="k">&lt;/th&gt;&lt;th class="num"&gt;</span>Count<span class="k">&lt;/th&gt;&lt;th&gt;</span>Updated<span class="k">&lt;/th&gt;&lt;/tr&gt;</span>
+  <span class="k">&lt;/thead&gt;</span>
+  <span class="k">&lt;tbody&gt;</span>
+    <span class="k">&lt;tr&gt;</span><span class="k">&lt;td&gt;</span>api<span class="k">&lt;/td&gt;&lt;td&gt;</span><span class="k">&lt;span</span> class="chip ok"<span class="k">&gt;&lt;span</span> class="pips"<span class="k">&gt;&lt;/span&gt;</span>ok<span class="k">&lt;/span&gt;&lt;/td&gt;</span>
+      <span class="k">&lt;td</span> class="num"<span class="k">&gt;</span>1,284<span class="k">&lt;/td&gt;&lt;td</span> class="mono"<span class="k">&gt;</span>20:29:41<span class="k">&lt;/td&gt;&lt;/tr&gt;</span>
+  <span class="k">&lt;/tbody&gt;</span>
+<span class="k">&lt;/table&gt;</span></pre>
+      </div>
+      <p class="note">Numeric columns get <code>.num</code> (right aligned, tabular numerals). IDs/timestamps get <code>.mono</code>. Hover is a subtle tint on the row; zebra not default (adds noise in dense tables). Sticky headers optional per view.</p>
+    </div>
+
+    <div class="grid two">
+      <div class="spec" style="margin-top: 0">
+        <div class="spec-head"><h3>Tabs &amp; nav list</h3><span class="tag">horizontal · vertical</span></div>
+        <div class="demo col">
+          <div class="demo-label">Tabs</div>
+          <div class="tabs" role="tablist" aria-label="Sample sections" style="margin-top: 8px">
+            <button class="tab on" type="button" role="tab" aria-selected="true" tabindex="0">Overview <span class="count">12</span></button>
+            <button class="tab" type="button" role="tab" aria-selected="false" tabindex="-1">Runs <span class="count">6</span></button>
+            <button class="tab" type="button" role="tab" aria-selected="false" tabindex="-1">Artifacts</button>
+            <button class="tab" type="button" role="tab" aria-selected="false" tabindex="-1">History</button>
+          </div>
+          <div class="demo-label">Nav list</div>
+          <div class="navlist" role="navigation" aria-label="Sample navigation" style="margin-top: 8px">
+            <button class="navrow on" type="button" aria-current="page"><svg aria-hidden="true"><use href="#i-grid"/></svg>Dashboard</button>
+            <button class="navrow" type="button"><svg aria-hidden="true"><use href="#i-table"/></svg>Runs <span class="tail">42</span></button>
+            <button class="navrow" type="button"><svg aria-hidden="true"><use href="#i-form"/></svg>Wizards</button>
+            <button class="navrow" type="button"><svg aria-hidden="true"><use href="#i-doc"/></svg>Docs</button>
+          </div>
+        </div>
+        <p class="note">Tabs and nav rows are buttons. Arrow keys move the tab selection. The underline is a border, so it does not shift layout. The active nav row uses the 12% accent tint.</p>
+      </div>
+      <div class="spec" style="margin-top: 0">
+        <div class="spec-head"><h3>KPI &amp; meter</h3><span class="tag">change up/down · progress by state</span></div>
+        <div class="kpis">
+          <div class="kpi"><div class="k">Success rate</div><div class="v">99.94%</div><div class="d up"><svg><use href="#i-arrow-up"/></svg>+0.08%</div></div>
+          <div class="kpi"><div class="k">Latency p95</div><div class="v">84 ms</div><div class="d down"><svg><use href="#i-arrow-up" transform="rotate(180,12,12)"/></svg>-12 ms</div></div>
+          <div class="kpi"><div class="k">Active runs</div><div class="v">26</div><div class="d">steady</div></div>
+          <div class="kpi"><div class="k">Queue</div><div class="v">7</div><div class="d">backpressure</div></div>
+        </div>
+        <div style="margin-top: 16px">
+          <div class="demo-label">Capacity</div>
+          <div class="meter" style="margin-top: 8px"><i class="warn" style="width:68%"></i></div>
+          <div class="demo-label" style="margin-top: 16px">Healthy</div>
+          <div class="meter" style="margin-top: 8px"><i class="ok" style="width:94%"></i></div>
+          <div class="demo-label" style="margin-top: 16px">Critical</div>
+          <div class="meter" style="margin-top: 8px"><i class="danger" style="width:96%"></i></div>
+        </div>
+        <p class="note">KPI values use tabular numerals. Directional deltas are colored by status (up usually <code>--ok</code>, down <code>--danger</code>); neutral deltas stay <code>--dim</code>. Meter bars inherit status hues.</p>
+      </div>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>States, empty, skeleton, toast</h3><span class="tag">design every state</span></div>
+      <div class="grid two" style="margin-top: 16px">
+        <div>
+          <div class="empty">
+            <svg><use href="#i-search"/></svg>
+            <b>No results found</b>
+            <p>Try adjusting filters or search terms.</p>
+            <button class="btn primary">Clear filters</button>
+          </div>
+          <div class="demo" style="margin-top: 12px">
+            <div class="skel" style="flex:1;height:12px"></div>
+            <div class="skel" style="flex:2;height:12px"></div>
+            <div class="skel" style="flex:1;height:12px"></div>
+          </div>
+          <p class="note">Empty state always includes an action when recovery is possible. Skeletons are flat bars (no shimmer by default) to avoid motion fatigue; use shimmer only if explicitly justified and respect <code>prefers-reduced-motion</code>.</p>
+        </div>
+        <div>
+          <div class="toast">
+            <svg><use href="#i-check-circle"/></svg>
+            <div><b>Saved</b><p>Changes were persisted successfully.</p></div>
+          </div>
+          <div class="toast" style="margin-top: 12px">
+            <svg style="color:var(--danger)"><use href="#i-x-circle"/></svg>
+            <div><b>Failed to save</b><p>Check connection and retry in a moment.</p></div>
+          </div>
+          <p class="note">Toasts float above panels with a soft shadow reserved for genuinely floating surfaces. Position toasts in a stack (top-right by default) and never block primary flow.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Mark slot &amp; code block</h3><span class="tag">brand mark is a symbol, not CSS art</span></div>
+      <div class="grid two" style="margin-top: 16px;align-items:start">
+        <div class="plate" style="display:flex;flex-direction:column;align-items:center;gap: 16px;padding: 28px">
+          <span class="mark-tile"><svg width="38" height="38" viewBox="68 82 442 448" aria-hidden="true">
+            <defs><linearGradient id="mark-gold-38" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFE05A"/><stop offset="0.38" stop-color="#f9c735"/><stop offset="0.72" stop-color="#E9A91B"/><stop offset="1" stop-color="#CF8B08"/></linearGradient></defs>
+            <path d="M 70 308 L 70 399 L 72 407 L 78 419 L 91 430 L 192 486 L 259 525 L 265 527 L 280 527 L 297 519 L 440 439 L 481 418 L 491 411 L 498 404 L 504 393 L 507 380 L 506 363 L 504 357 L 498 347 L 487 337 L 476 332 L 453 318 L 445 315 L 422 332 L 411 337 L 404 342 L 379 355 L 286 408 L 273 411 L 259 410 L 246 405 L 241 401 L 173 364 L 152 351 L 141 346 L 131 339 L 113 330 L 87 314 L 72 306 Z M 351 278 L 356 296 L 355 312 L 373 312 L 374 311 L 391 311 L 392 310 L 428 310 L 429 309 L 429 304 L 426 302 L 361 281 L 355 278 Z M 272 248 L 271 249 L 261 250 L 247 256 L 240 261 L 229 272 L 220 290 L 218 299 L 218 314 L 222 328 L 228 339 L 244 355 L 253 360 L 263 363 L 285 364 L 297 361 L 305 357 L 316 349 L 322 343 L 328 334 L 333 322 L 334 297 L 332 288 L 327 277 L 312 260 L 304 255 L 292 250 L 282 249 L 281 248 Z M 70 226 L 71 248 L 78 263 L 87 272 L 131 297 L 133 297 L 144 284 L 159 273 L 165 271 L 183 260 L 193 256 L 213 244 L 236 233 L 271 213 L 290 204 L 310 203 L 315 204 L 337 215 L 504 307 L 506 307 L 507 304 L 507 214 L 503 199 L 496 188 L 483 179 L 427 149 L 422 145 L 398 133 L 393 129 L 366 115 L 354 107 L 337 99 L 323 90 L 310 85 L 301 85 L 290 88 L 207 133 L 169 152 L 162 157 L 152 161 L 94 192 L 88 196 L 79 205 L 73 215 Z" fill="url(#mark-gold-38)" fill-rule="evenodd"/>
+          </svg></span>
+          <p class="note" style="margin: 0;text-align:center">The mark is the Snitch icon on the official four-stop gold gradient. No drop shadow or noise. Keep the tile; do not redraw the mark in CSS.</p>
+        </div>
+        <div class="code-wrap">
+          <button class="copy" data-copy="markup-code">Copy</button>
+          <pre class="code" id="markup-code"><span class="c">// Token-copy friendly: data-attr copies CSS var values</span>
+<span class="k">function</span> copyVar(el){ … <span class="k">navigator</span>.clipboard.writeText(v) … }
+<span class="c">// Respect reduced motion, persist theme, highlight rail</span></pre>
+        </div>
+      </div>
+      <p class="note">Code blocks use mono, 12.5px/1.7, flat background, and a copy button in the top-right. The copy button uses the existing <code>.copy</code> styles and the small script later in this file.</p>
+    </div>
+  </section>
+
+<!-- 6 · Status & data -->
+  <section id="status">
+    <p class="eyebrow">06 · Data</p>
+    <h2>One rubric for severity, one grammar for data.</h2>
+    <p class="lede">Status colors say <em>what kind</em> of thing happened. Severity says <em>how much</em> it matters. Keeping those two axes separate is what stops dashboards from turning into a wall of orange.</p>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Severity rubric</h3><span class="tag">four tiers · label required</span></div>
+      <div class="grid two" style="margin-top: 16px">
+        <div class="plate">
+          <div class="sev critical"><i></i>Critical</div>
+          <p style="margin: 8px 0 0;font-size:13.5px;color:var(--muted)">Data loss, security exposure, or a full outage. Page someone. Act now.</p>
+          <p style="margin: 8px 0 0;font:400 12.5px var(--mono);color:var(--dim)">p95 latency &gt; 30 s · disk full · auth outage</p>
+        </div>
+        <div class="plate">
+          <div class="sev high"><i></i>High</div>
+          <p style="margin: 8px 0 0;font-size:13.5px;color:var(--muted)">Core workflow broken or degraded for many users. Fix today.</p>
+          <p style="margin: 8px 0 0;font:400 12.5px var(--mono);color:var(--dim)">p95 &gt; 5 s · &gt; 5% of requests failing · queue stalled</p>
+        </div>
+        <div class="plate">
+          <div class="sev medium"><i></i>Medium</div>
+          <p style="margin: 8px 0 0;font-size:13.5px;color:var(--muted)">Degradation with a workaround, or a trend heading the wrong way.</p>
+          <p style="margin: 8px 0 0;font:400 12.5px var(--mono);color:var(--dim)">p95 &gt; 1 s · retry rate climbing · cache misses up</p>
+        </div>
+        <div class="plate">
+          <div class="sev low"><i></i>Low</div>
+          <p style="margin: 8px 0 0;font-size:13.5px;color:var(--muted)">Informational. Record it, review later, do not interrupt anyone.</p>
+          <p style="margin: 8px 0 0;font:400 12.5px var(--mono);color:var(--dim)">new deploy · quota at 60% · cert expires in 21 d</p>
+        </div>
+      </div>
+      <p class="note">The tier is set by impact, not by how alarming the text sounds. Color, icon, and written label always ship together — a color-only signal is not accessible.</p>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Status vs. severity</h3><span class="tag">two axes, no overlap</span></div>
+      <div class="grid two" style="margin-top: 16px">
+        <div class="table-scroll">
+          <table class="tbl">
+            <caption>Status — the state of a thing</caption>
+            <thead><tr><th>Tone</th><th>Means</th><th>Use for</th></tr></thead>
+            <tbody>
+              <tr><td><span class="chip ok"><span class="pips"></span>ok</span></td><td>Healthy / passed</td><td>Checks, jobs, builds</td></tr>
+              <tr><td><span class="chip info"><span class="pips"></span>info</span></td><td>Neutral progress</td><td>Queued, running, skipped</td></tr>
+              <tr><td><span class="chip warn"><span class="pips"></span>warn</span></td><td>Attention needed</td><td>Degraded, retried, partial</td></tr>
+              <tr><td><span class="chip danger"><span class="pips"></span>danger</span></td><td>Broken</td><td>Failed, rejected, denied</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-scroll">
+          <table class="tbl">
+            <caption>Severity — how much a finding matters</caption>
+            <thead><tr><th>Tier</th><th>Response</th><th>Owner</th></tr></thead>
+            <tbody>
+              <tr><td><span class="sev critical"><i></i>Critical</span></td><td>Immediate</td><td>On-call</td></tr>
+              <tr><td><span class="sev high"><i></i>High</span></td><td>Same day</td><td>Team</td></tr>
+              <tr><td><span class="sev medium"><i></i>Medium</span></td><td>This week</td><td>Team</td></tr>
+              <tr><td><span class="sev low"><i></i>Low</span></td><td>Backlog</td><td>Whoever is free</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="note">A failing check can be <code>danger</code> (status) and <code>critical</code> (severity) at once. Present them in different places: status on the object, severity in the triage list.</p>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Numbers, thresholds &amp; time</h3><span class="tag">tabular · bounded · explicit</span></div>
+      <div class="grid two" style="margin-top: 16px">
+        <div class="plate">
+          <p class="eyebrow" style="margin-bottom: 12px">Formatting</p>
+          <p style="margin: 0 0 12px;font:400 12.5px/1.9 var(--mono)">99.94% · 1,284 · 84 ms<br>412 / 600 GB · 20:29:41<br>7d 04h · −0.08% · +3</p>
+          <p class="note" style="margin-top: 12px">Thousands separators, tabular numerals, explicit units, absolute time for logs and relative time only when recency is the point.</p>
+        </div>
+        <div class="plate">
+          <p class="eyebrow" style="margin-bottom: 12px">Thresholds</p>
+          <div class="demo col" style="gap: 16px">
+            <div>
+              <div class="demo-label">healthy · &lt; 1 s</div>
+              <div class="meter" style="margin-top: 8px"><i class="ok" style="width:22%"></i></div>
+            </div>
+            <div>
+              <div class="demo-label">degraded · 1–5 s</div>
+              <div class="meter" style="margin-top: 8px"><i class="warn" style="width:58%"></i></div>
+            </div>
+            <div>
+              <div class="demo-label">failing · &gt; 5 s</div>
+              <div class="meter" style="margin-top: 8px"><i class="danger" style="width:92%"></i></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="note">Every meter or gauge ships with its boundary labels — a bar with no scale is decoration. Mark a target on the meter when there is one worth hitting.</p>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Dense reference table</h3><span class="tag">the shape most admin views need</span></div>
+      <div class="code-wrap" style="margin-top: 16px">
+        <button class="copy" data-copy="markup-datatable">Copy</button>
+        <pre class="code" id="markup-datatable"><span class="k">&lt;table</span> class="tbl dense"<span class="k">&gt;</span>
+  <span class="k">&lt;thead&gt;&lt;tr&gt;&lt;th&gt;</span>Name<span class="k">&lt;/th&gt;&lt;th&gt;</span>Status<span class="k">&lt;/th&gt;&lt;th&gt;</span>Severity<span class="k">&lt;/th&gt;&lt;th class="num"&gt;</span>Latency<span class="k">&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;</span>
+  <span class="k">&lt;tbody&gt;</span>
+    <span class="k">&lt;tr&gt;</span>
+      <span class="k">&lt;td</span> data-label="Name"<span class="k">&gt;</span>api-gateway<span class="k">&lt;/td&gt;</span>
+      <span class="k">&lt;td</span> data-label="Status"<span class="k">&gt;</span>ok<span class="k">&lt;/td&gt;</span>
+      <span class="k">&lt;td</span> data-label="Severity"<span class="k">&gt;</span>Medium<span class="k">&lt;/td&gt;</span>
+      <span class="k">&lt;td</span> class="num" data-label="Latency"<span class="k">&gt;</span>84 ms<span class="k">&lt;/td&gt;</span>
+    <span class="k">&lt;/tr&gt;</span>
+  <span class="k">&lt;/tbody&gt;&lt;/table&gt;</span></pre>
+      </div>
+      <div class="table-scroll" style="margin-top: 16px">
+        <table class="tbl dense">
+          <caption>Live dense table — stacks below 720px</caption>
+          <thead><tr><th>Name</th><th>Status</th><th>Severity</th><th class="num">Latency</th></tr></thead>
+          <tbody>
+            <tr>
+              <td data-label="Name">api-gateway</td>
+              <td data-label="Status"><span class="chip ok"><span class="pips"></span>ok</span></td>
+              <td data-label="Severity"><span class="sev medium"><i></i>Medium</span></td>
+              <td class="num" data-label="Latency">84 ms</td>
+            </tr>
+            <tr>
+              <td data-label="Name">web</td>
+              <td data-label="Status"><span class="chip danger"><span class="pips"></span>failing</span></td>
+              <td data-label="Severity"><span class="sev critical"><i></i>Critical</span></td>
+              <td class="num" data-label="Latency">1,204 ms</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Dense rows are 28px via <code>.tbl.dense</code>. Below 720px those rows stack, and each cell's label comes from <code>data-label</code>. Comfortable tables stay in <code>.table-scroll</code> instead of widening the page.</p>
+    </div>
+
+    <div class="pair">
+      <div class="verdict good">
+        <h4>Do</h4>
+        <p>Show the number, its unit, its boundary, and where it came from. Put the threshold label next to the bar. Reserve red for things that are actually broken.</p>
+      </div>
+      <div class="verdict bad">
+        <h4>Don't</h4>
+        <p>Color a healthy metric red because it went down, flag a value without stating the threshold, or mix severity and status on the same row.</p>
+      </div>
+    </div>
+  </section>
+
+<!-- 7 · Motion & icons -->
+  <section id="motion">
+    <p class="eyebrow">07 · Behavior</p>
+    <h2>Motion that confirms, never performs.</h2>
+    <p class="lede">In a dense tool, animation has one job: tell you what changed. Everything that moves is a state transition, and every one of them respects <code>prefers-reduced-motion</code>.</p>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Timing</h3><span class="tag">two durations · one easing</span></div>
+      <div class="grid two" style="margin-top: 16px">
+        <div class="table-scroll">
+          <table class="tbl">
+            <caption>Duration</caption>
+            <thead><tr><th>Token</th><th class="num">Value</th><th>Use</th></tr></thead>
+            <tbody>
+              <tr><td class="mono">--dur-1</td><td class="num">150ms</td><td>Hover, focus, color, border</td></tr>
+              <tr><td class="mono">--dur-2</td><td class="num">220ms</td><td>Panels, dialogs, toasts, drawers</td></tr>
+            </tbody>
+          </table>
+          <p class="note">A single easing, <code>ease</code>, for everything. Nothing bounces, springs, or overshoots — overshoot on a data tool reads as noise.</p>
+        </div>
+        <div class="table-scroll">
+          <table class="tbl">
+            <caption>What earns motion</caption>
+            <thead><tr><th>Element</th><th>Motion</th></tr></thead>
+            <tbody>
+              <tr><td>Buttons, chips, rows</td><td>background / border tint, 150ms</td></tr>
+              <tr><td>Switch thumb</td><td>translate, 150ms</td></tr>
+              <tr><td>Toast</td><td>fade + 6px rise, 220ms</td></tr>
+              <tr><td>Skeleton, spinner</td><td>loop, until resolved</td></tr>
+              <tr><td>Numbers</td><td>no animation — update in place</td></tr>
+            </tbody>
+          </table>
+          <p class="note">Tab underline, tooltip opacity, and nav tint all animate at <code>--dur-1</code>. Nothing animates on scroll; only the rail highlight changes.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Loading</h3><span class="tag">spinner inside the control that triggered it</span></div>
+      <div class="demo">
+        <button class="btn primary" disabled><span class="spinner"></span>Saving…</button>
+        <button class="btn" disabled>Cancel</button>
+        <div class="demo-label" style="align-self:center;margin: 0">inline · 14px · 0.8s loop</div>
+      </div>
+      <p class="note">Disable the button that triggered the action, show the spinner inside it, and keep its width stable so the row doesn't reflow. For anything over ~2s, add a line of text with the elapsed state rather than a faster spinner.</p>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Reduced motion</h3><span class="tag">the rule, not an exception</span></div>
+      <div class="code-wrap" style="margin-top: 16px">
+        <button class="copy" data-copy="markup-motion">Copy</button>
+        <pre class="code" id="markup-motion"><span class="c">/* Loops only when motion is welcome. */</span>
+<span class="k">@media</span> (prefers-reduced-motion: no-preference) {
+  <span class="k">.flow</span>    { animation: flow 1.6s linear infinite; }
+  <span class="k">.spinner</span> { animation: spin .8s linear infinite; }
+}
+
+<span class="c">/* Transitions collapse; nothing fades through the frame. */</span>
+<span class="k">@media</span> (prefers-reduced-motion: reduce) {
+  <span class="k">html</span> { scroll-behavior: auto; }
+  <span class="k">*</span>    { transition-duration: .01ms <span class="k">!important</span>; }
+}</pre>
+      </div>
+      <p class="note">Infinite loops are wrapped in <code>no-preference</code> so they simply never start. State changes still happen — they're just instant. Skeleton shimmer is off by default for the same reason.</p>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Icons</h3><span class="tag">one stroke, 1.6px, 24px grid</span></div>
+      <div class="plate" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap: 12px">
+        <span style="display:flex;flex-direction:column;align-items:center;gap: 8px;font:400 12.5px var(--mono);color:var(--dim)"><svg width="22" height="22"><use href="#i-grid"/></svg>grid</span>
+        <span style="display:flex;flex-direction:column;align-items:center;gap: 8px;font:400 12.5px var(--mono);color:var(--dim)"><svg width="22" height="22"><use href="#i-table"/></svg>table</span>
+        <span style="display:flex;flex-direction:column;align-items:center;gap: 8px;font:400 12.5px var(--mono);color:var(--dim)"><svg width="22" height="22"><use href="#i-form"/></svg>form</span>
+        <span style="display:flex;flex-direction:column;align-items:center;gap: 8px;font:400 12.5px var(--mono);color:var(--dim)"><svg width="22" height="22"><use href="#i-mobile"/></svg>mobile</span>
+        <span style="display:flex;flex-direction:column;align-items:center;gap: 8px;font:400 12.5px var(--mono);color:var(--dim)"><svg width="22" height="22"><use href="#i-doc"/></svg>doc</span>
+        <span style="display:flex;flex-direction:column;align-items:center;gap: 8px;font:400 12.5px var(--mono);color:var(--dim)"><svg width="22" height="22"><use href="#i-search"/></svg>search</span>
+        <span style="display:flex;flex-direction:column;align-items:center;gap: 8px;font:400 12.5px var(--mono);color:var(--dim)"><svg width="22" height="22"><use href="#i-filter"/></svg>filter</span>
+        <span style="display:flex;flex-direction:column;align-items:center;gap: 8px;font:400 12.5px var(--mono);color:var(--dim)"><svg width="22" height="22"><use href="#i-gauge"/></svg>gauge</span>
+        <span style="display:flex;flex-direction:column;align-items:center;gap: 8px;font:400 12.5px var(--mono);color:var(--dim)"><svg width="22" height="22"><use href="#i-terminal"/></svg>terminal</span>
+        <span style="display:flex;flex-direction:column;align-items:center;gap: 8px;font:400 12.5px var(--mono);color:var(--dim)"><svg width="22" height="22"><use href="#i-cloud"/></svg>cloud</span>
+        <span style="display:flex;flex-direction:column;align-items:center;gap: 8px;font:400 12.5px var(--mono);color:var(--dim)"><svg width="22" height="22"><use href="#i-lock"/></svg>lock</span>
+        <span style="display:flex;flex-direction:column;align-items:center;gap: 8px;font:400 12.5px var(--mono);color:var(--dim)"><svg width="22" height="22"><use href="#i-shield"/></svg>shield</span>
+      </div>
+      <p class="note">Icons inherit <code>currentColor</code>, so they recolor with the text they sit next to — no separate icon palette. Use <code>aria-hidden</code> when the icon repeats adjacent text, and <code>.ico</code> inside buttons to keep the 15px size consistent.</p>
+    </div>
+  </section>
+
+<!-- 8 · Application recipes -->
+  <section id="patterns">
+    <p class="eyebrow">08 · Patterns</p>
+    <h2>Six shapes cover most products.</h2>
+    <p class="lede">Compose, don't invent. Each recipe below is the same tokens and the same components rearranged — a console, a docs page, a wizard, an admin table, a mobile PWA, and a realtime feed.</p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-head"><span class="ring"><svg><use href="#i-gauge"/></svg></span><div><h3>Console</h3><p>KPI row, then detail</p></div></div>
+        <div class="mock viz" aria-hidden="true">
+          <div class="ph">kpi row</div>
+          <div class="row"><div class="blk"><div class="line acc"></div><div class="line"></div></div><div class="blk"><div class="line"></div><div class="line"></div></div></div>
+          <div class="ph">table</div>
+          <div class="blk"><div class="line"></div><div class="line"></div><div class="line"></div></div>
+        </div>
+        <div class="cap">4 KPIs · primary action top-right · table fills the fold</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span class="ring"><svg><use href="#i-doc"/></svg></span><div><h3>Marketing / docs</h3><p>Prose measure, generous air</p></div></div>
+        <div class="mock viz" aria-hidden="true">
+          <div class="blk"><div class="ph">hero</div><div class="line acc" style="width:78%"></div><div class="line acc" style="width:52%"></div><div class="line"></div></div>
+          <div class="row"><div class="blk"><div class="line"></div><div class="line"></div></div><div class="blk"><div class="line"></div><div class="line"></div></div></div>
+          <div class="foot"></div>
+        </div>
+        <div class="cap">700px measure · sections at --s-7 · one CTA pair</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span class="ring"><svg><use href="#i-form"/></svg></span><div><h3>Wizard / form</h3><p>One question per step</p></div></div>
+        <div class="mock viz" aria-hidden="true">
+          <div class="row"><div class="skel" style="height:8px"></div><div class="skel" style="height:8px"></div><div class="skel" style="height:8px"></div></div>
+          <div class="blk"><div class="ph">step 3 of 5</div><div class="line acc"></div><div class="line"></div><div class="line"></div></div>
+          <div class="row"><div class="blk"><div class="line" style="width:60%"></div></div><div class="blk"><div class="line acc" style="width:60%"></div></div></div>
+        </div>
+        <div class="cap">field groups at --s-4 · back / next pinned to one row</div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-head"><span class="ring"><svg><use href="#i-table"/></svg></span><div><h3>Admin table</h3><p>Dense, filterable, sortable</p></div></div>
+        <div class="mock viz" aria-hidden="true">
+          <div class="row"><div class="blk"><div class="line"></div></div><div class="blk"><div class="line"></div></div></div>
+          <div class="blk">
+            <div class="ph">rows · dense</div>
+            <div class="line"></div><div class="line"></div><div class="line"></div><div class="line"></div>
+          </div>
+        </div>
+        <div class="cap">toolbar above · .tbl.dense · selection in a leading column</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span class="ring"><svg><use href="#i-mobile"/></svg></span><div><h3>Mobile / PWA</h3><p>Thumb-first, same tokens</p></div></div>
+        <div class="mock viz" aria-hidden="true" style="justify-items:center">
+          <div class="blk" style="width:150px">
+            <div class="ph">screen</div>
+            <div class="line acc"></div><div class="line"></div><div class="line"></div>
+          </div>
+          <div class="row" style="width:150px"><div class="line acc"></div><div class="line"></div><div class="line"></div></div>
+        </div>
+        <div class="cap">48px targets · 20px gutters · bottom nav, no rail</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><span class="ring"><svg><use href="#i-pulse"/></svg></span><div><h3>Realtime feed</h3><p>Streaming, but calm</p></div></div>
+        <div class="mock viz" aria-hidden="true">
+          <div class="blk">
+            <div class="ph">t+0s · t+1s · t+2s</div>
+            <div class="line"></div><div class="line"></div><div class="line"></div><div class="line"></div>
+          </div>
+          <div class="row"><div class="blk"><div class="line acc" style="width:70%"></div></div><div class="blk"><div class="line" style="width:40%"></div></div></div>
+        </div>
+        <div class="cap">mono timestamps · one row per event · no auto-scroll hijack</div>
+      </div>
+    </div>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Composition rules</h3><span class="tag">same in all six</span></div>
+      <div class="grid two" style="margin-top: 16px">
+        <div class="plate">
+          <p class="eyebrow" style="margin-bottom: 12px">Structure</p>
+          <p style="margin: 0 0 12px;font-size:14px;line-height:1.55;color:var(--muted)">Page title and primary action share one row. A toolbar sits directly above the thing it filters. Panels never nest more than two deep.</p>
+          <p class="note" style="margin-top: 12px">One accent fill per view region. Secondary actions are ghost or default; destructive actions are <code>.danger</code> and never the default focus.</p>
+        </div>
+        <div class="plate">
+          <p class="eyebrow" style="margin-bottom: 12px">Responsive</p>
+          <p style="margin: 0 0 12px;font-size:14px;line-height:1.55;color:var(--muted)">Grids collapse at 1100px and 720px. Code and comfortable tables may scroll inside their own container. Below 720px, <code>.tbl.dense</code> stacks each cell and labels it from <code>data-label</code>.</p>
+          <p class="note" style="margin-top: 12px">The section rail is a convenience and disappears under 1100px — it's never the only navigation. Touch targets stay at 40px+ in every shape.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+<!-- 9 · Adoption -->
+  <section id="adopt">
+    <p class="eyebrow">09 · Adoption</p>
+    <h2>Copy the system, not one block.</h2>
+    <p class="lede">There is no build step, no package, and no framework requirement. A working screen needs the <code>:root</code> tokens, the light-theme remap, the component classes, the SVG symbols, the responsive rules, and the script. Inline <code>style</code> attributes in this file are specimen layout. Do not extract them into production components.</p>
+
+    <div class="spec">
+      <div class="spec-head"><h3>Tokens first</h3><span class="tag">then classes, symbols, rules, script</span></div>
+      <div class="code-wrap" style="margin-top: 16px">
+        <button class="copy" data-copy="markup-adopt">Copy</button>
+        <pre class="code" id="markup-adopt"><span class="c">/* 1. Tokens — the single source of truth. */</span>
+<span class="c">/* 1. surface — elevation is lightness, not shadow */</span>
+<span class="k">:root</span> {
+  <span class="k">--bg</span>: #07080A; <span class="k">--bg-2</span>: #0B0C0E; <span class="k">--panel</span>: #0E0F12;
+  <span class="k">--panel-2</span>: #121418; <span class="k">--raise</span>: #191B20;
+
+  <span class="c">/* 2. line — three weights, no more */</span>
+  <span class="k">--line</span>: #23262C; <span class="k">--line-2</span>: #2E3138; <span class="k">--line-3</span>: #3A3D44;
+
+  <span class="c">/* 3. ink — role, not size */</span>
+  <span class="k">--text</span>: #ECEAE4; <span class="k">--muted</span>: #9A988F; <span class="k">--dim</span>: #63625D;
+
+  <span class="c">/* 4. accent — the fill is theme-invariant */</span>
+  <span class="k">--accent</span>: #D4AF37; <span class="k">--accent-ink</span>: #F2D168;
+  <span class="k">--accent-dim</span>: #6E5B22; <span class="k">--on-accent</span>: #0B0C0E;
+
+  <span class="c">/* 5. status — hue only; severity is the rubric */</span>
+  <span class="k">--ok</span>: #7FB99A; <span class="k">--info</span>: #74A9E0;
+  <span class="k">--warn</span>: #E8943F; <span class="k">--danger</span>: #E5534B;
+
+  <span class="c">/* space · radius · motion */</span>
+  <span class="k">--s-1</span>: 4px; <span class="k">--s-4</span>: 16px; <span class="k">--s-7</span>: 48px;
+  <span class="k">--r-2</span>: 4px; <span class="k">--r-5</span>: 10px; <span class="k">--r-6</span>: 999px;
+  <span class="k">--dur-1</span>: 150ms; <span class="k">--dur-2</span>: 220ms; <span class="k">--ease</span>: ease;
+}
+
+<span class="c">/* 6. Theme — a remap, never a redesign. */</span>
+<span class="k">html</span>[data-theme="light"] {
+  <span class="k">--bg</span>: #F6F4EF; <span class="k">--panel</span>: #FFFFFF; <span class="k">--panel-2</span>: #FBFAF6;
+  <span class="k">--text</span>: #15171B; <span class="k">--accent</span>: #D4AF37; <span class="k">--accent-ink</span>: #7A5F0E;
+}
+
+<span class="c">/* 7. Accessibility — loops only when motion is welcome. */</span>
+<span class="k">@media</span> (prefers-reduced-motion: reduce) { <span class="k">*</span> { transition-duration: .01ms <span class="k">!important</span>; } }</pre>
+      </div>
+      <p class="note">Light and dark share one structure. Surface and status tints are remapped in the light block; component rules do not fork.</p>
+    </div>
+
+    <div class="grid two" style="margin-top: 24px">
+      <div class="spec" style="margin-top: 0">
+        <div class="spec-head"><h3>Before you ship</h3></div>
+        <ul class="checks">
+          <li class="yes"><svg><use href="#i-check-circle"/></svg><span>No raw hex in markup — every color traces to a token.</span></li>
+          <li class="yes"><svg><use href="#i-check-circle"/></svg><span>Both themes pass contrast at body, muted, and dim text.</span></li>
+          <li class="yes"><svg><use href="#i-check-circle"/></svg><span>Every interactive element is a native control with a visible focus state.</span></li>
+          <li class="yes"><svg><use href="#i-check-circle"/></svg><span>Status and severity always ship a written label.</span></li>
+          <li class="yes"><svg><use href="#i-check-circle"/></svg><span>Empty, loading, and error states exist for every data view.</span></li>
+          <li class="yes"><svg><use href="#i-check-circle"/></svg><span>Numbers that change in place use tabular numerals.</span></li>
+          <li class="yes"><svg><use href="#i-check-circle"/></svg><span>Layout holds at 720px without horizontal scroll.</span></li>
+          <li class="yes"><svg><use href="#i-check-circle"/></svg><span>Infinite animations wrapped in <code>no-preference</code>.</span></li>
+        </ul>
+      </div>
+      <div class="spec" style="margin-top: 0">
+        <div class="spec-head"><h3>Where it pays off</h3></div>
+        <ul class="checks">
+          <li class="no"><svg><use href="#i-x-circle"/></svg><span>A drawn span standing in for a checkbox, switch, tab, or nav row.</span></li>
+          <li class="no"><svg><use href="#i-x-circle"/></svg><span>A one-off hex in a component that "needs its own shade."</span></li>
+          <li class="no"><svg><use href="#i-x-circle"/></svg><span>A second shadow system layered on top of lightness elevation.</span></li>
+          <li class="no"><svg><use href="#i-x-circle"/></svg><span>A new status hue added because a label needed to stand out.</span></li>
+          <li class="no"><svg><use href="#i-x-circle"/></svg><span>A spinner standing in for an empty or error state.</span></li>
+          <li class="no"><svg><use href="#i-x-circle"/></svg><span>Skipped empty states because "there won't be data."</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="closing">
+      <span class="mark-tile"><svg width="46" height="46" viewBox="68 82 442 448" aria-hidden="true">
+            <defs><linearGradient id="mark-gold-46" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFE05A"/><stop offset="0.38" stop-color="#f9c735"/><stop offset="0.72" stop-color="#E9A91B"/><stop offset="1" stop-color="#CF8B08"/></linearGradient></defs>
+            <path d="M 70 308 L 70 399 L 72 407 L 78 419 L 91 430 L 192 486 L 259 525 L 265 527 L 280 527 L 297 519 L 440 439 L 481 418 L 491 411 L 498 404 L 504 393 L 507 380 L 506 363 L 504 357 L 498 347 L 487 337 L 476 332 L 453 318 L 445 315 L 422 332 L 411 337 L 404 342 L 379 355 L 286 408 L 273 411 L 259 410 L 246 405 L 241 401 L 173 364 L 152 351 L 141 346 L 131 339 L 113 330 L 87 314 L 72 306 Z M 351 278 L 356 296 L 355 312 L 373 312 L 374 311 L 391 311 L 392 310 L 428 310 L 429 309 L 429 304 L 426 302 L 361 281 L 355 278 Z M 272 248 L 271 249 L 261 250 L 247 256 L 240 261 L 229 272 L 220 290 L 218 299 L 218 314 L 222 328 L 228 339 L 244 355 L 253 360 L 263 363 L 285 364 L 297 361 L 305 357 L 316 349 L 322 343 L 328 334 L 333 322 L 334 297 L 332 288 L 327 277 L 312 260 L 304 255 L 292 250 L 282 249 L 281 248 Z M 70 226 L 71 248 L 78 263 L 87 272 L 131 297 L 133 297 L 144 284 L 159 273 L 165 271 L 183 260 L 193 256 L 213 244 L 236 233 L 271 213 L 290 204 L 310 203 L 315 204 L 337 215 L 504 307 L 506 307 L 507 304 L 507 214 L 503 199 L 496 188 L 483 179 L 427 149 L 422 145 L 398 133 L 393 129 L 366 115 L 354 107 L 337 99 L 323 90 L 310 85 L 301 85 L 290 88 L 207 133 L 169 152 L 162 157 L 152 161 L 94 192 L 88 196 L 79 205 L 73 215 Z" fill="url(#mark-gold-46)" fill-rule="evenodd"/>
+          </svg></span>
+      <h2>Consistency is a feature.<br><em>Ship it once.</em></h2>
+      <p class="lede" style="margin: 0 auto">Five token groups, eighteen patterns, six shapes — one system, in every app, forever.</p>
+    </div>
+    <p class="source">the snitch · rush style guide · no dependencies</p>
+  </section>
+
+</main>
+
+<script>
+  // Section rail: highlight the dot for the section in view.
+  const links = [...document.querySelectorAll('.nav a')];
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (!e.isIntersecting) return;
+      links.forEach(a => a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id));
+    });
+  }, { rootMargin: '-45% 0px -50% 0px' });
+  document.querySelectorAll('main section').forEach(s => io.observe(s));
+
+  // Theme toggle. Bound first and isolated from storage: if localStorage is
+  // unavailable the toggle must still work for the current page view.
+  const root = document.documentElement;
+  const themeBtn = document.querySelector('.theme');
+  const store = {
+    get() { try { return localStorage.getItem('rush-theme'); } catch { return null; } },
+    set(v) { try { localStorage.setItem('rush-theme', v); } catch { /* ignore */ } },
+  };
+  const applyTheme = next => {
+    root.dataset.theme = next;
+    store.set(next);
+    themeBtn.setAttribute('aria-label', next === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
+  };
+  themeBtn.addEventListener('click', () => {
+    applyTheme(root.dataset.theme === 'dark' ? 'light' : 'dark');
+  });
+  applyTheme(root.dataset.theme || 'dark');
+
+  document.querySelectorAll('[role="tablist"]').forEach(list => {
+    const tabs = [...list.querySelectorAll('[role="tab"]')];
+    const select = tab => {
+      tabs.forEach(item => {
+        const on = item === tab;
+        item.classList.toggle('on', on);
+        item.setAttribute('aria-selected', on ? 'true' : 'false');
+        item.tabIndex = on ? 0 : -1;
+      });
+    };
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => select(tab));
+      tab.addEventListener('keydown', event => {
+        const index = tabs.indexOf(tab);
+        const next = event.key === 'ArrowRight' ? tabs[(index + 1) % tabs.length]
+          : event.key === 'ArrowLeft' ? tabs[(index - 1 + tabs.length) % tabs.length]
+          : null;
+        if (!next) return;
+        event.preventDefault();
+        select(next);
+        next.focus();
+      });
+    });
+  });
+
+  document.querySelectorAll('.navlist').forEach(list => {
+    const rows = [...list.querySelectorAll('.navrow')];
+    rows.forEach(row => {
+      row.addEventListener('click', () => {
+        rows.forEach(item => {
+          const on = item === row;
+          item.classList.toggle('on', on);
+          if (on) item.setAttribute('aria-current', 'page');
+          else item.removeAttribute('aria-current');
+        });
+      });
+    });
+  });
+
+  // Copy the token block. Falls back to selection when the clipboard API is blocked.
+  document.querySelectorAll('.copy').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const text = document.getElementById(btn.dataset.copy).innerText;
+      const label = btn.textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+        btn.textContent = 'Copied';
+      } catch {
+        const sel = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(document.getElementById(btn.dataset.copy));
+        sel.removeAllRanges(); sel.addRange(range);
+        btn.textContent = 'Selected';
+      }
+      setTimeout(() => { btn.textContent = label; }, 1600);
+    });
+  });
+</script>
+</body>
+</html>
