@@ -18,6 +18,8 @@ import { freezeUniformProfile } from "./uniform-profile.ts";
 import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { parseImplementationGate } from "../src/handoff.ts";
+import { policyHash } from "../src/policy.ts";
+import { deliveryCoverage } from "../src/delivery-coverage.ts";
 import { validateAgentResult } from "../src/agent-result.ts";
 import { parseEnvelope } from "../src/harness.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
@@ -67,7 +69,7 @@ function fixtureExecutor(): ExecutorDefinition {
       commandAllowlist: [],
       idleTimeoutSeconds: 30,
       absoluteTimeoutSeconds: 120,
-      envPassthrough: ["PATH", "SystemRoot", "TEMP", "TMP", "EMIT_MODE", "EMIT_PATH"],
+      envPassthrough: ["PATH", "SystemRoot", "TEMP", "TMP", "EMIT_MODE", "EMIT_PATH", "EMIT_FAIL_PHASE"],
       network: "inherit",
     },
   };
@@ -109,11 +111,18 @@ function freezeExecutorIntoProfile(
   store.setProfileRef(runId, sha256Hex(serialized));
 }
 
-async function withMode(fn: () => Promise<void>, mode: string, emitPath?: string): Promise<void> {
+async function withMode(
+  fn: () => Promise<void>,
+  mode: string,
+  emitPath?: string,
+  failPhase?: number
+): Promise<void> {
   const beforeMode = process.env.EMIT_MODE;
   const beforePath = process.env.EMIT_PATH;
+  const beforePhase = process.env.EMIT_FAIL_PHASE;
   process.env.EMIT_MODE = mode;
   if (emitPath !== undefined) process.env.EMIT_PATH = emitPath;
+  if (failPhase !== undefined) process.env.EMIT_FAIL_PHASE = String(failPhase);
   try {
     await fn();
   } finally {
@@ -121,6 +130,8 @@ async function withMode(fn: () => Promise<void>, mode: string, emitPath?: string
     else process.env.EMIT_MODE = beforeMode;
     if (beforePath === undefined) delete process.env.EMIT_PATH;
     else process.env.EMIT_PATH = beforePath;
+    if (beforePhase === undefined) delete process.env.EMIT_FAIL_PHASE;
+    else process.env.EMIT_FAIL_PHASE = beforePhase;
   }
 }
 
@@ -145,7 +156,14 @@ interface Ctx {
  */
 function withApprovedRun(
   fn: (ctx: Ctx) => Promise<void>,
-  opts: { scope?: string[]; approval?: boolean; spec?: string; gitignore?: string } = {}
+  opts: {
+    scope?: string[];
+    approval?: boolean;
+    spec?: string;
+    gitignore?: string;
+    /** The plan document, given the hash of the spec it must bind to. */
+    plan?: (specHash: string) => string;
+  } = {}
 ): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "bw-implementation-"));
   const store = openStore(root);
@@ -219,7 +237,7 @@ function withApprovedRun(
     }
 
     const planPath = join(root, "docs", "features", SLUG, "plan.md");
-    const plan = `feature: demo
+    const plan = opts.plan?.(specHash) ?? `feature: demo
 plan_for: ${specHash}
 
 ## Tasks
@@ -811,6 +829,7 @@ test("the ok fixture body passes the same contract real output is held to", () =
   try {
     writeFileSync(join(scratch, "base.txt"), BASE_MARKER);
     const prompt = [
+      "This is phase 1 of 1.",
       `baseCommit must be exactly: ${"a".repeat(40)}`,
       "",
       "Patch only these paths:",
@@ -860,4 +879,335 @@ test("the gate event records the handoff: the projections commit as base, the ap
     );
     assert.notEqual(parsed.value.base, head, "the base is never the starting commit: projections precede it");
   });
+});
+
+// --- phases: one dispatch per slice of the plan's tasks (hazard 20) ----------
+
+/**
+ * The plan team-notes run 6 produced, verbatim, with only its `plan_for` line
+ * rewritten to the test spec's hash (the recorded hash names run 6's own spec).
+ * Every task line is the recorded one: 57 of them.
+ */
+const RUN_6 = JSON.parse(
+  readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "plan-team-notes-run-6.json"), "utf8")
+) as { planMarkdown: string };
+
+function run6Plan(specHash: string): string {
+  return RUN_6.planMarkdown.replace(/^plan_for:.*$/m, `plan_for: ${specHash}`);
+}
+
+/** A valid plan with `count` tasks, for the boundary and frozen-ceiling tests. */
+function tasksPlan(count: number): (specHash: string) => string {
+  return (specHash) =>
+    `feature: demo\nplan_for: ${specHash}\n\n## Tasks\n\n${Array.from({ length: count }, (_, i) => `- Task ${i + 1}`).join("\n")}\n\n## Coverage\n\n- AC-001 -> src/a1.ts\n`;
+}
+
+/** One scope path per phase, which the `phased` fixture modes add one at a time. */
+function phaseScope(count: number): string[] {
+  return Array.from({ length: count }, (_, i) => `src/p${i + 1}.ts`);
+}
+
+function auditActionCount(store: Store, runId: number, action: string): number {
+  return store.query<{ n: number }>("SELECT COUNT(*) AS n FROM audit WHERE run_id = ? AND action = ?", [
+    runId,
+    action,
+  ])[0]!.n;
+}
+
+/** Rewrite the frozen policy the way a run frozen with other numbers would carry it. */
+function freezePolicyValues(store: Store, root: string, runId: number, values: Record<string, number>): void {
+  const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+  const profile = JSON.parse(readFileSync(path, "utf8")) as {
+    policy: Record<string, unknown>;
+    policyHash: string;
+  };
+  Object.assign(profile.policy, values);
+  // loadVerifiedProfile requires the recorded hash to describe the policy it carries.
+  profile.policyHash = policyHash(profile.policy as unknown as Parameters<typeof policyHash>[0]);
+  const serialized = canonicalJson(profile);
+  writeFileSync(path, serialized);
+  store.setProfileRef(runId, sha256Hex(serialized));
+}
+
+test("the 57-task plan team-notes run 6 produced is implemented in six phases, one dispatch and one commit each", async () => {
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId, head, worktreePath }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        if (!result.ok) return;
+
+        // Six dispatches, each by the implementer setting, each with its own
+        // prompt: five full phases and the remainder.
+        assert.equal(agentRunCount(store, runId), 6);
+        const rows = store.query<{ setting: string; input_hash: string }>(
+          "SELECT ar.setting, ar.input_hash FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? ORDER BY ar.id",
+          [runId]
+        );
+        assert.deepEqual([...new Set(rows.map((r) => r.setting))], ["implementer"]);
+        assert.equal(new Set(rows.map((r) => r.input_hash)).size, 6, "each phase sent a different prompt");
+
+        const events = store
+          .query<{ summary: string }>(
+            "SELECT summary FROM audit WHERE run_id = ? AND action = 'implementation.phase.apply' ORDER BY id",
+            [runId]
+          )
+          .map((e) => e.summary);
+        assert.equal(events.length, 6);
+        assert.match(events[0]!, /^phase 1 of 6: tasks 1-10; base=[0-9a-f]{40,64}; head=[0-9a-f]{40,64}$/);
+        assert.match(events[5]!, /^phase 6 of 6: tasks 51-57; /);
+
+        // The projections commit, then one commit per phase, newest first.
+        const log = git(worktreePath, ["log", "--format=%s", `${head}..HEAD`]);
+        const messages = log.stdout.trim().split("\n");
+        assert.equal(messages.length, 7);
+        assert.match(messages[0]!, new RegExp(`^bw run ${runId}: phase 6/6 \\(base [0-9a-f]{8}\\)$`));
+        assert.match(messages[5]!, new RegExp(`^bw run ${runId}: phase 1/6 \\(base [0-9a-f]{8}\\)$`));
+        assert.equal(messages[6], `bw run ${runId}: projections (spec and plan)`);
+
+        // Each phase proposed against the head the previous phase committed.
+        const heads = events.map((e) => /head=([0-9a-f]+)$/.exec(e)![1]!);
+        const bases = events.map((e) => /base=([0-9a-f]+);/.exec(e)![1]!);
+        assert.deepEqual(bases.slice(1), heads.slice(0, -1), "phase k+1 starts where phase k ended");
+
+        // The one handoff: the base is the head before phase 1, the head is the tip.
+        const gate = store.query<{ summary: string }>(
+          "SELECT summary FROM audit WHERE run_id = ? AND action = 'implementation.gate.pass'",
+          [runId]
+        );
+        assert.equal(gate.length, 1, "the gate event is written once, after the last phase");
+        const parsed = parseImplementationGate(gate[0]!.summary);
+        assert.equal(parsed.ok, true);
+        if (!parsed.ok) return;
+        assert.equal(parsed.value.base, bases[0]);
+        assert.equal(parsed.value.head, git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim());
+
+        // Delivery's range holds exactly the union of the phases' paths.
+        const changed = git(worktreePath, ["diff", "--name-only", `${parsed.value.base}..${parsed.value.head}`]);
+        assert.deepEqual(changed.stdout.trim().split("\n").sort(), phaseScope(6));
+        assert.equal(store.getRun(runId)!.status, "in_progress");
+        assert.equal(verifyAuditChain(store), null);
+      },
+      { plan: run6Plan, scope: phaseScope(6) }
+    );
+  }, "phased");
+});
+
+test("a phase that is refused stops the run there: later phases are never dispatched and earlier commits stay", async () => {
+  await withMode(
+    async () => {
+      await withApprovedRun(
+        async ({ store, root, runId, head, worktreePath }) => {
+          const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+          assert.equal(result.ok, false);
+          if (result.ok) return;
+          assert.match(result.reason, /^phase 3 of 6: implementer returned status blocked, not proposed$/);
+          // Three dispatches were paid for, not six.
+          assert.equal(agentRunCount(store, runId), 3);
+          const stage = store.getStageChain(runId).find((s) => s.kind === "implementation")!;
+          assert.equal(stage.status, "blocked");
+          assert.equal(stage.gate_result, "block");
+          assert.equal(store.getRun(runId)!.status, "blocked");
+          assert.equal(existsSync(worktreePath), true, "the worktree survives the block");
+          // The projections commit and the two phases that succeeded.
+          const log = git(worktreePath, ["log", "--format=%s", `${head}..HEAD`]);
+          assert.equal(log.stdout.trim().split("\n").length, 3);
+          assert.equal(auditActionCount(store, runId, "implementation.phase.apply"), 2);
+          assert.equal(auditActionCount(store, runId, "implementation.gate.pass"), 0, "no handoff for a failed stage");
+          assert.ok(existsSync(join(worktreePath, "src", "p2.ts")), "phase 2's file is retained");
+          assert.ok(!existsSync(join(worktreePath, "src", "p3.ts")), "phase 3 wrote nothing");
+        },
+        { plan: run6Plan, scope: phaseScope(6) }
+      );
+    },
+    "fail-at-phase",
+    undefined,
+    3
+  );
+});
+
+test("an executor that writes into the tree during a later phase is refused naming that phase and every path", async () => {
+  await withMode(
+    async () => {
+      await withApprovedRun(
+        async ({ store, root, runId, worktreePath }) => {
+          const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+          assert.equal(result.ok, false);
+          if (result.ok) return;
+          assert.match(result.reason, /^phase 2 of 6: worktree is not clean after dispatch: .*unreported\.txt/);
+          assert.equal(agentRunCount(store, runId), 2);
+          assert.equal(auditActionCount(store, runId, "implementation.phase.apply"), 1, "only phase 1 was applied");
+          assert.ok(existsSync(join(worktreePath, "unreported.txt")), "the write is retained as evidence");
+          assert.equal(store.getRun(runId)!.status, "blocked");
+        },
+        { plan: run6Plan, scope: phaseScope(6) }
+      );
+    },
+    "mutate-at-phase",
+    undefined,
+    2
+  );
+});
+
+test("a later phase may modify a path an earlier phase added", async () => {
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId, worktreePath }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        assert.equal(agentRunCount(store, runId), 6);
+        // Phase 6 wrote last, so the file carries its marker, not phase 1's.
+        assert.ok(readFileSync(join(worktreePath, "src", "p1.ts"), "utf8").endsWith("// phase 6\n"));
+      },
+      { plan: run6Plan, scope: phaseScope(1) }
+    );
+  }, "phased-modify");
+});
+
+test("a later phase adding a path an earlier phase committed is refused by the existing add rule, naming the phase", async () => {
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+        assert.match(result.reason, /^phase 2 of 6: add requires the file not to exist: src\/p1\.ts$/);
+        assert.equal(agentRunCount(store, runId), 2);
+        assert.equal(store.getRun(runId)!.status, "blocked");
+      },
+      { plan: run6Plan, scope: phaseScope(1) }
+    );
+  }, "phased-add-existing");
+});
+
+test("each phase is told which scope paths exist in the worktree now, so a later phase modifies what an earlier one added", async () => {
+  // Team-notes run 7: phase 4 proposed modify for a path no phase had created
+  // and was refused. The emitter takes each action from the prompt's two lists
+  // and throws on a path in neither, so a stage that stops computing them fails.
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId, worktreePath }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        assert.equal(agentRunCount(store, runId), 3);
+        // Phase 1 added src/p1.ts; phases 2 and 3 modified it and added their own.
+        assert.ok(readFileSync(join(worktreePath, "src", "p1.ts"), "utf8").endsWith("// phase 3\n"));
+        assert.ok(existsSync(join(worktreePath, "src", "p2.ts")));
+        assert.ok(existsSync(join(worktreePath, "src", "p3.ts")));
+      },
+      { plan: tasksPlan(30), scope: phaseScope(3) }
+    );
+  }, "phased-by-prompt");
+});
+
+test("a plan of exactly the frozen ceiling is implemented, and one task more is refused before any spend", async () => {
+  // The ceiling is the frozen phase size times the frozen phase count: here
+  // 2 x 3, which the live constants (10 x 8) would never refuse at 7 tasks, so
+  // the second half proves the stage reads the frozen profile (hard rule 6).
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId }) => {
+        freezePolicyValues(store, root, runId, { implementationPhaseTasks: 2, implementationMaxPhases: 3 });
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        assert.equal(agentRunCount(store, runId), 3, "six tasks at two per phase is three dispatches");
+      },
+      { plan: tasksPlan(6), scope: phaseScope(3) }
+    );
+    await withApprovedRun(
+      async ({ store, root, runId, worktreePath }) => {
+        freezePolicyValues(store, root, runId, { implementationPhaseTasks: 2, implementationMaxPhases: 3 });
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+        assert.match(
+          result.reason,
+          /the approved plan has 7 tasks, more than the frozen ceiling of 6 \(2 tasks per phase, at most 3 phases\)/
+        );
+        assert.equal(agentRunCount(store, runId), 0, "nothing was dispatched");
+        assert.equal(existsSync(worktreePath), false, "no worktree was created");
+        assert.ok(!store.getStageChain(runId).some((s) => s.kind === "implementation"), "no stage row was created");
+        assert.equal(store.getRun(runId)!.status, "in_progress", "the refusal blocks nothing: it costs nothing");
+      },
+      { plan: tasksPlan(7), scope: phaseScope(4) }
+    );
+  }, "phased");
+});
+
+test("a plan that does not parse is refused by name before any stage row or spend", async () => {
+  await withApprovedRun(
+    async ({ store, root, runId, worktreePath }) => {
+      const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(result.reason, /the approved plan .*plan\.md does not parse: tasks must not be empty/);
+      assert.equal(agentRunCount(store, runId), 0);
+      assert.equal(existsSync(worktreePath), false);
+    },
+    // Hashed and gated like any other plan, so only the stage's own parse can refuse it.
+    { plan: (specHash) => `feature: demo\nplan_for: ${specHash}\n\n## Tasks\n\n## Coverage\n\n- AC-001 -> src/a1.ts\n` }
+  );
+});
+
+test("the implementation stage reads the phase size and ceiling from the frozen profile, never the live constants", () => {
+  const source = readFileSync(join(process.cwd(), "src", "implementation-stage.ts"), "utf8");
+  assert.ok(source.includes("profile.policy"), "the stage reads profile.policy");
+  assert.ok(!/IMPLEMENTATION_PHASE_TASKS|IMPLEMENTATION_MAX_PHASES/.test(source));
+});
+
+// --- delivery over a multi-commit range (src/delivery-coverage.ts) ------------
+
+/** The net changed paths and the handoff of a passed implementation stage. */
+function netRange(store: Store, runId: number, worktreePath: string): { base: string; head: string; changed: string[] } {
+  const gate = store.query<{ summary: string }>(
+    "SELECT summary FROM audit WHERE run_id = ? AND action = 'implementation.gate.pass' ORDER BY id DESC LIMIT 1",
+    [runId]
+  )[0]!;
+  const parsed = parseImplementationGate(gate.summary);
+  assert.equal(parsed.ok, true);
+  const diff = git(worktreePath, ["diff", "--name-only", `${parsed.value.base}..${parsed.value.head}`]);
+  assert.equal(diff.status, 0, diff.stderr);
+  return { ...parsed.value, changed: diff.stdout.trim().split("\n").filter((l) => l !== "") };
+}
+
+test("a path touched by six phases is one entry in the net range and satisfies delivery of that artifact", async () => {
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId, worktreePath }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        // Six commits touched src/p1.ts; the range names it once.
+        const { changed } = netRange(store, runId, worktreePath);
+        assert.deepEqual(changed, ["src/p1.ts"]);
+        const coverage = deliveryCoverage(["src/p1.ts"], changed);
+        assert.deepEqual(coverage.delivered, ["src/p1.ts"]);
+        assert.deepEqual(coverage.missing, []);
+      },
+      { plan: run6Plan, scope: phaseScope(1) }
+    );
+  }, "phased-modify");
+});
+
+test("a base file one phase changes and a later phase restores drops out of the range, so delivery fails closed", async () => {
+  // The limitation delivery-coverage.ts states: nothing stops a later phase
+  // putting a path that existed at the base back to its base content, and the
+  // net range then no longer names it. The outcome that matters is the
+  // direction: a declared artifact is reported missing and delivery blocks; it
+  // is never reported delivered. base.txt is committed in the fixture repository.
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId, worktreePath }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        assert.equal(agentRunCount(store, runId), 3);
+        const { changed } = netRange(store, runId, worktreePath);
+        assert.deepEqual(changed, ["src/p3.ts"], "base.txt was changed by phase 1 and restored by phase 2");
+        assert.equal(readFileSync(join(worktreePath, "base.txt"), "utf8"), BASE_MARKER, "restored byte for byte");
+        const coverage = deliveryCoverage(["base.txt", "src/p3.ts"], changed);
+        assert.deepEqual(coverage.delivered, ["src/p3.ts"]);
+        assert.deepEqual(coverage.missing, ["base.txt"], "delivery blocks on it: fails closed");
+      },
+      { plan: tasksPlan(30), scope: ["base.txt", "src/p2.ts", "src/p3.ts"] }
+    );
+  }, "phased-restore");
 });

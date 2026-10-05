@@ -3123,13 +3123,19 @@ function renderStageUsage(snapshot, application, label) {
  * Findings, governance, delivery, and evidence
  * ------------------------------------------------------------------ */
 
-/** @param {string} severity */
+/**
+ * The style guide's four-tier severity rubric: critical takes the danger hue,
+ * high the warning hue, medium the accent, and low stays neutral. Severity and
+ * workflow state are separate axes, so a HIGH finding is never drawn in the
+ * hue of a BLOCKED run.
+ * @param {string} severity
+ */
 function severityTone(severity) {
   const value = severity.toLowerCase();
   if (value === "critical") return "critical";
-  if (value === "high") return "danger";
-  if (value === "medium") return "warning";
-  if (value === "low") return "active";
+  if (value === "high") return "warning";
+  if (value === "medium") return "accent";
+  if (value === "low") return "neutral";
   return "neutral";
 }
 
@@ -4619,7 +4625,7 @@ function applyTheme(theme, button) {
   button.setAttribute("aria-label", `Switch to ${next} theme`);
   button.title = `Switch to ${next} theme`;
   for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
-    meta.setAttribute("content", theme === "dark" ? "#121316" : "#ffffff");
+    meta.setAttribute("content", theme === "dark" ? "#0e0f12" : "#ffffff");
   }
 }
 
@@ -4704,8 +4710,10 @@ async function startBrowserApplication() {
     btn.addEventListener("keydown", (e) => {
       if (e instanceof KeyboardEvent) {
         let targetIndex = -1;
-        if (e.key === "ArrowRight") targetIndex = (index + 1) % tabButtons.length;
-        else if (e.key === "ArrowLeft") targetIndex = (index - 1 + tabButtons.length) % tabButtons.length;
+        // The strip is vertical on a wide screen and horizontal on a narrow one,
+        // so both axes move the selection.
+        if (e.key === "ArrowRight" || e.key === "ArrowDown") targetIndex = (index + 1) % tabButtons.length;
+        else if (e.key === "ArrowLeft" || e.key === "ArrowUp") targetIndex = (index - 1 + tabButtons.length) % tabButtons.length;
         else if (e.key === "Home") targetIndex = 0;
         else if (e.key === "End") targetIndex = tabButtons.length - 1;
         if (targetIndex >= 0) {

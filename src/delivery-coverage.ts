@@ -9,15 +9,26 @@ import { normalizePath } from "./scope.ts";
  * **The changed set's meaning is the range's invariants, stated here because
  * delivery's correctness lives in them.** `runDeliveryStage` diffs
  * `git diff --name-only` over `patchBase..verifiedCommit`, and that net range
- * equals the union of the applied patch changes only while: (1) the base is
- * the single anchor the implementation stage read before its first apply —
- * the post-projection commit the implementer's patches bound to, recorded in
- * the gate event (task 2); (2) the apply-time overlap refusal
- * (`implementation-stage.ts`) prevents a later patch from touching a path an
- * earlier patch moved, so no applied path can be reverted inside the range;
- * and (3) nothing but the system's patch commits lands between base and
- * head. A future multi-commit apply that drops any of these must fail here,
- * not silently change what "delivered" means.
+ * is what delivery matches against. It holds the paths whose content at the
+ * head differs from the base, and that equals the union of the applied patch
+ * changes only while: (1) the base is the single anchor the implementation
+ * stage read before its first apply — the post-projection commit the first
+ * phase's patches bound to, recorded in the gate event (task 2); (2) within one
+ * phase the apply-time overlap refusal (`patch-application.ts`) prevents a
+ * later patch from touching a path an earlier patch of that phase moved; and
+ * (3) nothing but the system's patch commits lands between base and head.
+ *
+ * Invariant 2 is narrower than it was. The implementation stage now runs one
+ * phase per slice of the plan's tasks (hazard 20), each proposing against the
+ * head the previous phase committed, so a later phase may modify a path an
+ * earlier phase added: that path appears once in the net diff, and delivery
+ * counts it. What a later phase can still do is put a path that existed at the
+ * base back to its base content, which removes it from the net diff. Delivery
+ * then reports a declared artifact for that path as missing and blocks the
+ * run: it fails closed, never open, and nothing prevents it. Deletion is
+ * refused, so a path a phase added cannot leave the range. A future change to
+ * how patches are applied that drops any of these must fail here, not silently
+ * change what "delivered" means.
  *
  * Matching is exact equality after normalization. A declared artifact is
  * delivered only when its normalized form equals a changed path — a

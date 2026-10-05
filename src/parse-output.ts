@@ -1,6 +1,63 @@
 export type ExtractResult = { kind: "ok"; value: unknown } | { kind: "refused"; reason: string };
 
 /**
+ * Escape raw control characters that sit inside JSON string literals
+ * (hazard 1, item 10). A raw line break inside a string has one reading: the
+ * author meant that line break. Characters outside string literals are
+ * untouched, and a CRLF pair becomes one `\n`, matching the CRLF
+ * normalization applied before fence scanning (item 7).
+ */
+function escapeControlCharsInStrings(text: string): string {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (!inString) {
+      if (ch === '"') inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === "\\") {
+      out += ch + (text[i + 1] ?? "");
+      i++;
+    } else if (ch === '"') {
+      inString = false;
+      out += ch;
+    } else if (ch === "\r" && text[i + 1] === "\n") {
+      out += "\\n";
+      i++;
+    } else if (ch.charCodeAt(0) < 0x20) {
+      out += ch === "\n" ? "\\n" : ch === "\r" ? "\\r" : ch === "\t" ? "\\t" : `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`;
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+/**
+ * `JSON.parse`, with one repair when the strict parse fails: escape raw
+ * control characters inside string literals and parse again. Nothing else is
+ * repaired. A body that is still invalid after the repair throws the original
+ * error, so a refusal names the position in the bytes the model wrote.
+ */
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    const repaired = escapeControlCharsInStrings(text);
+    if (repaired !== text) {
+      try {
+        return JSON.parse(repaired);
+      } catch {
+        // still invalid; report the original failure
+      }
+    }
+    throw err;
+  }
+}
+
+/**
  * Extract a JSON body from model output, exercising every shape hazard 1
  * documents. Strictness by consequence: this extractor feeds schema
  * validation, so it tolerates one fenced block anywhere in the body, refuses
@@ -10,7 +67,7 @@ export type ExtractResult = { kind: "ok"; value: unknown } | { kind: "refused"; 
 export function extractJsonBody(text: string): ExtractResult {
   const trimmed = text.trim();
   try {
-    return { kind: "ok", value: JSON.parse(trimmed) };
+    return { kind: "ok", value: parseJson(trimmed) };
   } catch {
     // not bare JSON; fall through to fenced extraction
   }
@@ -25,7 +82,7 @@ export function extractJsonBody(text: string): ExtractResult {
   if (fences.length === 1) {
     const content = fences[0][1].trim();
     try {
-      return { kind: "ok", value: JSON.parse(content) };
+      return { kind: "ok", value: parseJson(content) };
     } catch (err) {
       return { kind: "refused", reason: `fenced block is not valid JSON: ${(err as Error).message}` };
     }
@@ -61,7 +118,7 @@ export function extractJsonBody(text: string): ExtractResult {
     };
   }
   try {
-    return { kind: "ok", value: JSON.parse(normalized.slice(brace)) };
+    return { kind: "ok", value: parseJson(normalized.slice(brace)) };
   } catch (err) {
     // Say what was found, not only what was missing (hazard 2): an object
     // may well be there, and the operator diagnosing from the log needs to

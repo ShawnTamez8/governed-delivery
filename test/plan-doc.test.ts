@@ -3,9 +3,19 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validatePlanDoc, writePlanDoc } from "../src/plan-doc.ts";
+import { planPhases, validatePlanDoc, writePlanDoc } from "../src/plan-doc.ts";
 
 const SPEC_HASH = "a".repeat(64);
+
+/**
+ * The plan team-notes run 6 produced and its plan_review gate passed, verbatim
+ * (`test/fixtures/recorded/plan-team-notes-run-6.json`, with provenance). Its
+ * task count is the recorded fact the phase tests rest on, not a number written
+ * beside the code that splits it.
+ */
+const RUN_6 = JSON.parse(
+  readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "plan-team-notes-run-6.json"), "utf8")
+) as { provenance: { tasksSectionLines: number }; planMarkdown: string };
 
 /**
  * A valid document, built from parts so each refusal test can remove exactly
@@ -226,6 +236,44 @@ test("duplicate valid criterion IDs remain visible to the spec-aware gate", () =
   assert.equal(result.ok, true, (result as { reason?: string }).reason);
   if (!result.ok) return;
   assert.deepEqual(result.value.coverage.map((entry) => entry.criterionId), ["AC-001", "AC-001"]);
+});
+
+function run6Tasks(): string[] {
+  const result = validatePlanDoc(RUN_6.planMarkdown);
+  assert.equal(result.ok, true, (result as { reason?: string }).reason);
+  return (result as { value: { tasks: string[] } }).value.tasks;
+}
+
+test("the recorded run 6 plan parses to the task count recorded when it was captured", () => {
+  assert.equal(RUN_6.provenance.tasksSectionLines, 57);
+  assert.equal(run6Tasks().length, RUN_6.provenance.tasksSectionLines);
+});
+
+test("57 tasks split into five phases of ten and one of seven, in plan order", () => {
+  const tasks = run6Tasks();
+  const phases = planPhases(tasks, 10);
+  assert.deepEqual(phases.map((p) => p.tasks.length), [10, 10, 10, 10, 10, 7]);
+  assert.deepEqual(phases.map((p) => p.index), [1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(phases.map((p) => p.firstTask), [1, 11, 21, 31, 41, 51]);
+  assert.ok(phases.every((p) => p.count === 6));
+  // No task is dropped, repeated or reordered.
+  assert.deepEqual(phases.flatMap((p) => p.tasks), tasks);
+  // The first and last lines of each slice are the plan's own, by position.
+  assert.equal(phases[1].tasks[0], tasks[10]);
+  assert.equal(phases[5].tasks[6], tasks[56]);
+});
+
+test("exactly one phase of tasks is one phase, and one task more is a second", () => {
+  const ten = Array.from({ length: 10 }, (_, i) => `task ${i + 1}`);
+  assert.deepEqual(planPhases(ten, 10).map((p) => p.tasks.length), [10]);
+  assert.deepEqual(planPhases([...ten, "task 11"], 10).map((p) => p.tasks.length), [10, 1]);
+  assert.deepEqual(planPhases(["only"], 10).map((p) => [p.index, p.count, p.firstTask]), [[1, 1, 1]]);
+});
+
+test("a phase size that is not a positive integer, or an empty task list, is a programming error", () => {
+  assert.throws(() => planPhases(["a"], 0), /phase size must be a positive integer/);
+  assert.throws(() => planPhases(["a"], 2.5), /phase size must be a positive integer/);
+  assert.throws(() => planPhases([], 10), /cannot split an empty task list/);
 });
 
 test("writePlanDoc writes the content verbatim and returns the parsed document", () => {

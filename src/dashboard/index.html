@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
-  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#121316">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0e0f12">
   <title>BuildWorks &mdash; Governed Delivery</title>
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icon-192.png">
@@ -38,13 +38,14 @@
       </div>
     </header>
     <nav class="tabs-nav" aria-label="Views">
+      <span class="nav-label" aria-hidden="true">Workspace</span>
       <div class="tabs" role="tablist">
-        <button role="tab" id="tab-overview" class="tab" aria-controls="dashboard" aria-selected="true" data-tab="overview">Overview</button>
-        <button role="tab" id="tab-runs" class="tab" aria-controls="dashboard" aria-selected="false" data-tab="runs" tabindex="-1">Runs<span class="tab-count num" data-tab-count="runs" hidden></span></button>
-        <button role="tab" id="tab-findings" class="tab" aria-controls="dashboard" aria-selected="false" data-tab="findings" tabindex="-1">Findings<span class="tab-count num" data-tab-count="attention" hidden></span><span class="visually-hidden"> require attention</span></button>
-        <button role="tab" id="tab-governance" class="tab" aria-controls="dashboard" aria-selected="false" data-tab="governance" tabindex="-1">Governance</button>
-        <button role="tab" id="tab-models" class="tab" aria-controls="dashboard" aria-selected="false" data-tab="models" tabindex="-1">Models &amp; agents</button>
-        <button role="tab" id="tab-audit" class="tab" aria-controls="dashboard" aria-selected="false" data-tab="audit" tabindex="-1">Audit</button>
+        <button role="tab" id="tab-overview" class="tab" aria-controls="dashboard" aria-selected="true" data-tab="overview"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"/></svg>Overview</button>
+        <button role="tab" id="tab-runs" class="tab" aria-controls="dashboard" aria-selected="false" data-tab="runs" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 5.5h16v13H4zM4 10h16M4 14.5h16M9.5 10v8.5"/></svg>Runs<span class="tab-count num" data-tab-count="runs" hidden></span></button>
+        <button role="tab" id="tab-findings" class="tab" aria-controls="dashboard" aria-selected="false" data-tab="findings" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 4.5 20.5 19h-17zM12 10v4M12 16.5h.01"/></svg>Findings<span class="tab-count num" data-tab-count="attention" hidden></span><span class="visually-hidden"> require attention</span></button>
+        <button role="tab" id="tab-governance" class="tab" aria-controls="dashboard" aria-selected="false" data-tab="governance" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3 20 6v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>Governance</button>
+        <button role="tab" id="tab-models" class="tab" aria-controls="dashboard" aria-selected="false" data-tab="models" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3 21 8l-9 5-9-5zM3 13l9 5 9-5"/></svg>Models &amp; agents</button>
+        <button role="tab" id="tab-audit" class="tab" aria-controls="dashboard" aria-selected="false" data-tab="audit" tabindex="-1"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6"/></svg>Audit</button>
       </div>
     </nav>
     <main id="dashboard" tabindex="-1" aria-busy="true">

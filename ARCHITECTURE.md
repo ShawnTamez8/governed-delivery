@@ -806,6 +806,29 @@ without a fresh human decision. A stage
 that fails its requirement blocks the run rather than requesting a new
 signature.
 
+**`implementation`.** Runs one implementer dispatch per phase, and a phase is
+the next ten items of the plan's `## Tasks` section in plan order (hazard 20).
+Deterministic code splits the parsed task list; no model chooses the
+boundaries. Each phase proposes against the head the previous phase committed,
+passes through the same scope, base/head, link, staged-set, committed-set, and
+clean-tree guards as a single patch always did, and is committed before the next
+phase starts. The ten-task size and an eight-phase ceiling are frozen in the
+profile. A plan with more tasks than the ceiling covers refuses before the first
+dispatch is spent. A phase that fails blocks the run with no retry, and the
+commits of earlier phases stay on the branch as evidence. The stage records one
+gate event, whose base is the head before phase one and whose head is the last
+phase's commit, so `verification`, `code_review`, and `delivery_check` read the
+same net range they read before phasing existed. A plan of ten tasks or fewer
+is one phase and behaves as it did.
+
+Each phase's prompt also states which signed-scope paths exist in the worktree
+at that moment and which do not, using the existence test the patch applier
+refuses on, so the implementer does not guess what earlier phases created.
+
+What phasing does not establish: each phase sees the plan and the checkout, not
+the reasoning of the previous phase, and no code review runs between phases.
+`code_review` still reads the complete net diff once, after all phases.
+
 **`verification`.** Fails closed when commands are missing or do not pass.
 Bounded remediation rounds are the retry budget; exhausting one blocks.
 
@@ -1395,6 +1418,11 @@ price.
   proposal and verification before another full panel; the final panel is the
   severity gate and never triggers an unreviewed patch. A breach blocks rather
   than silently accepting or dispatching beyond the frozen budget.
+- **Implementation phases.** Ten plan tasks per phase and at most eight
+  phases, both frozen in the profile with the rest of policy. A plan that needs
+  more phases than the ceiling refuses by name before the first implementer
+  dispatch, never truncating the plan. A failed phase blocks the run and is not
+  retried.
 - **Verification retries.** No limit is in force, because there is no round
   loop: the first verification command that does not pass blocks the run.
   Adding retries later means adding a limit of its own, frozen in the profile
@@ -1435,7 +1463,7 @@ block.
 
 ## 22. Known hazards
 
-`docs/hazards.md` states nineteen failure modes this kind of system is subject
+`docs/hazards.md` states twenty failure modes this kind of system is subject
 to and what each requires. They are requirements, not an appendix: model output
 in shapes the schema refuses, discarded output being undiagnosable, constrained
 fields whose constraint the prompt never states, fixtures and code agreeing
@@ -1447,8 +1475,9 @@ specifications inventing obligations, independence that cannot be proven,
 proposal subprocesses that are requested rather than enforced to be read-only,
 a remediation loop aimed at the wrong artifact that cannot repair an upstream
 omission, a reconciliation that answers a finding by deleting the obligation,
-a delivery proven complete that nothing ever read, and an inactivity budget
-that a non-streaming executor turns into a wall clock.
+a delivery proven complete that nothing ever read, an inactivity budget
+that a non-streaming executor turns into a wall clock, and an implementation
+request larger than one implementer dispatch can answer.
 
 When a new failure mode is found, add it there rather than here. Two lists drift
 apart, and the one that drifts is the one people stop trusting.

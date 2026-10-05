@@ -90,6 +90,19 @@ valid. Its scratch target was not preserved; the per-dispatch record is in
 `docs/features/stage-role-model-overrides/plan.md`. A completed paid run never
 authorizes another spend.
 
+## Phased implementation
+
+The `implementation` stage dispatches the implementer once per phase, where a
+phase is the next ten items of the plan's `## Tasks` section in plan order
+(hazard 20; `docs/features/phased-implementation/plan.md`). The split is
+deterministic (`planPhases` in `src/plan-doc.ts`). `IMPLEMENTATION_PHASE_TASKS`
+(10) and `IMPLEMENTATION_MAX_PHASES` (8) live in `src/policy.ts` and freeze at
+run start; a plan needing more phases than the ceiling refuses before the first
+dispatch. Each phase commits before the next starts, a failed phase blocks the
+run with no retry, and the stage still records one gate event spanning the head
+before phase one to the last phase's commit. No code review runs between
+phases. A completed paid run never authorizes another spend.
+
 ## Windows harness launch
 
 The 2026-09-07 correction removed BuildWorks' obsolete *shim assumption*, not
@@ -104,7 +117,9 @@ The wrapper did not create the recorded invalid `\U0001f319` JSON bytes; they
 were already in the provider result. BuildWorks therefore also added explicit
 JSON-standard escaping instructions to both patch-producing prompts and
 regressions for direct launch, missing-executable reporting, and the prompt
-contract. The strict extractor remains unchanged; it does not guess repairs.
+contract. The extractor still refuses an invalid escape such as `\UXXXXXXXX`. Its
+one repair, added 2026-10-04, escapes a raw control character inside a JSON
+string literal and parses again (hazard 1, item 10).
 
 The 2026-09-14 correction anchored opening and closing code fences to the start
 of a line, allowing only indentation before them (`src/parse-output.ts`), so

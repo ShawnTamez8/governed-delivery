@@ -1,4 +1,5 @@
 import type { AgentDefinition } from "./agents.ts";
+import type { PlanPhase } from "./plan-doc.ts";
 
 export const SPEC_AUTHOR_PROMPT_PREFIX = "you are the spec author";
 export const SPEC_REVIEW_PROMPT_PREFIX = "you are the spec reviewer";
@@ -1060,15 +1061,54 @@ ${renderFindingsBlock(findings)}`;
  *
  * The scope block shape ("Patch only these paths:" followed by one `- <path>`
  * line per entry) is a contract: the fixture executor in Task 7 scrapes it
- * to build its patches, so changing the shape changes the fixture.
+ * to build its patches, so changing the shape changes the fixture. So is the
+ * sentence `This is phase K of N.`, which the same fixture scrapes to know which
+ * phase it is answering.
+ *
+ * The implementation stage dispatches once per phase of the plan's tasks
+ * (hazard 20), so every call carries one `PlanPhase`; a plan of at most one
+ * phase's tasks is phase 1 of 1, not a second code path. The whole plan and the
+ * specification still travel with every phase, because a task refers to
+ * decisions made elsewhere in the plan. The model keeps no memory between
+ * phases: what earlier phases built reaches it only through the checkout.
+ *
+ * `existingPaths` is the subset of `scope` that exists in the worktree at
+ * `baseCommit`, computed by the stage with the same existence test the patch
+ * applier uses, and the prompt splits the scope into the paths that take
+ * `modify` and the paths that take `add`. Without it the model guesses which
+ * scope paths an earlier phase created: team-notes run 7 proposed `modify` for
+ * a file no phase had created, and phase 4 was refused after $2.37 of
+ * implementation spend (hazard 20).
+ *
+ * Each rule below is one source line so that the constraint scan in
+ * `test/prompts.test.ts` matches it: a phrase wrapped across a template line
+ * does not match (hazard 3).
  */
 export function buildImplementationAuthorPrompt(
   agent: AgentDefinition,
   planContent: string,
   specContent: string,
   scope: string[],
-  baseCommit: string
+  baseCommit: string,
+  phase: PlanPhase,
+  existingPaths: readonly string[]
 ): string {
+  const lastTask = phase.firstTask + phase.tasks.length - 1;
+  const existing = new Set(existingPaths);
+  const renderPaths = (paths: string[]): string => (paths.length > 0 ? paths.map((p) => `- ${p}`).join("\n") : "none.");
+  const phaseRules = [
+    `This is phase ${phase.index} of ${phase.count}.`,
+    `Implement only the tasks listed under "Tasks for this phase" below: tasks ${phase.firstTask} through ${lastTask} of the approved plan.`,
+    ...(phase.index > 1
+      ? [`Earlier phases are already committed in this checkout, so the files they created exist: read them before patching and build on them.`]
+      : []),
+    `A file that already exists in the checkout takes action modify with its complete new file content; use action add only for a file that does not exist yet.`,
+    `The two lists after the scope list name which scope paths exist in the checkout right now: take the action each list states, and never modify a path listed as not existing yet.`,
+    ...(phase.index < phase.count
+      ? [`Later phases will implement the remaining tasks, so do not implement a task outside this phase.`]
+      : []),
+    `Return at least one file: a phase that changes nothing blocks the run.`,
+  ].join("\n");
   // The read-only sentence is UX, not a guard: enforcement is the
   // invocation boundary (the read-only executor command) and the stage's
   // clean-tree assertions. It must not tell the model about the backstop —
@@ -1082,6 +1122,8 @@ and commits the patches you propose. This checkout is read-only for you: do
 not create, modify, or delete any file. Only the patch content you return
 is considered.
 
+${phaseRules}
+
 Return exactly a JSON AgentResult object with this shape:
 {"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedPatches": [{"baseCommit": "...", "files": [{"path": "...", "action": "add", "content": "<complete new file content>"}]}]}
 
@@ -1091,6 +1133,7 @@ Every JSON string, including file content, must use JSON-standard escaping.
 Use literal UTF-8 for non-ASCII characters or valid \`\\uXXXX\` escapes (two
 UTF-16 surrogate escapes for a character above U+FFFF). Never use Python's
 \`\\UXXXXXXXX\` escape syntax; it is not valid JSON.
+Write every line break inside a JSON string, including each line break of a file's content, as \`\\n\` and every tab as \`\\t\`; never put a raw line break or tab inside a string literal.
 
 Each patch has:
 - baseCommit must be exactly: ${baseCommit}
@@ -1106,6 +1149,18 @@ Each patch has:
 Patch only these paths:
 
 ${scope.map((p) => `- ${p}`).join("\n")}
+
+Of those paths, these exist in the checkout now, so each takes action modify:
+
+${renderPaths(scope.filter((p) => existing.has(p)))}
+
+Of those paths, these do not exist yet, so each takes action add:
+
+${renderPaths(scope.filter((p) => !existing.has(p)))}
+
+Tasks for this phase (tasks ${phase.firstTask} through ${lastTask} of the approved plan):
+
+${phase.tasks.map((task) => `- ${task}`).join("\n")}
 
 Approved plan:
 
@@ -1268,6 +1323,7 @@ markdown fences. Every JSON string, including file content, must use
 JSON-standard escaping. Use literal UTF-8 for non-ASCII characters or valid
 \`\\uXXXX\` escapes (two UTF-16 surrogate escapes for a character above U+FFFF).
 Never use Python's \`\\UXXXXXXXX\` escape syntax; it is not valid JSON.
+Write every line break inside a JSON string, including each line break of a file's content, as \`\\n\` and every tab as \`\\t\`; never put a raw line break or tab inside a string literal.
 
 Approved scope:
 

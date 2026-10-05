@@ -61,7 +61,7 @@ const EMISSIONS: Emission[] = [
   {
     name: "emit-implementation-stage",
     script: "emit-implementation-stage.mjs",
-    prompt: `baseCommit must be exactly: ${BASE_COMMIT}\n\nPatch only these paths:\n\nsrc/a.ts\n\n`,
+    prompt: `This is phase 1 of 1.\nbaseCommit must be exactly: ${BASE_COMMIT}\n\nPatch only these paths:\n\nsrc/a.ts\n\n`,
   },
   {
     name: "emit-code-review",

@@ -76,3 +76,24 @@ test("recorded implementer response with embedded markdown code fences in string
   if (!validated.ok) return;
   assert.equal(validated.value.proposedPatches?.[0]?.files.length, 18);
 });
+
+const rawNewlineFixture = JSON.parse(
+  readFileSync(
+    new URL("./fixtures/recorded/implementation-team-notes-run-9-raw-newline-in-string.json", import.meta.url),
+    "utf8"
+  )
+) as { result: string; provenance: { recordedRefusal: string } };
+
+test("recorded run 9 phase-2 response, refused for one raw line break in a string, extracts and validates", () => {
+  assert.throws(() => JSON.parse(rawNewlineFixture.result), /Bad control character in string literal/);
+  const extracted = extractJsonBody(rawNewlineFixture.result);
+  assert.equal(extracted.kind, "ok");
+  if (extracted.kind !== "ok") return;
+
+  const validated = validateAgentResult("implementer", extracted.value);
+  assert.equal(validated.ok, true, validated.ok ? "" : validated.reason);
+  if (!validated.ok) return;
+  const files = validated.value.proposedPatches?.[0]?.files ?? [];
+  assert.equal(files.length, 11);
+  assert.equal(files.at(-1)?.path, "src/server/routes/import.ts");
+});

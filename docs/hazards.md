@@ -22,6 +22,8 @@ Every parser that reads model output accepts or explicitly refuses each of:
 7. CRLF line endings inside the fence
 8. prose before an unfenced object, e.g. `I'll finalize the spec now.\n\n{…}`
 9. fenced JSON whose string literals contain markdown code fences
+10. JSON whose string literals contain a raw line break, tab, or other control
+    character
 
 **Choose strictness by consequence.** Where bytes are canonicalized into an
 immutable record, refuse prose outside the fence: dropping it silently corrupts
@@ -84,6 +86,42 @@ carries a backtick run beginning a line, the refusal names the anchoring rule
 instead of claiming there was no fence, which is hazard 2: the operator who
 reads "no fence" about a body that visibly has one goes looking for the wrong
 thing. Read this item as "one fenced block, each delimiter alone on its line."
+
+**Measured, 2026-10-04, $1.1298948 for the dispatch.** The implementer of
+team-notes run 9, phase 2 of 5 (Sonnet 5.5 at `medium`), finished normally
+(`end_turn`, `is_error` false) and returned a complete `AgentResult`: one patch of
+11 files, 113,649 characters. Exactly one raw line break (U+000A) sits inside a JSON
+string, in the content of *src/server/routes/import.ts* at line 605 of 649, 98.7
+percent of the way through the response. Every other line break in it is escaped;
+the 2,000 characters before the slip hold 53 correct `\n` escapes. The strict parse
+refused it ("Bad control character in string literal in JSON at position 112141"),
+the stage recorded `implementation.content.invalid`, and the run blocked with phase
+1 committed, at $4.8703008 total. The prompts told the model how to escape
+non-ASCII characters and never to use `\UXXXXXXXX`; none said that a line break
+inside a string is written `\n`. The retained response is committed at
+`test/fixtures/recorded/implementation-team-notes-run-9-raw-newline-in-string.json`
+and is the contract test.
+
+**What changed, and why this item differs from the `\U` one.** `extractJsonBody`
+now retries a failed parse once, after escaping raw control characters that sit
+inside string literals (`parseJson` in `src/parse-output.ts`). A CRLF pair becomes
+one `\n`, matching item 7. Nothing outside a string literal is touched, and a body
+still invalid after the retry is refused with the original parse error, so the
+position it names is in the bytes the model wrote. Earlier entries kept the
+extractor strict ("does not guess repairs"), and that stays true for an invalid
+escape such as `\UXXXXXXXX`, which has no single reading. A raw line break inside a
+string has one: the author meant a line break, here followed by indented code. Both
+patch-producing prompts (the implementation author and the remediation prompt) now
+state the rule too. The repair applies to every stage that parses model output, not
+only the implementer.
+
+What this does not show. It is one occurrence in one response, so how often a model
+does this is unmeasured, and so is whether the prompt sentence changes it. The
+repair is silent: nothing in the run record says it fired, and the original bytes
+survive only in the retained raw file. A control character inside a string in a
+canonicalized artifact such as a specification is now accepted as the line break it
+resembles. Response length is likely a factor, since this was the largest single
+response the phased stage has produced, but one sample does not show it.
 
 ## 2. Discarded output is undiagnosable
 
@@ -525,3 +563,73 @@ timeout values are unchanged, whether a 24-file implementation now finishes
 inside the 3600-second ceiling is unmeasured, and gaps during extended thinking
 were not sampled because the capture used none. One paid run past
 `implementation` is the end-to-end check, and it has not been made.
+
+## 20. One dispatch over a plan larger than one response
+
+The implementation stage once asked a single implementer dispatch to return every
+file the approved plan covered, each with its complete content, as one JSON
+response. A plan that needs many files can be more than one response carries, and
+the three ways that failed are all measured, on the same team-notes design.
+
+**Measured, 2026-09-27 to 2026-10-04.**
+- Run 4 was killed at 1,800,194 ms, the frozen idle budget, with a 24-path scope;
+  its retained raw file was 0 bytes (entry 19).
+- Run 5 failed with `API Error: Claude's response exceeded the 64000 output token
+  maximum` after four consecutive `max_tokens` messages, each 64,000 tokens of
+  thinking and none with a write. The raw result reports $2.9195696 that the store
+  did not record.
+- Run 6 (Sonnet 5.5 at `medium`, a 57-task plan) completed seven turns in 848,053 ms
+  for $1.2840398 and returned a valid result with `status: "blocked"` and no patch.
+  Its summary said it could not write the whole plan in one response and be
+  confident the JSON-escaped file contents were correct, and that a truncated or
+  malformed patch would be worse than none. The stage recorded `implementer
+  returned status blocked, not proposed`. The response and the plan are committed
+  at `test/fixtures/recorded/implementation-team-notes-run-6-refusal.json` and
+  `test/fixtures/recorded/plan-team-notes-run-6.json`.
+
+- Run 7, the first run under phases (2026-10-04, Sonnet 5.5 at `medium`, a plan of
+  71 to 80 tasks, so eight phases): phases 1 to 3 applied and committed; phase 4
+  took 22 turns and 391,664 ms for $1.0709032 and proposed `modify` for
+  *src/server/routes/import.ts*, a scope path no phase had created, so the patch
+  applier refused it (`modify requires the file to exist`). The prompt already said
+  to use `add` for a file that does not exist yet; the model could not tell which
+  scope paths earlier phases had created, because phase 1 had written files that
+  belong to later tasks. The run blocked at $5.3116814 total, $2.3721 of it
+  implementation. Each phase prompt now lists which scope paths exist in the
+  worktree and which do not, computed with the applier's own existence test. That
+  removes the guess; it does not make a task that needs no file in scope possible.
+
+- Run 9 (2026-10-04, a plan of five phases): phase 1 applied; phase 2 returned an 11-file,
+  113,649-character patch that failed to parse on one raw line break inside a string
+  (entry 1, item 10), and the run blocked at $4.8703008. That is a parse failure, not a
+  size or existence failure, and the extractor now repairs it.
+
+Run 6 also named a second, separate objection: the target still held a Next.js
+scaffold the plan never mentioned, and the system refuses patch deletions. Phasing
+does not touch that. It is a mismatch between the plan and the target, and it was
+handled by clearing the throwaway target.
+
+Bound what one dispatch is asked to return by a unit the plan already has, and
+refuse a plan that cannot fit before any implementation spend. The implementation stage
+now splits the approved plan's tasks into phases of `implementationPhaseTasks`
+(seeded at 10, the operator's choice on 2026-10-04) and dispatches the implementer
+once per phase, each proposing against the head the previous phase committed. The
+model keeps nothing between phases, so a phase sees the earlier ones only through
+the checkout. A plan with more tasks than `implementationPhaseTasks` times
+`implementationMaxPhases` (seeded at 8, an assistant value) is refused before the
+stage row exists. Both values freeze at run start. A phase that fails blocks the
+run and is not retried (entry 7); the earlier phases' commits stay on the retained
+branch, and a fresh run is the repair.
+
+What this does not show. Ten is not measured as a good size, and tasks differ
+widely in size, so ten tasks can still be more than one response. A task is one
+non-empty line of the plan's `## Tasks` section, so a plan that wraps or nests its
+bullets counts each line and can be cut mid-task or refused for size; run 6's plan
+was one line per bullet, and the plan gate does not enforce that. A phase whose
+tasks change no file in the signed scope, such as a trailing "run the build" task,
+has nothing to return and blocks the run. The oversize refusal comes after the
+spec and plan stages are paid for. No paid run has
+yet completed `implementation` under phases. Verification and code review still
+run once, on the whole range, so a large implementation still sends its entire
+diff to each reviewer under the prompt ceiling (entry 18's residual), and whether
+a 57-task diff fits is unmeasured.

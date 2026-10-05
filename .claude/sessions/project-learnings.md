@@ -1,161 +1,93 @@
 # Project learnings — BuildWorks (governed-delivery)
 
-## Current state (2026-09-29, per-agent model/effort plan implemented, committed, run live once, and pushed to `origin/master`)
+## Current state (2026-10-05, run 10 blocked at verification; baseline-verification plan awaiting the operator)
 
 This block is the resume point, rewritten in place. Session records below are
 history; Current state wins when they disagree. This repository file is the
 system of record. Machine-local memory is only a cache and never replaces
 durable knowledge here (`docs/proposals/durable-knowledge-tiers.md`).
 
-**Working state (verified 2026-09-29 with `git log`/`git status`):** Branch
-`streaming-harness-output`. `c539e59` is the stage-role-model-overrides
-implementation (source, migration 008, `test/uniform-profile.ts`, tests, docs, the plan
-and its review, the probe fixture), `f04a7a6` the earlier resume-point update, and a
-documentation commit after them records the live run below (read `git log` for its
-hash). Under them sit `ff61dee`, `85fccad` (streaming implementation) and `2447192`
-(also the tip of local `dashboard-ux-redesign`, three ahead of its origin). The operator
-asked for the push on 2026-09-29 and `git push origin HEAD:master` fast-forwarded
-`origin/master` from `3415032` to `1a3400c` (18 commits, no force). Local `master` is
-still at the old `e0d7ca6`, and no feature branch was pushed. `CLAUDE.md`/`AGENTS.md` are byte-identical. `base.txt` is untracked, a known test-suite leak, in no commit.
+**Working state (verified 2026-10-05 with `git status` and `git branch -vv`):**
+Branch `dashboard-restyling` at `af938d3`, in sync with its origin. `origin/master`
+is `e7aea6b` (streaming and per-agent settings); local `master` is still `e0d7ca6`,
+38 behind; `streaming-harness-output` is local-only at `e7aea6b`;
+`dashboard-ux-redesign` is 3 ahead of its origin. **Uncommitted on
+`dashboard-restyling`:** the phased-implementation work (source, tests, three
+recorded fixtures, `docs/features/phased-implementation/`, edits to
+`ARCHITECTURE.md`, `docs/hazards.md`, `CLAUDE.md` and `AGENTS.md`), the extractor
+repair in `src/parse-output.ts`, the dashboard restyling files in `src/dashboard/`
+(the operator said they need no further change), this file, and the untracked
+`docs/features/baseline-verification/` plan and review. `CLAUDE.md` and
+`AGENTS.md` are byte-identical. The full serial suite has not been run since the
+phased work (last record, 2026-09-29: the two known failures plus one since fixed).
 
-**Shipped (all committed):**
-- 2026-09-27 (`bda3b42`, `2447192`): disclosed-open-decisions, the
-  `upstream_blocking` prompt criterion, spec-operator-decisions (`spec_decision`
-  stage, `awaiting_decision` pause, `bw decide`, dashboard decision POST,
-  migration 007), spec-criterion-testability, dashboard STATE panel,
-  dashboard-pwa-redesign Task 6 (Tasks 7-12 remain), hazard 19. Each has a
-  plan under `docs/features/<slug>/plan.md`; the spec-operator-decisions code
-  review deferred an `awaiting_decision` attention-queue group and duplicate
-  questions across rounds (only if `SPEC_REVIEW_ROUNDS` rises above 1).
-- 2026-09-28 (`85fccad`): **streaming-harness-output**. The executor runs
-  `stream-json --include-partial-messages --verbose`; `parseEnvelope` takes
-  NDJSON with one last `result` line; `STREAM_RETAIN_MAX_BYTES` (64 MiB) bounds
-  retention and `RESULT_MAX_BYTES` caps the parsed result in `src/dispatch.ts`;
-  recording `test/fixtures/recorded/harness-stream-json-envelope.json`. The
-  executor definition changed, so runs frozen earlier refuse at their next
-  dispatch; a fresh run is the repair. The port-4200 hooks were removed from
-  `.claude/settings.json`.
+**Shipped and committed:** 2026-09-27 disclosed-open-decisions, spec operator
+decisions (`spec_decision` stage, `awaiting_decision`, `bw decide`, dashboard
+decision POST, migration 007); 2026-09-28 streaming harness output (`85fccad`);
+2026-09-29 per-agent model and effort settings (`c539e59`, migration 008). Seeded
+defaults in `src/policy.ts`: Opus 5.5 `high` spec and plan authors, Haiku 4.5
+`medium` spec reviewers, Sonnet 5.5 `medium` code reviewers and implementer;
+`--model` freezes only the reconciler. The first live run under them (web
+calculator) was 14 dispatches, $1.66350, completed; the stage-role-model-overrides
+plan carries its table.
 
-**Full suite (serial, 2026-09-29, with the effort work):** 1341 tests, 1333 pass, 5
-skipped, 3 failed: the two known (dashboard SIGTERM stderr warning; "nothing under
-src/ touches a private key") plus `test/schema.test.ts` "every table's columns",
-which this work caused and fixed afterwards (the file passes; the full suite was not
-rerun after that fix or the two review fixes; the touched files were). HEAD had no
-stray commit afterwards.
+**Implemented, not committed:** phased implementation (hazard 20; 10 tasks per
+phase, at most 8 phases, both frozen in `src/policy.ts`) with a per-phase list of
+which scope paths exist, and the one-repair extractor for raw control characters
+inside JSON strings (hazard 1 item 10). Run 10 is the first run to pass every phase
+of a multi-phase plan.
 
-**External target:** `C:\Users\Shawn-work\repositories\testing-repos\team-notes`
-(HEAD `3b73c3d`). Runs 1-3 blocked at `spec_review` ($1.4078, $1.1701,
-$1.6186). Run 4 blocked at `implementation` (killed at 1,800,194 ms, 0-byte raw
-file, hazard 19). **Run 5** (2026-09-28/29, first with streaming, model
-`claude-sonnet-5`, driven with `run --run 5 --yes` twice): spec, spec review and
-plan passed (about 19 and 11 min; $3.55 in the store), the operator signed
-approval in the dashboard, then `implementation` failed with exit 1.
-- Streaming worked: the implementer streamed 32.8 min, past run 4's 1,800 s, no
-  idle kill; raw file 3,500 lines / 2.75 MB, every line valid JSON.
-- The failure is a different mechanism: the `result` line is `API Error:
-  Claude's response exceeded the 64000 output token maximum` (`is_error`,
-  `terminal_reason: api_error`). After 17 read-only calls the model produced four
-  consecutive `max_tokens` messages, each 64,000 tokens of thinking (260,678 of
-  262,076 output). No writes. **[Inference]** run 4's 0-byte kill may have been
-  the same loop; the empty file cannot show it.
-- The store carries no cost for that failed dispatch ("unknown spend"); the raw
-  result has `total_cost_usd` 2.9195696, so run 5 is about $6.47.
-- Usage windows at the end: five-hour 0.82, seven-day 0.82.
-- Untracked `docs/features/team-notes/spec.md` and `plan.md` remain in the target
-  root (verified); move them aside before any next run. Raw evidence stays
-  machine-local at `.governance/raw/5/2026-09-29T00-49-38-624Z-26ea8b0ebac6.json`;
-  copy the result line and the four `max_tokens` lines into
-  `test/fixtures/recorded/` with provenance before a plan or test depends on them.
-- Thinking is not silent: each 64,000-token thinking message carried 380-402
-  `thinking_delta` events with empty text, so the idle timer is fed during heavy
-  thinking. Count only; the stream has no timestamps.
+**External target** `C:\Users\Shawn-work\repositories\testing-repos\team-notes`
+(HEAD `3b73c3d`): runs 1-10 are all `blocked`; none delivered. **Run 10** (2026-10-05,
+`--model claude-sonnet-5-5`, signer `~/.buildworks/approval.pub`) passed spec, spec
+review, approval, plan, plan review and a 6-phase implementation (16 dispatches,
+$7.3048866, no unknown-spend failures, audit chain valid), then `verification`
+blocked on `typecheck`: `Cannot find module ...\node_modules\typescript\bin\tsc`.
+`npm ls typescript` is empty while `node_modules/.bin/tsc` exists, so the install
+is partial **[Inference]**; nobody reinstalled to confirm. The six phase commits
+are on `gov/team-notes/10`. Team-notes at `3b73c3d` also has no application source,
+so its `build` command cannot pass until a feature creates the app. Target state
+now: `docs/features/team-notes/spec.md` and `plan.md` untracked again (copies of
+the earlier pair are in `%TEMP%\team-notes-aside-2026-10-05\`), and the operator
+skill `.claude/skills/buildworks-operator/SKILL.md` untracked, which dirties the
+tree and makes `new-run` refuse until it is committed or moved.
 
-**stage-role-model-overrides plan (`Implemented` 2026-09-29, committed `c539e59`; see the
-plan's Implementation note for what shipped, deviations (a)-(h) and the independent
-in-session review: no correctness defect, two low findings fixed, one deferred):**
-model **and effort** per setting for the nine registered agents plus one
-`reconciler` setting (covers spec, plan and the decision fold), seeded defaults in
-`src/policy.ts`, `--effort` / `--model-for` / `--effort-for` on `new-run`,
-`claude --effort` passed per dispatch, `agent_run.requested_effort` (migration
-008), `dispatchSettings` replaces `modelMap` in the frozen profile.
-- **Seeded defaults, final per the operator:** `spec-author` Opus 5.5 `high`;
-  spec reviewers Haiku 4.5 `medium`; code reviewers Sonnet 5.5 `medium`;
-  `implementer` Sonnet 5.5 `medium` and `reconciler` (`--model`) `medium` (both
-  set by the operator 2026-09-29); `plan-author` Opus 5.5 `high` (operator, later
-  2026-09-29; it was my `--model` guess until then, so `--model` now covers only
-  `reconciler`). Risk recorded: run 5's failure was at `high` on Sonnet 5, and
-  5.5's levels are recalibrated, so it says nothing about 5.5; nothing measured
-  shows that `medium` avoids the output-cap failure.
-- **Task 0 ran** ($0.0349, five dispatches, fixture above): Haiku 4.5 takes
-  `--effort` at `low` and `medium`; Opus 5.5 is callable; `xhigh` on Sonnet 4.6
-  (docs say unsupported) is accepted silently; a nonsense level warns on stderr
-  and runs at the default. A one-word prompt cannot show that effort changes
-  behavior or that any model reviews well.
-- **Review (in-session, same session as the author, so not independent):** 1
-  critical, 4 high-risk, 7 medium. Critical: existing tests encode the
-  single-model contract (`spec-stage.test.ts` passes `requestedModel: "m"` at 14+
-  sites; 47 `freezeProfile(` calls in 14 files), so seeded non-null defaults break
-  them; the plan says they pass unchanged. High: Tasks 2-3 expect a clean
-  typecheck that cannot exist until Tasks 4-5; `--model` no longer governs most
-  settings and cost moves toward Opus; new freeze refusals run before staffing
-  checks and collide with the `deps.agents` seam (`test/profile.test.ts:431-506`);
-  a repeat implementer failure is unrecorded spend.
-- **Reconciled 2026-09-29** (14 verdicts: 13 accepted, 1 deferred, 0 open; plan
-  `Reconciled`). Operator rulings: a run-wide `--effort` does not reach the six
-  reviewers (they move only through their own `--effort-for`, up to `max`, never
-  `ultracode`); `agent_run` gains a `setting` column beside `requested_effort`;
-  failed `agent.dispatch.failed` summaries name the requested model and effort; the
-  cost of a failed dispatch stays out of scope, stated in the plan. The plan adds a
-  test helper `test/uniform-profile.ts` and a Task 4 Step 0 that routes seven
-  dispatching test files through it. Deferred: printing setting sources in `status`.
-
-**First live run under the per-agent settings (2026-09-29, operator-authorized,
-`driver.mjs paid --yes --model claude-sonnet-5-5`, web-calculator):** 14 dispatches,
-$1.66350, run `completed`, ten stages passed, 4 of 4 artifacts delivered, audit chain
-valid, driver 15/15. The plan's Implementation note carries the per-row table.
-- All 14 `agent_run` rows carry `setting` and `requested_effort`, and `effective_model`
-  equals `requested_model` on each. Both reconciliations ran under `reconciler`
-  (Sonnet 5.5 `medium`) with `agent` still the author.
-- The `implementer` default (Sonnet 5.5 `medium`) completed: 30 s, $0.09, no output-cap
-  failure. One sample.
-- Opus author dispatches were $0.89 of the $1.66; Haiku spec reviewers $0.31;
-  reconciliations $0.18; implementer $0.09; code panel $0.19.
-- One clean code-review panel, so remediation, panel two and the blocking gate were not
-  exercised. Reviewers ran one turn each, no tools, about 17,000 input tokens
-  (diff is in the prompt), 3-12 s. Their cited specifics held against the delivered
-  files (`textContent`, theme allowlist, `localStorage` try/catch, Error reset), so they
-  did read the code; reviewer sensitivity is untested.
-- The scratch target (OS temp `bw-run-skill\1790702965489\target`) is not preserved and
-  `driver.mjs clean` deletes it; the rows are copied into the plan.
-- The driver's own `--model` default is still `claude-sonnet-5` and now sets the
-  reconciler; pass `--model claude-sonnet-5-5`.
-
-**Running state:** dashboard background task `b7970wd79`, restarted after the paid run
-so its repositories file lists team-notes and the scratch target (port 52294; the
-bearer token is minted per start and is not recorded). Session-only; stop with TaskStop
-`b7970wd79`. The earlier tasks (`bjq5aqd81`, `bjutv7qpr`) are gone.
+**Decisions locked (operator):** a red baseline refuses unless the operator accepts
+it for that invocation (2026-10-05, a design choice inside the unimplemented plan
+below). The operator signs approvals; the assistant never reads or invokes
+`~/.buildworks/approval.key`. A completed paid run never authorizes another spend.
 
 **Open — operator decisions:**
-- Local `master` is 37 commits behind `origin/master`; `streaming-harness-output` has no
-  remote branch and `origin/dashboard-ux-redesign` is three commits behind its local
-  branch. Fast-forward local `master` and push the branches only if wanted.
-- A live run that reaches a spec_review question needs `bw run` or guided mode
-  with the operator answering; `driver.mjs paid` cannot cross a decision pause.
-  Old run stores (team-notes, note-keeper) read `interrupted_or_inconsistent`; a
-  fresh run is the repair.
-- `test/sign-approval.test.ts:99` false positive: it matches the comment "never
-  receives a private key" at `src/dashboard-approval.ts:16`.
-- `plan_review` has no blocking criterion or operator-question path (out of
-  scope for the 2026-09-27 plans).
-- Out of scope, recorded: the store records no cost for a dispatch that failed
-  after producing a stream.
+- **baseline-verification** (`docs/features/baseline-verification/plan.md`,
+  `Reconciled`; review `2026-10-05-plan-review.md`, 8 findings accepted): nothing
+  implemented. It would refuse a run at `run` time when the frozen verify commands
+  fail in a fresh worktree of the starting commit, before any dispatch. The operator
+  doubted it (more friction, likely test churn), and I found that with
+  `--accept-red-baseline` it would not have caught run 10, since team-notes is red
+  for a missing app whether or not `typescript` is installed. Choices put to the
+  operator and **unanswered**: (1) runbook checklist only, `npm ci` then the three
+  verify commands in a fresh checkout (my recommendation); (2) a "toolchain probe"
+  in `governed.yaml` that must pass even when the baseline is red, which changes the
+  config format; (3) the full plan. Plan decisions still open: whether to check
+  before consent; refuse versus block (I read `prefixAction` in
+  `src/operator-state.ts`: phase keys on stage rows only, so a refused run stays a
+  re-runnable `ready` run until the 7-day age limit); widening
+  `VERIFY_ENV_PASSTHROUGH` (the operator said yes; global versus per-target list
+  undecided).
+- **Commit plan:** phased work as one commit, dashboard files separately, this file
+  and the baseline plan after; branch choice (the work is on `dashboard-restyling`
+  and is not dashboard work); full suite not yet run.
+- Team-notes needs a repaired `npm install` (operator-owned) and a committed
+  application scaffold before any run can pass `build`.
+- Local `master` is behind `origin/master`; push branches only if wanted.
+- Carried, not rechecked: a live run that reaches a spec_review question needs
+  `bw run` or guided mode (`driver.mjs paid` cannot cross a decision pause);
+  `test/sign-approval.test.ts:99` false positive on a comment; `plan_review` has no
+  blocking criterion or operator-question path; the store records no cost for a
+  dispatch that failed after producing a stream.
 
-**Next up:** Reviewer and implementer quality
-across levels is unmeasured; a run on a design that attracts findings (for example
-`target-tap-design.md`, or `--effort-for` on a reviewer) is the test, needs its own
-authorization, and a completed paid run never authorizes another. Deferred: refuse an
-unknown `--model-for`/`--effort-for` setting name at parse time so a typo leaves no
-blocked run.
+**Next up:** the operator picks among the three baseline options; then split-commit
+the working tree. Any paid run needs its own authorization.
 
 ## Diagnostics quick-reference
 
@@ -237,43 +169,18 @@ Durable project facts belong here, regardless of whether a host also caches them
 - A plan that changes a seeded default must count the tests asserting the old value, not only the files that mention the renamed symbol. The effort plan listed nine files by symbol and missed the stage tests that assert `requestedModel: "m"` (review finding 1).
 - Bash heredocs and regex `node -e` were mangled; use a scratch `.mjs`. Read every adjacent review before planning from a proposal.
 - Check `git status` and `git log` against the recorded state before trusting a resume point; an unexplained file count means an undocumented layer (happened 2026-09-15 and 2026-09-24).
+- Replay a proposed gate against the failure that motivated it before planning it. The baseline-verification gate looked right until the operator asked; with its accept flag it would have been red on run 10's own target for a different reason than the one that cost $7.30.
+- An `[Unknown]` in a plan about the environment a paid stage depends on, answerable by a free command, is a check to run before spend, not a note. The phased plan recorded "whether that worktree has `node_modules` has not been checked" and run 10 paid for the answer.
+- Verification commands spawn with `shell: WINDOWS` (`src/verify-command.ts`), so `npm`, `npx`, `pnpm` and `dotnet` shims resolve; only a native `claude.exe` is spawned directly (hazard 8). I wrongly called `.cmd` shims a risk for verification on 2026-10-05.
+- A verification worktree (`.governance/worktrees/<run>`) holds tracked files only; dependency resolution there works by walking up to the main checkout's ignored `node_modules`. `checkCommitState` runs `git status` without `--ignored`, and `runVerifyCommand` truncates `<name>.log`, so a reused worktree or evidence directory hides an unreproducible repair and overwrites an audit-referenced log.
 
 ## Session records
 
 ### Effort plan, run 5, streaming check (2026-09-28 to 2026-09-29, `85fccad`, `ff61dee`)
 
-#### Decisions and assumptions
-- The operator authorized a fresh team-notes run 5 knowing the usage limit might stop it; a completed paid run authorizes nothing further, so nothing was retried after the failure.
-- The operator chose the reconciler as its own setting covering spec and plan, spec author on an Opus-class model, reviewers never `high`, Haiku for spec reviewers, Sonnet 5.5 for code reviewers and the implementer (final defaults in Current state).
-- The `--model` assertion on `bw spec|plan|implement|review` stays; it will assert against the stage's author setting (plan open decision 7, my recommendation).
-
-#### What failed
-- Run 5 `implementation`: output-token-cap loop, not the idle timer; root cause and cost in Current state. Open: the plan does not claim its defaults fix it.
-- My first plan revision treated the agent as the only unit and dropped the reconciler; the operator reversed that within one message. I had also written the existing-test impact off as "unchanged" until the review checked the tests.
-
-#### What worked
-- Reading the retained stream's last line and per-message `stop_reason` and `thinking_tokens` diagnosed the failure without code changes or spend.
-- A scratch `.mjs` importing `CLAUDE_CODE.command` ran the five probes through the executor's own flags; dropping the `system` lines kept machine paths out of the fixture (provenance says so).
-
-#### Running state
-- See Current state (dashboard `bjq5aqd81`). Scratch outputs of the probes live under the session scratchpad `effort-probe-out`; the fixture is the durable copy.
-
-#### Verification
-- `node <scratch>/effort-probe.mjs` (five dispatches) - all exit 0, $0.0349 total.
-- `claude --effort nonsense --version` - warning, exit 0.
-- `npm run check:docs`, `git diff --check` - clean after each doc edit.
-- Not run: the full serial suite, any paid run beyond run 5 and Task 0.
-
-#### Deferred and open
-- Deferred: extracting run 5's failure lines into `test/fixtures/recorded/` - nothing depends on them yet.
-- Open at the time: `plan-author` and `reconciler` defaults (plan-author since settled: Opus 5.5 `high`); push; the review's critical and high findings.
-
-#### Next time
-- Count assertions on the old value before saying a plan leaves tests unchanged.
-- Confirm the unit of configuration with the operator's own words before rewriting a design around it.
-
-#### Next up
-- See Current state.
+- Run 5's implementation failed on the 64,000-token output cap, not the idle timer (hazards 19 and 20); the effort defaults do not claim to fix it. Operator rulings (reconciler as its own setting, reviewers never `high`, the final defaults) live in `src/policy.ts` and the stage-role-model-overrides plan.
+- Lessons: count assertions on the old value before saying a plan leaves tests unchanged; confirm the unit of configuration in the operator's own words before redesigning around it. Reading a retained stream's last line diagnosed run 5 with no code change or spend; a scratch `.mjs` importing `CLAUDE_CODE.command` ran the effort probes (the recorded fixture is the durable copy).
+- Deferred: extracting run 5's failing lines into `test/fixtures/recorded/`; nothing depends on them yet.
 
 ### Operator decisions for spec review; team-notes runs 1-2 (2026-09-27)
 
@@ -357,3 +264,40 @@ Only version commands ran as frozen verification in every chain.
   wrong task boundary. **Steps 1-7:** `bw new-run` needed `.governance/`
   gitignored (hazard 11); the plan stage mirrors the spec stage without a shared
   abstraction (hard rule 4).
+
+## 2026-10-04 — team-notes runs 7-9 under phases (phased work still uncommitted)
+
+- **Run 7** blocked at phase 4 of 8: the implementer proposed `modify` for a scope path no phase had created ($5.3116814; hazard 20). I had treated "the prompt states the add-versus-modify rule" as enough; the model could not tell which scope paths existed. General rule: when a prompt asks a model to branch on a fact the system can compute exactly, state the fact, not the rule. Each phase prompt now lists the existing and missing scope paths (`existsSync`). A passing component test (the prompt contains the rule) said nothing about whether the model could follow it.
+- **Run 8** blocked at phase 2 by HTTP 429, "session limit" (five-hour utilization 1.05, `total_cost_usd` 0). The "1 failed attempt with unknown spend" is $0; known cost $3.4449324. The limit is shared with the interactive session driving the run; the repair is the reset and a fresh run, not debugging.
+- **Run 9** blocked at phase 2: an 11-file patch (113,649 characters, $1.1298948) with one raw U+000A inside a JSON string (hazard 1 item 10; fixture `test/fixtures/recorded/implementation-team-notes-run-9-raw-newline-in-string.json`). Changed: `parseJson` retries once after escaping raw control characters inside string literals (`escapeControlCharsInStrings`; silent; every `extractJsonBody` caller), plus one prompt sentence on `\n` and `\t`. Eight parser tests; six extractor and three prompt mutations each failed a test. Unmeasured: the rate and the sentence's effect. Lesson: a state-toggling guard tested with an even number of occurrences cancels the bug (`\\"` and two escaped quotes both passed the mutant); use an odd count and run the break first.
+
+## 2026-10-05 — team-notes run 10: six phases passed, verification blocked on an uninstalled toolchain
+
+**Result.** Cost $7.3048866 over 16 dispatches (implementation $4.9523102 of it);
+blocked at `verification.gate.block` on `typecheck` (`verify-audit`: chain valid).
+Evidence: `.governance/verification/10/typecheck.log` in the target; Task 1 of the
+baseline plan copies it into `test/fixtures/recorded/` (not yet done). A first
+paid attempt the same day, on the scratch calculator, was stopped by me before any
+recorded dispatch when the operator redirected to team-notes.
+
+**Reasoning that failed.** The phased plan listed "whether the worktree has
+`node_modules`" as `[Unknown]` and the run proceeded on it. A free command could
+have answered it before spend. Then, in the follow-up work, I proposed a gate
+(baseline verification) without replaying it against run 10, and the operator's
+doubts surfaced that it would be red for a different reason on this target; the
+first plan draft also reused one worktree and one evidence directory across
+retries, which the reviewer showed approves an environment the implementation
+worktree lacks and overwrites logged evidence. General rule: replay a proposed
+gate against the failure that motivated it, and ask what its escape hatch does to
+that case.
+
+**Operational.** `new-run` refuses on an untracked `.claude/` and on leftover
+`spec.md` and `plan.md`; moving them aside to `%TEMP%` was enough. `run --yes`
+exits 3 at `awaiting_approval`; the dashboard prints its bootstrap URL once, at
+start, with a per-start token (not recorded). The consent for `run` covers
+only through that pause; implementation needed a second `run --yes` after the
+operator's signature, and the operator's "approved" was read as that consent.
+`claude` needs the native `claude.exe` directory first on PATH on this host.
+
+**Next time.** Before a paid run on an external target, run its three verify
+commands in a fresh checkout yourself, or have the operator do it.

@@ -134,3 +134,99 @@ test("no fence and an unparseable tail from the first '{' is refused, naming the
     /^no fence, and the text from the first '\{' \(offset 20\) to the end of the body is not valid JSON: /
   );
 });
+
+/**
+ * Hazard 1, item 10. The implementer's phase-2 response of team-notes run 9
+ * (2026-10-04, $1.1299, `implementation.content.invalid`) is a complete
+ * `AgentResult` with exactly one raw line break inside a JSON string: in the
+ * content of src/server/routes/import.ts, between
+ * `processZip(config, md, file, notes, rejected);` and `} else if (ext ===`.
+ * Its `provenance.recordedRefusal` names the strict-parse position (112141),
+ * and `provesWhat` states that replacing that one character yields a parseable
+ * result. Both are asserted here, not trusted.
+ */
+const RAW_NEWLINE_RUN = JSON.parse(
+  readFileSync(
+    new URL("./fixtures/recorded/implementation-team-notes-run-9-raw-newline-in-string.json", import.meta.url),
+    "utf8"
+  )
+) as { result: string; provenance: { recordedRefusal: string } };
+
+test("the recorded run 9 response carries one raw line break in a string, and extracts once it is escaped", () => {
+  const body = RAW_NEWLINE_RUN.result;
+  const position = 112141;
+  assert.throws(
+    () => JSON.parse(body),
+    new RegExp(`Bad control character in string literal in JSON at position ${position}`),
+    "the recorded body must still fail the strict parse where the live run refused it"
+  );
+  assert.match(RAW_NEWLINE_RUN.provenance.recordedRefusal, new RegExp(`position ${position}\\b`));
+  assert.equal(body[position], "\n");
+
+  // Independent expectation: the provenance's claim, built without the repair.
+  const escapedByHand = JSON.parse(body.slice(0, position) + "\\n" + body.slice(position + 1)) as {
+    proposedPatches: { files: { path: string; content: string }[] }[];
+  };
+  const result = extractJsonBody(body);
+  assert.equal(result.kind, "ok", `the recorded response must extract; got ${JSON.stringify(result)}`);
+  if (result.kind !== "ok") return;
+  assert.deepEqual(result.value, escapedByHand);
+
+  const files = escapedByHand.proposedPatches[0].files;
+  assert.equal(files.length, 11);
+  const importFile = files.find((f) => f.path === "src/server/routes/import.ts");
+  assert.ok(importFile, "the patch must carry import.ts");
+  assert.match(importFile.content, /processZip\(config, md, file, notes, rejected\);\n      \} else if \(ext === 'md'/);
+});
+
+test("a raw line break inside a string is accepted in a fence, bare, and after prose", () => {
+  const body = '{"a":"x\ny"}';
+  const expected = { kind: "ok", value: { a: "x\ny" } };
+  assert.deepEqual(extractJsonBody(body), expected);
+  assert.deepEqual(extractJsonBody("```json\n" + body + "\n```"), expected);
+  assert.deepEqual(extractJsonBody("Here it is:\n\n" + body), expected);
+});
+
+test("a raw CRLF inside a string reads as one line break, the same as LF", () => {
+  const crlf = extractJsonBody('{"a":"x\r\ny"}');
+  const lf = extractJsonBody('{"a":"x\ny"}');
+  assert.deepEqual(crlf, lf);
+  assert.deepEqual(crlf, { kind: "ok", value: { a: "x\ny" } });
+});
+
+test("a raw tab and a raw low control character inside a string are escaped", () => {
+  const result = extractJsonBody('{"a":"x\ty\u0001z"}');
+  assert.deepEqual(result, { kind: "ok", value: { a: "x\ty\u0001z" } });
+});
+
+test("string boundaries are tracked: an escaped backslash ends a string, an escaped quote does not", () => {
+  // `x\\` ends string a. If the scanner took `\\"` as an escaped quote, string b
+  // would be read as outside a string and its raw line break left unescaped.
+  const backslash = extractJsonBody('{"a":"x\\\\","b":"y\nz"}');
+  assert.deepEqual(backslash, { kind: "ok", value: { a: "x\\", b: "y\nz" } });
+  // `\"` does not end the string, so the raw line break after it is still inside it.
+  // One escaped quote, not two: a scanner that wrongly closes the string on `\"`
+  // flips state twice on a pair and lands back inside the string by accident.
+  const quote = extractJsonBody('{"a":"say \\"hi\nthere"}');
+  assert.deepEqual(quote, { kind: "ok", value: { a: 'say "hi\nthere' } });
+});
+
+test("line breaks between tokens, outside strings, are left alone", () => {
+  const result = extractJsonBody('{\n  "a": "x\ny",\n  "b": [1,\n 2]\n}');
+  assert.deepEqual(result, { kind: "ok", value: { a: "x\ny", b: [1, 2] } });
+});
+
+test("a body still invalid after the repair is refused with the original parse error", () => {
+  // The raw line break is repairable; the trailing comma is not. The refusal
+  // must report the strict parse's position in the bytes the model wrote
+  // (the control character), not the later failure in the repaired text.
+  const result = extractJsonBody('{"a":"x\ny",}');
+  assert.equal(result.kind, "refused");
+  if (result.kind !== "refused") return;
+  assert.match(result.reason, /Bad control character in string literal/);
+});
+
+test("a truncated string stays refused: only control characters are repaired", () => {
+  const result = extractJsonBody('{"a":"x\ny');
+  assert.equal(result.kind, "refused");
+});

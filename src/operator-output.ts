@@ -45,7 +45,10 @@ export function formatRunPreview(rootDir: string, snapshot: RunSnapshot, groups:
     spec: 2 + policy.specReviewRounds * (policy.panelSizeMax + 1),
     decision: 1,
     plan: 2 + policy.planReviewRounds * (policy.panelSizeMax + 1),
-    implementation: 1,
+    // At most one dispatch per phase, and the frozen ceiling caps the phases.
+    // The plan may not exist when the preview prints (run 6's did not), so its
+    // task count cannot be the ceiling.
+    implementation: policy.implementationMaxPhases,
     verification: 0,
     code_review: policy.codeReviewPanelSize * policy.codeReviewMaxRounds + policy.codeReviewMaxRounds - 1,
     delivery_check: 0,
@@ -58,6 +61,7 @@ export function formatRunPreview(rootDir: string, snapshot: RunSnapshot, groups:
     `Frozen verification commands: ${JSON.stringify(snapshot.configuration.verificationCommands)}`,
     `Document review: panel up to ${policy.panelSizeMax}; spec ${policy.specReviewRounds} round(s), plan ${policy.planReviewRounds} round(s). Each document group permits 1 author + 1 self-critique + rounds * (panel + 1 reconciler) dispatches.`,
     `Code review: ${policy.codeReviewPanelSize} reviewers * ${policy.codeReviewMaxRounds} panel(s), plus at most ${policy.codeReviewMaxRounds - 1} remediation implementer dispatch(es), each followed by frozen verification; blocking severity ${policy.codeReviewBlockingSeverity}.`,
+    `Implementation: one implementer dispatch per ${policy.implementationPhaseTasks} plan tasks, at most ${policy.implementationMaxPhases} phases; the phase count is known once the plan exists.`,
     `Dispatch ceilings for this range: ${groups.map((group) => `${group}=${ceilings[group]}`).join(", ")}; total ${groups.reduce((sum, group) => sum + ceilings[group], 0)}.`,
     "Consent covers EVERY listed group through approval or terminalization, including bounded internal remediation, not only the next group.",
     "There is no intermediate voluntary stop control or hard monetary cap. Dispatch ceilings are not an invoice or a dollar guarantee.",

@@ -31,7 +31,7 @@ import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
 import { SPEC_REVIEWER_TRACEABILITY } from "../src/agents/spec-reviewer-traceability.ts";
 import { validatePanelRequest } from "../src/select.ts";
 import { validateSpecDoc } from "../src/spec-doc.ts";
-import { validatePlanDoc } from "../src/plan-doc.ts";
+import { planPhases, validatePlanDoc, type PlanPhase } from "../src/plan-doc.ts";
 import { validateAgentResult, type AgentResult } from "../src/agent-result.ts";
 import { CLAUDE_CODE } from "../src/executor.ts";
 import { parseEnvelope } from "../src/harness.ts";
@@ -111,6 +111,25 @@ const CONSTRAINT_STRINGS = [
   "literal UTF-8",
   "\\uXXXX",
   "\\UXXXXXXXX",
+  // Hazard 1, item 10: team-notes run 9 returned a 113,649-character patch with
+  // one raw line break inside a string. The extractor now repairs that, and the
+  // prompts state the rule so the model is told where the repair is a backstop.
+  "Write every line break inside a JSON string",
+  "never put a raw line break or tab inside a string literal",
+  // The phase rules (docs/features/phased-implementation/plan.md, hazard 20).
+  // One dispatch is one phase of the plan's tasks, and the model keeps no memory
+  // between phases, so what each rule says is stated where it is requested. The
+  // add-versus-modify rule is the one the patch applier enforces: add over an
+  // existing file and modify over a missing one are both refused.
+  "Implement only the tasks listed under",
+  "Earlier phases are already committed in this checkout",
+  "takes action modify with its complete new file content",
+  "use action add only for a file that does not exist yet",
+  // The existence lists (team-notes run 7, hazard 20): phase 4 proposed modify
+  // for a scope path no phase had created.
+  "take the action each list states, and never modify a path listed as not existing yet",
+  "do not implement a task outside this phase",
+  "Return at least one file",
   // The code-review contract's constrained fields. The severity rubric is
   // here because the gate compares severity against a threshold frozen in the
   // profile (hazard 3): a threshold over an unstated scale is a comparison
@@ -488,12 +507,15 @@ test("the generated plan reviewer prompt states the finding constraints and name
   assert.ok(prompt.includes("names a criterion the plan does not deliver"));
 });
 
+/** One phase of one: what a plan of at most one phase's tasks gets. */
+const ONLY_PHASE: PlanPhase = { index: 1, count: 1, firstTask: 1, tasks: ["Build the thing"] };
+
 test("the generated implementation author prompt states the patch contract", () => {
   const baseCommit = "b".repeat(40);
   const prompt = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", [
     "src/a1.ts",
     "test/a1.test.ts",
-  ], baseCommit);
+  ], baseCommit, ONLY_PHASE, []);
   for (const constraint of [
     "proposed, blocked, failed",
     "proposedPatches",
@@ -509,6 +531,9 @@ test("the generated implementation author prompt states the patch contract", () 
     "literal UTF-8",
     "\\uXXXX",
     "\\UXXXXXXXX",
+    // Asserted per prompt: the remediation prompt carries its own copy, and the
+    // whole-file scan passes while either one still does.
+    "Write every line break inside a JSON string, including each line break of a file's content, as `\\n` and every tab as `\\t`; never put a raw line break or tab inside a string literal.",
   ]) {
     assert.ok(prompt.includes(constraint), `implementation author prompt missing: ${constraint}`);
   }
@@ -519,6 +544,87 @@ test("the generated implementation author prompt states the patch contract", () 
   // `- <path>` line per entry.
   assert.ok(prompt.includes("- src/a1.ts"));
   assert.ok(prompt.includes("- test/a1.test.ts"));
+});
+
+test("the implementation prompt names its phase, lists that phase's tasks verbatim, and states the phase rules", () => {
+  const phase: PlanPhase = {
+    index: 2,
+    count: 6,
+    firstTask: 11,
+    tasks: ["src/server/auth.ts: implement sessions.", "src/server/auth.ts: implement password reset."],
+  };
+  const prompt = buildImplementationAuthorPrompt(IMPLEMENTER, "PLAN-TEXT", "SPEC-TEXT", ["src/a.ts"], "b".repeat(40), phase, []);
+  for (const text of [
+    // The exact sentence the fixture emitter scrapes to learn which phase it
+    // is answering; changing it changes the fixture.
+    "This is phase 2 of 6.",
+    "tasks 11 through 12 of the approved plan",
+    "Earlier phases are already committed in this checkout",
+    "Later phases will implement the remaining tasks, so do not implement a task outside this phase",
+    "A file that already exists in the checkout takes action modify with its complete new file content; use action add only for a file that does not exist yet.",
+    "Return at least one file",
+    "Tasks for this phase (tasks 11 through 12 of the approved plan):",
+    "- src/server/auth.ts: implement sessions.",
+    "- src/server/auth.ts: implement password reset.",
+    // The whole plan and the specification travel with every phase.
+    "PLAN-TEXT",
+    "SPEC-TEXT",
+  ]) {
+    assert.ok(prompt.includes(text), `phase 2 of 6 prompt missing: ${text}`);
+  }
+  // The phase's tasks come before the whole plan, so the model reads what it
+  // is to do before the document it is one slice of.
+  assert.ok(prompt.indexOf("Tasks for this phase") < prompt.indexOf("Approved plan:"));
+  // The scope block the fixture scrapes still ends at its first blank line,
+  // with the phase's task list after it, not inside it.
+  const scope = /Patch only these paths:\n\n([\s\S]*?)\n\n/.exec(prompt);
+  assert.ok(scope, "the scope block must stay scrapable");
+  assert.deepEqual(scope![1]!.split("\n"), ["- src/a.ts"]);
+  assert.equal(/This is phase (\d+) of (\d+)\./.exec(prompt)!.slice(1).join("/"), "2/6");
+});
+
+test("the implementation prompt splits the scope into paths that exist (modify) and paths that do not (add)", () => {
+  const scope = ["src/a.ts", "src/b.ts", "src/c.ts"];
+  const phase: PlanPhase = { index: 4, count: 8, firstTask: 31, tasks: ["src/c.ts: implement it."] };
+  const prompt = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", scope, "b".repeat(40), phase, ["src/a.ts", "src/c.ts"]);
+  // Read the two lists the way the fixture emitter does: the block after each
+  // heading, up to the next blank line.
+  const list = (heading: string): string[] =>
+    /\n\n([\s\S]*?)\n\n/.exec(prompt.slice(prompt.indexOf(heading) + heading.length))![1]!.split("\n");
+  assert.deepEqual(list("these exist in the checkout now, so each takes action modify:"), ["- src/a.ts", "- src/c.ts"]);
+  assert.deepEqual(list("these do not exist yet, so each takes action add:"), ["- src/b.ts"]);
+  // Both lists come after the scope list and before the phase's tasks, and the
+  // scope block the emitters scrape still ends at its first blank line.
+  assert.ok(prompt.indexOf("Patch only these paths:") < prompt.indexOf("these exist in the checkout now"));
+  assert.ok(prompt.indexOf("these do not exist yet") < prompt.indexOf("Tasks for this phase (tasks"));
+  assert.deepEqual(/Patch only these paths:\n\n([\s\S]*?)\n\n/.exec(prompt)![1]!.split("\n"), scope.map((p) => `- ${p}`));
+  // An empty side is stated as `none.`, not left as a heading with nothing under it.
+  const none = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", scope, "b".repeat(40), phase, []);
+  assert.ok(none.includes("so each takes action modify:\n\nnone.\n\n"));
+  const all = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", scope, "b".repeat(40), phase, scope);
+  assert.ok(all.includes("so each takes action add:\n\nnone.\n\n"));
+});
+
+test("the first phase claims no earlier work, the last claims no later work, and a lone phase claims neither", () => {
+  const prompts = {
+    first: buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", ["src/a.ts"], "b".repeat(40), { index: 1, count: 3, firstTask: 1, tasks: ["a"] }, []),
+    last: buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", ["src/a.ts"], "b".repeat(40), { index: 3, count: 3, firstTask: 21, tasks: ["z"] }, []),
+    only: buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", ["src/a.ts"], "b".repeat(40), ONLY_PHASE, []),
+  };
+  // A sentence telling the first phase that earlier phases are committed, or
+  // the last that later phases follow, is a false statement the model acts on.
+  assert.ok(!prompts.first.includes("Earlier phases are already committed"));
+  assert.ok(prompts.first.includes("Later phases will implement"));
+  assert.ok(prompts.last.includes("Earlier phases are already committed"));
+  assert.ok(!prompts.last.includes("Later phases will implement"));
+  assert.ok(!prompts.only.includes("Earlier phases are already committed"));
+  assert.ok(!prompts.only.includes("Later phases will implement"));
+  // The add-versus-modify rule is true of every phase: a target may already
+  // hold files, so it is not conditional on the phase number.
+  for (const [name, prompt] of Object.entries(prompts)) {
+    assert.ok(prompt.includes("use action add only for a file that does not exist yet"), name);
+    assert.ok(prompt.includes("This is phase "), name);
+  }
 });
 
 test("the generated spec self-critique prompt states the contract and carries both governing inputs", () => {
@@ -1222,6 +1328,7 @@ test("the remediation prompt carries every report and advertises a valid patch r
     "literal UTF-8",
     "\\uXXXX",
     "\\UXXXXXXXX",
+    "Write every line break inside a JSON string, including each line break of a file's content, as `\\n` and every tab as `\\t`; never put a raw line break or tab inside a string literal.",
   ]) {
     assert.ok(prompt.includes(text), `remediation prompt missing: ${text}`);
   }
@@ -1265,7 +1372,7 @@ function routingPrompts(document: string) {
     { builder: "buildPlanSelfCritiquePrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanSelfCritiquePrompt(PLAN_AUTHOR, document, document, hash, scope, PANEL) },
     { builder: "buildPlanReviewPrompt", prefix: "PLAN_REVIEW_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanReviewPrompt(SPEC_REVIEWER_TRACEABILITY, document, document) },
     { builder: "buildPlanReconcilePrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanReconcilePrompt(PLAN_AUTHOR, document, document, hash, scope, PAIR) },
-    { builder: "buildImplementationAuthorPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, document, document, scope, base) },
+    { builder: "buildImplementationAuthorPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, document, document, scope, base, ONLY_PHASE, []) },
     { builder: "buildCodeReviewPrompt", prefix: "CODE_REVIEW_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, document, document, scope, document, base) },
     { builder: "buildCodeReviewRemediationPrompt", prefix: "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, document, document, scope, base, scope, document, []) },
   ];
@@ -1430,7 +1537,7 @@ test("CLI fixture composes existing emitters for all builder families with recei
     }
 
     const base = "b".repeat(40);
-    const implementationPrompt = buildImplementationAuthorPrompt(IMPLEMENTER, planText as string, specText as string, scope, base);
+    const implementationPrompt = buildImplementationAuthorPrompt(IMPLEMENTER, planText as string, specText as string, scope, base, planPhases(plan.value.tasks, 10)[0]!, []);
     const implemented = runRouter(root, implementationPrompt, IMPLEMENTER.id);
     assert.equal(implemented.status, "proposed");
     const patches = implemented.proposedPatches!;

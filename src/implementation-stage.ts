@@ -14,6 +14,7 @@ import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
 import { SYSTEM_NAME } from "./policy.ts";
 import { applyProposedPatches, checkWorktreeClean } from "./patch-application.ts";
+import { planPhases, validatePlanDoc } from "./plan-doc.ts";
 
 export type ImplementationStageResult =
   | { ok: true; stageId: number; worktreePath: string }
@@ -195,6 +196,26 @@ export async function runImplementationStage(
     };
   }
 
+  // The plan's tasks, split into the phases this stage dispatches (hazard 20:
+  // one dispatch over a whole plan was refused or failed in team-notes runs 4,
+  // 5 and 6). Both numbers come from the profile frozen at run start. A plan
+  // that needs more phases than the frozen ceiling is refused here, before the
+  // stage row, the worktree or any dispatch exists, so the refusal costs
+  // nothing beyond what the plan stages already spent.
+  const parsedPlan = validatePlanDoc(planContent);
+  if (!parsedPlan.ok) {
+    return { ok: false, reason: `the approved plan ${planPath} does not parse: ${parsedPlan.reason}` };
+  }
+  const { implementationPhaseTasks, implementationMaxPhases } = profile.policy;
+  const taskCeiling = implementationPhaseTasks * implementationMaxPhases;
+  if (parsedPlan.value.tasks.length > taskCeiling) {
+    return {
+      ok: false,
+      reason: `the approved plan has ${parsedPlan.value.tasks.length} tasks, more than the frozen ceiling of ${taskCeiling} (${implementationPhaseTasks} tasks per phase, at most ${implementationMaxPhases} phases): start a fresh run from a smaller design`,
+    };
+  }
+  const phases = planPhases(parsedPlan.value.tasks, implementationPhaseTasks);
+
   // Section 20's run-duration ceiling, read from the profile frozen at run
   // start so the run is governed by the limit in force when it began. The
   // refusal names the limit and happens before the stage row exists.
@@ -257,14 +278,17 @@ export async function runImplementationStage(
   const refuseDirty = (
     sid: number,
     when: "before dispatch" | "after dispatch" | "after applying patches",
-    check: { ok: false; entries: string[]; detail?: string }
+    check: { ok: false; entries: string[]; detail?: string },
+    where = ""
   ): ImplementationStageResult =>
     abort(
       sid,
       "implementation.worktree.dirty",
-      check.detail !== undefined
-        ? `cannot check worktree cleanliness ${when}: ${check.detail}`
-        : `worktree is not clean ${when}: ${check.entries.join(", ")}`
+      `${where}${
+        check.detail !== undefined
+          ? `cannot check worktree cleanliness ${when}: ${check.detail}`
+          : `worktree is not clean ${when}: ${check.entries.join(", ")}`
+      }`
     );
 
   try {
@@ -376,87 +400,117 @@ export async function runImplementationStage(
       return abort(stage.id, "implementation.author.failed", `cannot read the worktree head: ${headResult.detail}`);
     }
     const headAtProposal = headResult.stdout.trim();
-    const authorDispatch = await dispatchOnce(
-      store,
-      executor,
-      {
-        stageId: stage.id,
-        agent: author.id,
-        role: "author",
-        requestedModel: implementerSettings.model,
-        requestedEffort: implementerSettings.effort,
-        setting: author.id,
-        prompt: buildImplementationAuthorPrompt(author, planContent, specContent, scope, headAtProposal),
-        invocation: { cwd: worktreePath },
-      },
-      rootDir
-    );
-    if (!authorDispatch.ok) {
-      return abort(stage.id, "implementation.author.failed", authorDispatch.reason);
-    }
 
-    // The subprocess boundary backstop: the model may have mutated the tree
-    // it was invited to read. Any change — tracked, staged, untracked, or
-    // ignored — blocks the run and names the paths before anything is
-    // parsed or applied. A prompt is a request; this is the check.
-    const cleanAfterDispatch = checkWorktreeClean(worktreePath);
-    if (!cleanAfterDispatch.ok) {
-      return refuseDirty(stage.id, "after dispatch", cleanAfterDispatch);
-    }
+    // One dispatch per phase, in plan order, each applied and committed before
+    // the next begins. The `implementer` keeps no memory between dispatches:
+    // what earlier phases built reaches it only through the checkout, which is
+    // why every phase proposes against the head the previous phase committed
+    // (never `headAtProposal`, which stays the handoff base).
+    let phaseBase = headAtProposal;
+    let finalHead = headAtProposal;
+    for (const phase of phases) {
+      // A single-phase run keeps the reasons and the commit message it always
+      // had; only a run with more than one phase says where it stopped.
+      const where = phase.count > 1 ? `phase ${phase.index} of ${phase.count}: ` : "";
+      if (phase.index > 1) {
+        const headNow = runGit(["rev-parse", "HEAD"], worktreePath);
+        if (!headNow.ok) {
+          return abort(stage.id, "implementation.author.failed", `${where}cannot read the worktree head: ${headNow.detail}`);
+        }
+        phaseBase = headNow.stdout.trim();
+      }
+      // Which scope paths exist now, by the test the patch applier refuses on
+      // (`existsSync` in the worktree). The model is told rather than left to
+      // guess what earlier phases created (team-notes run 7, hazard 20).
+      const existingPaths = scope.filter((p) => existsSync(join(worktreePath, p)));
+      const authorDispatch = await dispatchOnce(
+        store,
+        executor,
+        {
+          stageId: stage.id,
+          agent: author.id,
+          role: "author",
+          requestedModel: implementerSettings.model,
+          requestedEffort: implementerSettings.effort,
+          setting: author.id,
+          prompt: buildImplementationAuthorPrompt(author, planContent, specContent, scope, phaseBase, phase, existingPaths),
+          invocation: { cwd: worktreePath },
+        },
+        rootDir
+      );
+      if (!authorDispatch.ok) {
+        return abort(stage.id, "implementation.author.failed", `${where}${authorDispatch.reason}`);
+      }
 
-    // --- parse, validate, and refuse an empty delivery ---
-    const authorBody = extractJsonBody(authorDispatch.envelope.resultText);
-    if (authorBody.kind === "refused") {
-      return abort(stage.id, "implementation.content.invalid", `implementer body refused: ${authorBody.reason}`);
-    }
-    const authorResult = validateAgentResult(author.id, authorBody.value);
-    if (!authorResult.ok) {
-      return abort(stage.id, "implementation.content.invalid", `implementer result refused: ${authorResult.reason}`);
-    }
-    if (authorResult.value.status !== "proposed") {
-      return abort(
+      // The subprocess boundary backstop: the model may have mutated the tree
+      // it was invited to read. Any change — tracked, staged, untracked, or
+      // ignored — blocks the run and names the paths before anything is
+      // parsed or applied. A prompt is a request; this is the check. It runs
+      // after every phase's dispatch; the tree before a later phase is already
+      // proven clean by `applyProposedPatches`, which ends on the same check.
+      const cleanAfterDispatch = checkWorktreeClean(worktreePath);
+      if (!cleanAfterDispatch.ok) {
+        return refuseDirty(stage.id, "after dispatch", cleanAfterDispatch, where);
+      }
+
+      // --- parse, validate, and refuse an empty delivery ---
+      const authorBody = extractJsonBody(authorDispatch.envelope.resultText);
+      if (authorBody.kind === "refused") {
+        return abort(stage.id, "implementation.content.invalid", `${where}implementer body refused: ${authorBody.reason}`);
+      }
+      const authorResult = validateAgentResult(author.id, authorBody.value);
+      if (!authorResult.ok) {
+        return abort(stage.id, "implementation.content.invalid", `${where}implementer result refused: ${authorResult.reason}`);
+      }
+      if (authorResult.value.status !== "proposed") {
+        return abort(
+          stage.id,
+          "implementation.author.failed",
+          `${where}implementer returned status ${authorResult.value.status}, not proposed`
+        );
+      }
+      const patches = authorResult.value.proposedPatches;
+      if (!Array.isArray(patches) || patches.length === 0) {
+        return abort(
+          stage.id,
+          "implementation.content.invalid",
+          `${where}implementer returned no proposed patches: a run that delivers nothing cannot pass`
+        );
+      }
+
+      // The patch helper is shared with code-review remediation. It owns the
+      // complete write-path guard sequence but never mutates run or stage state.
+      const applied = applyProposedPatches({
+        worktreePath,
+        runId,
+        slug: run.slug,
+        scope,
+        proposalBase: phaseBase,
+        patches: patches as ProposedPatch[],
+        commitMessage:
+          phase.count > 1
+            ? `bw run ${runId}: phase ${phase.index}/${phase.count} (base ${phaseBase.slice(0, 8)})`
+            : `bw run ${runId}: apply patch (base ${phaseBase.slice(0, 8)})`,
+        audit: (action, summary) => audit(stage.id, `implementation.${action}`, summary.replace(`; run ${runId}`, "")),
+      });
+      if (!applied.ok) {
+        const action =
+          applied.kind === "content_invalid"
+            ? "implementation.content.invalid"
+            : applied.kind === "worktree_dirty"
+              ? "implementation.worktree.dirty"
+              : applied.kind === "gate_failed"
+                ? "implementation.gate.failed"
+                : "implementation.patch.refused";
+        return abort(stage.id, action, `${where}${applied.reason}`);
+      }
+      finalHead = applied.resultingCommit;
+      audit(
         stage.id,
-        "implementation.author.failed",
-        `implementer returned status ${authorResult.value.status}, not proposed`
+        "implementation.phase.apply",
+        `phase ${phase.index} of ${phase.count}: tasks ${phase.firstTask}-${phase.firstTask + phase.tasks.length - 1}; base=${phaseBase}; head=${finalHead}`
       );
     }
-    const patches = authorResult.value.proposedPatches;
-    if (!Array.isArray(patches) || patches.length === 0) {
-      return abort(
-        stage.id,
-        "implementation.content.invalid",
-        "implementer returned no proposed patches: a run that delivers nothing cannot pass"
-      );
-    }
-
-    // The patch helper is now shared with code-review remediation. It owns the
-    // complete write-path guard sequence but never mutates run or stage state.
-    const applied = applyProposedPatches({
-      worktreePath,
-      runId,
-      slug: run.slug,
-      scope,
-      proposalBase: headAtProposal,
-      patches: patches as ProposedPatch[],
-      commitMessage: `bw run ${runId}: apply patch (base ${headAtProposal.slice(0, 8)})`,
-      audit: (action, summary) => audit(stage.id, `implementation.${action}`, summary.replace(`; run ${runId}`, "")),
-    });
-    if (!applied.ok) {
-      const action =
-        applied.kind === "content_invalid"
-          ? "implementation.content.invalid"
-          : applied.kind === "worktree_dirty"
-            ? "implementation.worktree.dirty"
-            : applied.kind === "gate_failed"
-              ? "implementation.gate.failed"
-              : "implementation.patch.refused";
-      return abort(
-        stage.id,
-        action,
-        applied.reason
-      );
-    }
-    const finalHead = applied.resultingCommit;
     store.completeStage(stage.id, worktreePath, "pass");
     // The handoff carries both commits (step 8, task 2): the base the
     // implementer's patches bound to and the final head. Verification and

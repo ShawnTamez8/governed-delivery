@@ -65,6 +65,27 @@ export const CODE_REVIEW_MAX_ROUNDS_CEILING = 5;
 export const CODE_REVIEW_MAX_ROUNDS = 2;
 
 /**
+ * The implementation stage dispatches the `implementer` once per phase, and a
+ * phase is this many consecutive tasks of the approved plan's `## Tasks`
+ * section, in plan order. One dispatch over a whole plan was refused or failed
+ * in team-notes runs 4, 5 and 6 (hazard 20); the operator chose ten tasks per
+ * phase on 2026-10-04. Nothing measured says ten is the right size.
+ *
+ * `IMPLEMENTATION_MAX_PHASES` bounds spend before it happens. The consent
+ * preview computes its dispatch ceilings from the frozen policy alone, and the
+ * plan may not exist when the preview is printed, so the ceiling cannot come
+ * from the plan's task count. A plan with more than
+ * `IMPLEMENTATION_PHASE_TASKS * IMPLEMENTATION_MAX_PHASES` tasks is refused
+ * before the implementation stage creates its row, worktree or dispatch. Eight
+ * is the assistant's value, not the operator's; team-notes run 6 needs six.
+ *
+ * Both values freeze at run start (hard rule 6); the stage reads
+ * `profile.policy`, never these constants.
+ */
+export const IMPLEMENTATION_PHASE_TASKS = 10;
+export const IMPLEMENTATION_MAX_PHASES = 8;
+
+/**
  * The lowest severity at which one code-review report blocks the run.
  *
  * `high` rather than anything weaker because of hazard 11: a panel that
@@ -244,6 +265,8 @@ export interface Policy {
   codeReviewPanelSize: number;
   codeReviewMaxRounds: number;
   codeReviewBlockingSeverity: string;
+  implementationPhaseTasks: number;
+  implementationMaxPhases: number;
   severities: string[];
   requiredSpecialties: string[];
   protectedPathPrefixes: string[];
@@ -272,6 +295,8 @@ export function buildPolicy(): Policy {
     codeReviewPanelSize: CODE_REVIEW_PANEL_SIZE,
     codeReviewMaxRounds: CODE_REVIEW_MAX_ROUNDS,
     codeReviewBlockingSeverity: CODE_REVIEW_BLOCKING_SEVERITY,
+    implementationPhaseTasks: IMPLEMENTATION_PHASE_TASKS,
+    implementationMaxPhases: IMPLEMENTATION_MAX_PHASES,
     severities: [...SEVERITIES],
     requiredSpecialties: [...REQUIRED_SPECIALTIES],
     protectedPathPrefixes: [...PROTECTED_PATH_PREFIXES],
@@ -303,6 +328,8 @@ const POSITIVE_INT_FIELDS = [
   "specReviewRounds",
   "planReviewRounds",
   "codeReviewMaxRounds",
+  "implementationPhaseTasks",
+  "implementationMaxPhases",
   "promptMaxBytes",
   "resultMaxBytes",
   "approvalMaxLifetimeSeconds",

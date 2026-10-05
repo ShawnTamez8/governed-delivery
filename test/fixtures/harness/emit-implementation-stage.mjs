@@ -1,8 +1,10 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-// One fixture serves the implementation stage's single dispatch, dispatching
-// on EMIT_MODE (default "ok").
+// One fixture serves every implementation dispatch (one per phase of the plan's
+// tasks), dispatching on EMIT_MODE (default "ok"). Which phase it is answering
+// is read out of the prompt, never counted here: a fixture carrying its own
+// counter would agree with whatever the stage did (hazard 4).
 //
 // The patch set is built *from the prompt*, not from a literal: the
 // baseCommit and the approved scope paths are read back out of the prompt
@@ -21,6 +23,15 @@ if (!baseCommitMatch) {
 }
 const baseCommit = baseCommitMatch[1];
 
+// `This is phase K of N.` — stated by buildImplementationAuthorPrompt.
+const phaseMatch = /This is phase (\d+) of (\d+)\./.exec(stdin);
+if (!phaseMatch) {
+  throw new Error("emit-implementation-stage: no phase found in the prompt");
+}
+const phaseIndex = Number(phaseMatch[1]);
+// The phase a failing mode acts on; 0 matches no phase.
+const targetPhase = Number(process.env.EMIT_FAIL_PHASE ?? "0");
+
 // The scope block: `- <path>` lines between the "Patch only these paths:"
 // line and the blank line that ends the list.
 function scopePaths() {
@@ -38,6 +49,19 @@ function scopePaths() {
   return paths;
 }
 
+// The `- <path>` lines of the list that follows `heading` (the tail of a
+// sentence stated by buildImplementationAuthorPrompt); `none.` is an empty list.
+function listAfter(heading) {
+  const block = new RegExp(`${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\n\\n([\\s\\S]*?)\\n\\n`).exec(stdin)?.[1];
+  if (block === undefined) {
+    throw new Error(`emit-implementation-stage: no list after "${heading}" in the prompt`);
+  }
+  return block
+    .split("\n")
+    .map((line) => line.trim().replace(/^-\s*/, ""))
+    .filter((line) => line !== "" && line !== "none.");
+}
+
 const mode = process.env.EMIT_MODE ?? "ok";
 const paths = scopePaths();
 
@@ -52,6 +76,23 @@ function markerContent() {
 
 function file(scopePath, action = "add") {
   return { path: scopePath, action, content: markerContent() };
+}
+
+// The phased modes give each phase its own content so that a modify of a path an
+// earlier phase wrote is a real change: identical content stages nothing, and
+// the stage refuses a patch whose staged set differs from the proposed one.
+function phasedFile(scopePath, action) {
+  return { path: scopePath, action, content: `${markerContent()}// phase ${phaseIndex}\n` };
+}
+
+// The scope path this phase adds, one per phase. A scope shorter than the phase
+// count is a broken test, so it throws rather than reusing a path.
+function phasePath() {
+  const path = paths[phaseIndex - 1];
+  if (path === undefined) {
+    throw new Error(`emit-implementation-stage: scope has ${paths.length} paths, phase ${phaseIndex} has none`);
+  }
+  return path;
 }
 
 function proposed(files, base = baseCommit) {
@@ -196,6 +237,64 @@ if (mode === "ok") {
     summary: "fixture implementation refused",
     proposedPatches: [{ baseCommit, files: paths.map((p) => file(p)) }],
   };
+} else if (mode === "phased") {
+  // Each phase adds the one scope path numbered after it.
+  agentResult = proposed([phasedFile(phasePath(), "add")]);
+} else if (mode === "phased-modify") {
+  // Phase 1 adds the first scope path; every later phase modifies it again.
+  agentResult = proposed([phasedFile(paths[0], phaseIndex === 1 ? "add" : "modify")]);
+} else if (mode === "phased-add-existing") {
+  // Every phase adds the first scope path, so phase 2 adds over a file phase 1
+  // committed, which the patch applier refuses.
+  agentResult = proposed([phasedFile(paths[0], "add")]);
+} else if (mode === "fail-at-phase") {
+  // The shape of the response team-notes run 6 recorded: a valid AgentResult
+  // with status blocked and no patch.
+  agentResult =
+    phaseIndex === targetPhase
+      ? {
+          status: "blocked",
+          agent: "implementer",
+          role: "author",
+          executor: "claude-code",
+          summary: "fixture refused this phase",
+        }
+      : proposed([phasedFile(phasePath(), "add")]);
+} else if (mode === "mutate-at-phase") {
+  // The executor writes into the tree it was invited to read, in one phase
+  // only, then proposes an ordinary patch.
+  if (phaseIndex === targetPhase) writeFileSync("unreported.txt", "fixture wrote this\n");
+  agentResult = proposed([phasedFile(phasePath(), "add")]);
+} else if (mode === "phased-restore") {
+  // Phase 1 changes an existing file, phase 2 puts it back byte for byte, and
+  // later phases add the remaining scope paths. The restore is derived from the
+  // checkout (the appended line is removed), not from a literal.
+  const SUFFIX = "\n// changed by phase 1\n";
+  if (phaseIndex === 1) {
+    agentResult = proposed([{ path: paths[0], action: "modify", content: readFileSync(paths[0], "utf8") + SUFFIX }]);
+  } else if (phaseIndex === 2) {
+    const current = readFileSync(paths[0], "utf8");
+    if (!current.endsWith(SUFFIX)) {
+      throw new Error("emit-implementation-stage: phase 2 did not find phase 1's change in the checkout");
+    }
+    agentResult = proposed([{ path: paths[0], action: "modify", content: current.slice(0, -SUFFIX.length) }]);
+  } else {
+    agentResult = proposed([phasedFile(phasePath(), "add")]);
+  }
+} else if (mode === "phased-by-prompt") {
+  // Every phase writes the first scope path and its own, and takes each action
+  // from the prompt's two lists rather than from its phase number. A path in
+  // neither list throws, so a stage that stops telling the model what exists
+  // fails here instead of passing by coincidence.
+  const exists = listAfter("exist in the checkout now, so each takes action modify:");
+  const missing = listAfter("do not exist yet, so each takes action add:");
+  const actionFor = (path) => {
+    if (exists.includes(path)) return "modify";
+    if (missing.includes(path)) return "add";
+    throw new Error(`emit-implementation-stage: ${path} is in neither of the prompt's existence lists`);
+  };
+  const targets = phaseIndex === 1 ? [paths[0]] : [paths[0], phasePath()];
+  agentResult = proposed(targets.map((p) => phasedFile(p, actionFor(p))));
 } else {
   throw new Error(`emit-implementation-stage: unknown EMIT_MODE ${mode}`);
 }

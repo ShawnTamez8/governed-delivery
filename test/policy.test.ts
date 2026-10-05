@@ -10,6 +10,8 @@ import {
   CODE_REVIEW_PANEL_SIZE_CEILING,
   CODE_REVIEW_PANEL_SIZE_FLOOR,
   DEFAULT_SETTINGS,
+  IMPLEMENTATION_MAX_PHASES,
+  IMPLEMENTATION_PHASE_TASKS,
   PANEL_SIZE_CEILING,
   PANEL_SIZE_FLOOR,
   PANEL_SIZE_MAX,
@@ -46,6 +48,8 @@ test("every policy value is the one the enforcing module actually uses", () => {
   assert.equal(p.panelSizeMax, PANEL_SIZE_MAX);
   assert.equal(p.codeReviewPanelSize, CODE_REVIEW_PANEL_SIZE);
   assert.equal(p.codeReviewMaxRounds, CODE_REVIEW_MAX_ROUNDS);
+  assert.equal(p.implementationPhaseTasks, IMPLEMENTATION_PHASE_TASKS);
+  assert.equal(p.implementationMaxPhases, IMPLEMENTATION_MAX_PHASES);
   assert.deepEqual(p.severities, [...SEVERITIES]);
   assert.equal(p.codeReviewBlockingSeverity, CODE_REVIEW_BLOCKING_SEVERITY);
   assert.deepEqual(p.requiredSpecialties, [...REQUIRED_SPECIALTIES]);
@@ -82,6 +86,8 @@ test("any change to policy changes its hash", () => {
   assert.notEqual(policyHash({ ...base, panelSizeMax: base.panelSizeMax + 1 }), before);
   assert.notEqual(policyHash({ ...base, codeReviewPanelSize: base.codeReviewPanelSize + 1 }), before);
   assert.notEqual(policyHash({ ...base, codeReviewMaxRounds: base.codeReviewMaxRounds + 1 }), before);
+  assert.notEqual(policyHash({ ...base, implementationPhaseTasks: base.implementationPhaseTasks + 1 }), before);
+  assert.notEqual(policyHash({ ...base, implementationMaxPhases: base.implementationMaxPhases + 1 }), before);
 });
 
 test("every value computeRisk can return is a declared risk value", () => {
@@ -164,6 +170,31 @@ test("a round count that is not a positive integer is refused", () => {
       /codeReviewMaxRounds must be a positive integer/,
       `codeReviewMaxRounds ${JSON.stringify(bad)} must be refused`
     );
+  }
+});
+
+test("a profile frozen before the implementation phase fields existed is refused, naming both", () => {
+  // The shape every run frozen before 2026-10-04 carries. Filling a default
+  // would govern the run by a value it never froze (hard rule 3 and 6).
+  const { implementationPhaseTasks, implementationMaxPhases, ...before } = buildPolicy();
+  assert.match(
+    String(invalidPolicyReason(before)),
+    /missing implementationMaxPhases, implementationPhaseTasks/
+  );
+});
+
+test("the implementation phase size and phase ceiling must be positive integers", () => {
+  for (const field of ["implementationPhaseTasks", "implementationMaxPhases"]) {
+    for (const bad of [0, -1, 2.5, "10", null, undefined]) {
+      assert.match(
+        String(invalidPolicyReason({ ...buildPolicy(), [field]: bad })),
+        new RegExp(`${field} must be a positive integer`),
+        `${field} ${JSON.stringify(bad)} must be refused`
+      );
+    }
+    // Legal but not today's configured value: a run is governed by what it froze.
+    assert.equal(invalidPolicyReason({ ...buildPolicy(), [field]: 1 }), null);
+    assert.equal(invalidPolicyReason({ ...buildPolicy(), [field]: 50 }), null);
   }
 });
 
@@ -312,6 +343,8 @@ const FROZEN_ONLY = [
   "CODE_REVIEW_BLOCKING_SEVERITY",
   "CODE_REVIEW_PANEL_SIZE",
   "CODE_REVIEW_MAX_ROUNDS",
+  "IMPLEMENTATION_PHASE_TASKS",
+  "IMPLEMENTATION_MAX_PHASES",
 ];
 
 /** The modules that execute a run, as opposed to those that configure one. */

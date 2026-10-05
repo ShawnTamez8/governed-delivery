@@ -155,6 +155,51 @@ export function validatePlanDoc(
   };
 }
 
+/**
+ * One slice of the approved plan's task list, handed to one implementer
+ * dispatch. `index` and `firstTask` are 1-based: phase 2 of 6 starting at task
+ * 11 covers tasks 11 through 20.
+ */
+export interface PlanPhase {
+  index: number;
+  count: number;
+  firstTask: number;
+  tasks: string[];
+}
+
+/**
+ * Split a validated plan's tasks into consecutive phases of `phaseSize`, in
+ * plan order, the last phase taking the remainder. The unit is whatever
+ * `validatePlanDoc` returned in `tasks`, so a phase boundary and the plan
+ * gate's notion of a task are the same thing. No model is involved: the split
+ * is arithmetic over the list, which is why a plan edited after its gate is
+ * caught by the existing plan-hash check, not here.
+ *
+ * Callers pass validated input (`validatePlanDoc` refuses an empty task list,
+ * and the frozen policy refuses a non-positive phase size), so a throw here is
+ * a programming error, not a path an operator reaches.
+ */
+export function planPhases(tasks: readonly string[], phaseSize: number): PlanPhase[] {
+  if (!Number.isInteger(phaseSize) || phaseSize < 1) {
+    throw new Error(`phase size must be a positive integer, found ${JSON.stringify(phaseSize)}`);
+  }
+  if (tasks.length === 0) {
+    throw new Error("cannot split an empty task list into phases");
+  }
+  const count = Math.ceil(tasks.length / phaseSize);
+  const phases: PlanPhase[] = [];
+  for (let index = 1; index <= count; index += 1) {
+    const start = (index - 1) * phaseSize;
+    phases.push({
+      index,
+      count,
+      firstTask: start + 1,
+      tasks: tasks.slice(start, start + phaseSize),
+    });
+  }
+  return phases;
+}
+
 function listItems(sectionText: string): string[] {
   return sectionText
     .split("\n")
