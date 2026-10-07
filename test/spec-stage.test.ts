@@ -10,12 +10,19 @@ import { loadVerifiedProfile } from "../src/profile.ts";
 import { freezeUniformProfile } from "./uniform-profile.ts";
 import { runSpecStage } from "../src/spec-stage.ts";
 import { AGENTS } from "../src/agents.ts";
+import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
+import { buildSpecAuthorPrompt } from "../src/prompts.ts";
 import { buildPolicy, policyHash } from "../src/policy.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
 
-/** One minimal frozen configuration; this stage does not read it. */
+/**
+ * One minimal frozen configuration. The stage states it to the author and
+ * self-critique prompts; the command name and tokens must stay clear of the
+ * words the stage emitter routes on, because it routes over the whole prompt
+ * (test/prompts.test.ts guards this).
+ */
 const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
 const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-spec-stage.mjs");
 
@@ -89,7 +96,7 @@ function freezeExecutorIntoProfile(
 
 function withRun(
   fn: (ctx: Ctx) => Promise<void>,
-  opts: { baseDirs?: string[] } = {}
+  opts: { baseDirs?: string[]; verification?: VerificationConfig } = {}
 ): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "bw-spec-stage-"));
   const store = openStore(root);
@@ -119,7 +126,7 @@ function withRun(
     const run = store.insertRun("p", "f-1", "demo", "feature");
     // The stage resolves its model from the frozen profile now, so a run
     // without one cannot reach a dispatch at all.
-    const frozen = freezeUniformProfile(root, run.id, head, "m", VERIFICATION);
+    const frozen = freezeUniformProfile(root, run.id, head, "m", opts.verification ?? VERIFICATION);
     store.setProfileRef(run.id, frozen.hash);
     // The run's frozen executor *is* the fixture the tests hand by default;
     // scratch-executor tests freeze their own right before the stage call.
@@ -1639,6 +1646,66 @@ function authoredSpec() {`
     );
     assert.ok(seatable.includes(named), `${named} is not a specialty the registry seats`);
   });
+});
+
+test("the author, self-critique and reconcile prompts carry the frozen profile's verification commands, and the reviewers' prompts do not follow them", async () => {
+  // The builders' own tests prove the commands are rendered; this proves the
+  // stage hands them the frozen profile's. `agent_run.input_hash` is the
+  // SHA-256 of the exact prompt sent, so the same stage run under two frozen
+  // configurations must send different author prompts and identical reviewer
+  // prompts. The fixture answers identically whatever the commands are, so the
+  // specification the reviewers see is the same in both runs.
+  const other: VerificationConfig = {
+    commands: [
+      { name: "smoke", command: ["node", "--version"] },
+      { name: "extra", command: ["node", "--help"] },
+    ],
+  };
+  async function dispatched(verification: VerificationConfig): Promise<{ setting: string; input_hash: string }[]> {
+    let rows: { setting: string; input_hash: string }[] = [];
+    await withRun(
+      async ({ store, root, runId }) => {
+        const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        rows = store.query<{ setting: string; input_hash: string }>(
+          "SELECT ar.setting, ar.input_hash FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? ORDER BY ar.id",
+          [runId]
+        );
+      },
+      { verification }
+    );
+    return rows;
+  }
+  const hashesFor = (rows: { setting: string; input_hash: string }[], setting: string): string[] =>
+    rows.filter((r) => r.setting === setting).map((r) => r.input_hash);
+
+  const recorded = await dispatched(VERIFICATION);
+  const changed = await dispatched(other);
+
+  // Draft first, then self-critique: both carry the commands, so both change.
+  const recordedAuthor = hashesFor(recorded, "spec-author");
+  const changedAuthor = hashesFor(changed, "spec-author");
+  assert.equal(recordedAuthor.length, 2, "draft and self-critique");
+  assert.equal(changedAuthor.length, 2);
+  assert.notEqual(recordedAuthor[0], changedAuthor[0], "the draft prompt follows the frozen commands");
+  assert.notEqual(recordedAuthor[1], changedAuthor[1], "the self-critique prompt follows the frozen commands");
+  // The draft is a pure function of the design and the frozen commands, so its
+  // hash can be rebuilt from the inputs rather than only compared between runs.
+  assert.equal(recordedAuthor[0], sha256Hex(buildSpecAuthorPrompt(SPEC_AUTHOR, "# design\n", VERIFICATION)));
+  assert.equal(changedAuthor[0], sha256Hex(buildSpecAuthorPrompt(SPEC_AUTHOR, "# design\n", other)));
+  // The reconciliation runs as the author agent under the reconciler setting,
+  // and it rewrites the specification the commands will judge, so it carries them too.
+  const recordedReconcile = hashesFor(recorded, "reconciler");
+  const changedReconcile = hashesFor(changed, "reconciler");
+  assert.equal(recordedReconcile.length, 1, "one reconciliation for one configured round");
+  assert.equal(changedReconcile.length, 1);
+  assert.notEqual(recordedReconcile[0], changedReconcile[0], "the reconcile prompt follows the frozen commands");
+  // The reviewers are told nothing about the commands, so nothing changes.
+  for (const reviewer of ["spec-reviewer-security", "spec-reviewer-traceability"]) {
+    const before = hashesFor(recorded, reviewer);
+    assert.ok(before.length > 0, `${reviewer} was dispatched`);
+    assert.deepEqual(hashesFor(changed, reviewer), before, `${reviewer} prompt changed with the commands`);
+  }
 });
 
 // --- reconciliation ------------------------------------------------------------

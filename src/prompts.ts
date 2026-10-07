@@ -1,4 +1,5 @@
 import type { AgentDefinition } from "./agents.ts";
+import type { VerificationConfig } from "./governed-config.ts";
 import type { PlanPhase } from "./plan-doc.ts";
 
 export const SPEC_AUTHOR_PROMPT_PREFIX = "you are the spec author";
@@ -15,9 +16,14 @@ export const CODE_REVIEW_REMEDIATION_PROMPT_PREFIX = "you are the code-review re
  * schema. The draft only — revision is the reconciliation dispatch's job
  * (step 5b Task 6), which carries the findings with their reports and asks
  * for typed decisions rather than a bare rewrite. A pure function of its
- * inputs.
+ * inputs. The frozen verification commands and the rule for them travel with
+ * the schema (`verificationCommandsBlock`, `specVerificationRule`).
  */
-export function buildSpecAuthorPrompt(agent: AgentDefinition, designContent: string): string {
+export function buildSpecAuthorPrompt(
+  agent: AgentDefinition,
+  designContent: string,
+  verification: VerificationConfig
+): string {
   return `${SPEC_AUTHOR_PROMPT_PREFIX}
 
 Produce the specification document for the design below. No git operations
@@ -48,6 +54,10 @@ The specification document schema is:
   not inside this section.
 ${criterionQualityRule("")}
 ${openDecisionsSchema("")}
+
+${verificationCommandsBlock(verification)}
+
+${specVerificationRule()}
 
 Design document:
 
@@ -81,6 +91,60 @@ ${indent}  List only a decision the design needs and does not make: one without 
 ${indent}  Protection, limits, or policy beyond what the design asks for is not an open decision; leave it out.
 ${indent}  Every non-blank line in this section is one open decision and nothing else.
 ${indent}  Record a question here instead of deciding it yourself or leaving it only in prose: each entry is recorded as a finding that must receive a typed decision before approval.`;
+}
+
+/**
+ * The frozen verification commands, stated once for every prompt that writes
+ * something they judge (hazard 21: no agent was told what would judge its
+ * work, and team-notes run 10 spent $7.30 on a layout its own `npm run build`
+ * could not accept). The commands come from the frozen profile, never the
+ * working copy of `governed.yaml` (hard rule 6). Command tokens carry no space
+ * or shell metacharacter (`TOKEN` in `src/governed-config.ts`), so joining them
+ * with a space loses nothing.
+ *
+ * Every fact is one the system computes: the lifecycle is
+ * `src/verification-stage.ts` and the remediation loop in
+ * `src/code-review-stage.ts`, and the pass conditions are
+ * `src/commit-verification.ts` (exit code, time and output limits, and a
+ * checkout that `git status --porcelain` shows unchanged). Each rule is one
+ * source line so the constraint scan in `test/prompts.test.ts` matches it
+ * (hazard 3). The block's size is set by `governed.yaml` and has no bound of
+ * its own: an oversize one is refused by the existing prompt ceiling in
+ * `src/dispatch.ts`, never truncated.
+ */
+function verificationCommandsBlock(verification: VerificationConfig): string {
+  const commands = verification.commands.map((c) => `- ${c.name}: ${c.command.join(" ")}`).join("\n");
+  return `After the implementation is committed, and again after each code-review remediation commit, the system runs these verification commands in this order in a checkout of the delivered code:
+
+${commands}
+
+A command passes only if it exits 0 within its time and output limits and leaves the checkout exactly as committed: git must show no new or changed file, so build output must be ignored by git.
+The first command that fails blocks the run, and no repair round follows.`;
+}
+
+/**
+ * What the spec author may do with the verification commands, stated once for
+ * the draft and the self-critique so the two cannot drift (hazard 3).
+ *
+ * The author cannot be assumed able to read the target: spec dispatches inherit
+ * the directory the operator launched from, which was the BuildWorks checkout in
+ * run 10 and is the target when `buildworks` is run from inside it. So the rule
+ * does not say either; it says to treat a file as evidence only if it belongs to
+ * the repository the design describes, and otherwise to ask. A commands-as-
+ * obligations misreading is the hazard 13 risk, so the rule forbids it.
+ *
+ * The question begins `Verification:` so the reconciliation and fold prompts can
+ * recognize it by its text; no code reads the word.
+ */
+function specVerificationRule(): string {
+  return [
+    `Your working directory may not be the target repository.`,
+    `Treat a file as evidence of what a command runs only if it belongs to the repository the design describes; if you cannot tell, what the command requires is not established.`,
+    `The commands are not obligations the design states: never restate a command as an acceptance criterion, and never declare an artifact only because a command exists.`,
+    `A command that only reports a tool version depends on nothing and needs no decision.`,
+    `If neither the design nor files you can read establish that the declared artifacts satisfy every other command, even when the design names a stack, record exactly one open decision in the form stated above, with severity high and a question that begins \`Verification:\`, asking what each such command requires and which declared artifact paths that needs.`,
+    `That is the one further kind of open decision this section admits.`,
+  ].join("\n");
 }
 
 /**
@@ -164,7 +228,8 @@ export function buildSpecSelfCritiquePrompt(
   agent: AgentDefinition,
   designContent: string,
   specContent: string,
-  panel: PanelPromptBounds
+  panel: PanelPromptBounds,
+  verification: VerificationConfig
 ): string {
   const floor = effectiveFloor(panel);
   return `${SPEC_AUTHOR_PROMPT_PREFIX} ${agent.id}
@@ -222,6 +287,10 @@ the specification, completing it, and making it consistent is the work;
 inventing a requirement the design never states is not, however reasonable
 that requirement looks. Where the design needs a decision it does not make, record it under ## Open decisions rather than deciding it yourself.
 Check every acceptance criterion against the pass/fail rule stated with the ## Acceptance criteria schema above and rewrite, split, or move any criterion that fails it.
+
+${verificationCommandsBlock(verification)}
+
+${specVerificationRule()}
 
 Design document:
 
@@ -315,12 +384,19 @@ ${specContent}`;
  * `.claude/sessions/project-learnings.md` showed that naming patch concepts
  * in a content-write prompt made the model refuse to produce a document at
  * all; this stage is a content write for the same reason the spec stage is.
+ *
+ * The frozen verification commands follow the scope list, with one rule: write no
+ * task that runs them. The system runs them itself after the last phase, and a
+ * trailing "run the build" task changes no scope file, so its phase has nothing to
+ * return and blocks the run (hazard 20). The scope block the fixture scrapes still
+ * ends at its first blank line.
  */
 export function buildPlanAuthorPrompt(
   agent: AgentDefinition,
   specContent: string,
   specHash: string,
-  scope: string[]
+  scope: string[],
+  verification: VerificationConfig
 ): string {
   return `${PLAN_AUTHOR_PROMPT_PREFIX} ${agent.id}
 
@@ -365,6 +441,9 @@ name only these:
 
 ${scope.map((p) => `- ${p}`).join("\n")}
 
+${verificationCommandsBlock(verification)}
+The system runs these commands itself: never write a task that runs, repeats or checks them, because a task that changes no file in the approved scope can leave an implementation phase with nothing to return, and that blocks the run.
+
 Approved specification:
 
 ${specContent}`;
@@ -383,6 +462,9 @@ ${specContent}`;
  * line per entry) is the plan author prompt's, deliberately: the fixture
  * executor scrapes that shape, and one document schema stated two ways is
  * two schemas.
+ *
+ * It carries the same verification commands and the same no-command-task rule as
+ * the draft, so the revision cannot undo what the draft was told (hazard 21).
  */
 export function buildPlanSelfCritiquePrompt(
   agent: AgentDefinition,
@@ -390,7 +472,8 @@ export function buildPlanSelfCritiquePrompt(
   planContent: string,
   specHash: string,
   scope: string[],
-  panel: PanelPromptBounds
+  panel: PanelPromptBounds,
+  verification: VerificationConfig
 ): string {
   const floor = effectiveFloor(panel);
   return `${PLAN_AUTHOR_PROMPT_PREFIX} ${agent.id}
@@ -461,6 +544,9 @@ You may not add an obligation the approved specification below does not
 contain. Sharpening the plan, completing it, and making it consistent is the
 work; inventing a requirement the specification never states is not, however
 reasonable that requirement looks.
+
+${verificationCommandsBlock(verification)}
+The system runs these commands itself: never write a task that runs, repeats or checks them, because a task that changes no file in the approved scope can leave an implementation phase with nothing to return, and that blocks the run.
 
 Approved specification:
 
@@ -741,12 +827,21 @@ function exampleDecisionsFor(findings: ReconciliationFindingInput[]): string {
  * gate. The normative-delta grounding contract is the deterministic
  * mitigation (operator finding E), and this prompt is where the author
  * learns what it must supply for the checks to accept the answer.
+ *
+ * It states the frozen verification commands and the one exception to the
+ * blocking rule: the `Verification:` open decision the draft prompt asks for
+ * routes `upstream_blocking`, so it opens the operator question (hazard 21). That
+ * is a prompt rule, not a check: the model may still choose `upstream_follow_up`.
+ * The reconciler writes the question's text, and the fold prompt can only
+ * recognize a `Verification:` question by that text, so this prompt asks for it.
+ * Each rule is one source line so the constraint scan matches it (hazard 3).
  */
 export function buildSpecReconcilePrompt(
   agent: AgentDefinition,
   designContent: string,
   specContent: string,
-  findings: ReconciliationFindingInput[]
+  findings: ReconciliationFindingInput[],
+  verification: VerificationConfig
 ): string {
   const exampleDecisions = exampleDecisionsFor(findings);
   return `${SPEC_AUTHOR_PROMPT_PREFIX} ${agent.id}
@@ -787,6 +882,12 @@ Choosing between the two upstream routes, for every finding whoever reported it:
 choose upstream_blocking only when the design states a behavior and leaves a decision without which no acceptance criterion for that behavior can be written, so the design as written cannot be implemented.
 When the design already states a workable baseline and the question is whether to add protection, limits, or policy beyond it, the design is implementable as written: choose upstream_follow_up.
 A report's severity, or how serious a risk sounds, does not by itself make a finding blocking.
+
+${verificationCommandsBlock(verification)}
+
+A finding whose subject reads \`OD-<n>: Verification: <question>\` is an open decision you disclosed about the verification commands, and it is the one exception to the upstream_blocking test above: choose upstream_blocking for it, because the commands decide whether the delivered code is accepted at all.
+For that finding, begin the question's text with \`Verification:\` and make each option name the stack or layout the commands would then accept and the declared artifact paths that needs, each path written exactly as it would be declared, as an answer that can be folded into the specification as it stands.
+Never restate a command as an acceptance criterion.
 
 The revised specification must satisfy the same document schema as before:
 - frontmatter with feature and change_kind (one of feature, defect_fix)
@@ -846,12 +947,18 @@ export const SPEC_DECISION_FOLD_MARKER = "Operator answers to fold:";
  * A denied question is listed so the author knows to leave it open, and gets
  * no decision. The wording avoids the words the harness fixture routes the
  * earlier prompts on, so the fold is recognized by its own heading.
+ *
+ * It states the frozen verification commands, because the fold rewrites the
+ * specification those commands will judge (hazard 21), and tells the author to
+ * fold only the artifact paths an answer to a `Verification:` question names.
+ * Each rule is one source line so the constraint scan matches it (hazard 3).
  */
 export function buildSpecDecisionFoldPrompt(
   agent: AgentDefinition,
   designContent: string,
   specContent: string,
-  questions: FoldQuestionInput[]
+  questions: FoldQuestionInput[],
+  verification: VerificationConfig
 ): string {
   const folded = questions.filter((q) => q.action !== "deny");
   const denied = questions.filter((q) => q.action === "deny");
@@ -928,6 +1035,11 @@ The revised specification must satisfy the same document schema as before:
   this form: \`- OD-001 (high): <the question the design leaves open>\`
 A revised specification that does not validate blocks the run.
 
+${verificationCommandsBlock(verification)}
+
+An answer to a question that begins \`Verification:\` may name a stack, a layout and declared artifact paths: fold exactly the paths it names into ## Declared artifacts, grounded in that answer, and nothing the answer does not state.
+Never restate a command as an acceptance criterion.
+
 Design document:
 
 ${designContent}
@@ -951,6 +1063,11 @@ ${renderedDenied}`;
  * governing source and normative nodes. It restates `plan_for` and the
  * approved scope for the same reason the self-critique prompt does — the
  * reconciled plan is gated exactly like the draft.
+ *
+ * It states the frozen verification commands and forbids adding a task that runs
+ * them: a finding could otherwise be answered with a trailing verify-only task
+ * after the draft and the self-critique obeyed the rule (hazard 20). The rule
+ * forbids an addition; it never tells the reconciler to remove a task.
  */
 export function buildPlanReconcilePrompt(
   agent: AgentDefinition,
@@ -958,7 +1075,8 @@ export function buildPlanReconcilePrompt(
   planContent: string,
   specHash: string,
   scope: string[],
-  findings: ReconciliationFindingInput[]
+  findings: ReconciliationFindingInput[],
+  verification: VerificationConfig
 ): string {
   const exampleDecisions = exampleDecisionsFor(findings);
   return `${PLAN_AUTHOR_PROMPT_PREFIX} ${agent.id}
@@ -1035,6 +1153,9 @@ that builds them — that is a change you can claim. If the concern cannot be
 answered inside the plan at all, route it upstream with a complete proposal
 candidate rather than rejecting it on a rule the specification never states.
 
+${verificationCommandsBlock(verification)}
+The system runs these commands itself: never add a task that runs, repeats or checks them, because a task that changes no file in the approved scope can leave an implementation phase with nothing to return, and that blocks the run.
+
 Approved specification:
 
 ${specContent}
@@ -1080,6 +1201,13 @@ ${renderFindingsBlock(findings)}`;
  * a file no phase had created, and phase 4 was refused after $2.37 of
  * implementation spend (hazard 20).
  *
+ * The frozen verification commands follow the two lists and precede the phase's
+ * tasks, so the scope block and both lists the fixture scrapes still end at their
+ * first blank line. The implementer is the one agent that can read the
+ * repository the commands will run against, so it is told to read what each
+ * command runs. It is not given a way to refuse: the scope is signed before it
+ * runs, and a false refusal is terminal (hazard 21).
+ *
  * Each rule below is one source line so that the constraint scan in
  * `test/prompts.test.ts` matches it: a phrase wrapped across a template line
  * does not match (hazard 3).
@@ -1091,7 +1219,8 @@ export function buildImplementationAuthorPrompt(
   scope: string[],
   baseCommit: string,
   phase: PlanPhase,
-  existingPaths: readonly string[]
+  existingPaths: readonly string[],
+  verification: VerificationConfig
 ): string {
   const lastTask = phase.firstTask + phase.tasks.length - 1;
   const existing = new Set(existingPaths);
@@ -1157,6 +1286,10 @@ ${renderPaths(scope.filter((p) => existing.has(p)))}
 Of those paths, these do not exist yet, so each takes action add:
 
 ${renderPaths(scope.filter((p) => !existing.has(p)))}
+
+${verificationCommandsBlock(verification)}
+These commands first run after the last phase, and again after any code-review remediation, so a phase that leaves one of them failing is not by itself a defect.
+Before you choose a file's content, read what each command runs (for an npm command, its entry under scripts in package.json) and write files that command will accept.
 
 Tasks for this phase (tasks ${phase.firstTask} through ${lastTask} of the approved plan):
 

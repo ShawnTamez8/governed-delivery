@@ -188,6 +188,15 @@ root, authored by the operator before the first run. The verification stage
 finds its commands there and must actually run them; a stage that cannot
 verify fails closed. `governed.yaml` is never part of any run's scope.
 
+The commands the run froze are stated to every prompt whose output they judge:
+the spec draft, self-critique, reconcile and decision-fold prompts, the plan
+draft, self-critique and reconcile prompts, and the implementer's. They are
+rendered from the frozen profile, never from the working copy (hazard 21). The
+spec and plan dispatches inherit the directory the operator launched from, so
+they may not be able to read the target or its `governed.yaml`; the implementer
+reads the target in its own worktree, and its prompt tells it to read what each
+command runs before it chooses a file's content.
+
 ### What the system writes
 
 - `docs/features/<slug>/` — projections, committed, human-readable.
@@ -308,10 +317,17 @@ with an `OD` prefix and whose severity uses the finding vocabulary. The heading
 is spelled exactly and appears at most once; a second or differently spelled
 one is refused, because its entries would otherwise escape recording. An entry
 is a question the design leaves open, not an obligation, so entries are not
-normative nodes (section 12). The prompts that write the section limit it to a
-decision the design needs and does not make — one without which a behavior the
-design states cannot be written as a testable criterion. Protection, limits or
-policy beyond what the design asks for is not an entry.
+normative nodes (section 12). The prompts that write the section admit two kinds
+of entry. The first is a decision the design needs and does not make — one
+without which a behavior the design states cannot be written as a testable
+criterion. Protection, limits or policy beyond what the design asks for is not
+an entry of that kind. The second is a question about the frozen verification
+commands (section 7): when neither the design nor files the author can read show
+that the declared artifacts satisfy every command that checks code, even if the
+design names a stack, the author records one entry whose question begins
+`Verification:` and asks what each such command requires and which declared
+artifact paths that needs (hazard 21). No code reads that word; the reconcile
+and fold prompts recognize it by its text.
 
 An acceptance criterion is a pass/fail check: a specific input, action, value
 or observable outcome, never a subjective or unquantified term. Where the
@@ -771,6 +787,16 @@ No panel reviews the fold; the operator reads the folded specification at
 approval, and approval binds the `spec_decision` output and hash. A mistaken
 answer is repaired by a fresh run. `plan_review` has no decision boundary.
 
+The `Verification:` question of section 8 is the one disclosed open decision
+whose route a prompt names. The spec reconcile prompt tells the reconciler to
+choose `upstream_blocking` for it, as the stated exception to section 13's
+implementability test, so that it opens a question at this boundary; the fold
+prompt then folds exactly the declared artifact paths the operator's answer
+names. The route is a prompt rule, not a check: the gate still reads
+dispositions only, the reconciler may choose `upstream_follow_up`, and a
+follow-up opens no question. Neither prompt restates a command as an acceptance
+criterion.
+
 **`awaiting_approval`.** The only signed authorization gate. One signed
 authorization — an Ed25519 signature by the operator, verified by the gate against a public key
 held in machine-local configuration, never in a repository — binds feature ID,
@@ -808,8 +834,9 @@ signature.
 
 **`implementation`.** Runs one implementer dispatch per phase, and a phase is
 the next ten items of the plan's `## Tasks` section in plan order (hazard 20).
-Deterministic code splits the parsed task list; no model chooses the
-boundaries. Each phase proposes against the head the previous phase committed,
+An item is a top-level list entry, and the lines indented beneath it travel with
+it; the ceiling below counts items, not lines. Deterministic code splits the
+parsed task items; no model chooses the boundaries. Each phase proposes against the head the previous phase committed,
 passes through the same scope, base/head, link, staged-set, committed-set, and
 clean-tree guards as a single patch always did, and is committed before the next
 phase starts. The ten-task size and an eight-phase ceiling are frozen in the
@@ -1032,9 +1059,10 @@ missing decision does not make the approved input implementable; and
 `upstream_blocking` is implementability, not severity: a question about adding
 protection, limits or policy beyond a workable baseline the governing input
 already states leaves that input implementable, so it is a follow-up. The spec
-reconciliation prompt states this test; the gate still reads dispositions only,
-so it is the author's judgement under a stated rule, not a mechanical check
-(operator decision, 2026-09-27). In `spec_review` only, a model-chosen
+reconciliation prompt states this test, and states one exception, the
+`Verification:` question of section 8 (section 12); the gate still reads
+dispositions only, so it is the author's judgement under a stated rule, not a
+mechanical check (operator decision, 2026-09-27). In `spec_review` only, a model-chosen
 `upstream_blocking` or `cannot_determine` decision now asks the operator a
 question instead of blocking (section 12, operator decision 2026-09-27); an
 `upstream_blocking` proposal still records route `blocking_dependency` and is
@@ -1418,7 +1446,7 @@ price.
   proposal and verification before another full panel; the final panel is the
   severity gate and never triggers an unreviewed patch. A breach blocks rather
   than silently accepting or dispatching beyond the frozen budget.
-- **Implementation phases.** Ten plan tasks per phase and at most eight
+- **Implementation phases.** Ten plan task items per phase and at most eight
   phases, both frozen in the profile with the rest of policy. A plan that needs
   more phases than the ceiling refuses by name before the first implementer
   dispatch, never truncating the plan. A failed phase blocks the run and is not
@@ -1463,7 +1491,7 @@ block.
 
 ## 22. Known hazards
 
-`docs/hazards.md` states twenty failure modes this kind of system is subject
+`docs/hazards.md` states twenty-one failure modes this kind of system is subject
 to and what each requires. They are requirements, not an appendix: model output
 in shapes the schema refuses, discarded output being undiagnosable, constrained
 fields whose constraint the prompt never states, fixtures and code agreeing
@@ -1476,8 +1504,9 @@ proposal subprocesses that are requested rather than enforced to be read-only,
 a remediation loop aimed at the wrong artifact that cannot repair an upstream
 omission, a reconciliation that answers a finding by deleting the obligation,
 a delivery proven complete that nothing ever read, an inactivity budget
-that a non-streaming executor turns into a wall clock, and an implementation
-request larger than one implementer dispatch can answer.
+that a non-streaming executor turns into a wall clock, an implementation
+request larger than one implementer dispatch can answer, and agents never told
+the verification commands that will judge their work.
 
 When a new failure mode is found, add it there rather than here. Two lists drift
 apart, and the one that drifts is the one people stop trusting.

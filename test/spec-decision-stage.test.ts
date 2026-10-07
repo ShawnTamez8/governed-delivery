@@ -12,8 +12,15 @@ import { answerQuestion, DECISION_ANSWER_MAX_CHARS, runSpecDecisionStage } from 
 import { validateSpecDoc } from "../src/spec-doc.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
-import type { VerificationConfig } from "../src/governed-config.ts";
+import { parseGovernedConfig, type VerificationConfig } from "../src/governed-config.ts";
+import { buildSpecDecisionFoldPrompt, type FoldQuestionInput } from "../src/prompts.ts";
+import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
 
+/**
+ * One minimal frozen configuration. The fold prompt states it; the command name
+ * and tokens must stay clear of the words the stage emitter routes on, because
+ * it routes over the whole prompt (test/prompts.test.ts guards this).
+ */
 const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
 const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-spec-stage.mjs");
 
@@ -57,7 +64,11 @@ interface Ctx {
  * question rows the tests answer are written by `runSpecStage` itself, not
  * inserted by hand (hazard 4).
  */
-function withRun(marker: string, fn: (ctx: Ctx) => Promise<void>): Promise<void> {
+function withRun(
+  marker: string,
+  fn: (ctx: Ctx) => Promise<void>,
+  verification: VerificationConfig = VERIFICATION
+): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "bw-spec-decision-"));
   const store = openStore(root);
   const git = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
@@ -72,7 +83,7 @@ function withRun(marker: string, fn: (ctx: Ctx) => Promise<void>): Promise<void>
     assert.equal(git(["-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "-m", "base"]).status, 0);
     const head = git(["rev-parse", "HEAD"]).stdout.trim();
     const run = store.insertRun("p", "f-1", "demo", "feature");
-    const frozen = freezeUniformProfile(root, run.id, head, "m", VERIFICATION);
+    const frozen = freezeUniformProfile(root, run.id, head, "m", verification);
     store.setProfileRef(run.id, frozen.hash);
     freezeExecutorIntoProfile(store, root, run.id, fixtureExecutor(FIXTURE));
     mkdirSync(join(root, "docs", "features", "demo"), { recursive: true });
@@ -514,4 +525,121 @@ test("the decision group refuses before any stage row while a question is unansw
     assert.deepEqual(ctx.store.getStageChain(ctx.runId), chain);
     assert.equal(ctx.store.getRun(ctx.runId)!.status, "in_progress", "a precondition refusal does not block the run");
   });
+});
+
+// --- verification-aware prompts (docs/features/verification-aware-prompts/plan.md) ---
+
+/** team-notes' own governed.yaml, from the run 10 fixture, through the real parser (hazard 4). */
+function run10Verification(): VerificationConfig {
+  const fixture = JSON.parse(
+    readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "run-10-dispatch-context.json"), "utf8")
+  ) as { governedYaml: string };
+  const parsed = parseGovernedConfig(fixture.governedYaml);
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.reason);
+  return parsed.config;
+}
+
+/**
+ * The fold prompt the stage should have sent, rebuilt from the run's own rows:
+ * the design the run wrote, the reviewed spec as it stood before the fold, and
+ * every question with its recorded answer. `agent_run.input_hash` is the SHA-256
+ * of the prompt sent, so equality with this proves what the stage passed.
+ */
+function expectedFoldPrompt(
+  ctx: Ctx,
+  marker: string,
+  reviewStageId: number,
+  reviewedSpec: string,
+  verification: VerificationConfig
+): string {
+  const answers = new Map(ctx.store.getDecisionAnswers(reviewStageId).map((a) => [a.question_id, a]));
+  const inputs: FoldQuestionInput[] = ctx.store.getDecisionQuestions(reviewStageId).map((q) => {
+    const recorded = answers.get(q.id)!;
+    return { findingId: q.finding_id, text: q.text, action: recorded.action as FoldQuestionInput["action"], answer: recorded.answer };
+  });
+  return buildSpecDecisionFoldPrompt(SPEC_AUTHOR, `# design\n\n${marker}\n`, reviewedSpec, inputs, verification);
+}
+
+function foldPromptHashes(store: Store, runId: number): string[] {
+  return store
+    .query<{ input_hash: string }>(
+      "SELECT ar.input_hash FROM agent_run ar JOIN stage s ON s.id = ar.stage_id WHERE s.run_id = ? AND s.kind = 'spec_decision' ORDER BY ar.id",
+      [runId]
+    )
+    .map((r) => r.input_hash);
+}
+
+test("a Verification: open decision pauses the run, is answered, and is folded under the frozen commands", async () => {
+  // What this proves: the pipeline carries a `Verification:` open decision from
+  // the draft through spec_review to an operator question, takes the answer
+  // through the fold with the frozen commands in the prompt, and reaches a
+  // passed spec_decision gate, which is the point approval binds. What it
+  // cannot prove: that the reconciler routes the decision blocking. That route
+  // is the fixture's here (FIXTURE-ASK-OPERATOR); in a real run it is the
+  // model's, under a prompt rule nothing checks.
+  const marker = "FIXTURE-DISCLOSE-VERIFICATION-OD FIXTURE-ASK-OPERATOR";
+  const verification = run10Verification();
+  const answerText = "The build needs a Next.js app directory: declare app/page.tsx.";
+  await withRun(
+    marker,
+    async (ctx) => {
+      const { questions, specPath, disclosed, reviewStageId } = await paused(ctx);
+      assert.notEqual(disclosed, null, "the draft's Verification: decision became a finding");
+      assert.deepEqual(questions.map((q) => q.finding_id), [disclosed], "the question is on that finding");
+      const [report] = ctx.store.getFindingReports(disclosed!);
+      assert.match(report.subject, /^OD-001: Verification: /);
+      assert.deepEqual(ctx.store.getStageChain(ctx.runId).map((s) => s.kind), ["spec", "spec_review"], "paused before spec_decision");
+      assert.equal(ctx.store.getRun(ctx.runId)!.status, "in_progress");
+
+      const reviewed = readFileSync(specPath, "utf8");
+      answer(ctx, disclosed!, "modify", answerText);
+      const result = await runSpecDecisionStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+      assert.ok(result.ok, result.ok ? "" : result.reason);
+      assert.equal(result.folded, 1);
+
+      // The fold dispatch got the frozen commands and the operator's answer.
+      const sent = expectedFoldPrompt(ctx, marker, reviewStageId, reviewed, verification);
+      for (const line of ["- typecheck: npx tsc --noEmit", "- lint: npm run lint", "- build: npm run build", answerText]) {
+        assert.ok(sent.includes(line), `the fold prompt carries ${line}`);
+      }
+      assert.deepEqual(foldPromptHashes(ctx.store, ctx.runId), [sha256Hex(sent)]);
+
+      const chain = ctx.store.getStageChain(ctx.runId);
+      assert.deepEqual(chain.map((s) => [s.kind, s.status]), [["spec", "passed"], ["spec_review", "passed"], ["spec_decision", "passed"]]);
+      const onDisk = readFileSync(specPath, "utf8");
+      assert.match(
+        lastSummary(ctx.store, ctx.runId, "spec_decision.gate.pass")!,
+        new RegExp(`specHash=${sha256Hex(normalizeText(onDisk))}; risk=(low|standard|high); answers=1; folded=1`)
+      );
+      assert.equal(verifyAuditChain(ctx.store), null);
+    },
+    verification
+  );
+});
+
+test("the fold prompt carries the frozen profile's commands, and another config changes it", async () => {
+  const marker = "FIXTURE-ASK-OPERATOR";
+  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }] };
+  async function foldWith(verification: VerificationConfig): Promise<{ sent: string; expected: string }> {
+    let observed = { sent: "", expected: "" };
+    await withRun(
+      marker,
+      async (ctx) => {
+        const { questions, specPath, reviewStageId } = await paused(ctx);
+        const reviewed = readFileSync(specPath, "utf8");
+        answer(ctx, questions[0].finding_id, "approve");
+        const result = await runSpecDecisionStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+        assert.ok(result.ok, result.ok ? "" : result.reason);
+        const [hash] = foldPromptHashes(ctx.store, ctx.runId);
+        observed = { sent: hash!, expected: sha256Hex(expectedFoldPrompt(ctx, marker, reviewStageId, reviewed, verification)) };
+      },
+      verification
+    );
+    return observed;
+  }
+  const recorded = await foldWith(VERIFICATION);
+  const changed = await foldWith(other);
+  assert.equal(recorded.sent, recorded.expected, "the fold sent the prompt built from the frozen commands");
+  assert.equal(changed.sent, changed.expected);
+  assert.notEqual(recorded.sent, changed.sent, "the fold prompt follows the frozen config");
 });

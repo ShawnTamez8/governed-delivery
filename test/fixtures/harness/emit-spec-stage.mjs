@@ -101,6 +101,15 @@ function authoredSpec() {
   // FIXTURE-DISCLOSE-OD in the design: the author discloses one open decision,
   // which the stage records as a round-1 finding.
   // The plain return stays a literal line: a stage test substitutes it.
+  // FIXTURE-DISCLOSE-VERIFICATION-OD: the open decision the spec author prompt
+  // asks for when the declared artifacts cannot be shown to satisfy the frozen
+  // verification commands. The question begins `Verification:`, the marker the
+  // reconcile and fold prompts recognize. The text avoids every word this file
+  // routes on, because every prompt that carries the specification is routed
+  // by a substring check over the whole of it.
+  if (stdin.includes("FIXTURE-DISCLOSE-VERIFICATION-OD")) {
+    return `${BASE_SPEC}\n## Open decisions\n\n- OD-001 (high): Verification: what does npm run build require, and which declared artifact paths does that need?\n`;
+  }
   if (stdin.includes("FIXTURE-DISCLOSE-OD")) {
     return `${BASE_SPEC}\n## Open decisions\n\n- OD-001 (high): who may download the export archive\n`;
   }

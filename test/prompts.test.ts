@@ -44,6 +44,8 @@ import {
 } from "../src/reconciliation.ts";
 import { validateCodeReviewReports } from "../src/code-review.ts";
 import { normalizeText, sha256Hex } from "../src/canonical.ts";
+import { parseGovernedConfig, type VerificationConfig } from "../src/governed-config.ts";
+import { disclosedOpenDecisionReports } from "../src/spec-stage.ts";
 
 // Hazard 3: every constrained field the prompts request must state its
 // constraint in the prompt source. This test reads the file, never the
@@ -64,6 +66,96 @@ const PANEL: PanelPromptBounds = {
   requiredSpecialties: ["requirements-traceability"],
   registeredSpecialties: ["consistency", "security"],
 };
+
+/**
+ * The frozen verification commands every verification-aware builder takes.
+ *
+ * Parsed by the real parser from the `governed.yaml` recorded verbatim in the
+ * run 10 fixture (hard rule 5; hazard 4): the commands are team-notes' own, not
+ * a literal written alongside the code that renders them. The fixture's
+ * provenance block names the run and what was dropped.
+ */
+const RUN_10_FIXTURE: { governedYaml: string } = JSON.parse(
+  readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "run-10-dispatch-context.json"), "utf8")
+);
+const VERIFICATION: VerificationConfig = (() => {
+  const parsed = parseGovernedConfig(RUN_10_FIXTURE.governedYaml);
+  if (!parsed.ok) throw new Error(`run 10 governed.yaml does not parse: ${parsed.reason}`);
+  return parsed.config;
+})();
+
+/** The three command lines as `governed.yaml` in the fixture declares them, in order. */
+const RUN_10_COMMAND_LINES = ["- typecheck: npx tsc --noEmit", "- lint: npm run lint", "- build: npm run build"];
+
+/**
+ * The verification block's sentences, each one source line in `src/prompts.ts`
+ * so the source scan below matches it (hazard 3). The commands themselves are
+ * data and are asserted separately.
+ */
+const VERIFICATION_BLOCK_SENTENCES = [
+  "After the implementation is committed, and again after each code-review remediation commit, the system runs these verification commands in this order in a checkout of the delivered code:",
+  "A command passes only if it exits 0 within its time and output limits and leaves the checkout exactly as committed: git must show no new or changed file, so build output must be ignored by git.",
+  "The first command that fails blocks the run, and no repair round follows.",
+];
+
+/**
+ * The spec author's rule for the commands. The fifth sentence carries the
+ * backticked word the reconcile and fold prompts recognize, which cannot be
+ * matched in source without its escapes; it is split around it here and
+ * asserted whole against the generated prompt.
+ */
+const SPEC_VERIFICATION_SENTENCES = [
+  "Your working directory may not be the target repository.",
+  "Treat a file as evidence of what a command runs only if it belongs to the repository the design describes; if you cannot tell, what the command requires is not established.",
+  "The commands are not obligations the design states: never restate a command as an acceptance criterion, and never declare an artifact only because a command exists.",
+  "A command that only reports a tool version depends on nothing and needs no decision.",
+  "If neither the design nor files you can read establish that the declared artifacts satisfy every other command, even when the design names a stack, record exactly one open decision in the form stated above, with severity high and a question that begins",
+  "asking what each such command requires and which declared artifact paths that needs.",
+  "That is the one further kind of open decision this section admits.",
+];
+
+/**
+ * The spec reconcile prompt's rule for that question, split around its
+ * backticked words for the same reason. The prompt routes it `upstream_blocking`
+ * as a rule the model may not follow: nothing checks the route.
+ */
+const RECONCILE_VERIFICATION_SENTENCES = [
+  "A finding whose subject reads",
+  "is an open decision you disclosed about the verification commands, and it is the one exception to the upstream_blocking test above: choose upstream_blocking for it, because the commands decide whether the delivered code is accepted at all.",
+  "For that finding, begin the question's text with",
+  "and make each option name the stack or layout the commands would then accept and the declared artifact paths that needs, each path written exactly as it would be declared, as an answer that can be folded into the specification as it stands.",
+  "Never restate a command as an acceptance criterion.",
+];
+
+/**
+ * The implementer's two lines, which follow the block. The implementer is the one
+ * agent that can read the repository the commands run against, so it is told to
+ * read what each runs; it is not given a way to refuse.
+ */
+const IMPLEMENTER_VERIFICATION_SENTENCES = [
+  "These commands first run after the last phase, and again after any code-review remediation, so a phase that leaves one of them failing is not by itself a defect.",
+  "Before you choose a file's content, read what each command runs (for an npm command, its entry under scripts in package.json) and write files that command will accept.",
+];
+
+/**
+ * The plan prompts' one rule: no task that runs the commands. The system runs them
+ * itself, and a task that changes no file in the approved scope can leave its phase
+ * with nothing to return, which blocks the run (hazard 20): the implementation
+ * stage blocks only when the whole phase returns no patch, so the sentence says
+ * "can", not "does". The reconcile prompt forbids an addition and never tells the
+ * reconciler to remove a task.
+ */
+const PLAN_DRAFT_VERIFICATION_SENTENCE =
+  "The system runs these commands itself: never write a task that runs, repeats or checks them, because a task that changes no file in the approved scope can leave an implementation phase with nothing to return, and that blocks the run.";
+const PLAN_RECONCILE_VERIFICATION_SENTENCE =
+  "The system runs these commands itself: never add a task that runs, repeats or checks them, because a task that changes no file in the approved scope can leave an implementation phase with nothing to return, and that blocks the run.";
+
+/** The spec decision fold prompt's rule for an answer to that question. */
+const FOLD_VERIFICATION_SENTENCES = [
+  "An answer to a question that begins",
+  "may name a stack, a layout and declared artifact paths: fold exactly the paths it names into ## Declared artifacts, grounded in that answer, and nothing the answer does not state.",
+  "Never restate a command as an acceptance criterion.",
+];
 
 // The patch rules (baseCommit, the add/modify action enum, whole-file
 // content, the no-deletion rule) arrived with the implementation stage —
@@ -307,6 +399,18 @@ const CONSTRAINT_STRINGS = [
   "never in another finding's answer",
   "Denied questions stay open",
   "for a denied question stays exactly as written",
+  // The frozen verification commands and the spec author's rule for them
+  // (docs/features/verification-aware-prompts/plan.md, hazard 21). Measured
+  // 2026-10-05, $7.3048866: team-notes run 10 delivered a layout its own
+  // frozen `npm run build` could not accept, because no prompt said the
+  // commands existed.
+  ...VERIFICATION_BLOCK_SENTENCES,
+  ...SPEC_VERIFICATION_SENTENCES,
+  ...RECONCILE_VERIFICATION_SENTENCES,
+  ...FOLD_VERIFICATION_SENTENCES,
+  ...IMPLEMENTER_VERIFICATION_SENTENCES,
+  PLAN_DRAFT_VERIFICATION_SENTENCE,
+  PLAN_RECONCILE_VERIFICATION_SENTENCE,
   // What a criterion may say (docs/features/spec-criterion-testability/plan.md).
   // Measured 2026-09-27, $1.6186: team-notes run 3 copied the design's
   // "meaningful content change" into AC-041, and its tone guidance reached
@@ -326,7 +430,7 @@ test("every constrained field's constraint appears in the prompt source", () => 
 });
 
 test("the generated author prompt states the schema constraints", () => {
-  const prompt = buildSpecAuthorPrompt(SPEC_AUTHOR, "design text");
+  const prompt = buildSpecAuthorPrompt(SPEC_AUTHOR, "design text", VERIFICATION);
   for (const constraint of [
     "proposed, blocked, failed",
     "## Declared artifacts",
@@ -392,7 +496,7 @@ test("the generated plan author prompt states the schema, the hash, and the scop
   const prompt = buildPlanAuthorPrompt(PLAN_AUTHOR, "# spec", specHash, [
     "src/thing.ts",
     "test/thing.test.ts",
-  ]);
+  ], VERIFICATION);
   for (const constraint of [
     "proposed, blocked, failed",
     "## Tasks",
@@ -457,9 +561,60 @@ test("the plan author prompt has no revision variant — reconciliation owns rev
   // (Task 6). The author prompt drafts; the reconciliation prompt revises,
   // carrying findings with their reports and asking for typed decisions.
   const specHash = "a".repeat(64);
-  const prompt = buildPlanAuthorPrompt(PLAN_AUTHOR, "# spec", specHash, ["src/a.ts"]);
+  const prompt = buildPlanAuthorPrompt(PLAN_AUTHOR, "# spec", specHash, ["src/a.ts"], VERIFICATION);
   assert.ok(!prompt.includes("## Revision"));
   assert.ok(!prompt.includes("Address"), "no legacy revision heading");
+});
+
+const PLAN_SCOPE = ["src/thing.ts", "test/thing.test.ts"];
+
+/** The three plan builders that state the commands, each with the rule it carries. */
+function planVerificationPrompts(verification: VerificationConfig): Array<{ name: string; prompt: string; sentence: string }> {
+  const specHash = "a".repeat(64);
+  return [
+    { name: "plan author", prompt: buildPlanAuthorPrompt(PLAN_AUTHOR, "SPEC-TEXT", specHash, PLAN_SCOPE, verification), sentence: PLAN_DRAFT_VERIFICATION_SENTENCE },
+    { name: "plan self-critique", prompt: buildPlanSelfCritiquePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", specHash, PLAN_SCOPE, PANEL, verification), sentence: PLAN_DRAFT_VERIFICATION_SENTENCE },
+    { name: "plan reconcile", prompt: buildPlanReconcilePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", specHash, PLAN_SCOPE, PAIR, verification), sentence: PLAN_RECONCILE_VERIFICATION_SENTENCE },
+  ];
+}
+
+test("each plan prompt states the frozen commands and forbids a task that runs them, ahead of the approved specification", () => {
+  for (const { name, prompt, sentence } of planVerificationPrompts(VERIFICATION)) {
+    const at = (text: string): number => {
+      const index = prompt.indexOf(text);
+      assert.ok(index >= 0, `${name} prompt missing: ${text}`);
+      return index;
+    };
+    assert.ok(prompt.includes(`\n\n${RUN_10_COMMAND_LINES.join("\n")}\n\n`), `${name}: the commands are one block, in order`);
+    for (const blockSentence of VERIFICATION_BLOCK_SENTENCES) at(blockSentence);
+    // The rule follows the block directly and the approved specification follows the rule.
+    at(`${VERIFICATION_BLOCK_SENTENCES[2]}\n${sentence}\n\nApproved specification:\n\n`);
+    assert.ok(at(RUN_10_COMMAND_LINES[2]!) < at(sentence), `${name}: commands, then the rule`);
+    // The emitter reads the scope as the list after `name only these:`, up to the
+    // first blank line, and the criteria as everything after the first
+    // `Approved specification:`: neither may move.
+    assert.deepEqual(/name only these:\n\n([\s\S]*?)\n\n/.exec(prompt)![1]!.split("\n"), PLAN_SCOPE.map((p) => `- ${p}`), name);
+    assert.equal(prompt.split("Approved specification:").length, 2, `${name}: one specification marker`);
+    // The emitter routes over the whole prompt: `self-critique` first, then `plan reviewer`.
+    assert.ok(!prompt.includes("plan reviewer"), `${name} carries the routing words plan reviewer`);
+    if (name !== "plan self-critique") assert.ok(!prompt.includes("self-critique"), `${name} carries the routing word self-critique`);
+  }
+  // The reconcile prompt keeps the finding-id scrape intact: PAIR holds finding 7 only.
+  const reconcile = planVerificationPrompts(VERIFICATION)[2]!.prompt;
+  assert.deepEqual([...reconcile.matchAll(/finding (\d+)/g)].map((m) => Number(m[1])), [7]);
+  // An addition is forbidden; nothing tells the reconciler to take a task out.
+  assert.ok(!/remov|delet|drop/i.test(PLAN_RECONCILE_VERIFICATION_SENTENCE));
+});
+
+test("each plan prompt follows the config it is given", () => {
+  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }] };
+  const recorded = planVerificationPrompts(VERIFICATION);
+  const changed = planVerificationPrompts(other);
+  for (const [index, { name, prompt }] of changed.entries()) {
+    assert.notEqual(prompt, recorded[index]!.prompt, `${name} ignores its verification argument`);
+    assert.ok(prompt.includes("\n\n- smoke: node --version\n\n"), `${name} names the supplied command`);
+    for (const line of RUN_10_COMMAND_LINES) assert.ok(!prompt.includes(line), `${name} still carries ${line}`);
+  }
 });
 
 test("the generated plan reviewer prompt states the finding constraints and names the agent", () => {
@@ -515,7 +670,7 @@ test("the generated implementation author prompt states the patch contract", () 
   const prompt = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", [
     "src/a1.ts",
     "test/a1.test.ts",
-  ], baseCommit, ONLY_PHASE, []);
+  ], baseCommit, ONLY_PHASE, [], VERIFICATION);
   for (const constraint of [
     "proposed, blocked, failed",
     "proposedPatches",
@@ -553,7 +708,7 @@ test("the implementation prompt names its phase, lists that phase's tasks verbat
     firstTask: 11,
     tasks: ["src/server/auth.ts: implement sessions.", "src/server/auth.ts: implement password reset."],
   };
-  const prompt = buildImplementationAuthorPrompt(IMPLEMENTER, "PLAN-TEXT", "SPEC-TEXT", ["src/a.ts"], "b".repeat(40), phase, []);
+  const prompt = buildImplementationAuthorPrompt(IMPLEMENTER, "PLAN-TEXT", "SPEC-TEXT", ["src/a.ts"], "b".repeat(40), phase, [], VERIFICATION);
   for (const text of [
     // The exact sentence the fixture emitter scrapes to learn which phase it
     // is answering; changing it changes the fixture.
@@ -586,7 +741,7 @@ test("the implementation prompt names its phase, lists that phase's tasks verbat
 test("the implementation prompt splits the scope into paths that exist (modify) and paths that do not (add)", () => {
   const scope = ["src/a.ts", "src/b.ts", "src/c.ts"];
   const phase: PlanPhase = { index: 4, count: 8, firstTask: 31, tasks: ["src/c.ts: implement it."] };
-  const prompt = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", scope, "b".repeat(40), phase, ["src/a.ts", "src/c.ts"]);
+  const prompt = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", scope, "b".repeat(40), phase, ["src/a.ts", "src/c.ts"], VERIFICATION);
   // Read the two lists the way the fixture emitter does: the block after each
   // heading, up to the next blank line.
   const list = (heading: string): string[] =>
@@ -599,17 +754,17 @@ test("the implementation prompt splits the scope into paths that exist (modify) 
   assert.ok(prompt.indexOf("these do not exist yet") < prompt.indexOf("Tasks for this phase (tasks"));
   assert.deepEqual(/Patch only these paths:\n\n([\s\S]*?)\n\n/.exec(prompt)![1]!.split("\n"), scope.map((p) => `- ${p}`));
   // An empty side is stated as `none.`, not left as a heading with nothing under it.
-  const none = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", scope, "b".repeat(40), phase, []);
+  const none = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", scope, "b".repeat(40), phase, [], VERIFICATION);
   assert.ok(none.includes("so each takes action modify:\n\nnone.\n\n"));
-  const all = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", scope, "b".repeat(40), phase, scope);
+  const all = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", scope, "b".repeat(40), phase, scope, VERIFICATION);
   assert.ok(all.includes("so each takes action add:\n\nnone.\n\n"));
 });
 
 test("the first phase claims no earlier work, the last claims no later work, and a lone phase claims neither", () => {
   const prompts = {
-    first: buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", ["src/a.ts"], "b".repeat(40), { index: 1, count: 3, firstTask: 1, tasks: ["a"] }, []),
-    last: buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", ["src/a.ts"], "b".repeat(40), { index: 3, count: 3, firstTask: 21, tasks: ["z"] }, []),
-    only: buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", ["src/a.ts"], "b".repeat(40), ONLY_PHASE, []),
+    first: buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", ["src/a.ts"], "b".repeat(40), { index: 1, count: 3, firstTask: 1, tasks: ["a"] }, [], VERIFICATION),
+    last: buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", ["src/a.ts"], "b".repeat(40), { index: 3, count: 3, firstTask: 21, tasks: ["z"] }, [], VERIFICATION),
+    only: buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", ["src/a.ts"], "b".repeat(40), ONLY_PHASE, [], VERIFICATION),
   };
   // A sentence telling the first phase that earlier phases are committed, or
   // the last that later phases follow, is a false statement the model acts on.
@@ -627,11 +782,81 @@ test("the first phase claims no earlier work, the last claims no later work, and
   }
 });
 
+test("the implementation prompt states the frozen commands after the path lists and before the tasks, and the scraped blocks stay clean", () => {
+  const scope = ["src/a.ts", "src/b.ts", "src/c.ts"];
+  const phase: PlanPhase = { index: 2, count: 3, firstTask: 11, tasks: ["src/c.ts: implement it."] };
+  const prompt = buildImplementationAuthorPrompt(IMPLEMENTER, "PLAN-TEXT", "SPEC-TEXT", scope, "b".repeat(40), phase, ["src/a.ts"], VERIFICATION);
+  const at = (text: string): number => {
+    const index = prompt.indexOf(text);
+    assert.ok(index >= 0, `implementation prompt missing: ${text}`);
+    return index;
+  };
+  assert.ok(prompt.includes(`\n\n${RUN_10_COMMAND_LINES.join("\n")}\n\n`), "the commands are one block, in order");
+  for (const sentence of [...VERIFICATION_BLOCK_SENTENCES, ...IMPLEMENTER_VERIFICATION_SENTENCES]) at(sentence);
+  // The block and the two lines are one paragraph, then the phase's tasks.
+  at(`${VERIFICATION_BLOCK_SENTENCES[2]}\n${IMPLEMENTER_VERIFICATION_SENTENCES.join("\n")}\n\nTasks for this phase (tasks 11 through 11`);
+  assert.ok(at("these do not exist yet, so each takes action add:") < at(VERIFICATION_BLOCK_SENTENCES[0]!));
+  assert.ok(at(IMPLEMENTER_VERIFICATION_SENTENCES.at(-1)!) < at("Tasks for this phase (tasks"));
+  // The emitter reads the scope block and both lists as the text after a heading
+  // up to the first blank line. No command line may fall inside any of them.
+  const blockAfter = (heading: string): string[] =>
+    /\n\n([\s\S]*?)\n\n/.exec(prompt.slice(at(heading) + heading.length))![1]!.split("\n");
+  for (const heading of [
+    "Patch only these paths:",
+    "these exist in the checkout now, so each takes action modify:",
+    "these do not exist yet, so each takes action add:",
+  ]) {
+    const scraped = blockAfter(heading);
+    assert.ok(scraped.every((line) => line === "none." || scope.includes(line.slice(2))), `${heading} holds only paths: ${scraped.join(" | ")}`);
+    for (const line of RUN_10_COMMAND_LINES) assert.ok(!scraped.includes(line), `${heading} holds a command line`);
+  }
+  // The values the emitter scrapes once each: the base commit and the phase.
+  assert.equal([...prompt.matchAll(/baseCommit must be exactly: [0-9a-f]{40}/g)].length, 1);
+  assert.equal([...prompt.matchAll(/This is phase (\d+) of (\d+)\./g)].length, 1);
+});
+
+test("the implementation prompt follows the config it is given", () => {
+  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }] };
+  const build = (verification: VerificationConfig): string =>
+    buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", ["src/a.ts"], "b".repeat(40), ONLY_PHASE, [], verification);
+  const recorded = build(VERIFICATION);
+  const changed = build(other);
+  assert.notEqual(recorded, changed);
+  assert.ok(changed.includes("\n\n- smoke: node --version\n\nA command passes only if"));
+  for (const line of RUN_10_COMMAND_LINES) assert.ok(!changed.includes(line), `still carries ${line}`);
+});
+
+test("the phase prompts built from the recorded run 12 plan carry its own lines, each task with its detail lines under it", () => {
+  // Run 12's author nested 173 detail lines under 53 tasks. The expected text is
+  // the plan's Tasks section as written, read here without the parser.
+  const RUN_12: { planMarkdown: string } = JSON.parse(
+    readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "plan-team-notes-run-12.json"), "utf8")
+  );
+  const plan = validatePlanDoc(RUN_12.planMarkdown);
+  assert.ok(plan.ok, plan.ok ? "" : plan.reason);
+  const section = /\n## Tasks\n([\s\S]*?)\n## Coverage\n/.exec(RUN_12.planMarkdown);
+  assert.ok(section, "the recorded plan has a Tasks section followed by Coverage");
+  const written = section![1]!.split("\n").filter((line) => line.trim() !== "").map((line) => line.trimEnd());
+  const phases = planPhases(plan.value.taskItems, 10);
+  assert.equal(phases.length, 6);
+  const blocks = phases.map((phase) => {
+    const prompt = buildImplementationAuthorPrompt(IMPLEMENTER, "PLAN-TEXT", "SPEC-TEXT", ["src/a.ts"], "b".repeat(40), phase, [], VERIFICATION);
+    const heading = `Tasks for this phase (tasks ${phase.firstTask} through ${phase.firstTask + phase.tasks.length - 1} of the approved plan):\n\n`;
+    const start = prompt.indexOf(heading);
+    assert.ok(start >= 0, `phase ${phase.index} prompt missing its task heading`);
+    return prompt.slice(start + heading.length, prompt.indexOf("\n\nApproved plan:", start));
+  });
+  // A phase never opens on a detail line: its first line is a top-level task.
+  for (const block of blocks) assert.ok(/^- \S/.test(block), `a phase opens on: ${block.split("\n")[0]}`);
+  // In order, the blocks are the plan's lines: nothing lost, repeated or reordered.
+  assert.deepEqual(blocks.join("\n").split("\n"), written);
+});
+
 test("the generated spec self-critique prompt states the contract and carries both governing inputs", () => {
   // Both inputs travel: the design is the ceiling on what the author may
   // require, the specification is what it is revising. A prompt with only one
   // of them asks for a judgement the model has no basis to make.
-  const prompt = buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PANEL);
+  const prompt = buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PANEL, VERIFICATION);
   for (const constraint of [
     "proposedContentChanges.selfCritique",
     "proposed, blocked, failed",
@@ -683,10 +908,130 @@ test("the generated spec self-critique prompt states the contract and carries bo
 test("the spec self-critique prompt is not the author prompt", () => {
   // Hazard 7 in the small: two dispatches under one agent and one model that
   // sent the same bytes would be paying twice for one answer.
-  const author = buildSpecAuthorPrompt(SPEC_AUTHOR, "DESIGN-TEXT");
-  const critique = buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PANEL);
+  const author = buildSpecAuthorPrompt(SPEC_AUTHOR, "DESIGN-TEXT", VERIFICATION);
+  const critique = buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PANEL, VERIFICATION);
   assert.notEqual(author, critique);
   assert.ok(!author.includes("selfCritique"), "the draft prompt asks for a spec, not a critique");
+});
+
+test("both spec draft prompts state the frozen commands in order, then the rule for them, ahead of the design", () => {
+  // The expected lines are the ones the recorded governed.yaml declares; this
+  // pins that the fixture still declares them, so a changed fixture cannot
+  // leave the literals below describing a different config.
+  assert.deepEqual(
+    VERIFICATION.commands.map(({ name }) => name),
+    ["typecheck", "lint", "build"]
+  );
+  const prompts = {
+    author: buildSpecAuthorPrompt(SPEC_AUTHOR, "DESIGN-TEXT", VERIFICATION),
+    selfCritique: buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PANEL, VERIFICATION),
+  };
+  for (const [name, prompt] of Object.entries(prompts)) {
+    const at = (text: string): number => {
+      const index = prompt.indexOf(text);
+      assert.ok(index >= 0, `${name} prompt missing: ${text}`);
+      return index;
+    };
+    // One block, one line per command, in the frozen order.
+    assert.ok(
+      prompt.includes(`\n\n${RUN_10_COMMAND_LINES.join("\n")}\n\n`),
+      `${name} prompt lists the commands as one block in order`
+    );
+    for (const sentence of [...VERIFICATION_BLOCK_SENTENCES, ...SPEC_VERIFICATION_SENTENCES]) at(sentence);
+    // The marker sentence whole, with the backticked word the later passes look for.
+    at("a question that begins `Verification:`, asking what each such command requires");
+    // The rule says "the form stated above", so the form is stated first: the
+    // open-decisions schema, then the commands, then the rule, then the design.
+    assert.ok(at("- an optional ## Open decisions section") < at(VERIFICATION_BLOCK_SENTENCES[0]!));
+    assert.ok(at(VERIFICATION_BLOCK_SENTENCES[0]!) < at(RUN_10_COMMAND_LINES[0]!));
+    assert.ok(at(RUN_10_COMMAND_LINES[2]!) < at(SPEC_VERIFICATION_SENTENCES[0]!));
+    assert.ok(at(SPEC_VERIFICATION_SENTENCES.at(-1)!) < at("Design document:"));
+  }
+});
+
+test("the verification lines follow the config a builder is given, not a fixed one", () => {
+  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }] };
+  const builds: Array<[string, (verification: VerificationConfig) => string]> = [
+    ["author", (v) => buildSpecAuthorPrompt(SPEC_AUTHOR, "DESIGN-TEXT", v)],
+    ["selfCritique", (v) => buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PANEL, v)],
+  ];
+  for (const [name, build] of builds) {
+    const recorded = build(VERIFICATION);
+    const changed = build(other);
+    assert.notEqual(recorded, changed, `${name} prompt ignores its verification argument`);
+    assert.ok(changed.includes("\n\n- smoke: node --version\n\n"), `${name} prompt names the supplied command`);
+    for (const line of RUN_10_COMMAND_LINES) {
+      assert.ok(!changed.includes(line), `${name} prompt still carries the other config's line: ${line}`);
+    }
+    assert.ok(!recorded.includes("- smoke: node --version"), `${name} prompt carries a line it was not given`);
+  }
+});
+
+test("a specification whose open decision begins Verification: is valid, so the question the rule asks for can be recorded", () => {
+  // The form the spec author rule advertises, run through the receiving
+  // validator (hazard 3): a question the rule asks for that the validator
+  // refuses would block the run at the first spec dispatch.
+  const spec = validateSpecDoc(`feature: demo
+change_kind: feature
+
+## Declared artifacts
+
+- src/a.ts
+
+## Acceptance criteria
+
+- AC-001: criterion text
+
+## Open decisions
+
+- OD-001 (high): Verification: what does npm run build need, and which declared artifact paths does that need?
+`);
+  assert.ok(spec.ok, spec.ok ? "" : spec.reason);
+  assert.deepEqual(spec.value.openDecisions, [
+    {
+      id: "OD-001",
+      severity: "high",
+      text: "Verification: what does npm run build need, and which declared artifact paths does that need?",
+    },
+  ]);
+  // What the stage records as the finding's subject is what the reconcile
+  // prompt then shows the reconciler; its rule names that form. The subject is
+  // taken from the stage's own function, not written here.
+  const [report] = disclosedOpenDecisionReports(spec.value);
+  assert.ok(report!.subject.startsWith("OD-001: Verification: "), `the finding subject reads ${report!.subject}`);
+});
+
+test("fixture command data carries no word a stage emitter routes on", () => {
+  // The stage emitters (test/fixtures/harness/emit-*-stage.mjs) route over the
+  // whole prompt with includes(), so the commands rendered into every
+  // verification-aware prompt are routing input. A command named
+  // `self-critique` turns a spec draft into a self-critique reply. The design
+  // text has the same exposure and the FIXTURE-* modes depend on it, so the
+  // emitters are not changed; fixture command data has to stay clear instead.
+  const markers = [
+    "self-critique",
+    "spec reviewer",
+    "plan reviewer",
+    "reconcile",
+    "spec author",
+    "plan author",
+    "Operator answers to fold:",
+    "FIXTURE-",
+    "REVISED-",
+  ];
+  const clear = (label: string, text: string): void => {
+    for (const marker of markers) {
+      assert.ok(!text.toLowerCase().includes(marker.toLowerCase()), `${label} carries the routing marker ${marker}`);
+    }
+  };
+  for (const { name, command } of VERIFICATION.commands) clear(`run 10 command ${name}`, [name, ...command].join("\n"));
+  // Every verification constant a stage test freezes into a profile.
+  for (const file of ["spec-stage", "spec-decision-stage", "plan-stage", "implementation-stage"]) {
+    const text = readFileSync(join(process.cwd(), "test", `${file}.test.ts`), "utf8");
+    const constants = [...text.matchAll(/const [A-Z_]*VERIFICATION[A-Z_]*\b[^;]*;/g)].map((m) => m[0]);
+    assert.ok(constants.length > 0, `${file}.test.ts defines no verification constant for the guard to read`);
+    for (const constant of constants) clear(`${file}.test.ts`, constant.replace(/^const [A-Z_]+\b[^=]*=/, ""));
+  }
 });
 
 test("the generated plan self-critique prompt restates the hash and the scope it must still satisfy", () => {
@@ -697,7 +1042,8 @@ test("the generated plan self-critique prompt restates the hash and the scope it
     "PLAN-TEXT",
     specHash,
     ["src/thing.ts", "test/thing.test.ts"],
-    PANEL
+    PANEL,
+    VERIFICATION
   );
   for (const constraint of [
     "proposedContentChanges.selfCritique",
@@ -757,14 +1103,15 @@ test("every size a self-critique prompt advertises is one the validator accepts"
       registeredSpecialties: ["consistency", "security"],
     };
     const prompts = {
-      spec: buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", bounds),
+      spec: buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", bounds, VERIFICATION),
       plan: buildPlanSelfCritiquePrompt(
         PLAN_AUTHOR,
         "SPEC-TEXT",
         "PLAN-TEXT",
         "a".repeat(64),
         ["src/a.ts"],
-        bounds
+        bounds,
+        VERIFICATION
       ),
     };
     for (const [name, prompt] of Object.entries(prompts)) {
@@ -798,8 +1145,8 @@ test("a configuration requiring no lens states no always-seated block", () => {
   // does not exist, which is the same defect as omitting one that does.
   const none: PanelPromptBounds = { ...PANEL, requiredSpecialties: [] };
   for (const prompt of [
-    buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", none),
-    buildPlanSelfCritiquePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", "a".repeat(64), ["src/a.ts"], none),
+    buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", none, VERIFICATION),
+    buildPlanSelfCritiquePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", "a".repeat(64), ["src/a.ts"], none, VERIFICATION),
   ]) {
     assert.ok(!prompt.includes("always seated"), "no always-seated block without required lenses");
     // The cap is still stated, just the simpler one: with no required lens the
@@ -838,7 +1185,7 @@ const PAIR: ReconciliationFindingInput[] = [
 ];
 
 test("the generated spec reconciliation prompt carries the decision contract and every report unfused", () => {
-  const prompt = buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PAIR);
+  const prompt = buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PAIR, VERIFICATION);
   for (const constraint of [
     "proposedContentChanges",
     "decisions",
@@ -938,7 +1285,7 @@ test("the generated spec reconciliation prompt carries the decision contract and
 
 test("the generated plan reconciliation prompt carries the spec as governing input and restates the binding values", () => {
   const specHash = "a".repeat(64);
-  const prompt = buildPlanReconcilePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", specHash, ["src/a.ts"], PAIR);
+  const prompt = buildPlanReconcilePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", specHash, ["src/a.ts"], PAIR, VERIFICATION);
   for (const constraint of [
     "decisions",
     "source is always specification",
@@ -1007,8 +1354,8 @@ test("the generated plan reconciliation prompt carries the spec as governing inp
 
 test("a reconciliation prompt with no findings states the none-line, not a bare block", () => {
   for (const prompt of [
-    buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", []),
-    buildPlanReconcilePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", "a".repeat(64), ["src/a.ts"], []),
+    buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", [], VERIFICATION),
+    buildPlanReconcilePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", "a".repeat(64), ["src/a.ts"], [], VERIFICATION),
   ]) {
     assert.ok(prompt.includes("Findings to reconcile:"));
     assert.ok(prompt.includes("none were reported this round."), "the empty round is stated as such");
@@ -1018,8 +1365,8 @@ test("a reconciliation prompt with no findings states the none-line, not a bare 
 test("the spec reconciliation prompt is not the spec author prompt", () => {
   // Hazard 7 in the small: two dispatches under one agent and one model that
   // sent the same bytes would be paying twice for one answer.
-  const author = buildSpecAuthorPrompt(SPEC_AUTHOR, "DESIGN-TEXT");
-  const reconcile = buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", []);
+  const author = buildSpecAuthorPrompt(SPEC_AUTHOR, "DESIGN-TEXT", VERIFICATION);
+  const reconcile = buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", [], VERIFICATION);
   assert.notEqual(author, reconcile);
   // The JSON key, not the word: the draft states the `## Open decisions`
   // section, but it never asks for a decisions list.
@@ -1050,8 +1397,8 @@ test("every finding id a reconcile prompt advertises is one the validator accept
     { findingId: 5, reports: [report] },
   ];
   const prompts = {
-    spec: buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", findings),
-    plan: buildPlanReconcilePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", "a".repeat(64), ["src/a.ts"], findings),
+    spec: buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", findings, VERIFICATION),
+    plan: buildPlanReconcilePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", "a".repeat(64), ["src/a.ts"], findings, VERIFICATION),
   };
   for (const [name, prompt] of Object.entries(prompts)) {
     const advertised = [...prompt.matchAll(/"findingId": (\d+)/g)].map((m) => Number(m[1]));
@@ -1062,8 +1409,8 @@ test("every finding id a reconcile prompt advertises is one the validator accept
     );
   }
   for (const prompt of [
-    buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", []),
-    buildPlanReconcilePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", "a".repeat(64), ["src/a.ts"], []),
+    buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", [], VERIFICATION),
+    buildPlanReconcilePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", "a".repeat(64), ["src/a.ts"], [], VERIFICATION),
   ]) {
     assert.ok(prompt.includes('"decisions": []'), "an empty round advertises an empty decisions list");
   }
@@ -1081,13 +1428,13 @@ test("every decision shape a reconcile prompt advertises validates against valid
       name: "spec",
       governingSource: "design" as const,
       governingText: "DESIGN-TEXT",
-      prompt: buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PAIR),
+      prompt: buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PAIR, VERIFICATION),
     },
     {
       name: "plan",
       governingSource: "specification" as const,
       governingText: "SPEC-TEXT",
-      prompt: buildPlanReconcilePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", "a".repeat(64), ["src/a.ts"], PAIR),
+      prompt: buildPlanReconcilePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", "a".repeat(64), ["src/a.ts"], PAIR, VERIFICATION),
     },
   ];
   for (const { name, governingSource, governingText, prompt } of cases) {
@@ -1133,6 +1480,49 @@ test("every decision shape a reconcile prompt advertises validates against valid
   }
 });
 
+test("the spec reconciliation prompt states the frozen commands and names a Verification: question as the one blocking exception", () => {
+  const prompt = buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PAIR, VERIFICATION);
+  const at = (text: string): number => {
+    const index = prompt.indexOf(text);
+    assert.ok(index >= 0, `spec reconcile prompt missing: ${text}`);
+    return index;
+  };
+  assert.ok(prompt.includes(`\n\n${RUN_10_COMMAND_LINES.join("\n")}\n\n`), "the commands are one block, in order");
+  for (const sentence of [...VERIFICATION_BLOCK_SENTENCES, ...RECONCILE_VERIFICATION_SENTENCES]) at(sentence);
+  // The two backticked forms, whole: the subject form the reconciler reads in
+  // the findings block, and the marker it is told to start the question with.
+  at("A finding whose subject reads `OD-<n>: Verification: <question>` is an open decision");
+  at("begin the question's text with `Verification:` and make each option name");
+  // The exception names the test it is an exception to ("the upstream_blocking
+  // test above") because the commands block now sits between them, so "the rule
+  // above" would point at the block's last line. The test it names, which is
+  // unchanged, is above the block and the exception.
+  assert.ok(at("choose upstream_blocking only when the design states a behavior") < at(VERIFICATION_BLOCK_SENTENCES[0]!));
+  assert.ok(at("does not by itself make a finding blocking.") < at(VERIFICATION_BLOCK_SENTENCES[0]!));
+  assert.ok(at(RUN_10_COMMAND_LINES[2]!) < at(RECONCILE_VERIFICATION_SENTENCES[0]!));
+  assert.ok(at(RECONCILE_VERIFICATION_SENTENCES.at(-1)!) < at("The revised specification must satisfy the same document schema"));
+  // The stage emitter routes over the whole prompt and checks these two words
+  // before `reconcile`; the new text must not carry either.
+  for (const word of ["self-critique", "spec reviewer"]) {
+    assert.ok(!prompt.includes(word), `spec reconcile prompt carries the routing word ${word}`);
+  }
+  // The emitter scrapes every `finding <digits>` in the prompt and two block
+  // markers; the new text must add none. PAIR holds finding 7 and nothing else.
+  assert.deepEqual([...prompt.matchAll(/finding (\d+)/g)].map((m) => Number(m[1])), [7]);
+  for (const marker of ["The specification under review:", "Findings to reconcile:"]) {
+    assert.equal(prompt.split(marker).length, 2, `${marker} appears once`);
+  }
+});
+
+test("the spec reconciliation prompt follows the config it is given", () => {
+  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }] };
+  const recorded = buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PAIR, VERIFICATION);
+  const changed = buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PAIR, other);
+  assert.notEqual(recorded, changed);
+  assert.ok(changed.includes("\n\n- smoke: node --version\n\n"));
+  for (const line of RUN_10_COMMAND_LINES) assert.ok(!changed.includes(line), `still carries ${line}`);
+});
+
 // --- spec decision fold (spec-operator-decisions Task 6) ---------------------
 
 const FOLD_QUESTIONS: FoldQuestionInput[] = [
@@ -1142,7 +1532,7 @@ const FOLD_QUESTIONS: FoldQuestionInput[] = [
 ];
 
 test("the generated fold prompt carries every answer, lists denied questions apart, and states the fold contract", () => {
-  const prompt = buildSpecDecisionFoldPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", FOLD_QUESTIONS);
+  const prompt = buildSpecDecisionFoldPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", FOLD_QUESTIONS, VERIFICATION);
   for (const text of [
     "DESIGN-TEXT",
     "SPEC-TEXT",
@@ -1171,7 +1561,7 @@ test("the generated fold prompt carries every answer, lists denied questions apa
 });
 
 test("the fold decision shape the prompt advertises validates with the operator's answer as grounding", () => {
-  const prompt = buildSpecDecisionFoldPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", FOLD_QUESTIONS);
+  const prompt = buildSpecDecisionFoldPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", FOLD_QUESTIONS, VERIFICATION);
   const shape = /^(\{"findingId": <id>, "disposition": "addressed".*\})$/m.exec(prompt);
   assert.ok(shape, "the fold prompt advertises one complete decision shape");
   const answer = FOLD_QUESTIONS[0].answer;
@@ -1192,6 +1582,41 @@ test("the fold decision shape the prompt advertises validates with the operator'
   assert.ok(result.ok, result.ok ? "" : result.reason);
   assert.deepEqual(result.value.conversions, []);
   assert.deepEqual(result.value.unclaimedNodes, []);
+});
+
+test("the fold prompt states the frozen commands and folds only the paths a Verification: answer names", () => {
+  const prompt = buildSpecDecisionFoldPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", FOLD_QUESTIONS, VERIFICATION);
+  const at = (text: string): number => {
+    const index = prompt.indexOf(text);
+    assert.ok(index >= 0, `fold prompt missing: ${text}`);
+    return index;
+  };
+  assert.ok(prompt.includes(`\n\n${RUN_10_COMMAND_LINES.join("\n")}\n\n`), "the commands are one block, in order");
+  for (const sentence of [...VERIFICATION_BLOCK_SENTENCES, ...FOLD_VERIFICATION_SENTENCES]) at(sentence);
+  at("An answer to a question that begins `Verification:` may name a stack, a layout and declared artifact paths");
+  // After the document schema the revision must satisfy, before the design and
+  // the answers: the rule is about what the answers below may add.
+  assert.ok(at("A revised specification that does not validate blocks the run.") < at(VERIFICATION_BLOCK_SENTENCES[0]!));
+  assert.ok(at(RUN_10_COMMAND_LINES[2]!) < at(FOLD_VERIFICATION_SENTENCES[0]!));
+  assert.ok(at(FOLD_VERIFICATION_SENTENCES.at(-1)!) < at("Design document:"));
+  // The fixture routes the earlier spec prompts on these words, in this order,
+  // and recognizes the fold by its own heading afterwards.
+  for (const word of ["self-critique", "spec reviewer", "reconcile"]) {
+    assert.ok(!prompt.includes(word), `fold prompt carries the routing word ${word}`);
+  }
+  // The emitter reads the answers from the last use of the heading.
+  assert.equal(prompt.indexOf(promptBuilders.SPEC_DECISION_FOLD_MARKER, at("Design document:")) > 0, true);
+  // The advertised envelope still names exactly the folded ids.
+  assert.deepEqual([...prompt.matchAll(/"findingId": (\d+)/g)].map((m) => Number(m[1])), [4, 6]);
+});
+
+test("the fold prompt follows the config it is given", () => {
+  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }] };
+  const recorded = buildSpecDecisionFoldPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", FOLD_QUESTIONS, VERIFICATION);
+  const changed = buildSpecDecisionFoldPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", FOLD_QUESTIONS, other);
+  assert.notEqual(recorded, changed);
+  assert.ok(changed.includes("\n\n- smoke: node --version\n\n"));
+  for (const line of RUN_10_COMMAND_LINES) assert.ok(!changed.includes(line), `still carries ${line}`);
 });
 
 test("the generated code review prompt states every field the validator and the gate act on", () => {
@@ -1363,16 +1788,16 @@ function routingPrompts(document: string) {
   const base = "b".repeat(40);
   const scope = ["src/a.ts"];
   return [
-    { builder: "buildSpecAuthorPrompt", prefix: "SPEC_AUTHOR_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecAuthorPrompt(SPEC_AUTHOR, document) },
-    { builder: "buildSpecSelfCritiquePrompt", prefix: "SPEC_AUTHOR_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecSelfCritiquePrompt(SPEC_AUTHOR, document, document, PANEL) },
+    { builder: "buildSpecAuthorPrompt", prefix: "SPEC_AUTHOR_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecAuthorPrompt(SPEC_AUTHOR, document, VERIFICATION) },
+    { builder: "buildSpecSelfCritiquePrompt", prefix: "SPEC_AUTHOR_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecSelfCritiquePrompt(SPEC_AUTHOR, document, document, PANEL, VERIFICATION) },
     { builder: "buildSpecReviewPrompt", prefix: "SPEC_REVIEW_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecReviewPrompt(SPEC_REVIEWER_TRACEABILITY, document, document) },
-    { builder: "buildSpecReconcilePrompt", prefix: "SPEC_AUTHOR_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecReconcilePrompt(SPEC_AUTHOR, document, document, PAIR) },
-    { builder: "buildSpecDecisionFoldPrompt", prefix: "SPEC_AUTHOR_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecDecisionFoldPrompt(SPEC_AUTHOR, document, document, FOLD_QUESTIONS) },
-    { builder: "buildPlanAuthorPrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanAuthorPrompt(PLAN_AUTHOR, document, hash, scope) },
-    { builder: "buildPlanSelfCritiquePrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanSelfCritiquePrompt(PLAN_AUTHOR, document, document, hash, scope, PANEL) },
+    { builder: "buildSpecReconcilePrompt", prefix: "SPEC_AUTHOR_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecReconcilePrompt(SPEC_AUTHOR, document, document, PAIR, VERIFICATION) },
+    { builder: "buildSpecDecisionFoldPrompt", prefix: "SPEC_AUTHOR_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildSpecDecisionFoldPrompt(SPEC_AUTHOR, document, document, FOLD_QUESTIONS, VERIFICATION) },
+    { builder: "buildPlanAuthorPrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanAuthorPrompt(PLAN_AUTHOR, document, hash, scope, VERIFICATION) },
+    { builder: "buildPlanSelfCritiquePrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanSelfCritiquePrompt(PLAN_AUTHOR, document, document, hash, scope, PANEL, VERIFICATION) },
     { builder: "buildPlanReviewPrompt", prefix: "PLAN_REVIEW_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanReviewPrompt(SPEC_REVIEWER_TRACEABILITY, document, document) },
-    { builder: "buildPlanReconcilePrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanReconcilePrompt(PLAN_AUTHOR, document, document, hash, scope, PAIR) },
-    { builder: "buildImplementationAuthorPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, document, document, scope, base, ONLY_PHASE, []) },
+    { builder: "buildPlanReconcilePrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanReconcilePrompt(PLAN_AUTHOR, document, document, hash, scope, PAIR, VERIFICATION) },
+    { builder: "buildImplementationAuthorPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, document, document, scope, base, ONLY_PHASE, [], VERIFICATION) },
     { builder: "buildCodeReviewPrompt", prefix: "CODE_REVIEW_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, document, document, scope, document, base) },
     { builder: "buildCodeReviewRemediationPrompt", prefix: "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, document, document, scope, base, scope, document, []) },
   ];
@@ -1477,14 +1902,14 @@ test("CLI fixture composes existing emitters for all builder families with recei
   try {
     writeFileSync(join(root, "base.txt"), "worktree marker\n");
     const design = "# design\ndesign\n";
-    const specResult = runRouter(root, buildSpecAuthorPrompt(SPEC_AUTHOR, design), SPEC_AUTHOR.id);
+    const specResult = runRouter(root, buildSpecAuthorPrompt(SPEC_AUTHOR, design, VERIFICATION), SPEC_AUTHOR.id);
     const specText = proposedChanges(specResult).spec;
     assert.equal(typeof specText, "string");
     const spec = validateSpecDoc(specText as string);
     assert.ok(spec.ok, spec.ok ? "" : spec.reason);
     const scope = spec.value.declaredArtifacts;
     const specHash = sha256Hex(normalizeText(specText as string));
-    const planResult = runRouter(root, buildPlanAuthorPrompt(PLAN_AUTHOR, specText as string, specHash, scope), PLAN_AUTHOR.id);
+    const planResult = runRouter(root, buildPlanAuthorPrompt(PLAN_AUTHOR, specText as string, specHash, scope, VERIFICATION), PLAN_AUTHOR.id);
     const planText = proposedChanges(planResult).plan;
     assert.equal(typeof planText, "string");
     const plan = validatePlanDoc(planText as string);
@@ -1494,8 +1919,8 @@ test("CLI fixture composes existing emitters for all builder families with recei
     for (const kind of ["spec", "plan"] as const) {
       const agent = kind === "spec" ? SPEC_AUTHOR : PLAN_AUTHOR;
       const prompt = kind === "spec"
-        ? buildSpecSelfCritiquePrompt(agent, design, specText as string, PANEL)
-        : buildPlanSelfCritiquePrompt(agent, specText as string, planText as string, specHash, scope, PANEL);
+        ? buildSpecSelfCritiquePrompt(agent, design, specText as string, PANEL, VERIFICATION)
+        : buildPlanSelfCritiquePrompt(agent, specText as string, planText as string, specHash, scope, PANEL, VERIFICATION);
       const critique = validateSelfCritique(proposedChanges(runRouter(root, prompt, agent.id)).selfCritique);
       assert.ok(critique.ok, critique.ok ? "" : critique.reason);
       const artifact = kind === "spec" ? validateSpecDoc(critique.value.artifact) : validatePlanDoc(critique.value.artifact);
@@ -1513,8 +1938,8 @@ test("CLI fixture composes existing emitters for all builder families with recei
         findingId: index + 1, reports: [{ reviewerId: reviewer.id, ...report }],
       }));
       const reconciliationPrompt = kind === "spec"
-        ? buildSpecReconcilePrompt(agent, design, specText as string, findings)
-        : buildPlanReconcilePrompt(agent, specText as string, planText as string, specHash, scope, findings);
+        ? buildSpecReconcilePrompt(agent, design, specText as string, findings, VERIFICATION)
+        : buildPlanReconcilePrompt(agent, specText as string, planText as string, specHash, scope, findings, VERIFICATION);
       const reconciled = proposedChanges(runRouter(root, reconciliationPrompt, agent.id));
       const revisedText = reconciled[kind];
       assert.equal(typeof revisedText, "string");
@@ -1537,7 +1962,7 @@ test("CLI fixture composes existing emitters for all builder families with recei
     }
 
     const base = "b".repeat(40);
-    const implementationPrompt = buildImplementationAuthorPrompt(IMPLEMENTER, planText as string, specText as string, scope, base, planPhases(plan.value.tasks, 10)[0]!, []);
+    const implementationPrompt = buildImplementationAuthorPrompt(IMPLEMENTER, planText as string, specText as string, scope, base, planPhases(plan.value.taskItems, 10)[0]!, [], VERIFICATION);
     const implemented = runRouter(root, implementationPrompt, IMPLEMENTER.id);
     assert.equal(implemented.status, "proposed");
     const patches = implemented.proposedPatches!;

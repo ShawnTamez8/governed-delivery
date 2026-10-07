@@ -28,7 +28,22 @@ export interface PlanDoc {
    * plan to the specification the operator actually authorized.
    */
   planFor: string;
+  /**
+   * Every non-empty line of `## Tasks`, trimmed, with a leading `-` removed.
+   * This is the plan gate's unit: `planNormativeNodes` makes one normative node
+   * of each, so a reworded or removed nested line still needs a claim
+   * (hazard 17). It is not the unit a phase is counted in; that is `taskItems`.
+   */
   tasks: string[];
+  /**
+   * The same section grouped into items, the unit the implementation stage
+   * counts against its ceiling and splits into phases (hazard 20). A line at
+   * the section's smallest indentation starts an item; a deeper line joins the
+   * item above it, on its own line and keeping its indentation relative to the
+   * item. A plan whose lines are all at one indentation has one item per line,
+   * so `taskItems` equals `tasks`.
+   */
+  taskItems: string[];
   coverage: CoverageEntry[];
 }
 
@@ -151,7 +166,13 @@ export function validatePlanDoc(
 
   return {
     ok: true,
-    value: { feature: featureMatch[1].trim(), planFor, tasks, coverage },
+    value: {
+      feature: featureMatch[1].trim(),
+      planFor,
+      tasks,
+      taskItems: groupTaskItems(tasksSection),
+      coverage,
+    },
   };
 }
 
@@ -169,11 +190,13 @@ export interface PlanPhase {
 
 /**
  * Split a validated plan's tasks into consecutive phases of `phaseSize`, in
- * plan order, the last phase taking the remainder. The unit is whatever
- * `validatePlanDoc` returned in `tasks`, so a phase boundary and the plan
- * gate's notion of a task are the same thing. No model is involved: the split
- * is arithmetic over the list, which is why a plan edited after its gate is
- * caught by the existing plan-hash check, not here.
+ * plan order, the last phase taking the remainder. The unit is whatever the
+ * caller passes: the implementation stage passes `PlanDoc.taskItems`, so a phase
+ * never cuts an item and a nested sub-bullet travels with its parent. The plan
+ * gate counts every line as a normative node (`PlanDoc.tasks`), so a phase
+ * boundary and a normative node are different units. No model is involved: the
+ * split is arithmetic over the list, which is why a plan edited after its gate
+ * is caught by the existing plan-hash check, not here.
  *
  * Callers pass validated input (`validatePlanDoc` refuses an empty task list,
  * and the frozen policy refuses a non-positive phase size), so a throw here is
@@ -200,11 +223,41 @@ export function planPhases(tasks: readonly string[], phaseSize: number): PlanPha
   return phases;
 }
 
+/** A list line's text: trimmed, with a leading `-` removed. A bare `-` has none. */
+function itemText(line: string): string {
+  return line.trim().replace(/^-\s*/, "");
+}
+
 function listItems(sectionText: string): string[] {
   return sectionText
     .split("\n")
-    .map((line) => line.trim().replace(/^-\s*/, ""))
+    .map(itemText)
     .filter((line) => line !== "");
+}
+
+/**
+ * Group a `## Tasks` section into items. A line with text at the section's
+ * smallest indentation starts an item, with its indentation and leading `-`
+ * removed. A deeper line is appended to the current item after a newline,
+ * keeping the indentation it has beyond that smallest one, so the item renders
+ * as a nested list under its first line. A deeper line before any item starts
+ * one rather than being dropped. A line without text (blank, or a bare `-`) is
+ * skipped exactly as `listItems` skips it, so a flat plan has one item per
+ * task. Callers pass a section with at least one line that has text.
+ */
+function groupTaskItems(sectionText: string): string[] {
+  const lines = sectionText.split("\n").filter((line) => itemText(line) !== "");
+  const indentOf = (line: string): number => line.length - line.trimStart().length;
+  const base = Math.min(...lines.map(indentOf));
+  const items: string[] = [];
+  for (const line of lines) {
+    if (indentOf(line) <= base || items.length === 0) {
+      items.push(itemText(line));
+    } else {
+      items[items.length - 1] += `\n${line.slice(base).trimEnd()}`;
+    }
+  }
+  return items;
 }
 
 function section(content: string, title: string): string | null {

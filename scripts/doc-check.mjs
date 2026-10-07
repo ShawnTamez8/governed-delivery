@@ -303,6 +303,7 @@ const NUMBER_WORDS = {
   eighteen: 18,
   nineteen: 19,
   twenty: 20,
+  "twenty-one": 21,
 };
 
 // ---------------------------------------------------------------------------
@@ -517,7 +518,7 @@ function checkContract(facts) {
 // drifting apart the way this check can.
 function checkHazardCount(facts) {
   const line = lineIn(facts.architectureMd, "## 22.");
-  const stated = /states (\w+) failure modes/.exec(facts.hazardsSection);
+  const stated = /states ([\w-]+) failure modes/.exec(facts.hazardsSection);
   if (!stated) {
     err(
       "hazardCount",

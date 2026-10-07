@@ -24,8 +24,15 @@ import { validateAgentResult } from "../src/agent-result.ts";
 import { parseEnvelope } from "../src/harness.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
+import { IMPLEMENTER } from "../src/agents/implementer.ts";
+import { buildImplementationAuthorPrompt } from "../src/prompts.ts";
+import { planPhases, validatePlanDoc } from "../src/plan-doc.ts";
 
-/** One minimal frozen configuration; this stage does not read it. */
+/**
+ * One minimal frozen configuration. The stage states it to the implementer; the
+ * command name and tokens must stay clear of the words the stage emitters route
+ * on (test/prompts.test.ts guards this).
+ */
 const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
 const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-implementation-stage.mjs");
 const MODEL = "m";
@@ -163,6 +170,8 @@ function withApprovedRun(
     gitignore?: string;
     /** The plan document, given the hash of the spec it must bind to. */
     plan?: (specHash: string) => string;
+    /** The commands frozen into the run's profile; the stage states them to the implementer. */
+    verification?: VerificationConfig;
   } = {}
 ): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "bw-implementation-"));
@@ -194,7 +203,7 @@ function withApprovedRun(
 
     const spec = opts.spec ?? SPEC;
     const run = store.insertRun("p", "f-1", SLUG, "feature");
-    const frozen = freezeUniformProfile(root, run.id, head, MODEL, VERIFICATION);
+    const frozen = freezeUniformProfile(root, run.id, head, MODEL, opts.verification ?? VERIFICATION);
     store.setProfileRef(run.id, frozen.hash);
     // The run's frozen executor *is* the fixture: the stage refuses an
     // executor the profile never froze, and a test run is not exempt from
@@ -345,6 +354,56 @@ test("the success path: worktree, projections commit, applied patch, pass", asyn
     assert.equal(verifyAuditChain(store), null);
     assert.equal(store.getRun(runId)!.status, "in_progress");
   });
+});
+
+test("the phase-1 implementer prompt carries the frozen profile's commands, and another config changes it", async () => {
+  // `agent_run.input_hash` is the SHA-256 of the prompt sent. The prompt is
+  // rebuilt from the run's own rows: the plan and spec on disk, the signed scope,
+  // the handoff base the gate recorded, the first phase of the plan's tasks, and
+  // no existing scope path (none of SCOPE exists at the base). If the hashes
+  // differed for any reason but the commands, that is a finding, not a tolerance.
+  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }] };
+  async function phaseOne(verification: VerificationConfig): Promise<{ sent: string; expected: string }> {
+    let observed = { sent: "", expected: "" };
+    await withApprovedRun(
+      async ({ store, root, runId, specPath, planPath }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        const rows = store.query<{ input_hash: string }>(
+          "SELECT ar.input_hash FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? ORDER BY ar.id",
+          [runId]
+        );
+        assert.equal(rows.length, 1, "one phase, one dispatch");
+        const gate = store.query<{ summary: string }>(
+          "SELECT summary FROM audit WHERE run_id = ? AND action = 'implementation.gate.pass' ORDER BY id DESC LIMIT 1",
+          [runId]
+        )[0]!;
+        const handoff = parseImplementationGate(gate.summary);
+        assert.ok(handoff.ok, handoff.ok ? "" : handoff.reason);
+        const planText = readFileSync(planPath, "utf8");
+        const plan = validatePlanDoc(planText);
+        assert.ok(plan.ok, plan.ok ? "" : plan.reason);
+        const prompt = buildImplementationAuthorPrompt(
+          IMPLEMENTER,
+          planText,
+          readFileSync(specPath, "utf8"),
+          SCOPE,
+          handoff.value.base,
+          planPhases(plan.value.taskItems, 10)[0]!,
+          [],
+          verification
+        );
+        observed = { sent: rows[0]!.input_hash, expected: sha256Hex(prompt) };
+      },
+      { verification }
+    );
+    return observed;
+  }
+  const recorded = await phaseOne(VERIFICATION);
+  const changed = await phaseOne(other);
+  assert.equal(recorded.sent, recorded.expected, "the stage sent the prompt built from the frozen commands");
+  assert.equal(changed.sent, changed.expected);
+  assert.notEqual(recorded.sent, changed.sent, "the implementer prompt follows the frozen config");
 });
 
 // --- preconditions, each refused by name before any state mutation ----------
@@ -902,6 +961,19 @@ function tasksPlan(count: number): (specHash: string) => string {
     `feature: demo\nplan_for: ${specHash}\n\n## Tasks\n\n${Array.from({ length: count }, (_, i) => `- Task ${i + 1}`).join("\n")}\n\n## Coverage\n\n- AC-001 -> src/a1.ts\n`;
 }
 
+/**
+ * A valid plan with `items` top-level tasks, each followed by `nested` indented
+ * detail lines: the shape team-notes run 12's plan had (53 items, 173 nested lines).
+ */
+function nestedTasksPlan(items: number, nested: number): (specHash: string) => string {
+  return (specHash) => {
+    const tasks = Array.from({ length: items }, (_, i) =>
+      [`- Task ${i + 1}:`, ...Array.from({ length: nested }, (_, j) => `  - detail ${i + 1}.${j + 1}`)].join("\n")
+    ).join("\n");
+    return `feature: demo\nplan_for: ${specHash}\n\n## Tasks\n\n${tasks}\n\n## Coverage\n\n- AC-001 -> src/a1.ts\n`;
+  };
+}
+
 /** One scope path per phase, which the `phased` fixture modes add one at a time. */
 function phaseScope(count: number): string[] {
   return Array.from({ length: count }, (_, i) => `src/p${i + 1}.ts`);
@@ -1130,6 +1202,94 @@ test("a plan of exactly the frozen ceiling is implemented, and one task more is 
         assert.equal(store.getRun(runId)!.status, "in_progress", "the refusal blocks nothing: it costs nothing");
       },
       { plan: tasksPlan(7), scope: phaseScope(4) }
+    );
+  }, "phased");
+});
+
+test("a nested plan is counted and split by its task items, not its lines", async () => {
+  // Team-notes run 12: 53 tasks with 173 indented detail lines beneath them,
+  // 226 lines in all, refused at the ceiling of 80. Here the ceiling is 2 x 3 = 6:
+  // six items of three detail lines each are 24 lines, so a stage still counting
+  // lines would refuse this plan, and one counting items runs three phases of two.
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId }) => {
+        freezePolicyValues(store, root, runId, { implementationPhaseTasks: 2, implementationMaxPhases: 3 });
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        assert.equal(agentRunCount(store, runId), 3, "six items at two per phase is three dispatches");
+        const events = store
+          .query<{ summary: string }>(
+            "SELECT summary FROM audit WHERE run_id = ? AND action = 'implementation.phase.apply' ORDER BY id",
+            [runId]
+          )
+          .map((e) => e.summary);
+        assert.match(events[0]!, /^phase 1 of 3: tasks 1-2; /);
+        assert.match(events[1]!, /^phase 2 of 3: tasks 3-4; /);
+        assert.match(events[2]!, /^phase 3 of 3: tasks 5-6; /);
+      },
+      { plan: nestedTasksPlan(6, 3), scope: phaseScope(3) }
+    );
+    await withApprovedRun(
+      async ({ store, root, runId, worktreePath }) => {
+        freezePolicyValues(store, root, runId, { implementationPhaseTasks: 2, implementationMaxPhases: 3 });
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+        assert.match(
+          result.reason,
+          /the approved plan has 7 tasks, more than the frozen ceiling of 6 \(2 tasks per phase, at most 3 phases\)/
+        );
+        assert.equal(agentRunCount(store, runId), 0, "nothing was dispatched");
+        assert.equal(existsSync(worktreePath), false, "no worktree was created");
+        assert.ok(!store.getStageChain(runId).some((s) => s.kind === "implementation"), "no stage row was created");
+      },
+      { plan: nestedTasksPlan(7, 3), scope: phaseScope(4) }
+    );
+  }, "phased");
+});
+
+test("a nested plan's phase prompt keeps each task's detail lines directly under it, and the stage sent that prompt", async () => {
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId, specPath, planPath }) => {
+        freezePolicyValues(store, root, runId, { implementationPhaseTasks: 2, implementationMaxPhases: 3 });
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        const first = store.query<{ input_hash: string }>(
+          "SELECT ar.input_hash FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? ORDER BY ar.id LIMIT 1",
+          [runId]
+        )[0]!;
+        const gate = store.query<{ summary: string }>(
+          "SELECT summary FROM audit WHERE run_id = ? AND action = 'implementation.gate.pass' ORDER BY id DESC LIMIT 1",
+          [runId]
+        )[0]!;
+        const handoff = parseImplementationGate(gate.summary);
+        assert.ok(handoff.ok, handoff.ok ? "" : handoff.reason);
+        const planText = readFileSync(planPath, "utf8");
+        const plan = validatePlanDoc(planText);
+        assert.ok(plan.ok, plan.ok ? "" : plan.reason);
+        const prompt = buildImplementationAuthorPrompt(
+          IMPLEMENTER,
+          planText,
+          readFileSync(specPath, "utf8"),
+          phaseScope(3),
+          handoff.value.base,
+          planPhases(plan.value.taskItems, 2)[0]!,
+          [],
+          VERIFICATION
+        );
+        assert.equal(sha256Hex(prompt), first.input_hash, "the stage sent the prompt built from the task items");
+        const block = prompt.slice(prompt.indexOf("Tasks for this phase"), prompt.indexOf("Approved plan:"));
+        assert.ok(
+          block.includes(
+            "- Task 1:\n  - detail 1.1\n  - detail 1.2\n  - detail 1.3\n- Task 2:\n  - detail 2.1\n  - detail 2.2\n  - detail 2.3\n"
+          ),
+          block
+        );
+        assert.ok(!block.includes("Task 3"), "the phase ends after its second item");
+      },
+      { plan: nestedTasksPlan(6, 3), scope: phaseScope(3) }
     );
   }, "phased");
 });

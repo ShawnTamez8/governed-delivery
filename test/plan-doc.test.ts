@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { normalizeText, sha256Hex } from "../src/canonical.ts";
 import { planPhases, validatePlanDoc, writePlanDoc } from "../src/plan-doc.ts";
+import { IMPLEMENTATION_MAX_PHASES, IMPLEMENTATION_PHASE_TASKS } from "../src/policy.ts";
 
 const SPEC_HASH = "a".repeat(64);
 
@@ -16,6 +18,24 @@ const SPEC_HASH = "a".repeat(64);
 const RUN_6 = JSON.parse(
   readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "plan-team-notes-run-6.json"), "utf8")
 ) as { provenance: { tasksSectionLines: number }; planMarkdown: string };
+
+/**
+ * The plan team-notes run 12 produced and its plan_review gate passed, verbatim
+ * (`test/fixtures/recorded/plan-team-notes-run-12.json`, with provenance). The
+ * implementation stage refused it: 226 task lines against a ceiling of 80, though
+ * the author had written 53 top-level tasks and nested 173 detail lines under them.
+ */
+const RUN_12 = JSON.parse(
+  readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "plan-team-notes-run-12.json"), "utf8")
+) as {
+  provenance: {
+    planHash: string;
+    tasksSectionLines: number;
+    tasksSectionTopLevelItems: number;
+    tasksSectionNestedLines: number;
+  };
+  planMarkdown: string;
+};
 
 /**
  * A valid document, built from parts so each refusal test can remove exactly
@@ -247,6 +267,137 @@ function run6Tasks(): string[] {
 test("the recorded run 6 plan parses to the task count recorded when it was captured", () => {
   assert.equal(RUN_6.provenance.tasksSectionLines, 57);
   assert.equal(run6Tasks().length, RUN_6.provenance.tasksSectionLines);
+});
+
+/** Parse a plan whose `## Tasks` section is `tasks`, and return both task views. */
+function taskViews(tasks: string): { tasks: string[]; taskItems: string[] } {
+  const result = validatePlanDoc(planDoc({ tasks }));
+  assert.equal(result.ok, true, (result as { reason?: string }).reason);
+  return (result as { value: { tasks: string[]; taskItems: string[] } }).value;
+}
+
+/** Every line of every item in the form `tasks` uses: nothing lost, repeated or reordered. */
+function itemLines(items: string[]): string[] {
+  return items.flatMap((item) => item.split("\n")).map((line) => line.trim().replace(/^-\s*/, ""));
+}
+
+test("a plan whose task lines share one indentation has one task item per line, equal to tasks", () => {
+  const { tasks, taskItems } = taskViews("## Tasks\n\n- Build the thing\n- Test the thing\n- Ship it\n");
+  assert.deepEqual(taskItems, ["Build the thing", "Test the thing", "Ship it"]);
+  assert.deepEqual(taskItems, tasks);
+});
+
+test("the recorded run 6 plan has one task item per line, so phasing it is unchanged", () => {
+  const result = validatePlanDoc(RUN_6.planMarkdown);
+  assert.equal(result.ok, true, (result as { reason?: string }).reason);
+  if (!result.ok) return;
+  assert.equal(result.value.taskItems.length, RUN_6.provenance.tasksSectionLines);
+  assert.deepEqual(result.value.taskItems, result.value.tasks);
+});
+
+test("indented lines under a task join it with their relative indentation, while tasks keeps every line", () => {
+  const { tasks, taskItems } = taskViews(
+    "## Tasks\n\n- Build the thing:\n  - part one\n  - part two\n- Test the thing\n"
+  );
+  assert.deepEqual(taskItems, ["Build the thing:\n  - part one\n  - part two", "Test the thing"]);
+  assert.deepEqual(tasks, ["Build the thing:", "part one", "part two", "Test the thing"]);
+});
+
+test("a plan indented uniformly gives the same task items as the same plan unindented", () => {
+  const unindented = taskViews("## Tasks\n\n- A:\n  - a1\n- B\n");
+  const indented = taskViews("## Tasks\n\n  - A:\n    - a1\n  - B\n");
+  assert.deepEqual(indented.taskItems, unindented.taskItems);
+  assert.deepEqual(indented.taskItems, ["A:\n  - a1", "B"]);
+});
+
+test("an indented line before any task starts a task instead of being dropped, and does not set the base", () => {
+  assert.deepEqual(taskViews("## Tasks\n\n  - stray\n- Real\n").taskItems, ["stray", "Real"]);
+  // The smallest indentation in the section is the base, not the first line's:
+  // were it the first line's, "a1" would be a task of its own.
+  assert.deepEqual(taskViews("## Tasks\n\n  - stray\n- A\n  - a1\n").taskItems, ["stray", "A\n  - a1"]);
+});
+
+test("grouping never loses, repeats or reorders a line: the lines of the items are the tasks", () => {
+  const nested = taskViews(
+    "## Tasks\n\n- A:\n  - a1\n    - a1a\n  - a2\n- B\n- C:\n  - c1\n"
+  );
+  assert.deepEqual(itemLines(nested.taskItems), nested.tasks);
+  assert.equal(nested.taskItems.length, 3);
+  const run6 = validatePlanDoc(RUN_6.planMarkdown);
+  assert.equal(run6.ok, true, (run6 as { reason?: string }).reason);
+  if (!run6.ok) return;
+  assert.deepEqual(itemLines(run6.value.taskItems), run6.value.tasks);
+});
+
+test("a bare dash is no task in either view, so a flat plan with one still has taskItems equal to tasks", () => {
+  const flat = taskViews("## Tasks\n\n- a\n-\n- b\n- \n");
+  assert.deepEqual(flat.tasks, ["a", "b"]);
+  assert.deepEqual(flat.taskItems, flat.tasks);
+  // Above a nested line it must not become an item whose first line is empty.
+  const nested = taskViews("## Tasks\n\n-\n  - x\n- y\n");
+  assert.deepEqual(nested.tasks, ["x", "y"]);
+  assert.deepEqual(nested.taskItems, ["x", "y"]);
+});
+
+test("trailing whitespace on a task line or a nested line is not carried into its item", () => {
+  assert.deepEqual(taskViews("## Tasks\n\n- a   \n  - a1   \n- b\t\n").taskItems, ["a\n  - a1", "b"]);
+});
+
+/** The run 12 plan's `## Tasks` lines that start at column 0: its top-level tasks, read without the parser. */
+function run12TopLevelLines(): string[] {
+  const section = /\n## Tasks\n([\s\S]*?)\n## Coverage\n/.exec(RUN_12.planMarkdown);
+  assert.ok(section, "the recorded plan has a Tasks section followed by Coverage");
+  return section![1]!
+    .split("\n")
+    .filter((line) => /^- \S/.test(line))
+    .map((line) => line.slice(2).trim());
+}
+
+test("the recorded run 12 plan is the plan its gate passed", () => {
+  assert.equal(sha256Hex(normalizeText(RUN_12.planMarkdown)), RUN_12.provenance.planHash);
+});
+
+test("the recorded run 12 plan counts 226 lines but 53 tasks, and only the tasks fit the stage ceiling", () => {
+  const result = validatePlanDoc(RUN_12.planMarkdown);
+  assert.equal(result.ok, true, (result as { reason?: string }).reason);
+  if (!result.ok) return;
+  const ceiling = IMPLEMENTATION_PHASE_TASKS * IMPLEMENTATION_MAX_PHASES;
+  assert.equal(result.value.tasks.length, RUN_12.provenance.tasksSectionLines);
+  assert.equal(result.value.taskItems.length, RUN_12.provenance.tasksSectionTopLevelItems);
+  assert.equal(
+    result.value.tasks.length - result.value.taskItems.length,
+    RUN_12.provenance.tasksSectionNestedLines
+  );
+  // The refusal this fix answers: counted by line the plan is over the ceiling,
+  // counted by task it is under.
+  assert.ok(result.value.tasks.length > ceiling, `${result.value.tasks.length} lines must exceed ${ceiling}`);
+  assert.ok(result.value.taskItems.length <= ceiling, `${result.value.taskItems.length} tasks must fit ${ceiling}`);
+});
+
+test("the recorded run 12 plan's task items are its column-0 tasks, each carrying its own detail lines", () => {
+  const result = validatePlanDoc(RUN_12.planMarkdown);
+  assert.equal(result.ok, true, (result as { reason?: string }).reason);
+  if (!result.ok) return;
+  const topLevel = run12TopLevelLines();
+  assert.equal(topLevel.length, RUN_12.provenance.tasksSectionTopLevelItems);
+  // Each item starts with the plan's own top-level line, in plan order, so no
+  // item begins on a detail line.
+  assert.deepEqual(result.value.taskItems.map((item) => item.split("\n")[0]), topLevel);
+  // The lines of the items are the lines of the plan: nothing lost or reordered.
+  assert.deepEqual(itemLines(result.value.taskItems), result.value.tasks);
+});
+
+test("the recorded run 12 plan splits into six phases by task, the last holding three", () => {
+  const result = validatePlanDoc(RUN_12.planMarkdown);
+  assert.equal(result.ok, true, (result as { reason?: string }).reason);
+  if (!result.ok) return;
+  const phases = planPhases(result.value.taskItems, IMPLEMENTATION_PHASE_TASKS);
+  // 53 tasks (recorded) at ten per phase.
+  assert.deepEqual(phases.map((p) => p.tasks.length), [10, 10, 10, 10, 10, 3]);
+  assert.deepEqual(phases.map((p) => p.firstTask), [1, 11, 21, 31, 41, 51]);
+  assert.ok(phases.every((p) => p.count === 6));
+  assert.deepEqual(phases.flatMap((p) => p.tasks), result.value.taskItems);
+  assert.ok(phases.length <= IMPLEMENTATION_MAX_PHASES);
 });
 
 test("57 tasks split into five phases of ten and one of seven, in plan order", () => {

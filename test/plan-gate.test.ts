@@ -26,7 +26,7 @@ function criteria(...ids: string[]): AcceptanceCriterion[] {
 }
 
 function planWith(coverage: CoverageEntry[]): PlanDoc {
-  return { feature: "Thing", planFor: "a".repeat(64), tasks: ["do it"], coverage };
+  return { feature: "Thing", planFor: "a".repeat(64), tasks: ["do it"], taskItems: ["do it"], coverage };
 }
 
 function decision(disposition: string, findingId: number): FindingDecisionRow {

@@ -1,0 +1,269 @@
+{
+  "provenance": {
+    "run": "team-notes run 10, operator-authorized paid run, 2026-10-05",
+    "capturedOn": "2026-10-05",
+    "source": "The first line (the system/init line) of each retained stream under .governance/raw/10 in the team-notes target, joined in order to the agent_run rows of run 10 in its state.db (read-only); governed.yaml is `git show 3b73c3d:governed.yaml` in that target.",
+    "kept": "per dispatch: model, cwd, tools, the UTC timestamp in the raw file name, and the agent_run id, stage kind, agent, setting and cost",
+    "dropped": "every line after the first of each stream, and all prompts and results",
+    "note": "rawFileTimestampUtc is the time in the retained file's name, not a measured dispatch start."
+  },
+  "dispatches": [
+    {
+      "order": 1,
+      "agentRunId": 84,
+      "stageKind": "spec",
+      "agent": "spec-author",
+      "setting": "spec-author",
+      "rawFileTimestampUtc": "2026-10-05T14-49-27-816Z",
+      "model": "claude-opus-5-5",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\governed-delivery",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 0.3919038000000001
+    },
+    {
+      "order": 2,
+      "agentRunId": 85,
+      "stageKind": "spec",
+      "agent": "spec-author",
+      "setting": "spec-author",
+      "rawFileTimestampUtc": "2026-10-05T14-52-11-690Z",
+      "model": "claude-opus-5-5",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\governed-delivery",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 0.42447539999999995
+    },
+    {
+      "order": 3,
+      "agentRunId": 86,
+      "stageKind": "spec_review",
+      "agent": "spec-reviewer-traceability",
+      "setting": "spec-reviewer-traceability",
+      "rawFileTimestampUtc": "2026-10-05T14-54-00-237Z",
+      "model": "claude-haiku-4-5-20251001",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\governed-delivery",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 0.074515
+    },
+    {
+      "order": 4,
+      "agentRunId": 87,
+      "stageKind": "spec_review",
+      "agent": "spec-reviewer-security",
+      "setting": "spec-reviewer-security",
+      "rawFileTimestampUtc": "2026-10-05T14-55-31-468Z",
+      "model": "claude-haiku-4-5-20251001",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\governed-delivery",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 0.062111
+    },
+    {
+      "order": 5,
+      "agentRunId": 88,
+      "stageKind": "spec",
+      "agent": "spec-author",
+      "setting": "reconciler",
+      "rawFileTimestampUtc": "2026-10-05T14-56-32-107Z",
+      "model": "claude-sonnet-5-5",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\governed-delivery",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 0.185693
+    },
+    {
+      "order": 6,
+      "agentRunId": 89,
+      "stageKind": "plan",
+      "agent": "plan-author",
+      "setting": "plan-author",
+      "rawFileTimestampUtc": "2026-10-05T15-08-54-404Z",
+      "model": "claude-opus-5-5",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\governed-delivery",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 0.3056474
+    },
+    {
+      "order": 7,
+      "agentRunId": 90,
+      "stageKind": "plan",
+      "agent": "plan-author",
+      "setting": "plan-author",
+      "rawFileTimestampUtc": "2026-10-05T15-12-01-605Z",
+      "model": "claude-opus-5-5",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\governed-delivery",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 0.5388154
+    },
+    {
+      "order": 8,
+      "agentRunId": 91,
+      "stageKind": "plan_review",
+      "agent": "spec-reviewer-traceability",
+      "setting": "spec-reviewer-traceability",
+      "rawFileTimestampUtc": "2026-10-05T15-15-48-823Z",
+      "model": "claude-haiku-4-5-20251001",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\governed-delivery",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 0.130389
+    },
+    {
+      "order": 9,
+      "agentRunId": 92,
+      "stageKind": "plan_review",
+      "agent": "spec-reviewer-security",
+      "setting": "spec-reviewer-security",
+      "rawFileTimestampUtc": "2026-10-05T15-17-29-657Z",
+      "model": "claude-haiku-4-5-20251001",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\governed-delivery",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 0.080045
+    },
+    {
+      "order": 10,
+      "agentRunId": 93,
+      "stageKind": "plan",
+      "agent": "plan-author",
+      "setting": "reconciler",
+      "rawFileTimestampUtc": "2026-10-05T15-18-08-315Z",
+      "model": "claude-sonnet-5-5",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\governed-delivery",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 0.1589814
+    },
+    {
+      "order": 11,
+      "agentRunId": 94,
+      "stageKind": "implementation",
+      "agent": "implementer",
+      "setting": "implementer",
+      "rawFileTimestampUtc": "2026-10-05T15-22-55-179Z",
+      "model": "claude-sonnet-5-5",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\testing-repos\\team-notes\\.governance\\worktrees\\10",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 0.6750664
+    },
+    {
+      "order": 12,
+      "agentRunId": 95,
+      "stageKind": "implementation",
+      "agent": "implementer",
+      "setting": "implementer",
+      "rawFileTimestampUtc": "2026-10-05T15-26-01-209Z",
+      "model": "claude-sonnet-5-5",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\testing-repos\\team-notes\\.governance\\worktrees\\10",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 0.510721
+    },
+    {
+      "order": 13,
+      "agentRunId": 96,
+      "stageKind": "implementation",
+      "agent": "implementer",
+      "setting": "implementer",
+      "rawFileTimestampUtc": "2026-10-05T15-31-31-939Z",
+      "model": "claude-sonnet-5-5",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\testing-repos\\team-notes\\.governance\\worktrees\\10",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 0.826111
+    },
+    {
+      "order": 14,
+      "agentRunId": 97,
+      "stageKind": "implementation",
+      "agent": "implementer",
+      "setting": "implementer",
+      "rawFileTimestampUtc": "2026-10-05T15-39-27-364Z",
+      "model": "claude-sonnet-5-5",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\testing-repos\\team-notes\\.governance\\worktrees\\10",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 1.0215614
+    },
+    {
+      "order": 15,
+      "agentRunId": 98,
+      "stageKind": "implementation",
+      "agent": "implementer",
+      "setting": "implementer",
+      "rawFileTimestampUtc": "2026-10-05T15-50-04-537Z",
+      "model": "claude-sonnet-5-5",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\testing-repos\\team-notes\\.governance\\worktrees\\10",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 1.6905512
+    },
+    {
+      "order": 16,
+      "agentRunId": 99,
+      "stageKind": "implementation",
+      "agent": "implementer",
+      "setting": "implementer",
+      "rawFileTimestampUtc": "2026-10-05T15-50-58-741Z",
+      "model": "claude-sonnet-5-5",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\testing-repos\\team-notes\\.governance\\worktrees\\10",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "costUsd": 0.22829920000000004
+    }
+  ],
+  "governedYaml": "verify:\n  - name: typecheck\n    command: [\"npx\", \"tsc\", \"--noEmit\"]\n  - name: lint\n    command: [\"npm\", \"run\", \"lint\"]\n  - name: build\n    command: [\"npm\", \"run\", \"build\"]\n"
+}

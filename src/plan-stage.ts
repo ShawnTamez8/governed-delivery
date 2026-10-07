@@ -283,7 +283,7 @@ export async function runPlanStage(
         requestedModel: authorSettings.model,
         requestedEffort: authorSettings.effort,
         setting: author.id,
-        prompt: buildPlanAuthorPrompt(author, specContent, specHash, scope),
+        prompt: buildPlanAuthorPrompt(author, specContent, specHash, scope, profile.verification),
       },
       rootDir
     );
@@ -380,7 +380,8 @@ export async function runPlanStage(
             sizeMax: profile.policy.panelSizeMax,
             requiredSpecialties: profile.policy.requiredSpecialties,
             registeredSpecialties,
-          }
+          },
+          profile.verification
         ),
       },
       rootDir
@@ -643,7 +644,15 @@ export async function runPlanStage(
           requestedModel: reconcilerSettings.model,
           requestedEffort: reconcilerSettings.effort,
           setting: RECONCILER,
-          prompt: buildPlanReconcilePrompt(author, specContent, planContent, specHash, scope, reconcileFindings),
+          prompt: buildPlanReconcilePrompt(
+            author,
+            specContent,
+            planContent,
+            specHash,
+            scope,
+            reconcileFindings,
+            profile.verification
+          ),
         },
         rootDir
       );

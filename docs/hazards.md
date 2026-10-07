@@ -571,7 +571,7 @@ file the approved plan covered, each with its complete content, as one JSON
 response. A plan that needs many files can be more than one response carries, and
 the three ways that failed are all measured, on the same team-notes design.
 
-**Measured, 2026-09-27 to 2026-10-04.**
+**Measured, 2026-09-27 to 2026-10-07.**
 - Run 4 was killed at 1,800,194 ms, the frozen idle budget, with a 24-path scope;
   its retained raw file was 0 bytes (entry 19).
 - Run 5 failed with `API Error: Claude's response exceeded the 64000 output token
@@ -604,6 +604,18 @@ the three ways that failed are all measured, on the same team-notes design.
   (entry 1, item 10), and the run blocked at $4.8703008. That is a parse failure, not a
   size or existence failure, and the extractor now repairs it.
 
+- Run 12 (2026-10-07, a Next.js team-notes design, 11 dispatches, $3.0802364): the
+  plan passed its review with a `## Tasks` section of 226 non-empty lines, 53 of them
+  top-level bullets and 173 indented beneath them. The implementation stage refused
+  it before its row, worktree or any dispatch ("the approved plan has 226 tasks, more
+  than the frozen ceiling of 80"), because it counted lines. $1.8167862 of the spend
+  was the plan and its review; none was implementation. The author nested its detail
+  in the draft (201 task lines, 53 top-level), the self-critique and the reconciliation
+  (226 each, 53 top-level), though each plan prompt says one plain task per list line.
+  The plan and those per-dispatch counts are committed at
+  `test/fixtures/recorded/plan-team-notes-run-12.json`. The count now follows items
+  (below); no implementer has run on that plan.
+
 Run 6 also named a second, separate objection: the target still held a Next.js
 scaffold the plan never mentioned, and the system refuses patch deletions. Phasing
 does not touch that. It is a mismatch between the plan and the target, and it was
@@ -622,14 +634,106 @@ run and is not retried (entry 7); the earlier phases' commits stay on the retain
 branch, and a fresh run is the repair.
 
 What this does not show. Ten is not measured as a good size, and tasks differ
-widely in size, so ten tasks can still be more than one response. A task is one
-non-empty line of the plan's `## Tasks` section, so a plan that wraps or nests its
-bullets counts each line and can be cut mid-task or refused for size; run 6's plan
-was one line per bullet, and the plan gate does not enforce that. A phase whose
-tasks change no file in the signed scope, such as a trailing "run the build" task,
-has nothing to return and blocks the run. The oversize refusal comes after the
-spec and plan stages are paid for. No paid run has
+widely in size, so ten items can still be more than one response. A task is a
+top-level list item of the plan's `## Tasks` section, and the lines indented beneath
+it belong to it (`taskItems` in `src/plan-doc.ts`, 2026-10-07, after run 12). The
+ceiling and the split count items, so a nested plan is neither refused for its line
+count nor cut mid-task. The plan gate still counts every line as a normative node
+(entry 17), so a reworded or removed nested line still needs a claim. A plan of more
+than `implementationPhaseTasks` times `implementationMaxPhases` real items still
+passes the plan gate and is refused, after the spec and plan stages are paid for. A
+phase whose tasks change no file in the signed scope, such as a trailing "run the
+build" task, has nothing to return and blocks the run. No paid run has
 yet completed `implementation` under phases. Verification and code review still
 run once, on the whole range, so a large implementation still sends its entire
 diff to each reviewer under the prompt ceiling (entry 18's residual), and whether
 a 57-task diff fits is unmeasured.
+
+## 21. Agents are never told the gate that will judge their work
+
+The frozen `governed.yaml` commands decide whether delivered code is accepted at
+all, and no prompt that produced the specification, the plan or the code stated
+them. Each author wrote for the design alone. The commands ran after everything
+was paid for, so a design the commands could not accept stayed invisible until
+the money was spent.
+
+**Measured, 2026-10-05, $7.3048866.** Team-notes run 10 made 16 dispatches and
+blocked at `verification` on `typecheck`, which failed on a partial
+`npm install`. The cost is the sum of the 16 `costUsd` rows in
+`test/fixtures/recorded/run-10-dispatch-context.json`: $2.3525764 for the ten
+spec and plan dispatches and $4.9523102 for the six implementation phases. Its
+frozen commands were `npx tsc --noEmit`, `npm run lint` and `npm run build`. After
+an operator-authorized `npm ci`, a fresh worktree of the delivered commit
+`d62ba9d` still failed `npx tsc --noEmit` (two type errors) and `npm run build`
+("Couldn't find any `pages` or `app` directory"). The delivered code is a Node
+`http` server in the target's *src/server* and a plain TypeScript client in its
+*src/client*; `package.json` was not touched, and its `build` script is
+`next build`. Those two results come from a manual check recorded in the project
+learnings, not from the run record.
+
+**The mechanism.** None of the eight builders that ask an agent for a
+specification, a plan or a patch took the run's verification config, so no
+prompt carried the commands. Two facts made that worse. Dispatches 1 to 10 (spec,
+plan and their reviews) ran with the BuildWorks checkout as their working
+directory, because the spec and plan stages set none and inherit the directory the
+operator launched from; the implementation and code-review stages set the run's
+worktree, and dispatches 11 to 16 ran there. And the scope is signed before the implementer
+can read the target, so an implementer that learns `npm run build` needs an `app`
+directory still cannot add one, since a patch outside the signed scope is
+refused. Run 6's Next.js scaffold objection (entry 20) is a cousin: the target
+held a layout the plan never mentioned. That run did not measure what any agent
+knew about the commands, so it shows the same kind of mismatch, not this cause.
+
+**What each prompt states now.** State the frozen commands, as facts the system
+computes, to every agent whose output they judge, and give an author that cannot
+inspect the target a human-gated way to ask. `src/prompts.ts` renders the run's
+frozen `profile.verification`, never the working copy of `governed.yaml`, into
+eight prompts, each with one rule for its role.
+- The spec draft and self-critique are told the commands, that they are not
+  obligations (no acceptance criterion and no artifact exists only because a
+  command does), and that when compatibility cannot be established, even for a
+  design that names a stack, they record one open decision beginning
+  `Verification:`.
+- The spec reconcile prompt names that decision as the one exception that routes
+  `upstream_blocking`, so it opens an operator question at `spec_decision`. The
+  fold prompt folds exactly the declared artifact paths the operator's answer
+  names.
+- The plan draft, self-critique and reconcile prompts forbid a task that runs,
+  repeats or checks the commands, because a task that changes no scope file can
+  leave its phase with nothing to return, and a phase that returns no patch blocks
+  the run (entry 20).
+- The implementer is told the commands first run after the last phase and again
+  after any code-review remediation, so a phase that leaves one failing is not a
+  defect by itself, and to read what each command runs before choosing a file's
+  content.
+
+Replayed against run 10, the spec author would have asked the operator what each
+command requires and which artifact paths that needs, before approval and before
+any plan or implementation spend. It would not have caught the partial install
+(an environment fault no prompt can prevent) or the two type errors (code
+defects).
+
+What this does not show.
+- One paid run has used these prompts: the web calculator on 2026-10-06, 15
+  dispatches for $1.61751, completed. Its frozen commands were `node --version` and
+  `npm --version`, so it drew no `Verification:` question, no criterion or plan
+  task about the commands, and no operator pause. It says nothing about a real
+  build command, whether a spec author asks when one needs a layout the design
+  never names, or what a question costs the operator. A question is expected on
+  nearly every run launched outside the target, because the author cannot read
+  it; that load is unmeasured.
+- The reconcile exception is a prompt rule. The reconciler can still choose
+  `upstream_follow_up`, which opens no question, and the gate passes it.
+- Code-review remediation is not told the commands, by operator decision on
+  2026-10-05, so a remediation patch can break a command it never saw.
+- The launch-directory gap stays: spec and plan dispatches still inherit the
+  directory the operator launched from, and an author launched outside the target
+  cannot read it.
+- `parseGovernedConfig` bounds neither the number of commands nor a token's
+  length. A config large enough to push a prompt past `PROMPT_MAX_BYTES` blocks at
+  the first dispatch it overflows, refused by name, possibly after earlier
+  dispatches were paid for. Nothing truncates the commands.
+- The test fixtures' stage emitters still route by searching the whole prompt for
+  words such as `self-critique`, so command data containing one would misroute a
+  fixture. A test keeps the fixtures' command names clear of those words; the
+  emitters are unchanged.

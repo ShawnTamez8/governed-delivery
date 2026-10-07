@@ -242,7 +242,7 @@ export async function runSpecStage(
         requestedModel: authorSettings.model,
         requestedEffort: authorSettings.effort,
         setting: author.id,
-        prompt: buildSpecAuthorPrompt(author, design),
+        prompt: buildSpecAuthorPrompt(author, design, profile.verification),
       },
       rootDir
     );
@@ -308,12 +308,18 @@ export async function runSpecStage(
         requestedModel: authorSettings.model,
         requestedEffort: authorSettings.effort,
         setting: author.id,
-        prompt: buildSpecSelfCritiquePrompt(author, design, specContent, {
-          sizeMin: profile.policy.panelSizeMin,
-          sizeMax: profile.policy.panelSizeMax,
-          requiredSpecialties: profile.policy.requiredSpecialties,
-          registeredSpecialties,
-        }),
+        prompt: buildSpecSelfCritiquePrompt(
+          author,
+          design,
+          specContent,
+          {
+            sizeMin: profile.policy.panelSizeMin,
+            sizeMax: profile.policy.panelSizeMax,
+            requiredSpecialties: profile.policy.requiredSpecialties,
+            registeredSpecialties,
+          },
+          profile.verification
+        ),
       },
       rootDir
     );
@@ -595,7 +601,7 @@ export async function runSpecStage(
           requestedModel: reconcilerSettings.model,
           requestedEffort: reconcilerSettings.effort,
           setting: RECONCILER,
-          prompt: buildSpecReconcilePrompt(author, design, specContent, reconcileFindings),
+          prompt: buildSpecReconcilePrompt(author, design, specContent, reconcileFindings, profile.verification),
         },
         rootDir
       );

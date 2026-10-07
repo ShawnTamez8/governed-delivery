@@ -196,25 +196,28 @@ export async function runImplementationStage(
     };
   }
 
-  // The plan's tasks, split into the phases this stage dispatches (hazard 20:
-  // one dispatch over a whole plan was refused or failed in team-notes runs 4,
-  // 5 and 6). Both numbers come from the profile frozen at run start. A plan
-  // that needs more phases than the frozen ceiling is refused here, before the
-  // stage row, the worktree or any dispatch exists, so the refusal costs
-  // nothing beyond what the plan stages already spent.
+  // The plan's task items, split into the phases this stage dispatches (hazard
+  // 20: one dispatch over a whole plan was refused or failed in team-notes runs
+  // 4, 5 and 6). An item is a top-level list entry of `## Tasks` with its
+  // indented lines, so a nested plan is counted by its tasks, not its lines
+  // (team-notes run 12 had 226 lines in 53 items and was refused at 80). Both
+  // numbers come from the profile frozen at run start. A plan that needs more
+  // phases than the frozen ceiling is refused here, before the stage row, the
+  // worktree or any dispatch exists, so the refusal costs nothing beyond what
+  // the plan stages already spent.
   const parsedPlan = validatePlanDoc(planContent);
   if (!parsedPlan.ok) {
     return { ok: false, reason: `the approved plan ${planPath} does not parse: ${parsedPlan.reason}` };
   }
   const { implementationPhaseTasks, implementationMaxPhases } = profile.policy;
   const taskCeiling = implementationPhaseTasks * implementationMaxPhases;
-  if (parsedPlan.value.tasks.length > taskCeiling) {
+  if (parsedPlan.value.taskItems.length > taskCeiling) {
     return {
       ok: false,
-      reason: `the approved plan has ${parsedPlan.value.tasks.length} tasks, more than the frozen ceiling of ${taskCeiling} (${implementationPhaseTasks} tasks per phase, at most ${implementationMaxPhases} phases): start a fresh run from a smaller design`,
+      reason: `the approved plan has ${parsedPlan.value.taskItems.length} tasks, more than the frozen ceiling of ${taskCeiling} (${implementationPhaseTasks} tasks per phase, at most ${implementationMaxPhases} phases): start a fresh run from a smaller design`,
     };
   }
-  const phases = planPhases(parsedPlan.value.tasks, implementationPhaseTasks);
+  const phases = planPhases(parsedPlan.value.taskItems, implementationPhaseTasks);
 
   // Section 20's run-duration ceiling, read from the profile frozen at run
   // start so the run is governed by the limit in force when it began. The
@@ -433,7 +436,16 @@ export async function runImplementationStage(
           requestedModel: implementerSettings.model,
           requestedEffort: implementerSettings.effort,
           setting: author.id,
-          prompt: buildImplementationAuthorPrompt(author, planContent, specContent, scope, phaseBase, phase, existingPaths),
+          prompt: buildImplementationAuthorPrompt(
+            author,
+            planContent,
+            specContent,
+            scope,
+            phaseBase,
+            phase,
+            existingPaths,
+            profile.verification
+          ),
           invocation: { cwd: worktreePath },
         },
         rootDir

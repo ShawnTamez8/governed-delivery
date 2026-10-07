@@ -311,7 +311,7 @@ export async function runSpecDecisionStage(
         requestedModel: foldSettings!.model,
         requestedEffort: foldSettings!.effort,
         setting: RECONCILER,
-        prompt: buildSpecDecisionFoldPrompt(author!, design, reviewedContent, foldInputs),
+        prompt: buildSpecDecisionFoldPrompt(author!, design, reviewedContent, foldInputs, profile.verification),
       },
       rootDir
     );

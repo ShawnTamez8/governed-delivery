@@ -8,6 +8,9 @@ import { dispatchOnce } from "../src/dispatch.ts";
 import { PROMPT_MAX_BYTES, RESULT_MAX_BYTES } from "../src/harness.ts";
 import { verifyAuditChain } from "../src/audit.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
+import { parseGovernedConfig, type VerificationConfig } from "../src/governed-config.ts";
+import { buildSpecAuthorPrompt } from "../src/prompts.ts";
+import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
 
 const FIXTURES = join(process.cwd(), "test", "fixtures", "harness");
 
@@ -296,5 +299,75 @@ test("an oversized prompt is refused before any invocation", async () => {
     assert.equal(result.ok, false);
     assert.match(result.reason, new RegExp(`prompt exceeds ${PROMPT_MAX_BYTES} bytes`));
     assert.ok(!existsSync(join(root, ".governance", "raw")), "no spawn, no retained output");
+  });
+});
+
+// The frozen verification commands are rendered into the spec, plan and
+// implementer prompts, and `parseGovernedConfig` bounds neither the number of
+// commands nor a token's length (docs/features/verification-aware-prompts/plan.md).
+// An oversize config therefore reaches the ceiling above, which is the defined
+// behavior: refuse by name before any invocation, truncate nothing.
+
+/** A config with one command whose single token is `token`, through the real parser. */
+function oneTokenConfig(token: string): VerificationConfig {
+  const parsed = parseGovernedConfig(`verify:\n  - name: big\n    command: ["${token}"]\n`);
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.reason);
+  return parsed.config;
+}
+
+const specPromptWithToken = (token: string): string =>
+  buildSpecAuthorPrompt(SPEC_AUTHOR, "DESIGN-TEXT", oneTokenConfig(token));
+
+test("an accepted governed.yaml can render a prompt over the ceiling, and dispatch refuses it by name without truncating", async () => {
+  const token = "a".repeat(PROMPT_MAX_BYTES);
+  const prompt = specPromptWithToken(token);
+  // The parser accepted the token (oneTokenConfig asserts it), the prompt holds
+  // the whole of it, and nothing shortened the prompt to fit.
+  assert.ok(prompt.includes(token), "the prompt carries the whole token");
+  assert.ok(Buffer.byteLength(prompt) > PROMPT_MAX_BYTES);
+  await withDispatchContext(async (store, root, stageId) => {
+    const result = await dispatchOnce(
+      store,
+      fixtureExecutor("exit-nonzero"),
+      { stageId, agent: "spec-author", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "spec-author", prompt },
+      root
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.reason, new RegExp(`prompt exceeds ${PROMPT_MAX_BYTES} bytes`));
+    assert.ok(!existsSync(join(root, ".governance", "raw")), "no spawn, no retained output");
+    assert.equal(store.query("SELECT * FROM agent_run").length, 0);
+  });
+});
+
+test("a verification-aware prompt of exactly the ceiling is dispatched, and one byte more is refused", async () => {
+  // Size the token so the whole prompt lands on the boundary. The ceiling counts
+  // bytes and the prompt text around the token is not all ASCII, so the size is
+  // measured rather than assumed.
+  const baseline = Buffer.byteLength(specPromptWithToken("a"));
+  const token = "a".repeat(PROMPT_MAX_BYTES - baseline + 1);
+  const atCeiling = specPromptWithToken(token);
+  const overCeiling = specPromptWithToken(`${token}a`);
+  assert.equal(Buffer.byteLength(atCeiling), PROMPT_MAX_BYTES);
+  assert.equal(Buffer.byteLength(overCeiling), PROMPT_MAX_BYTES + 1);
+  await withDispatchContext(async (store, root, stageId) => {
+    const dispatch = (prompt: string) =>
+      dispatchOnce(
+        store,
+        fixtureExecutor("exit-nonzero"),
+        { stageId, agent: "spec-author", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "spec-author", prompt },
+        root
+      );
+    // At the ceiling the size check passes and the fixture fails for its own reason.
+    const accepted = await dispatch(atCeiling);
+    assert.equal(accepted.ok, false);
+    assert.match(accepted.reason, /exited with code 3/);
+    assert.doesNotMatch(accepted.reason, /prompt exceeds/);
+    assert.ok(rawDirFiles(root).length >= 1, "the ceiling-sized prompt reached the harness");
+    // One byte over is refused before the harness starts: nothing new is retained.
+    const filesBefore = rawDirFiles(root).length;
+    const refused = await dispatch(overCeiling);
+    assert.equal(refused.ok, false);
+    assert.match(refused.reason, new RegExp(`prompt exceeds ${PROMPT_MAX_BYTES} bytes`));
+    assert.equal(rawDirFiles(root).length, filesBefore, "the refused prompt retained nothing");
   });
 });
