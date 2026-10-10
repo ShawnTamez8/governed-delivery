@@ -9,6 +9,7 @@ import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { Writable } from "node:stream";
 import { test } from "node:test";
 import { parseGovernedConfig } from "../src/governed-config.ts";
+import { VERIFY_ENV_PASSTHROUGH } from "../src/policy.ts";
 import { prepareGuidedProject } from "../src/project-bootstrap.ts";
 import { checkIntakeRepository } from "../src/readiness.ts";
 
@@ -66,6 +67,16 @@ function answers(...values: string[]) {
   return async () => pending.shift() ?? "";
 }
 
+// What the verification stage gives a project's commands: named variables only.
+function verificationEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of VERIFY_ENV_PASSTHROUGH) {
+    const value = process.env[name];
+    if (value !== undefined) env[name] = value;
+  }
+  return env;
+}
+
 test("an absent target becomes the exact committed static-web starter and waits for design", async () => {
   const root = workspace();
   const target = join(root, "My Guided App");
@@ -118,9 +129,10 @@ test("an absent target becomes the exact committed static-web starter and waits 
       const config = parseGovernedConfig(readFileSync(join(target, "governed.yaml"), "utf8"));
       assert.ok(config.ok, config.ok ? "" : config.reason);
       assert.deepEqual(config.config.commands.map((command) => command.command), [["npm", "ci"], ["npm", "test"]]);
-      const install = spawnSync("npm", ["ci"], { cwd: target, encoding: "utf8", shell: process.platform === "win32" });
+      const shell = process.platform === "win32";
+      const install = spawnSync("npm", ["ci"], { cwd: target, encoding: "utf8", shell, env: verificationEnv() });
       assert.equal(install.status, 0, install.stderr);
-      const tested = spawnSync("npm", ["test"], { cwd: target, encoding: "utf8", shell: process.platform === "win32" });
+      const tested = spawnSync("npm", ["test"], { cwd: target, encoding: "utf8", shell, env: verificationEnv() });
       assert.equal(tested.status, 0, tested.stderr);
       assert.match(written.text(), /Generated static-web baseline/);
       assert.ok(written.text().includes(join(target, "docs", "features", "first-feature", "design.md")));
@@ -149,6 +161,29 @@ test("an absent target becomes the exact committed static-web starter and waits 
       assert.equal(git(target, "rev-parse", "HEAD"), head);
     });
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the starter's install and test run under the verification environment, not the launcher's", async () => {
+  // `npm run` and `npm exec` export every .npmrc setting as npm_config_*. npm 11.18
+  // refuses an exported allow-scripts in a project install (EALLOWSCRIPTS), so a
+  // bootstrap that forwards its own environment fails only when launched by npm.
+  const root = workspace();
+  const saved = process.env.npm_config_allow_scripts;
+  process.env.npm_config_allow_scripts = "buildworks-fixture";
+  try {
+    await withTools(root, async () => {
+      const prepared = await prepareGuidedProject(join(root, "launched-by-npm"), {
+        prompt: answers("static-web", "first-feature", "Fixture User", "fixture@example.invalid", "yes"),
+        stdout: output().stream,
+        invocationDirectory: root,
+      });
+      assert.equal(prepared.waitingForDesign, true);
+    });
+  } finally {
+    if (saved === undefined) delete process.env.npm_config_allow_scripts;
+    else process.env.npm_config_allow_scripts = saved;
     rmSync(root, { recursive: true, force: true });
   }
 });

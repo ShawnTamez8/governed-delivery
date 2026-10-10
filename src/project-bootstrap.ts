@@ -7,6 +7,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import type { Writable } from "node:stream";
 import { parseGovernedConfig } from "./governed-config.ts";
 import { GOVERNANCE_DIR, GOVERNANCE_PREFIX } from "./paths.ts";
+import { VERIFY_ENV_PASSTHROUGH } from "./policy.ts";
 import { inspectBootstrapPrerequisites } from "./readiness.ts";
 import { resolveProjectTarget } from "./repo-root.ts";
 import { validateRunIdentity } from "./store.ts";
@@ -46,6 +47,20 @@ function checked(result: ReturnType<typeof spawnSync>, operation: string): strin
     throw new Error(`${operation}: ${stderr || `exited with code ${result.status}`}`);
   }
   return typeof result.stdout === "string" ? result.stdout : "";
+}
+
+// The starter's own commands run under the environment the verification stage
+// will give them (named variables only), so this check and that one cannot
+// disagree. Passing the whole environment on carries whatever launched this
+// process: `npm run` exports each .npmrc setting as npm_config_*, and npm 11.18
+// refuses an exported allow-scripts in a project install (EALLOWSCRIPTS).
+function verificationEnvironment(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of VERIFY_ENV_PASSTHROUGH) {
+    const value = process.env[name];
+    if (value !== undefined) env[name] = value;
+  }
+  return env;
 }
 
 function normalizeProjectName(name: string): string {
@@ -368,9 +383,10 @@ async function bootstrap(
   mkdirSync(join(rootDir, "docs", "features", slug), { recursive: true });
   const config = parseGovernedConfig(expected.get("governed.yaml")!);
   if (!config.ok) throw new Error(config.reason);
-  checked(spawnSync("npm", ["ci"], { cwd: rootDir, encoding: "utf8", shell: WINDOWS }),
+  const env = verificationEnvironment();
+  checked(spawnSync("npm", ["ci"], { cwd: rootDir, encoding: "utf8", shell: WINDOWS, env }),
     "generated npm ci failed");
-  checked(spawnSync("npm", ["test"], { cwd: rootDir, encoding: "utf8", shell: WINDOWS }),
+  checked(spawnSync("npm", ["test"], { cwd: rootDir, encoding: "utf8", shell: WINDOWS, env }),
     "generated npm test failed");
   const owned = new Set(expected.keys());
   requireOnlyPaths(rootDir, owned, "the baseline commit");

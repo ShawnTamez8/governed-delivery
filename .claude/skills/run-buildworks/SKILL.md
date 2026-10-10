@@ -424,8 +424,9 @@ Then any command from the CLI's advanced usage. Keep
   the frozen commands without adding a CLI stage. `deliver` (step 8) is the deterministic terminal check that
   completes or blocks the run against the signed declared artifacts;
   `verify-audit` recomputes the whole audit hash chain.
-- Every invocation prints `ExperimentalWarning: SQLite is an experimental
-  feature` on stderr. It is noise; the driver strips it.
+- No command prints `ExperimentalWarning: SQLite is an experimental feature`:
+  `src/sqlite.ts` loads `node:sqlite` on first use and hides that one notice.
+  The driver still strips it, which is now harmless.
 
 ## Test
 

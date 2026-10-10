@@ -1,10 +1,11 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { types } from "node:util";
 import { applyMigrations, listMigrations } from "./migrate.ts";
 import { stateDbPath } from "./paths.ts";
+import { openDatabase } from "./sqlite.ts";
 import type { AuditRow } from "./audit.ts";
 
 export type ChangeKind = "feature" | "defect_fix";
@@ -359,7 +360,7 @@ export class Store {
           }
           throw error;
         }
-        db = new DatabaseSync(dbPath, { readOnly: true });
+        db = openDatabase(dbPath, { readOnly: true });
         db.exec("PRAGMA busy_timeout = 1000");
         db.exec("PRAGMA foreign_keys = ON");
         const supported = [...listMigrations(DEFAULT_MIGRATIONS_DIR)].at(-1)?.index ?? 0;
@@ -378,7 +379,7 @@ export class Store {
       }
     }
     applyMigrations(dbPath, DEFAULT_MIGRATIONS_DIR);
-    this.#db = new DatabaseSync(dbPath);
+    this.#db = openDatabase(dbPath);
     this.#db.exec("PRAGMA foreign_keys = ON");
     this.#db.exec("PRAGMA busy_timeout = 5000");
   }

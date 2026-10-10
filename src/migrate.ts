@@ -1,6 +1,6 @@
-import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { openDatabase } from "./sqlite.ts";
 
 export interface Migration {
   file: string;
@@ -24,7 +24,7 @@ export function* listMigrations(migrationsDir: string): Generator<Migration> {
  */
 export function applyMigrations(dbPath: string, migrationsDir: string): void {
   mkdirSync(dirname(dbPath), { recursive: true });
-  const db = new DatabaseSync(dbPath);
+  const db = openDatabase(dbPath);
   try {
     db.exec("PRAGMA foreign_keys = ON");
     db.exec("PRAGMA busy_timeout = 5000");

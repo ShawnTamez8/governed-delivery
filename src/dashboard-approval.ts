@@ -13,7 +13,8 @@ import { openStore, StoreStateError, type Store } from "./store.ts";
  * approval decision below belongs to `buildBinding` and `approveRun`; this
  * module only reads the request read-only and submits a detached signature
  * under the same lock-then-writer sequence the guided CLI uses. It holds no
- * approval policy of its own and never sees a private key.
+ * approval policy of its own and handles only the public key and a detached
+ * signature, never signing material.
  */
 
 export type ApprovalRequestResult =
