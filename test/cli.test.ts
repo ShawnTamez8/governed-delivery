@@ -1038,12 +1038,12 @@ const SEEDED_WITH_MODEL_FLAG = (model: string): Record<string, { model: string; 
   "plan-author": { model: "claude-opus-5-5", effort: "high" },
   "implementer": { model: "claude-sonnet-5-5", effort: "medium" },
   "reconciler": { model, effort: "medium" },
-  "spec-reviewer-traceability": { model: "claude-haiku-4-5-20251001", effort: "medium" },
-  "spec-reviewer-security": { model: "claude-haiku-4-5-20251001", effort: "medium" },
-  "spec-reviewer-consistency": { model: "claude-haiku-4-5-20251001", effort: "medium" },
-  "code-reviewer-correctness": { model: "claude-sonnet-5-5", effort: "medium" },
-  "code-reviewer-security": { model: "claude-sonnet-5-5", effort: "medium" },
-  "code-reviewer-state-integrity": { model: "claude-sonnet-5-5", effort: "medium" },
+  "spec-reviewer-traceability": { model: "claude-haiku-5-5", effort: "medium" },
+  "spec-reviewer-security": { model: "claude-haiku-5-5", effort: "medium" },
+  "spec-reviewer-consistency": { model: "claude-haiku-5-5", effort: "medium" },
+  "code-reviewer-correctness": { model: "claude-haiku-5-5", effort: "medium" },
+  "code-reviewer-security": { model: "claude-haiku-5-5", effort: "medium" },
+  "code-reviewer-state-integrity": { model: "claude-haiku-5-5", effort: "medium" },
 });
 
 const REVIEWERS = [

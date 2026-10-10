@@ -129,10 +129,12 @@ run below, was measured with one model, `claude-sonnet-5`, for every dispatch,
 and none of that is valid for a run frozen today.** `new-run` now freezes a
 model and effort per setting, and the driver passes only `--model`, so a paid
 chain takes the seeded defaults in `src/policy.ts`: `claude-opus-5-5` for the
-spec and plan authors, `claude-haiku-4-5-20251001` for the spec reviewers, and
-`claude-sonnet-5-5` for the implementer and the code reviewers, with `--model`
-covering only the reconciler. One paid run has been measured under those
-defaults, and it is one sample, not a range.
+spec and plan authors, `claude-haiku-5-5` for the spec reviewers and the code
+reviewers (changed on 2026-10-08 from Haiku 4.5 and Sonnet 5.5), and
+`claude-sonnet-5-5` for the implementer, with `--model` covering only the
+reconciler. One paid run has been measured under the earlier defaults, with
+Haiku 4.5 spec reviewers and Sonnet 5.5 code reviewers, and it is one sample, not
+a range. None has run with the Haiku 5.5 reviewers.
 
 Verified run, 2026-09-29, seeded defaults with `--model claude-sonnet-5-5`
 (passed to the driver as `paid --yes --model claude-sonnet-5-5`), all ten stages

@@ -2390,20 +2390,20 @@ test("the run view shows each frozen setting's model and effort, and each stage'
       "code-reviewer-correctness", "code-reviewer-security", "code-reviewer-state-integrity", "implementer", "plan-author",
       "reconciler", "spec-author", "spec-reviewer-consistency", "spec-reviewer-security", "spec-reviewer-traceability",
     ]);
-    assert.deepEqual(settings["code-reviewer-security"], { model: "claude-sonnet-5-5", effort: "max" });
+    assert.deepEqual(settings["code-reviewer-security"], { model: "claude-haiku-5-5", effort: "max" });
 
     // The expected text is the operator's seeded table plus the two overrides above.
     // A reconciliation dispatch is recorded on the spec and plan rows, and the
     // remediation dispatch (the implementer) on the code_review row, so each row
     // lists those settings beside its own.
     assert.equal(stageSettingsText(settings, "spec"), "claude-opus-5-5 · high; test-model · medium");
-    assert.equal(stageSettingsText(settings, "spec_review"), "claude-haiku-4-5-20251001 · medium");
+    assert.equal(stageSettingsText(settings, "spec_review"), "claude-haiku-5-5 · medium");
     assert.equal(stageSettingsText(settings, "spec_decision"), "test-model · medium");
     assert.equal(stageSettingsText(settings, "plan"), "claude-opus-5-5 · high; test-model · medium");
-    assert.equal(stageSettingsText(settings, "plan_review"), "claude-haiku-4-5-20251001 · medium");
+    assert.equal(stageSettingsText(settings, "plan_review"), "claude-haiku-5-5 · medium");
     assert.equal(stageSettingsText(settings, "implementation"), "claude-sonnet-5-5 · low");
     assert.equal(stageSettingsText(settings, "code_review"),
-      "claude-sonnet-5-5 · low; claude-sonnet-5-5 · medium; claude-sonnet-5-5 · max",
+      "claude-sonnet-5-5 · low; claude-haiku-5-5 · medium; claude-haiku-5-5 · max",
       "the remediation setting and the panel's distinct pairs each appear once");
     assert.equal(stageSettingsText(settings, "awaiting_approval"), "Not configured");
     assert.equal(stageSettingsText({}, "spec"), "Not configured", "a missing setting is stated, not guessed");

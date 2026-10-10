@@ -134,9 +134,12 @@ export interface SettingDefault {
   effort: EffortLevel;
 }
 
-// Task 0 (2026-09-29): Haiku 4.5 accepts --effort at low and medium.
-const SPEC_REVIEWER: SettingDefault = { model: "claude-haiku-4-5-20251001", effort: "medium" };
-const CODE_REVIEWER: SettingDefault = { model: "claude-sonnet-5-5", effort: "medium" };
+// 2026-10-08: the operator moved both reviewer panels to Haiku 5.5
+// (`claude-haiku-5-5`), the spec reviewers from Haiku 4.5 and the code reviewers
+// from Sonnet 5.5. Task 0 (2026-09-29) showed Haiku 4.5 accepts --effort at low
+// and medium; effort `medium` on Haiku 5.5 was not probed.
+const SPEC_REVIEWER: SettingDefault = { model: "claude-haiku-5-5", effort: "medium" };
+const CODE_REVIEWER: SettingDefault = { model: "claude-haiku-5-5", effort: "medium" };
 
 /**
  * Seeded model and effort per dispatch setting: one entry per registered agent

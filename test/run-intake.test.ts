@@ -79,8 +79,8 @@ test("shared intake passes per-setting overrides to the freeze, and omitting the
       const read = (id: number) => JSON.parse(readFileSync(profilePath(root, id), "utf8")).dispatchSettings;
       assert.deepEqual(read(seeded.run.id)["implementer"], { model: "claude-sonnet-5-5", effort: "medium" });
       assert.deepEqual(read(overridden.run.id)["implementer"], { model: "override-model", effort: "xhigh" });
-      assert.deepEqual(read(overridden.run.id)["code-reviewer-security"], { model: "claude-sonnet-5-5", effort: "max" });
-      assert.deepEqual(read(overridden.run.id)["code-reviewer-correctness"], { model: "claude-sonnet-5-5", effort: "medium" });
+      assert.deepEqual(read(overridden.run.id)["code-reviewer-security"], { model: "claude-haiku-5-5", effort: "max" });
+      assert.deepEqual(read(overridden.run.id)["code-reviewer-correctness"], { model: "claude-haiku-5-5", effort: "medium" });
     } finally {
       store.close();
     }

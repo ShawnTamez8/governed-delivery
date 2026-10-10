@@ -176,7 +176,7 @@ test("the profile freezes the approval key fingerprint, or null when none is con
 
 // --- per-setting model and effort (stage-role-model-overrides Task 2) --------
 
-const HAIKU = "claude-haiku-4-5-20251001";
+const HAIKU = "claude-haiku-5-5";
 const SONNET = "claude-sonnet-5-5";
 const REVIEWER_IDS = AGENTS.filter((a) => a.role === "reviewer").map((a) => a.id);
 const NON_REVIEWER_SETTINGS = ["spec-author", "plan-author", "implementer", "reconciler"];
@@ -195,9 +195,9 @@ function seededFor(runModel: string) {
     "spec-reviewer-traceability": { model: HAIKU, effort: "medium" },
     "spec-reviewer-security": { model: HAIKU, effort: "medium" },
     "spec-reviewer-consistency": { model: HAIKU, effort: "medium" },
-    "code-reviewer-correctness": { model: SONNET, effort: "medium" },
-    "code-reviewer-security": { model: SONNET, effort: "medium" },
-    "code-reviewer-state-integrity": { model: SONNET, effort: "medium" },
+    "code-reviewer-correctness": { model: HAIKU, effort: "medium" },
+    "code-reviewer-security": { model: HAIKU, effort: "medium" },
+    "code-reviewer-state-integrity": { model: HAIKU, effort: "medium" },
   };
 }
 

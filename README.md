@@ -602,8 +602,8 @@ only. Every other setting takes its seeded value from
 | `plan-author` | `claude-opus-5-5` | `high` |
 | `implementer` | `claude-sonnet-5-5` | `medium` |
 | `reconciler` | `--model` | `medium` |
-| the three spec reviewers | `claude-haiku-4-5-20251001` | `medium` |
-| the three code reviewers | `claude-sonnet-5-5` | `medium` |
+| the three spec reviewers | `claude-haiku-5-5` | `medium` |
+| the three code reviewers | `claude-haiku-5-5` | `medium` |
 
 Three optional flags change one run's settings:
 - `--effort <level>` sets the four non-reviewer settings and never reaches a
@@ -620,9 +620,11 @@ Effort is what each dispatch requests through `claude --effort`; the provider
 does not report the effort it applied, so BuildWorks records the requested level
 only, in `agent_run.requested_effort`. Changing a seeded default in
 `src/policy.ts` affects later `new-run` commands only. These defaults are
-starting points. One live run completed under them on 2026-09-29, and that is the
-whole measurement: it shows the defaults can complete a small chain, not that any
-level or model reviews or implements better than another.
+starting points. One live run completed on 2026-09-29, with Haiku 4.5 as the spec
+reviewers and Sonnet 5.5 as the code reviewers; none has run since both panels
+moved to Haiku 5.5 on 2026-10-08. That run is the whole measurement: it shows the
+defaults of that day can complete a small chain, not that any level or model
+reviews or implements better than another.
 
 `run --run` displays the frozen model and effort settings, remaining groups,
 actual verification argv, review budgets, and dispatch ceilings before asking a TTY for explicit
