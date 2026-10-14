@@ -44,6 +44,59 @@ function emit(agentResult) {
   emitRaw(JSON.stringify(agentResult));
 }
 
+// The code-review reconciler (docs/features/code-review-reconciler/plan.md).
+// The finding ids and intent keys are scraped from the prompt's findings
+// block, and a rejection's excerpt is the first acceptance criterion's text
+// scraped from the prompt's own specification, never a literal (hazard 4).
+// Every mode not named below keeps every finding, so the stage makes one call
+// and remediates exactly what it did before the reconciler existed.
+if (stdin.startsWith("you are the code-review reconciler")) {
+  const listed = [...stdin.matchAll(/^- finding (\d+); location .*; intentKey (\S+)$/gm)].map((m) => ({
+    findingId: Number(m[1]),
+    intentKey: m[2],
+  }));
+  const specBlock = /\nApproved specification:\n\n([\s\S]*?)\n\nApproved plan:\n/.exec(stdin)?.[1];
+  const criterion = specBlock === undefined ? undefined : /^- AC-\d{3,}: (.+)$/m.exec(specBlock)?.[1]?.trimEnd();
+  if (listed.length === 0 || criterion === undefined) {
+    throw new Error("emit-code-review: incomplete reconciler prompt");
+  }
+  const keep = (finding) => ({ findingId: finding.findingId, disposition: "keep", basis: "wrong-result" });
+  const reject = (finding, excerpt) => ({
+    findingId: finding.findingId,
+    disposition: "reject",
+    rationale: "The specification already states a workable baseline for this behavior.",
+    excerpt,
+  });
+  let answer = mode;
+  if (mode === "reconcile-split") {
+    // The first call rejects, the second keeps: the two calls disagree.
+    const stateDir = process.env.BW_TEST_RECONCILE_STATE_DIR;
+    if (stateDir === undefined) throw new Error("emit-code-review: reconcile-split needs BW_TEST_RECONCILE_STATE_DIR");
+    const counter = join(stateDir, "reconciler-calls");
+    const calls = existsSync(counter) ? Number(readFileSync(counter, "utf8")) : 0;
+    writeFileSync(counter, String(calls + 1));
+    answer = calls === 0 ? "reconcile-reject-one" : "keep";
+  }
+  if (mode === "reconcile-exit") {
+    process.stderr.write("fixture reconciler failure\n");
+    process.exit(3);
+  }
+  if (mode === "reconcile-prose") {
+    emitRaw("I judged every finding and keep them all.");
+    process.exit(0);
+  }
+  if (mode === "reconcile-mutate") writeFileSync("reconciler-residue.txt", "fixture wrote this\n");
+  const decisions = listed.map((finding) => {
+    if (answer === "reconcile-reject-all-low" || answer === "reconcile-reject-all-high") return reject(finding, criterion);
+    if (finding.intentKey !== "beyond-spec-hardening") return keep(finding);
+    if (answer === "reconcile-reject-one") return reject(finding, criterion);
+    if (answer === "reconcile-bad-excerpt") return reject(finding, "words the specification never says");
+    return keep(finding);
+  });
+  emitRaw(JSON.stringify({ decisions }));
+  process.exit(0);
+}
+
 // The same executor also stands in for the frozen implementer between panel
 // executions. Its patch is derived from the prompt and current checkout.
 const remediationMatch = /you are the code-review remediator (\S+)/.exec(stdin);
@@ -60,6 +113,19 @@ if (remediationMatch) {
     .filter((line) => line !== "");
   if (scope.length === 0) throw new Error("emit-code-review: empty remediation scope");
   const target = scope[0];
+  // The prompt is not persisted, so the remediation input is checked here.
+  if (mode === "reconcile-reject-one" && stdin.includes("beyond-spec-hardening")) {
+    throw new Error("emit-code-review: a finding the reconciler rejected reached the remediation");
+  }
+  if (mode.startsWith("reconcile-") && !stdin.includes("intentKey needs-remediation")) {
+    throw new Error("emit-code-review: a finding the reconciler kept is missing from the remediation");
+  }
+  if (
+    ["reconcile-split", "reconcile-bad-excerpt", "reconcile-prose", "reconcile-exit"].includes(mode) &&
+    !stdin.includes("intentKey beyond-spec-hardening")
+  ) {
+    throw new Error("emit-code-review: a finding no agreed rejection removed is missing from the remediation");
+  }
   if (mode === "mixed-then-clean") {
     const reviewers = [
       "code-reviewer-correctness",
@@ -243,6 +309,28 @@ if (mode === "parallel-fail") {
           subject: `The ${agent} finding must retain canonical panel order.`,
         }),
       ]);
+} else if (
+  mode === "reconcile-reject-one" ||
+  mode === "reconcile-split" ||
+  mode === "reconcile-bad-excerpt" ||
+  mode === "reconcile-prose" ||
+  mode === "reconcile-exit" ||
+  mode === "reconcile-mutate"
+) {
+  // Two findings before remediation: one the reconciler keeps and one it may
+  // reject. After remediation every seat reports nothing, as high-then-clean.
+  const remediated = readFileSync(first, "utf8").includes("code-review-remediated");
+  agentResult = remediated
+    ? proposed([])
+    : agent === CORRECTNESS
+      ? proposed([finding({ severity: "high", location: `${first}:1`, intentKey: "needs-remediation" })])
+      : agent === SECURITY
+        ? proposed([finding({ severity: "high", location: `${first}:2`, intentKey: "beyond-spec-hardening" })])
+        : proposed([]);
+} else if (mode === "reconcile-reject-all-low") {
+  agentResult = onlyFrom(CORRECTNESS, [finding({ severity: "low", location: `${first}:1`, intentKey: "beyond-spec-hardening" })]);
+} else if (mode === "reconcile-reject-all-high") {
+  agentResult = onlyFrom(CORRECTNESS, [finding({ severity: "high", location: `${first}:1`, intentKey: "beyond-spec-hardening" })]);
 } else if (
   mode === "remediation-empty" ||
   mode === "remediation-wrong-base" ||

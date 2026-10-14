@@ -1,0 +1,715 @@
+{
+  "provenance": {
+    "what": "Paid replay of crew-chatter run 6's round-1 security code-reviewer prompt, operator-consented 2026-10-13 (budget about $1). Question: why did the reviewer report #200 (sessions survive a password reset), which the approved spec does not require, despite the prompt's rule against speculative hardening?",
+    "source": "test/fixtures/recorded/code-review-crew-chatter-run-6.json (agent_run 66)",
+    "controlPrompt": "buildCodeReviewPrompt(CODE_REVIEWER_SECURITY, spec, plan, changedPaths, diff, bb7f3f673a3b4d452d07782c54f13881f281fbd5) with spec and plan read from crew-chatter's docs/features/crew-chatter-foundation/ and the diff 01f9a111..bb7f3f67; its SHA-256 423008e2d4c3691a206df1b5cbc4a7dbbe38e156700cfba88305bb136c45671f equals agent_run 66's input_hash, so the control is byte-identical to what run 6 sent",
+    "variants": "b: four exact string replacements in the control (the security instruction, the report rule rewritten with the spec reconciler's baseline test, the exhaustive-audit sentence, the medium severity definition); ab: b plus a required basis field. The replacement strings are in variantSource below, copied from the build script.",
+    "invocation": "invokeHarness(CLAUDE_CODE) with BuildWorks' executor flags unchanged, model claude-haiku-5-5, effort medium (run 6's frozen setting), cwd a fresh clone of crew-chatter checked out detached at bb7f3f67; the three arms ran concurrently per round, ten rounds",
+    "probe": "One call under the same flags (effort low) asked whether any CLAUDE.md, .claude/CLAUDE.md or AGENTS.md content was in its context; it answered NONE and used no tools. The clone contains .claude/CLAUDE.md. The positive control without --safe-mode was refused by the auto-mode classifier and did not run, so the probe alone does not prove the file is withheld. Update the same day: the operator ran the positive control by hand in the same clone (claude -p --model claude-haiku-5-5 without --safe-mode) and it quoted \"# Shawn's global Claude Code config\" (from the operator's ~/.claude/CLAUDE.md) and \"# CLAUDE.md\" (from the clone's .claude/CLAUDE.md). Together the two calls show --safe-mode withholds both files from BuildWorks dispatches.",
+    "scoring": "Regexes fixed before results past round 1 were read, calibrated once against run 6's own #200 subject (the first version missed it), then checked against all 20 run 6 findings with no false out-of-spec match. Every subject was also read by eye: ab-6 is #198 and the regex missed it, so ab's #198 count is 6, not the scorer's 5. Out-of-spec topics were checked absent from the approved spec by grep.",
+    "captured": "2026-10-13",
+    "totalCost": 0.22697759,
+    "dropped": "The raw stream-json output of each call (kept only in the session scratchpad), and the three prompt texts (about 122 KB each; the control is rebuildable and pinned by hash). Each record keeps its label, cost, exit code, duration, tool uses, and the parsed findings unabridged."
+  },
+  "summary": {
+    "control": {
+      "runs": 10,
+      "findings": 22,
+      "runsWithOutOfSpecFinding": 1,
+      "runsReporting": {
+        "198 cross-account cache": 7,
+        "199 out-of-order save": 3,
+        "201 NUL byte": 5
+      },
+      "highFindings": 6
+    },
+    "b": {
+      "runs": 10,
+      "findings": 13,
+      "runsWithOutOfSpecFinding": 0,
+      "runsReporting": {
+        "198 cross-account cache": 7,
+        "199 out-of-order save": 1,
+        "201 NUL byte": 1
+      },
+      "highFindings": 1
+    },
+    "ab": {
+      "runs": 10,
+      "findings": 10,
+      "runsWithOutOfSpecFinding": 0,
+      "runsReporting": {
+        "198 cross-account cache": 6,
+        "199 out-of-order save": 1,
+        "201 NUL byte": 2
+      },
+      "highFindings": 4,
+      "basisValid": "10 of 10 (6 unauthorized-access, 3 existing AC IDs, 1 plan task)"
+    }
+  },
+  "variantSource": "// Variant B: remove the conflicts and state the rule as a test, using the\n// spec reconciler's baseline wording. No example names a finding from run 6.\nlet b = control;\nb = replaceOnce(\n  b,\n  \"Trace attacker-controlled inputs and privilege or data transitions through the changed code and report only defects the current code can fix.\",\n  \"Trace attacker-controlled inputs and privilege or data transitions through the changed code and report only defects the current code can fix, judged against the rule below on what the approved specification requires.\"\n);\nb = replaceOnce(\n  b,\n  \"Report only actionable defects with a reproducible impact that can be corrected in the current changed code. Do not report style, preference, optional refactoring, speculative hardening, questions, or a concern that requires changing the approved specification or plan.\",\n  \"Report a defect only when the changed code fails a behavior the approved specification or plan states, or breaks in ordinary use: it crashes, loses or corrupts data, returns a wrong result, or lets a user read or change data or act in a way the specification does not allow. When the specification states a workable baseline and the concern is whether to add protection, limits, or policy beyond it, that concern is not a defect: do not report it, however reasonable it looks. Do not report style, preference, optional refactoring, or questions.\"\n);\nb = replaceOnce(\n  b,\n  \"report every actionable defect you identify across all declared acceptance criteria and plan tasks\",\n  \"report every defect that meets the rule above across all declared acceptance criteria and plan tasks\"\n);\nb = replaceOnce(\n  b,\n  \"  - medium: a concrete defect that does not fail an acceptance criterion\",\n  \"  - medium: the code breaks in ordinary use as described above without failing an acceptance criterion\"\n);\n\n// Variant AB: B plus a required basis field per finding.\nlet ab = b;\nab = replaceOnce(\n  ab,\n  '\"intentKey\": \"...\", \"subject\": \"...\"}]}}',\n  '\"intentKey\": \"...\", \"subject\": \"...\", \"basis\": \"...\"}]}}'\n);\nab = replaceOnce(\n  ab,\n  \"- subject: one sentence naming both the concrete defect and its reproducible\\n  impact\",\n  \"- subject: one sentence naming both the concrete defect and its reproducible\\n  impact\\n- basis: why this is a defect, as exactly one of: the ID of the acceptance criterion the code fails, copied exactly from the approved specification (for example AC-001); the words plan task followed by the task's first five words, copied exactly; or one of crash, data-loss, wrong-result, unauthorized-access, naming how the code breaks in ordinary use. A concern with no such basis is not reported.\"\n);\n\n",
+  "calls": [
+    {
+      "label": "probe-safe-mode",
+      "cost": 0.00057959,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 1848,
+      "tools": [],
+      "resultText": "NONE",
+      "parseError": "no JSON object found in output: the body has no fence and no '{'",
+      "findings": null
+    },
+    {
+      "label": "control-1",
+      "cost": 0.014120879999999999,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 38084,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "high",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:8",
+          "intentKey": "stale-cache-leaks-notes-across-accounts",
+          "subject": "When the session expires, the QueryCache onError only sets ['session'] to null and leaves ['notes'] and ['note', id] cached, so a different user signing in on the same browser sees the previous user's note list and note body from cache before the refetch returns 404."
+        },
+        {
+          "severity": "high",
+          "classification": "current_artifact",
+          "location": "frontend/src/lib/useAutosave.ts:110",
+          "intentKey": "out-of-order-autosave-overwrites-newer-edit",
+          "subject": "Because each flush sends immediately without ordering, an older PATCH can reach the server after a newer one; the newer response then marks the status Saved while the server keeps the stale body, so the latest edit is lost after reload and AC-016 fails."
+        }
+      ]
+    },
+    {
+      "label": "ab-1",
+      "cost": 0.01722858,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 65329,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:8",
+          "intentKey": "stale-user-cache-after-session-expiry",
+          "subject": "The 401 handler in the QueryCache sets only ['session'] to null and leaves other cached queries such as ['notes'] and ['note', id] in place, so after a session expires and a different user signs in on the same tab, the Dashboard can briefly show the previous user's note list and open note body from cache before refetching.",
+          "basis": "unauthorized-access"
+        }
+      ]
+    },
+    {
+      "label": "b-1",
+      "cost": 0.01781438,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 70987,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:12",
+          "intentKey": "session-expiry-leaks-prior-user-cache",
+          "subject": "When a query returns 401 the QueryCache onError only nulls the session, so a different user signing in on the same tab sees the previous user's note list and open note body from the React Query cache and the store's selectedNoteId until the refetch fails."
+        }
+      ]
+    },
+    {
+      "label": "ab-2",
+      "cost": 0.005278519999999999,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 48151,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "high",
+          "classification": "current_artifact",
+          "location": "frontend/src/lib/useAutosave.ts",
+          "intentKey": "autosave-out-of-order-overwrite",
+          "subject": "Because each flush sends immediately, an older save response can reach the server after a newer one, so the stored note keeps the older content while the indicator shows \"Saved\" and a reload loses the latest edit.",
+          "basis": "AC-016"
+        },
+        {
+          "severity": "high",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx",
+          "intentKey": "stale-cache-after-session-loss",
+          "subject": "When a 401 clears the session without clearing the query cache or the selected note, a different user who signs in on the same browser sees the previous user's cached note list and note body until the refetch completes.",
+          "basis": "unauthorized-access"
+        },
+        {
+          "severity": "high",
+          "classification": "current_artifact",
+          "location": "backend/src/features/notes/routes.ts",
+          "intentKey": "nul-character-input-returns-500",
+          "subject": "A title or body containing a NUL character (\\u0000) passes validation, is rejected by Postgres text or jsonb, and returns a generic HTTP 500 instead of a 400 naming the field, so autosave shows \"Unable to save\" for that input.",
+          "basis": "AC-075"
+        }
+      ]
+    },
+    {
+      "label": "b-2",
+      "cost": 0.0059796599999999995,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 54198,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "high",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:12",
+          "intentKey": "cross-account-cache-retained-after-401",
+          "subject": "When a 401 sets ['session'] to null, the cached ['notes'] and ['note', id] queries from the previous account are kept, so a different user who signs in on the same tab sees the previous user's note titles, previews and full note bodies until refetch."
+        },
+        {
+          "severity": "low",
+          "classification": "current_artifact",
+          "location": "frontend/src/lib/useAutosave.ts",
+          "intentKey": "queued-draft-survives-session-expiry",
+          "subject": "The module-level offline draft queue and store selectedNoteId are not cleared on a 401 session expiry, so a draft for the previous account's note is sent under the next account's cookie, rejected with 404, and never saved while the beforeunload prompt stays active."
+        }
+      ]
+    },
+    {
+      "label": "control-2",
+      "cost": 0.006801059999999999,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 61669,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "low",
+          "classification": "current_artifact",
+          "location": "backend/src/features/notes/routes.ts:57",
+          "intentKey": "nul-character-input-yields-500",
+          "subject": "A PATCH whose title or body contains a NUL character (\\u0000) is passed to Postgres, which rejects it, so the client receives a generic HTTP 500 instead of a 400 validation error and the note cannot be saved."
+        }
+      ]
+    },
+    {
+      "label": "b-3",
+      "cost": 0.0061721599999999995,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 55089,
+      "tools": [],
+      "parseError": null,
+      "findings": []
+    },
+    {
+      "label": "ab-3",
+      "cost": 0.00827802,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 73462,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "low",
+          "classification": "current_artifact",
+          "location": "frontend/src/features/notes/Dashboard.tsx",
+          "intentKey": "sign-out-leaves-queued-draft",
+          "subject": "Signing out after a failed autosave re-queues the unsent draft after discardQueuedDrafts has already run, so the queue is non-empty after sign-out, the leave-page prompt stays active on the sign-in screen, and the stale draft is replayed under the next session's cookie.",
+          "basis": "plan task Add offline handling to `frontend/src/lib/useAutosave.ts`"
+        }
+      ]
+    },
+    {
+      "label": "control-3",
+      "cost": 0.00869006,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 79169,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:12",
+          "intentKey": "session-expiry-leaves-prior-account-cache",
+          "subject": "When a 401 clears the session, the QueryCache onError handler leaves the previous account's React Query cache and Zustand store (selectedNoteId, user) intact, so a different user signing in on the same browser briefly sees the prior account's note titles and previews from the cached ['notes'] query before the refetch completes."
+        },
+        {
+          "severity": "low",
+          "classification": "current_artifact",
+          "location": "backend/src/features/notes/routes.ts:54",
+          "intentKey": "note-title-and-body-nul-unvalidated",
+          "subject": "The title check accepts NUL characters and unpaired surrogates, which Postgres text and jsonb reject, so PATCH /api/notes/:id with a title or body containing \\u0000 returns a generic 500 and that note can never be saved."
+        },
+        {
+          "severity": "low",
+          "classification": "current_artifact",
+          "location": "backend/src/features/auth/service.ts:19",
+          "intentKey": "email-validation-allows-control-characters",
+          "subject": "validateEmail's regex only excludes whitespace, so an email containing ASCII control characters such as ESC (\\u001b) is accepted and is then written verbatim to the server log by requestPasswordReset, allowing terminal escape sequences to be injected into log output."
+        }
+      ]
+    },
+    {
+      "label": "ab-4",
+      "cost": 0.0048295199999999995,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 41741,
+      "tools": [],
+      "parseError": null,
+      "findings": []
+    },
+    {
+      "label": "control-4",
+      "cost": 0.007000559999999999,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 62307,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "high",
+          "classification": "current_artifact",
+          "location": "backend/src/features/notes/routes.ts",
+          "intentKey": "unvalidated-nul-in-note-title-or-body",
+          "subject": "A PATCH to /api/notes/:id whose title or body contains a NUL character (\\u0000) or a lone surrogate passes the length and isTipTapDoc checks, PostgreSQL rejects it in the text or jsonb column, and the client receives a generic HTTP 500 instead of the HTTP 400 field validation that AC-075 requires."
+        },
+        {
+          "severity": "high",
+          "classification": "current_artifact",
+          "location": "backend/src/features/auth/service.ts",
+          "intentKey": "unvalidated-nul-in-email-address",
+          "subject": "validateEmail accepts a NUL character or lone surrogate inside the address (the regex only excludes whitespace and @), so register or sign-in sends it to PostgreSQL, which rejects the query, and the client receives HTTP 500 instead of the HTTP 400 field error that AC-075 requires."
+        }
+      ]
+    },
+    {
+      "label": "b-4",
+      "cost": 0.0072476599999999995,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 62663,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:11",
+          "intentKey": "stale-cross-user-cache-after-401",
+          "subject": "A 401 sets only the session query to null and leaves the ['notes'] and ['note', id] caches, the store's selectedNoteId, and the offline draft queue in place, so a different user signing in the same browser tab sees the previous user's note list and open note until refetch completes, and a queued draft from the earlier user is later sent under the new session."
+        }
+      ]
+    },
+    {
+      "label": "control-5",
+      "cost": 0.005212559999999999,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 45433,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:13",
+          "intentKey": "stale-cache-across-accounts-on-session-expiry",
+          "subject": "When a notes request returns 401, the QueryCache handler only sets ['session'] to null, so the previous user's cached ['notes'] and ['note', id] data, the store's selectedNoteId and any queued drafts survive; a different user signing in on the same browser then sees the earlier account's note titles and bodies until the refetch completes, and the queued drafts are sent with the new session."
+        },
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/features/notes/NoteEditor.tsx:47",
+          "intentKey": "out-of-order-save-response-overwrites-newer-edit",
+          "subject": "Because each flush sends immediately, an older PATCH that resolves after a newer one makes the save callback write the older response into the ['note', id] cache and the server row, so after the note is reopened the most recent typed edit is shown as the older content (lost) while the indicator reads Saved."
+        }
+      ]
+    },
+    {
+      "label": "b-5",
+      "cost": 0.00600766,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 50716,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:14",
+          "intentKey": "stale-query-cache-leaks-prior-user-data",
+          "subject": "When a session expires with a 401 and a different user signs in on the same browser tab, the QueryCache onError only nulls the session and keeps the previous user's ['notes'] and ['note', id] cache, so the new user sees the previous user's note titles and previews until the refetch completes and can open notes that return 404."
+        },
+        {
+          "severity": "low",
+          "classification": "current_artifact",
+          "location": "frontend/src/features/notes/NoteEditor.tsx",
+          "intentKey": "out-of-order-save-response-overwrites-cache",
+          "subject": "The save callback writes every server response into the ['note', id] cache, so an older response that arrives after a newer one overwrites the cache with stale body content, and reopening the note can show the older text instead of the latest edit (AC-019)."
+        }
+      ]
+    },
+    {
+      "label": "ab-5",
+      "cost": 0.007807519999999999,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 72587,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:14",
+          "intentKey": "stale-user-cache-after-session-expiry",
+          "subject": "When a 401 expires the session, the QueryCache onError only sets ['session'] to null, so the previous account's cached notes list and selected note id survive; the next user who signs in on the same tab sees the previous user's note titles and previews until the refetch completes.",
+          "basis": "unauthorized-access"
+        }
+      ]
+    },
+    {
+      "label": "ab-6",
+      "cost": 0.004698519999999999,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 41495,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:10",
+          "intentKey": "stale-user-cache-after-session-expiry",
+          "subject": "When a 401 clears the session, the QueryCache onError only sets ['session'] to null and leaves ['notes'] and ['note', id] cached, so a second user signing in on the same browser sees the first user's note list and selected note body while the refetch is in flight.",
+          "basis": "unauthorized-access"
+        }
+      ]
+    },
+    {
+      "label": "b-6",
+      "cost": 0.00756566,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 67431,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:14",
+          "intentKey": "stale-cache-leaks-across-accounts-on-401",
+          "subject": "When a session expires with a 401, the onError handler sets only ['session'] to null, so if a different user signs in on the same browser the Dashboard renders the previous user's cached note list and the still-selected note body (store selectedNoteId and ['note', id] cache are not cleared) before the refetch completes, exposing another account's note titles and content."
+        }
+      ]
+    },
+    {
+      "label": "control-6",
+      "cost": 0.01088106,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 97233,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "high",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:10",
+          "intentKey": "stale-cache-leaks-prior-account-data",
+          "subject": "The QueryCache 401 handler only nulls the session, so after a session expires and a different account signs in on the same browser, the still-cached ['notes'] list and ['note', id] body of the previous account render for the new user, and the store's selectedNoteId is not cleared either."
+        },
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "backend/src/features/notes/routes.ts:52",
+          "intentKey": "nul-character-input-causes-500",
+          "subject": "A PATCH whose title contains U+0000 (sent as \\u0000) or whose body contains \\u0000 passes validation, is rejected by Postgres text/jsonb, and returns a generic HTTP 500 instead of a 400 naming the field, so that note can never be saved and its edits are lost on reload."
+        },
+        {
+          "severity": "low",
+          "classification": "current_artifact",
+          "location": "backend/src/features/auth/service.ts:94",
+          "intentKey": "unvalidated-email-reaches-db-query",
+          "subject": "authenticate() does not validate the email, so a sign-in email containing U+0000 reaches the Postgres text query, raises a database error, and returns a generic HTTP 500 instead of the documented 401 or 400 response."
+        }
+      ]
+    },
+    {
+      "label": "control-7",
+      "cost": 0.004593559999999999,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 40990,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "high",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:14",
+          "intentKey": "stale-session-cache-cross-account",
+          "subject": "When a session expires (401), the QueryCache onError only sets ['session'] to null and leaves ['notes'], ['note', id], the store's selectedNoteId, and queued drafts in place, so a different user signing in through AuthScreen in the same browser is shown the previous account's cached note titles and previews until the refetch completes, and the stale selection points at the other account's note."
+        }
+      ]
+    },
+    {
+      "label": "ab-7",
+      "cost": 0.00576902,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 50326,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "low",
+          "classification": "current_artifact",
+          "location": "backend/src/features/notes/routes.ts",
+          "intentKey": "nul-character-input-returns-500",
+          "subject": "A PATCH to /api/notes/:id whose title or body contains a NUL character (\\u0000) passes validation, is rejected by Postgres text and jsonb handling, and returns a generic HTTP 500 instead of a 400 naming the field.",
+          "basis": "AC-075"
+        }
+      ]
+    },
+    {
+      "label": "b-7",
+      "cost": 0.007269159999999999,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 63468,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:14",
+          "intentKey": "cached-notes-leak-across-accounts",
+          "subject": "When a session expires with a 401 on a notes request, the QueryCache onError only nulls the session, so the previous user's cached notes list, note bodies, and selectedNoteId survive; a different user signing in on the same browser sees the previous user's note content in the editor until the refetch returns 404."
+        },
+        {
+          "severity": "low",
+          "classification": "current_artifact",
+          "location": "frontend/src/features/notes/Dashboard.tsx:64",
+          "intentKey": "sign-out-requeues-unsent-draft",
+          "subject": "Sign-out calls discardQueuedDrafts() before the editor unmounts, but NoteEditor's unmount cleanup re-queues any still-unsent draft, so after sign-out the old user's draft stays in the offline queue, keeps the beforeunload prompt active, and is retried under the next user's session when the browser comes back online."
+        }
+      ]
+    },
+    {
+      "label": "b-8",
+      "cost": 0.00539266,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 47241,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "backend/src/features/notes/routes.ts",
+          "intentKey": "note-input-nul-character-server-error",
+          "subject": "A PATCH to /api/notes/:id whose title or body contains a NUL character (\\u0000) passes validation, is rejected by PostgreSQL as text or jsonb, and returns a generic HTTP 500 instead of a 400 naming the field, contrary to AC-075."
+        },
+        {
+          "severity": "low",
+          "classification": "current_artifact",
+          "location": "backend/src/features/auth/service.ts",
+          "intentKey": "email-nul-character-passes-validation",
+          "subject": "An email containing a NUL character passes validateEmail because \\s does not match \\u0000, so register, sign-in, or the forgot-password lookup sends it to PostgreSQL and returns HTTP 500 instead of a 400 naming the email field."
+        }
+      ]
+    },
+    {
+      "label": "control-8",
+      "cost": 0.00680656,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 62316,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:14",
+          "intentKey": "cross-user-cache-leak-on-session-expiry",
+          "subject": "The 401 handler only nulls the session query, so after a session expires and a different user signs in on the same browser, the previous user's cached note list and note bodies (keyed by the still-selected note id) render for the new user and their edits to those notes fail."
+        },
+        {
+          "severity": "low",
+          "classification": "current_artifact",
+          "location": "backend/src/features/notes/routes.ts",
+          "intentKey": "unvalidated-link-href-scheme-stored",
+          "subject": "PATCH /api/notes/:id accepts any link mark href, including javascript: URLs, because only the doc shape is checked, so a crafted body is stored and later loaded unfiltered into the editor, bypassing the protocol allow-list that only the toolbar enforces."
+        },
+        {
+          "severity": "low",
+          "classification": "current_artifact",
+          "location": "backend/src/features/notes/routes.ts",
+          "intentKey": "nul-character-input-causes-server-error",
+          "subject": "A title or body string containing a NUL character (\\u0000) passes validation, is rejected by Postgres, and returns a generic HTTP 500 instead of the field-naming HTTP 400 that AC-075 requires for invalid input."
+        }
+      ]
+    },
+    {
+      "label": "ab-8",
+      "cost": 0.007241019999999999,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 65666,
+      "tools": [],
+      "parseError": null,
+      "findings": []
+    },
+    {
+      "label": "control-9",
+      "cost": 0.005102059999999999,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 44443,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/features/notes/NoteEditor.tsx:49",
+          "intentKey": "stale-save-response-overwrites-cache",
+          "subject": "The save function writes every PATCH response into the ['note', id] cache without checking whether a newer edit exists, so when an older response arrives after a newer one the cache and any reopened editor show older content, and the next save can persist that stale body over the newer edit."
+        },
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/features/notes/Dashboard.tsx:67",
+          "intentKey": "signout-discards-queued-drafts-unsent",
+          "subject": "handleSignOut calls discardQueuedDrafts after flushPendingSave, but the editor's flush is already unregistered once the note has unmounted, so a draft queued after a failed or offline send is cleared without being sent and the user's edit is silently lost."
+        }
+      ]
+    },
+    {
+      "label": "ab-9",
+      "cost": 0.00560002,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 48457,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "high",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:14",
+          "intentKey": "stale-cache-survives-session-expiry",
+          "subject": "When a session expires (401), only the session query is cleared, so the previous user's cached note list, open note body and selected note id remain, and a different user who signs in on the same browser sees the earlier user's note titles and bodies until the refetch completes.",
+          "basis": "unauthorized-access"
+        }
+      ]
+    },
+    {
+      "label": "b-9",
+      "cost": 0.00591216,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 52448,
+      "tools": [],
+      "parseError": null,
+      "findings": []
+    },
+    {
+      "label": "b-10",
+      "cost": 0.00571816,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 52097,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:14",
+          "intentKey": "stale-account-data-after-session-expiry",
+          "subject": "When a 401 from any query clears only the session, the previous account's cached note list, note bodies and selectedNoteId stay in memory, so a different user signing in on the same browser can see the earlier user's note titles and bodies in the editor before the refetch fails with 404."
+        },
+        {
+          "severity": "low",
+          "classification": "current_artifact",
+          "location": "frontend/src/lib/useAutosave.ts:160",
+          "intentKey": "queued-draft-survives-sign-out",
+          "subject": "Because discardQueuedDrafts runs before the editor unmounts, the unmount re-queues the signed-out user's unsent draft, so the next signed-in account keeps retrying it, keeps the beforeunload prompt active, and the edit is never saved."
+        }
+      ]
+    },
+    {
+      "label": "ab-10",
+      "cost": 0.0061695199999999995,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 54014,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx:13",
+          "intentKey": "stale-user-cache-after-session-expiry",
+          "subject": "When a session expires with a 401, the QueryCache handler only nulls the session, so after another user signs in on the same browser the Dashboard briefly renders the previous user's cached note list and any cached note body, which the server would not return to that user.",
+          "basis": "unauthorized-access"
+        }
+      ]
+    },
+    {
+      "label": "control-10",
+      "cost": 0.00921006,
+      "exitCode": 0,
+      "timedOut": false,
+      "durationMs": 83936,
+      "tools": [],
+      "parseError": null,
+      "findings": [
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/App.tsx",
+          "intentKey": "session-expiry-keeps-previous-account-cache",
+          "subject": "A 401 from any query only sets the session to null without clearing the store or the cached notes and note queries, so after expiry a different user signing in on the same tab can briefly see the previous account's note list and open note body."
+        },
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "frontend/src/features/notes/Dashboard.tsx",
+          "intentKey": "signout-discards-unsaved-edits-after-failed-save",
+          "subject": "Sign-out proceeds even when the pre-sign-out save failed, and the note editor unmount after the reset re-queues the unsent draft after discardQueuedDrafts has run, so an edit made before a server error is held only in memory with the leave-page prompt, and it is lost if the tab closes."
+        },
+        {
+          "severity": "medium",
+          "classification": "current_artifact",
+          "location": "backend/src/lib/auth.ts",
+          "intentKey": "session-token-not-revoked-on-reset-or-signout",
+          "subject": "Session JWTs have no server-side revocation or password-version check, so a session copied before sign-out or before a password reset stays valid for up to 7 days and keeps access to the account after the owner resets the password."
+        }
+      ]
+    }
+  ]
+}

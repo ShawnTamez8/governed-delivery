@@ -63,7 +63,10 @@ canonical findings remain ordered by the frozen panel;
 the stage first verifies that all declared artifacts in the signed scope were
 delivered in the verified commit, blocking the stage and run immediately before
 reviewer dispatch if any are missing; while another configured panel execution
-remains, all actionable findings are sent together to the frozen implementer,
+remains, the code-review reconciler first checks each finding against the
+approved specification and may reject it only when every one of its frozen
+calls agrees, quoting the specification, then every
+finding it keeps is sent together to the frozen implementer,
 the resulting commit is verified with the frozen commands, and the full panel
 reviews it again; the last panel retains below-threshold findings without
 blocking and blocks only on findings at or above the independently frozen
@@ -73,8 +76,8 @@ record and the code-review record it is handed, cross-checks the two, re-reads
 the retained worktree, diffs the patch range between the recorded
 base and the final reviewed, verified commit, and completes the run only when every declared
 artifact the operator signed for appears there as an exact changed path —
-otherwise it blocks the run naming what is missing). Each agent's, and the
-reconciler's, model and effort are frozen at `bw new-run` (`--model` is required
+otherwise it blocks the run naming what is missing). Each agent's, and both
+reconcilers', model and effort are frozen at `bw new-run` (`--model` is required
 and covers only `reconciler`; the other settings take the
 seeded defaults in [`src/policy.ts`](src/policy.ts), and `--effort`,
 `--model-for` and `--effort-for` override them per run) and every spend entry
@@ -120,6 +123,7 @@ are frozen into each new run's profile:
 | --- | --- | --- |
 | `CODE_REVIEW_PANEL_SIZE` | `3` | `2`–`5`; changing it also requires enough registered `code-findings` reviewers with distinct, non-empty specialist instructions. |
 | `CODE_REVIEW_MAX_ROUNDS` | `2` | `1`–`5` total full-panel executions; `1` disables remediation because no re-review remains. |
+| `CODE_REVIEW_RECONCILER_CALLS` | `2` | `2`–`3` reconciler calls before each remediation, on the same model, prompt and input, so not shown to be independent; a finding is rejected only when every call agrees, quoting the approved specification, and any failed call keeps every finding. The final panel is never reconciled. |
 | `CODE_REVIEW_BLOCKING_SEVERITY` | `high` | Release-policy threshold applied only to the final panel in the frozen severity order. |
 
 Changing one of these constants affects profiles frozen by later `new-run`
@@ -220,7 +224,9 @@ recommended option, and the reviewer's reason, then asks for one action per
 question: `1` approves the recommendation, `2` denies it (the question stays
 open and the run continues), `3` records your own one-line answer, and `4`
 (the default) exits with code 3 and records nothing more. Three invalid entries
-also exit. Each answer is recorded as soon as you give it; answers are final.
+also exit. A design-split question ([below](#when-buildworks-proposes-a-split))
+offers only `1` (split), `2` (build as one) and `4` (exit). Each answer is
+recorded as soon as you give it; answers are final.
 Once every question is answered, guided mode asks consent for the fold, in
 which the spec author folds the answers into the spec, and then continues to
 the approval pause.
@@ -590,10 +596,11 @@ Use `defect_fix` instead of `feature` for a defect run. A freeze failure can
 leave a blocked run; its diagnostic names the ID. Inspect it rather than
 assuming no state was created.
 
-Model and effort are frozen per setting: each of the nine agents and the
+Model and effort are frozen per setting: each of the nine agents, the
 reconciler (the reconciliation dispatches of spec review, plan review and the
-decision fold). `--model` is required and names the model for `reconciler`
-only. Every other setting takes its seeded value from
+decision fold), and the code-review reconciler (the calls that judge code-review
+findings before a remediation). `--model` is required and names the model for
+`reconciler` only. Every other setting takes its seeded value from
 `DEFAULT_SETTINGS` in [`src/policy.ts`](src/policy.ts):
 
 | Setting | Seeded model | Seeded effort |
@@ -602,16 +609,18 @@ only. Every other setting takes its seeded value from
 | `plan-author` | `claude-opus-5-5` | `high` |
 | `implementer` | `claude-sonnet-5-5` | `medium` |
 | `reconciler` | `--model` | `medium` |
+| `code-review-reconciler` | `claude-haiku-5-5` | `medium` |
 | the three spec reviewers | `claude-haiku-5-5` | `medium` |
 | the three code reviewers | `claude-haiku-5-5` | `medium` |
 
 Three optional flags change one run's settings:
 - `--effort <level>` sets the four non-reviewer settings and never reaches a
-  reviewer.
+  reviewer or the code-review reconciler, which was measured only at its
+  seeded level.
 - `--model-for <setting>=<model>[,...]` sets the model of the named settings.
 - `--effort-for <setting>=<level>[,...]` sets the effort of the named settings,
-  and beats `--effort`. It is the only way to change a reviewer's effort, up to
-  `max`.
+  and beats `--effort`. It is the only way to change a reviewer's or the
+  code-review reconciler's effort, up to `max`.
 
 Levels are `low`, `medium`, `high`, `xhigh` and `max`. A bad level or model name
 is a usage error before any run exists. An unknown setting name is refused when
@@ -689,6 +698,73 @@ dispatches the spec author once to fold the approved and modified answers into
 the spec, validates the result, and stops at `awaiting_approval` with exit 3.
 If every answer is a deny, the fold completes without a dispatch. A fold that
 fails validation blocks the run. Approval binds the folded spec.
+
+### When BuildWorks proposes a split
+
+A run's plan is capped at 80 task items. When the reviewed spec declares more
+files than the frozen threshold (30 by default), spec review also proposes
+splitting the design into ordered features. The run pauses at
+`awaiting_decision` with one more question: the split. Its text lists the
+features in build order, each with its slug, title, and counts of criteria and
+files, and says the threshold is an estimate. The full split is retained as
+evidence under `.governance/proposals/<run-id>/split.json`. A spec with too few
+acceptance criteria to fill that many features gets no split proposal: the audit
+records `spec.split.skipped` and the run goes on as one build.
+
+- `--approve` splits the design. `--deny` builds it as one run, which may still
+  be refused at the plan ceiling after the plan is paid for.
+- `--answer-file` is refused for this question. Guided mode offers `1` Split,
+  `2` Build as one, and `4` Exit; any other entry is refused and asked again,
+  and three refused entries exit with code 3 without recording an answer.
+- Answer any other questions at the same pause as usual. An approved split
+  copies each of those answers into every feature's design.
+
+After the last answer, `run --yes` on an approved split stores one design per
+feature as a proposal and ends the run `blocked`, exit 1. The reason names each
+proposal ID and feature slug. For each feature, in the listed order:
+
+1. Export its design, naming the file by the feature's slug. The
+   `proposal_export` action `status` lists for each feature already carries
+   `--name <feature-slug>`, unless `docs\proposals\` already holds a file of
+   that name:
+
+   ```powershell
+   & node $BwCli proposal-export --repo $Target --proposal $ProposalId --name $FeatureSlug
+   ```
+
+2. In that new file under `docs\proposals\`, delete the lines from the top
+   through the `## Problem` heading, and from the `## Why this is upstream`
+   heading to the end. What remains starts "This is feature k of n" and keeps
+   its own `##` headings unchanged.
+3. Move it to `docs\features\<feature-slug>\design.md` and stage it. The export
+   is untracked, so `git mv` refuses it:
+
+   ```powershell
+   $Exported = Join-Path $Target "docs\proposals\$FeatureSlug.md"
+   $FeatureDir = Join-Path $Target "docs\features\$FeatureSlug"
+   New-Item -ItemType Directory -Force -Path $FeatureDir | Out-Null
+   Move-Item -LiteralPath $Exported -Destination (Join-Path $FeatureDir 'design.md')
+   git -C $Target add -- "docs/features/$FeatureSlug/design.md"
+   ```
+
+Before committing, keep the original `docs\features\<slug>\design.md`
+committed, because every feature's design names it, and commit or move aside
+the original run's untracked `docs\features\<slug>\spec.md`; `new-run` refuses
+a dirty tree. Then commit.
+
+Build feature 1 with `new-run` and `run` as usual. Once it is delivered, merge
+its branch `gov/<feature-slug>/<run-id>` into your branch, by merge or
+fast-forward but never by squash, and commit. Then start feature 2 with
+`--after` naming feature 1's run, and so on:
+
+```powershell
+$RunIdText = & node $BwCli new-run --repo $Target --project $Project --feature $FeatureId --slug $FeatureSlug --change-kind feature --model $Model --after $PreviousRunId
+```
+
+`--after` refuses, and creates no run, unless the named run belongs to the same
+project, is completed, its delivery record verifies, and its delivered commit
+is in this checkout's history. A squash merge does not count. The link is frozen into the new run's
+profile. Guided mode does not offer `--after`.
 
 ### Review and sign outside the CLI
 

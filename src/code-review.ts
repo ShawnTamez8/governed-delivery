@@ -35,12 +35,30 @@ export interface CodeReviewRemediationRecord {
   verification: CommitVerificationRecord;
 }
 
+/**
+ * The code-review reconciler's calls before one remediation, in call order,
+ * and what they decided (`docs/features/code-review-reconciler/plan.md`).
+ * `rejected` holds each finding every call validly rejected, with every call's
+ * rationale and excerpt; `kept` is every other finding id, sent to remediation.
+ */
+export interface CodeReviewReconciliation {
+  calls: Array<{
+    agentRunId: number | null;
+    status: "valid" | "failed" | "unparsed";
+    reason: string | null;
+    problems: string[];
+  }>;
+  rejected: Array<{ findingId: number; rationales: string[]; excerpts: string[]; agentRunIds: number[] }>;
+  kept: number[];
+}
+
 export interface CodeReviewRound {
   round: number;
   reviewedCommit: string;
   changedPaths: string[];
   findings: RecordedFinding[];
   blocking: CodeReviewBlock[];
+  reconciliation: CodeReviewReconciliation | null;
   remediation: CodeReviewRemediationRecord | null;
 }
 

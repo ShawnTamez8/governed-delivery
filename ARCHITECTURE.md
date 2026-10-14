@@ -134,6 +134,13 @@ above. Still deferred, each behind its own decision:
 `final_verification`, `pr_summary`. Each is real work; none is built
 because the loop closed.
 
+On 2026-10-12 the operator authorized one use of decomposition: when a
+reviewed specification declares more files than a frozen threshold, BuildWorks
+proposes splitting the design into separately built features, and the operator
+approves or denies the split. The split is a step inside spec review (section
+12), not a stage, so the sequence above is unchanged. It does not lift the task
+decomposition deferral: tasks as run rows stay unbuilt.
+
 ## 6. Trust boundaries
 
 Enumerate them; each is testable. Agents may not:
@@ -192,10 +199,18 @@ The commands the run froze are stated to every prompt whose output they judge:
 the spec draft, self-critique, reconcile and decision-fold prompts, the plan
 draft, self-critique and reconcile prompts, and the implementer's. They are
 rendered from the frozen profile, never from the working copy (hazard 21). The
-spec and plan dispatches inherit the directory the operator launched from, so
-they may not be able to read the target or its `governed.yaml`; the implementer
-reads the target in its own worktree, and its prompt tells it to read what each
-command runs before it chooses a file's content.
+spec and plan author dispatches (draft, self-critique, reconciliation, decision
+fold and split) run with the target repository's root as their working
+directory (2026-10-12), so they can read its working tree, including
+`governed.yaml` and a feature an earlier run delivered and the operator merged.
+Nothing keeps that tree at the starting commit during a pause, so the prompts
+claim the working tree, not a commit. The spec and plan reviewers do not run
+there: the target's `.governance/` holds the other reviewers' raw reports, and
+nothing enforces the executor's denied paths, so a reviewer started in the
+target could read its siblings' findings (hazard 14). Their prompts carry every
+document they judge. The implementer reads the
+target in its own worktree, and its prompt tells it to read what each command
+runs before it chooses a file's content.
 
 ### What the system writes
 
@@ -496,12 +511,15 @@ configuration resolves that to a concrete model. Keep this out of agent
 selection — a selection function that also routes models has two unrelated
 reasons to fail.
 
-**Configuration is per agent, plus one setting for reconciliation.** The profile
-freezes a model and an effort for every registered agent and for `reconciler`,
+**Configuration is per agent, plus two settings for reconciliation.** The profile
+freezes a model and an effort for every registered agent, for `reconciler`,
 the setting that governs the reconciliation dispatches that follow `spec_review`
 and `plan_review` (recorded on the `spec` and `plan` stage rows) and the
-`spec_decision` fold. Those dispatches run as the author agent, so
-the `reconciler` setting exists to give them a model and effort of their own; the
+`spec_decision` fold, and for `code-review-reconciler`, the setting that
+governs the calls that judge code-review findings before a remediation
+(recorded on the `code_review` stage row; section 12). Those dispatches run as
+an existing agent — the author, or for code review the implementer — so each
+setting exists to give them a model and effort of their own; the
 `agent_run.setting` column records which setting governed each row. Seeded
 defaults live in `src/policy.ts`; a new run may override them (`--model-for`,
 `--effort`, `--effort-for`), and `--model` covers only the one setting with no
@@ -538,7 +556,8 @@ and the difference is exactly what a cost model needs.
 **A stage whose model cannot be resolved fails at configuration time**, before
 any invocation. Discovering it at dispatch means discovering it after earlier
 stages have already been paid for. The profile loader refuses a frozen profile
-that lacks an entry for any agent or for `reconciler`, or whose model or effort is
+that lacks an entry for any agent, for `reconciler`, or for
+`code-review-reconciler`, or whose model or effort is
 not a valid value, so no stage reaches a dispatch with a missing setting.
 
 ## 11. Harness invocation
@@ -797,6 +816,54 @@ dispositions only, the reconciler may choose `upstream_follow_up`, and a
 follow-up opens no question. Neither prompt restates a command as an acceptance
 criterion.
 
+**The design split** (operator decision, 2026-10-12). A run's plan is capped at
+eighty task items (the implementation phase ceiling below), and a design large
+enough to pass that cap is refused only after the plan has been paid for. So
+when the `spec_review` gate passes and the reviewed specification declares more
+files than the frozen `designSplitPathThreshold`, the spec group dispatches the
+spec author once more, on the `spec` stage row, to propose an ordered split into
+features. The threshold defaults to 30: the ceiling divided by the highest
+recorded ratio of plan items to declared files, 2.6 across eleven runs of two
+test designs (`test/fixtures/recorded/declared-paths-vs-plan-items.json`). It is
+an estimate, and most of those runs would have been offered a split.
+
+Deterministic code validates the reply against the reviewed specification:
+- at least two pieces, with distinct kebab-case slugs that no
+  `docs/features/` directory already uses, in any letter case;
+- every acceptance criterion in exactly one piece;
+- every declared file in at least one piece, and at most the threshold of
+  distinct files in any piece;
+- each piece depending only on earlier pieces.
+
+Those rules need at least as many criteria as pieces, and at least
+`max(2, ceil(declared files / threshold))` pieces. A specification with fewer
+criteria than that cannot be split, so the stage records `spec.split.skipped`,
+dispatches nothing, and the run goes on as one build. A failed or refused reply
+blocks the run. A valid split is retained under
+`.governance/proposals/<run>/`, its hash recorded in the audit event, and
+recorded as a canonical finding with an `upstream_blocking` decision and a
+question. The run then pauses at `awaiting_decision` through the same path as
+any other question. The split question takes approve or deny; `answerQuestion`
+refuses modify for it, so every writer refuses it the same way.
+
+On approve, the decision group re-reads the evidence and refuses if its bytes or
+the reviewed specification changed since the review. It validates the split
+again against the feature directories present now and stores one proposal per
+feature, in one transaction with the audit event that names them. Each
+proposal's text is a design rendered by deterministic code, never by a model:
+- the piece's criteria, verbatim;
+- its declared files;
+- the features it builds after;
+- the original design, named by path and not copied;
+- the operator's answers to the other questions at the same pause.
+
+The decision group then ends the run `blocked`, with a reason that names the
+stored proposals and the next steps; it folds nothing. On deny, the split is
+left out of the fold, the other answers fold as usual, and the plan may still be
+refused at the phase ceiling. The validator checks coverage and the direction of
+dependencies. It cannot tell whether a piece needs code a later piece writes;
+the operator is the only check on order.
+
 **`awaiting_approval`.** The only signed authorization gate. One signed
 authorization — an Ed25519 signature by the operator, verified by the gate against a public key
 held in machine-local configuration, never in a repository — binds feature ID,
@@ -813,7 +880,8 @@ binding are recomputed under the repository lock before `approveRun` accepts
 the detached signature; changed bytes require a new external signing decision.
 
 The **profile** is the frozen record of everything the run resolved at start —
-`dispatchSettings` (the model and effort for each agent and for `reconciler`),
+`dispatchSettings` (the model and effort for each agent, for `reconciler`, and
+for `code-review-reconciler`),
 limits, policy, agent definitions, verification config, review panel bounds and
 round counts, and system name — stored under
 `.governance/profiles/<run>/` with its hash on the run row. Policy is
@@ -857,7 +925,14 @@ the reasoning of the previous phase, and no code review runs between phases.
 `code_review` still reads the complete net diff once, after all phases.
 
 **`verification`.** Fails closed when commands are missing or do not pass.
-Bounded remediation rounds are the retry budget; exhausting one blocks.
+Bounded remediation rounds are the retry budget; exhausting one blocks. When
+every command passes, it removes the ignored output the commands left in the
+worktree, such as installed packages and build output, and records each removed
+path in the audit (2026-10-13). Code review's clean-tree guard counts ignored
+entries so that an agent writing into an ignored path is visible; without the
+removal, every target whose commands install or build would fail that guard. No
+agent runs between the last command and the removal, so it hides nothing an
+agent wrote. A removal that fails blocks the run.
 
 **`code_review`.** Seats exactly the configured number of specialized code
 reviewers — role `reviewer`, output kind `code-findings`, bound to the frozen
@@ -891,8 +966,9 @@ dispatch, and no automatic retry or sequential fallback is introduced.
 Code review has a separate total panel-round budget, default two and bounded
 from one through five, frozen with its panel size and blocking severity at run
 start. A round is one complete execution of the configured panel. When any
-finding is reported and another round remains, every attributable report from
-that panel is handed together to the frozen `implementer`. The implementer
+finding is reported and another round remains, the code-review reconciler
+first judges every finding (below), and every finding it keeps is handed with
+all its attributable reports, together, to the frozen `implementer`. The implementer
 proposes code patches bound to the current reviewed commit; the system applies
 them through the same scope, protected-path, base/head, link, staged-set,
 committed-set, and clean-tree guards as initial implementation, then runs the
@@ -902,6 +978,40 @@ computed full diff from the original patch base. A remediation that produces
 no patch or no new verified commit blocks instead of buying an identical
 retry. Remediation, verification, and later panel rounds remain sequential;
 only independent reviewers within the current panel execute concurrently.
+
+**The code-review reconciler** (operator decision, 2026-10-13, "before fixes
+only"). Reviewers report findings that ask for more than the approved
+specification states, and remediating them adds obligations nobody approved
+(hazard 16). So before each remediation, up to the frozen
+`codeReviewReconcilerCalls` calls — two by default, at most three — each judge
+every finding of the round against the approved specification and plan, the
+complete diff, and the reviewed commit. The calls run one after another, as the
+implementer agent under their own setting `code-review-reconciler`, in the
+worktree, which must still be at the reviewed commit and clean after each call.
+A call answers each finding keep, naming a basis, or reject, with a rationale
+and an excerpt. A rejection is valid only when its rationale is non-empty and
+its excerpt occurs in the approved specification, compared with whitespace
+collapsed. A finding is withheld from the implementer only when every one of
+the frozen number of calls rejects it validly. Any failed check keeps the
+finding: an invalid answer keeps that finding, and a call that fails or
+returns no parsable reply ends the calls and keeps every finding. The calls
+also stop early once no finding has been rejected by every call so far.
+
+Each withheld finding is recorded as a `rejected_with_rationale` finding
+decision grounded in the specification, with the first call's rationale and
+excerpt; both hashes are the reviewed commit, because nothing changed. The
+audit event names every call's agent run. The finding keeps its reports, and
+the operator sees it as rejected. When every finding of the round is rejected,
+nothing is left to fix, so the round is decided by the severity gate as a final
+panel is: it passes when every finding is below the threshold and blocks
+otherwise, without another panel. The final panel is never reconciled.
+
+What the reconciler's check proves is that the quoted words occur in the
+specification, not that they support the rejection; a replay recorded one
+exact quote offered for a rejection it did not support, which is why every call
+must agree. A rejected finding that the final panel reports again still counts
+at the gate, so the reconciler can turn a run that a remediation would have
+fixed into a block.
 
 The final panel never triggers another patch. It passes with no findings, and
 also passes when every final finding is below the frozen
@@ -926,16 +1036,18 @@ budget, final reviewed commit, final finding count, and blocking severity.
 record before it trusts the final commit; the existence of a pass event alone
 does not authorize a later or edited commit.
 
-This remediation is not document reconciliation. It records no finding
-decision, creates no proposal or spike, asks for no human reviewer or waiver,
-and admits no `upstream` classification. A reviewer response that attempts to
+This remediation is not document reconciliation. Its only finding decisions
+are the code-review reconciler's `rejected_with_rationale` rejections above,
+recorded in the existing `finding_decision` table; it records no other
+disposition, creates no proposal or spike, asks for no human reviewer or
+waiver, and admits no `upstream` classification. A reviewer response that attempts to
 route a concern outside the current code is invalid output and blocks the run;
 the prompt instead tells the reviewer to omit concerns this stage cannot fix.
 The `spec_review` and `plan_review` author-requested panels, reconciliation
 schemas, upstream routes, and no-closure-pass behavior are unchanged.
 
-Every panel reviewer and each intervening implementer are separately
-dispatched and recorded as `configured_standalone` — never described as
+Every panel reviewer, each code-review reconciler call, and each intervening
+implementer are separately dispatched and recorded as `configured_standalone` — never described as
 independent; section 6 says what that label proves and what it does not.
 
 **`delivery_check`.** Before a run may complete, every declared artifact must
@@ -1094,6 +1206,28 @@ step: it renders one stored proposal into a new file under `docs/proposals/`,
 refusing to overwrite one that already exists there. The second step is the
 promotion above, `git mv` into `docs/features/<slug>/design.md`, unchanged and
 unaware of whether the file it moves came from a human or a run.
+
+**Features from an approved design split take the same two steps, plus one
+trim.** An approved split (section 12) stores one proposal per feature. These
+are the only proposals created by an operator's answer rather than a
+reconciliation decision. Each takes the `blocking_dependency` route that
+`upstream_blocking` derives, and cites the split evidence. `bw proposal-export
+--name <slug>` writes one under `docs/proposals/`; `status` suggests that name
+for each feature. The operator keeps only the text between its `## Problem` and
+`## Why this is upstream` headings, which
+carries its own second-level headings unchanged, moves it to
+`docs/features/<slug>/design.md`, and `git add`s it. The export is untracked, so
+`git mv` refuses it. The original design stays committed, because every
+feature's design names it.
+
+**`new-run --after <run-id>` binds a feature to the one before it.** Before the
+run row exists, intake reads the earlier run through the same verified snapshot
+`status` uses. It refuses unless that run belongs to the same project, is
+completed, its delivery record verifies, and its delivered commit is an ancestor
+of the new run's starting commit. The operator therefore merges the earlier feature's branch, never by
+squash, and commits before starting the next. The earlier run's ID and
+delivered commit are frozen into the new run's profile and recorded in the
+audit. Guided mode does not offer the option, and nothing requires it.
 
 **Active work.** One directory per unit of work:
 
@@ -1442,10 +1576,12 @@ price.
   accept.
 - **Code-review panel rounds.** A separate total panel-execution budget,
   default two and configurable from one through five, frozen in the profile
-  independently of panel size. Findings on a non-final panel trigger one patch
-  proposal and verification before another full panel; the final panel is the
-  severity gate and never triggers an unreviewed patch. A breach blocks rather
-  than silently accepting or dispatching beyond the frozen budget.
+  independently of panel size. Findings on a non-final panel first pass the
+  code-review reconciler, whose call count is its own frozen limit of two or
+  three; the findings it keeps trigger one patch proposal and verification
+  before another full panel. The final panel is the severity gate and never
+  triggers an unreviewed patch. A breach blocks rather than silently accepting
+  or dispatching beyond the frozen budget.
 - **Implementation phases.** Ten plan task items per phase and at most eight
   phases, both frozen in the profile with the rest of policy. A plan that needs
   more phases than the ceiling refuses by name before the first implementer
@@ -1491,7 +1627,7 @@ block.
 
 ## 22. Known hazards
 
-`docs/hazards.md` states twenty-one failure modes this kind of system is subject
+`docs/hazards.md` states twenty-two failure modes this kind of system is subject
 to and what each requires. They are requirements, not an appendix: model output
 in shapes the schema refuses, discarded output being undiagnosable, constrained
 fields whose constraint the prompt never states, fixtures and code agreeing
@@ -1505,8 +1641,9 @@ a remediation loop aimed at the wrong artifact that cannot repair an upstream
 omission, a reconciliation that answers a finding by deleting the obligation,
 a delivery proven complete that nothing ever read, an inactivity budget
 that a non-streaming executor turns into a wall clock, an implementation
-request larger than one implementer dispatch can answer, and agents never told
-the verification commands that will judge their work.
+request larger than one implementer dispatch can answer, agents never told
+the verification commands that will judge their work, and a clean-tree guard
+that counts ignored files after a stage that writes them.
 
 When a new failure mode is found, add it there rather than here. Two lists drift
 apart, and the one that drifts is the one people stop trusting.

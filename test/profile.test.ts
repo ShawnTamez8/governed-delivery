@@ -192,6 +192,7 @@ function seededFor(runModel: string) {
     "plan-author": { model: "claude-opus-5-5", effort: "high" },
     implementer: { model: SONNET, effort: "medium" },
     reconciler: { model: runModel, effort: "medium" },
+    "code-review-reconciler": { model: HAIKU, effort: "medium" },
     "spec-reviewer-traceability": { model: HAIKU, effort: "medium" },
     "spec-reviewer-security": { model: HAIKU, effort: "medium" },
     "spec-reviewer-consistency": { model: HAIKU, effort: "medium" },
@@ -201,7 +202,7 @@ function seededFor(runModel: string) {
   };
 }
 
-test("with no overrides the profile freezes all ten settings at their seeded defaults", () => {
+test("with no overrides the profile freezes all eleven settings at their seeded defaults", () => {
   withRoot((root) => {
     const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION);
     assert.deepEqual(profile.dispatchSettings, seededFor("chosen-model"));
@@ -281,6 +282,29 @@ test("a run-wide effort never reaches a reviewer", () => {
   });
 });
 
+test("a run-wide effort never reaches the code-review reconciler", () => {
+  // It was measured only at its seeded medium (the run 6 replays), so like a
+  // reviewer it moves only through its own --effort-for.
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, {}, {
+      effort: "xhigh",
+    });
+    assert.deepEqual(profile.dispatchSettings["code-review-reconciler"], { model: HAIKU, effort: "medium" });
+  });
+});
+
+test("the code-review reconciler's own model-for and effort-for reach it and nothing else", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, {}, {
+      modelFor: { "code-review-reconciler": "recon-model" },
+      effortFor: { "code-review-reconciler": "low" },
+    });
+    const expected = seededFor("chosen-model");
+    expected["code-review-reconciler"] = { model: "recon-model", effort: "low" };
+    assert.deepEqual(profile.dispatchSettings, expected);
+  });
+});
+
 test("an explicit effortFor can raise one reviewer to max and leaves the other five alone", () => {
   withRoot((root) => {
     const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, {}, {
@@ -317,10 +341,10 @@ test("an invalid level, invalid model, unknown setting, or agent with no default
   });
 });
 
-test("the shared stage-test helper freezes all ten settings at the model passed and medium", () => {
+test("the shared stage-test helper freezes all eleven settings at the model passed and medium", () => {
   withRoot((root) => {
     const { profile } = freezeUniformProfile(root, 1, COMMIT, "m", VERIFICATION);
-    assert.equal(Object.keys(profile.dispatchSettings).length, 10);
+    assert.equal(Object.keys(profile.dispatchSettings).length, 11);
     for (const [name, setting] of Object.entries(profile.dispatchSettings)) {
       assert.deepEqual(setting, { model: "m", effort: "medium" }, name);
     }
@@ -383,6 +407,10 @@ test("a profile whose dispatchSettings lacks an entry or holds a bad value is re
       return { ...profile, dispatchSettings: kept };
     };
     assert.match(String(invalidProfileReason(without("reconciler"))), /no entry for reconciler/);
+    assert.match(
+      String(invalidProfileReason(without("code-review-reconciler"))),
+      /no entry for code-review-reconciler/
+    );
     assert.match(String(invalidProfileReason(without("implementer"))), /no entry for implementer/);
     assert.match(
       String(
@@ -565,6 +593,32 @@ test("a profile predating approvalSigner is refused, while a frozen null is hono
     // Absent is an obsolete shape.
     const { approvalSigner, ...without } = profile;
     assert.match(String(invalidProfileReason(without)), /carries no approvalSigner/);
+  });
+});
+
+test("a profile predating after is refused, and after is null or exactly a run id and a full commit", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    assert.equal(profile.after, null, "a run that follows nothing freezes null");
+    const { after, ...without } = profile;
+    assert.match(String(invalidProfileReason(without)), /carries no after: it predates the field/);
+    const linked = freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION, {}, {}, { runId: 1, deliveredCommit: COMMIT }).profile;
+    assert.deepEqual(linked.after, { runId: 1, deliveredCommit: COMMIT });
+    assert.equal(invalidProfileReason(linked), null);
+    for (const bad of [
+      { runId: 0, deliveredCommit: COMMIT },
+      { runId: 1, deliveredCommit: "b".repeat(39) },
+      { runId: 1 },
+      { runId: 1, deliveredCommit: COMMIT, slug: "demo" },
+      [1, COMMIT],
+      1,
+    ]) {
+      assert.match(
+        String(invalidProfileReason({ ...profile, after: bad })),
+        /the frozen profile after must be null or \{ runId, deliveredCommit \}/,
+        JSON.stringify(bad)
+      );
+    }
   });
 });
 

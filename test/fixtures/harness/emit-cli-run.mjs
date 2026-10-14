@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   CODE_REVIEW_PROMPT_PREFIX,
+  CODE_REVIEW_RECONCILER_PROMPT_PREFIX,
   CODE_REVIEW_REMEDIATION_PROMPT_PREFIX,
+  DESIGN_SPLIT_PROMPT_PREFIX,
   IMPLEMENTATION_PROMPT_PREFIX,
   PLAN_AUTHOR_PROMPT_PREFIX,
   PLAN_REVIEW_PROMPT_PREFIX,
@@ -19,6 +21,8 @@ export const PROMPT_ROUTES = [
   { name: "IMPLEMENTATION_PROMPT_PREFIX", prefix: IMPLEMENTATION_PROMPT_PREFIX, emitter: "emit-implementation-stage.mjs" },
   { name: "CODE_REVIEW_PROMPT_PREFIX", prefix: CODE_REVIEW_PROMPT_PREFIX, emitter: "emit-code-review.mjs" },
   { name: "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", prefix: CODE_REVIEW_REMEDIATION_PROMPT_PREFIX, emitter: "emit-code-review.mjs" },
+  { name: "CODE_REVIEW_RECONCILER_PROMPT_PREFIX", prefix: CODE_REVIEW_RECONCILER_PROMPT_PREFIX, emitter: "emit-code-review.mjs" },
+  { name: "DESIGN_SPLIT_PROMPT_PREFIX", prefix: DESIGN_SPLIT_PROMPT_PREFIX, emitter: "emit-spec-stage.mjs" },
 ];
 
 export function selectPromptRoute(prompt) {

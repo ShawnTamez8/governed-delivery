@@ -9,6 +9,11 @@ import { readFileSync } from "node:fs";
 // because parseEnvelope reads the envelope's `result` field.
 const stdin = readFileSync(0, "utf8");
 
+// FIXTURE-REPORT-CWD anywhere in the prompt: report the directory the stage
+// started this process in. It goes to stderr, which `dispatchOnce` retains as
+// its own raw file, so every other test's retained output is unchanged.
+if (stdin.includes("FIXTURE-REPORT-CWD")) process.stderr.write(`cwd=${process.cwd()}\n`);
+
 const BASE_SPEC = `feature: demo
 change_kind: feature
 
@@ -33,7 +38,15 @@ change_kind: feature
 - AC-001: the thing works
 `;
 
-const REVISED_SPEC = BASE_SPEC.replace("the thing works", "the thing works REVISED-spec");
+// FIXTURE-SPLIT-CRITERIA in the design: the spec carries two more criteria after
+// AC-001, so a design split has criteria to divide among its pieces. Every spec
+// this fixture writes carries them, so the reconciled revision keeps them too.
+const SPLIT_CRITERIA = "- AC-002: the second thing works\n- AC-003: the third thing works\n";
+function withSplitCriteria(spec) {
+  return stdin.includes("FIXTURE-SPLIT-CRITERIA") ? spec.replace(/(- AC-001: .*\n)/, `$1${SPLIT_CRITERIA}`) : spec;
+}
+
+const REVISED_SPEC = withSplitCriteria(BASE_SPEC.replace("the thing works", "the thing works REVISED-spec"));
 
 // Used by a scratch copy in test/spec-stage.test.ts (the env-var route cannot
 // work: envPassthrough keeps it out of the spawned child).
@@ -69,7 +82,8 @@ change_kind: feature
 // reduced: init, one partial-message chunk, the assistant message, and the
 // result line last. `test/harness-stream-fixtures.test.ts` checks the shape.
 function emit(agentResult) {
-  const resultText = JSON.stringify(agentResult);
+  // A string is sent as the reply text itself, for a reply that is not JSON.
+  const resultText = typeof agentResult === "string" ? agentResult : JSON.stringify(agentResult);
   const session_id = "fixture-session";
   for (const line of [
     { type: "system", subtype: "init", session_id, model: "fixture-model" },
@@ -108,11 +122,12 @@ function authoredSpec() {
   // routes on, because every prompt that carries the specification is routed
   // by a substring check over the whole of it.
   if (stdin.includes("FIXTURE-DISCLOSE-VERIFICATION-OD")) {
-    return `${BASE_SPEC}\n## Open decisions\n\n- OD-001 (high): Verification: what does npm run build require, and which declared artifact paths does that need?\n`;
+    return withSplitCriteria(`${BASE_SPEC}\n## Open decisions\n\n- OD-001 (high): Verification: what does npm run build require, and which declared artifact paths does that need?\n`);
   }
   if (stdin.includes("FIXTURE-DISCLOSE-OD")) {
-    return `${BASE_SPEC}\n## Open decisions\n\n- OD-001 (high): who may download the export archive\n`;
+    return withSplitCriteria(`${BASE_SPEC}\n## Open decisions\n\n- OD-001 (high): who may download the export archive\n`);
   }
+  if (stdin.includes("FIXTURE-SPLIT-CRITERIA")) return withSplitCriteria(BASE_SPEC);
   return BASE_SPEC;
 }
 
@@ -329,13 +344,51 @@ function fold() {
   });
 }
 
+// The design split (docs/features/design-split-into-features/plan.md). The
+// pieces are derived from the reviewed specification in the prompt: its
+// criteria and its declared files in two contiguous halves, the second piece
+// building on the first, the rule `derivedSplit` in test/design-split.test.ts
+// applies. Nothing here is a written answer (hazard 4). The slugs extend the
+// first forbidden slug the prompt lists, which is the run's own. A
+// FIXTURE-SPLIT-* marker in the design breaks one rule for a refusal test.
+function split() {
+  const spec = stdin.slice(stdin.lastIndexOf("The reviewed specification to divide:"));
+  const section = (heading) => (spec.split(`## ${heading}`)[1] ?? "").split("\n## ")[0];
+  const criteria = [...section("Acceptance criteria").matchAll(/^- (AC-\d+):/gm)].map((m) => m[1]);
+  const files = [...section("Declared artifacts").matchAll(/^- (\S+)\s*$/gm)].map((m) => m[1]);
+  const runSlug = /none of these slugs already in use: ([a-z0-9-]+)/.exec(stdin)?.[1] ?? "fixture";
+  const cut = (list) => Math.ceil(list.length / 2);
+  const pieces = [
+    { slug: `${runSlug}-part-1`, title: "The first part", criteria: criteria.slice(0, cut(criteria)), declaredArtifacts: files.slice(0, cut(files)), dependsOn: [] },
+    { slug: `${runSlug}-part-2`, title: "The second part", criteria: criteria.slice(cut(criteria)), declaredArtifacts: files.slice(cut(files)), dependsOn: [1] },
+  ];
+  if (stdin.includes("FIXTURE-SPLIT-DROP-CRITERION")) pieces[0].criteria.pop();
+  if (stdin.includes("FIXTURE-SPLIT-BACKWARD")) pieces[0].dependsOn = [2];
+  if (stdin.includes("FIXTURE-SPLIT-NOT-JSON")) {
+    emit("The design divides into two parts.");
+    return;
+  }
+  emit({
+    status: "proposed",
+    agent: "spec-author",
+    role: "author",
+    executor: "claude-code",
+    summary: "fixture split",
+    proposedContentChanges: { split: { pieces, rationale: "the second part builds on the first part's files" } },
+  });
+}
+
+// The split is checked first: its prompt carries the reviewed specification,
+// and that text is routing input for every check below it.
 // Checked before the author branch: the self-critique prompt carries the
 // author's role line too, so an author branch tested first would answer it
 // with a draft and the stage would refuse the missing selfCritique payload.
 // The reconcile branch is checked after the reviewer branch and before the
 // author branch: its prompt carries the author's role line as well, and only
 // the "reconcile" word distinguishes it.
-if (stdin.includes("self-critique")) {
+if (stdin.startsWith("you are dividing a reviewed specification into separately built features")) {
+  split();
+} else if (stdin.includes("self-critique")) {
   emit({
     status: "proposed",
     agent: "spec-author",
@@ -370,6 +423,18 @@ if (stdin.includes("self-critique")) {
           subject: "artifact list could be grouped",
         },
       ];
+  // FIXTURE-REVIEWER-SPLIT-INTENT in the design: the first finding becomes a
+  // reviewer's own "split this design" concern, reported with the split's
+  // intent key at the upstream token a reviewer may use.
+  if (findings.length > 0 && stdin.includes("FIXTURE-REVIEWER-SPLIT-INTENT")) {
+    findings[0] = {
+      location: "upstream:design:split",
+      intentKey: "design-split",
+      severity: "high",
+      classification: "upstream",
+      subject: "the design is large enough to split",
+    };
+  }
   emit({
     status: "proposed",
     agent: agentId,

@@ -12,6 +12,11 @@ import { readFileSync } from "node:fs";
 // which is the failure mode hazard 4 names.
 const stdin = readFileSync(0, "utf8");
 
+// FIXTURE-REPORT-CWD anywhere in the prompt: report the directory the stage
+// started this process in. It goes to stderr, which `dispatchOnce` retains as
+// its own raw file, so every other test's retained output is unchanged.
+if (stdin.includes("FIXTURE-REPORT-CWD")) process.stderr.write(`cwd=${process.cwd()}\n`);
+
 // `plan_for must be exactly: <64 hex>` — stated by buildPlanAuthorPrompt,
 // buildPlanSelfCritiquePrompt, and buildPlanReconcilePrompt alike.
 const specHash = /plan_for must be exactly: ([0-9a-f]{64})/.exec(stdin)?.[1] ?? "0".repeat(64);

@@ -1,0 +1,1170 @@
+{
+  "provenance": {
+    "what": "Test 5 of the candidate code-review reconciler (not built), operator-approved 2026-10-13 (\"Lets run test 5\"; stated estimate about $0.15, hard cap $0.20). Same prompt template as calls rec-2 to rec-10 of code-review-reconciler-replay-crew-chatter-run-6.json (checked identical by diff), Haiku 5.5, medium effort, BuildWorks executor flags unchanged.",
+    "whyTheseSets": "No other recorded run kept its spec, diff and code: the live stores hold code-review findings only for crew-chatter run 6, and the web-calculator code-review fixtures hold reviewer envelopes without spec or diff (their targets were on another machine). So both sets use run 6's spec; neither tests a second project.",
+    "set5a": "Run 6 round-2 findings 208-214 as stored, code at ca0bd0e6 (a clone), diff 01f9a111..ca0bd0e6. Labels fixed before any call: keep 208, 209, 210, 211, 212; either 213, 214. 211 is a real lost-edit defect inside session-invalidation code the spec never asked for.",
+    "set5b": "Six distinct findings the security-reviewer replay produced that run 6 did not report (findingIds 901-906 assigned here; each record names its source call), code at bb7f3f67. Labels fixed before any call: keep 901, 904 (NUL email gives 500, AC-075), 906 (draft sent under the next account); reject 905 (no server-side revocation; baseline \"Sign-out clears the cookie.\"); either 902, 903.",
+    "result": "5a: 10 of 10 calls passed; every keep-labelled finding kept in every call (211 with basis data-loss 9 times, AC-019 once); 213 rejected 3 times and 214 once (allowed), one 213 rejection quoting a spec sentence about password reset that does not support it, and one 214 rejection whose quote was not in the spec (the check caught it). 5b: 7 of 10 passed; 905 rejected 7 times (quotes \"Sign-out clears the cookie.\"), kept 3 times as unauthorized-access; 906 wrongly rejected once, with a valid but irrelevant quote of AC-018's leave-page text; 901, 902, 903, 904 always kept.",
+    "captured": "2026-10-13",
+    "totalCost": 0.07176457000000001,
+    "dropped": "Raw stream-json outputs and the two prompt texts (128,460 and 122,407 bytes; kept in the session scratchpad only). Each record keeps label, cost, exit code, duration, check problems, the verdict against the labels, and the decisions unabridged."
+  },
+  "sets": {
+    "5a": {
+      "head": "ca0bd0e6961a7f08e79a8ce2ad9043faf14ff704",
+      "cwd": "cc6r2",
+      "labels": {
+        "keep": [
+          208,
+          209,
+          210,
+          211,
+          212
+        ],
+        "reject": [],
+        "either": [
+          213,
+          214
+        ]
+      },
+      "findings": [
+        {
+          "findingId": 208,
+          "location": "frontend/src/lib/useAutosave.ts",
+          "intentKey": "autosave-latest-draft-deferred-behind-inflight-save",
+          "reports": [
+            {
+              "reviewer": "code-reviewer-correctness",
+              "severity": "high",
+              "subject": "When a save request is still in flight, flush() returns the running drain loop instead of sending the newer draft, so an edit made 750 ms after the last keystroke waits for the slow earlier response and can be sent more than 1,000 ms after the last keystroke, violating AC-015 and the plan's rule that a send is never deferred behind an earlier request."
+            }
+          ]
+        },
+        {
+          "findingId": 209,
+          "location": "backend/src/features/auth/service.ts:24",
+          "intentKey": "email-nul-byte-validation-bypass",
+          "reports": [
+            {
+              "reviewer": "code-reviewer-security",
+              "severity": "high",
+              "subject": "validateEmail's regex lets U+0000 through, so a request such as POST /api/auth/register with an email containing a NUL byte reaches Postgres, which rejects the text parameter, and the client gets a generic HTTP 500 instead of a 400 naming the email field, failing AC-075."
+            }
+          ]
+        },
+        {
+          "findingId": 210,
+          "location": "frontend/src/lib/useAutosave.ts:181",
+          "intentKey": "autosave-latest-edit-deferred-behind-inflight-save",
+          "reports": [
+            {
+              "reviewer": "code-reviewer-state-integrity",
+              "severity": "high",
+              "subject": "When a save request is still in flight, flush() returns the running drain instead of sending the newer draft, so the latest edit is held until the earlier request settles (up to the 15 s api timeout), which violates AC-015's requirement to send the latest content within 1,000 ms of the last keystroke."
+            }
+          ]
+        },
+        {
+          "findingId": 211,
+          "location": "frontend/src/lib/useAutosave.ts:141",
+          "intentKey": "unauthorized-save-drops-unsaved-edit",
+          "reports": [
+            {
+              "reviewer": "code-reviewer-state-integrity",
+              "severity": "high",
+              "subject": "When a PATCH returns 401 (for example after a password reset invalidates the session), the hook only sets an error status and never routes the user back to sign-in, so switching notes discards the unsent edit while the user is still shown an editor."
+            }
+          ]
+        },
+        {
+          "findingId": 212,
+          "location": "frontend/src/lib/useAutosave.ts:147",
+          "intentKey": "queued-draft-never-retried-after-server-error",
+          "reports": [
+            {
+              "reviewer": "code-reviewer-state-integrity",
+              "severity": "medium",
+              "subject": "A non-offline save failure (for example a 500) during unmount is queued, but the queue is only retried on a browser 'online' event that never fires while the browser stays online, so the draft stays unsent and is lost on reload."
+            }
+          ]
+        },
+        {
+          "findingId": 213,
+          "location": "backend/src/features/auth/service.ts",
+          "intentKey": "rollback-error-masks-original-failure",
+          "reports": [
+            {
+              "reviewer": "code-reviewer-state-integrity",
+              "severity": "low",
+              "subject": "If ROLLBACK itself throws in resetPassword (for example after a dropped connection), the rollback error replaces the original error and the client is released to the pool without an error argument, so a broken connection can be reused by later requests."
+            }
+          ]
+        },
+        {
+          "findingId": 214,
+          "location": "backend/src/db/migrate.ts",
+          "intentKey": "rollback-error-masks-migration-failure",
+          "reports": [
+            {
+              "reviewer": "code-reviewer-state-integrity",
+              "severity": "low",
+              "subject": "If ROLLBACK throws after a failed migration statement, the rollback error replaces the original migration error and the client is released without an error argument, so startup diagnostics lose the real cause and a broken client can return to the pool."
+            }
+          ]
+        }
+      ]
+    },
+    "5b": {
+      "head": "bb7f3f673a3b4d452d07782c54f13881f281fbd5",
+      "cwd": "cc6",
+      "labels": {
+        "keep": [
+          901,
+          904,
+          906
+        ],
+        "reject": [
+          905
+        ],
+        "either": [
+          902,
+          903
+        ]
+      },
+      "findings": [
+        {
+          "findingId": 901,
+          "location": "backend/src/features/auth/service.ts",
+          "intentKey": "unvalidated-nul-in-email-address",
+          "reports": [
+            {
+              "reviewer": "code-reviewer-security",
+              "severity": "high",
+              "subject": "validateEmail accepts a NUL character or lone surrogate inside the address (the regex only excludes whitespace and @), so register or sign-in sends it to PostgreSQL, which rejects the query, and the client receives HTTP 500 instead of the HTTP 400 field error that AC-075 requires."
+            }
+          ],
+          "from": "control-4#1"
+        },
+        {
+          "findingId": 902,
+          "location": "backend/src/features/auth/service.ts:19",
+          "intentKey": "email-validation-allows-control-characters",
+          "reports": [
+            {
+              "reviewer": "code-reviewer-security",
+              "severity": "low",
+              "subject": "validateEmail's regex only excludes whitespace, so an email containing ASCII control characters such as ESC (\\u001b) is accepted and is then written verbatim to the server log by requestPasswordReset, allowing terminal escape sequences to be injected into log output."
+            }
+          ],
+          "from": "control-3#2"
+        },
+        {
+          "findingId": 903,
+          "location": "backend/src/features/notes/routes.ts",
+          "intentKey": "unvalidated-link-href-scheme-stored",
+          "reports": [
+            {
+              "reviewer": "code-reviewer-security",
+              "severity": "low",
+              "subject": "PATCH /api/notes/:id accepts any link mark href, including javascript: URLs, because only the doc shape is checked, so a crafted body is stored and later loaded unfiltered into the editor, bypassing the protocol allow-list that only the toolbar enforces."
+            }
+          ],
+          "from": "control-8#1"
+        },
+        {
+          "findingId": 904,
+          "location": "backend/src/features/auth/service.ts:94",
+          "intentKey": "unvalidated-email-reaches-db-query",
+          "reports": [
+            {
+              "reviewer": "code-reviewer-security",
+              "severity": "low",
+              "subject": "authenticate() does not validate the email, so a sign-in email containing U+0000 reaches the Postgres text query, raises a database error, and returns a generic HTTP 500 instead of the documented 401 or 400 response."
+            }
+          ],
+          "from": "control-6#2"
+        },
+        {
+          "findingId": 905,
+          "location": "backend/src/lib/auth.ts",
+          "intentKey": "session-token-not-revoked-on-reset-or-signout",
+          "reports": [
+            {
+              "reviewer": "code-reviewer-security",
+              "severity": "medium",
+              "subject": "Session JWTs have no server-side revocation or password-version check, so a session copied before sign-out or before a password reset stays valid for up to 7 days and keeps access to the account after the owner resets the password."
+            }
+          ],
+          "from": "control-10#2"
+        },
+        {
+          "findingId": 906,
+          "location": "frontend/src/lib/useAutosave.ts",
+          "intentKey": "queued-draft-survives-session-expiry",
+          "reports": [
+            {
+              "reviewer": "code-reviewer-security",
+              "severity": "low",
+              "subject": "The module-level offline draft queue and store selectedNoteId are not cleared on a 401 session expiry, so a draft for the previous account's note is sent under the next account's cookie, rejected with 404, and never saved while the beforeunload prompt stays active."
+            }
+          ],
+          "from": "b-2#1"
+        }
+      ]
+    }
+  },
+  "calls": [
+    {
+      "label": "5a-1",
+      "cost": 0.012897780000000001,
+      "exitCode": 0,
+      "durationMs": 19617,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 208,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 209,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 210,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 211,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 212,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 213,
+          "disposition": "keep",
+          "basis": "plan task: Add password reset to `backend/src/features/auth/service.ts`"
+        },
+        {
+          "findingId": 214,
+          "disposition": "keep",
+          "basis": "plan task: Create `backend/src/db/migrate.ts` exporting `runMigrations()`. Inside"
+        }
+      ]
+    },
+    {
+      "label": "5a-2",
+      "cost": 0.0030658800000000004,
+      "exitCode": 0,
+      "durationMs": 58722,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 208,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 209,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 210,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 211,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 212,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 213,
+          "disposition": "reject",
+          "rationale": "The reset still either commits the new hash or leaves the old one in place, and the client receives a generic 500, so the masked rollback error does not change the specified outcome; pool hygiene after a dropped connection is beyond the spec's stated baseline.",
+          "excerpt": "A successful reset replaces the password hash, so the old password no longer signs in."
+        },
+        {
+          "findingId": 214,
+          "disposition": "keep",
+          "basis": "plan task: Create `backend/src/db/migrate.ts` exporting `runMigrations()`. Inside"
+        }
+      ]
+    },
+    {
+      "label": "5a-3",
+      "cost": 0.0030548800000000003,
+      "exitCode": 0,
+      "durationMs": 23756,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 208,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 209,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 210,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 211,
+          "disposition": "keep",
+          "basis": "AC-019"
+        },
+        {
+          "findingId": 212,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 213,
+          "disposition": "keep",
+          "basis": "plan task: Add password reset to `backend/src/features/auth/service.ts`."
+        },
+        {
+          "findingId": 214,
+          "disposition": "keep",
+          "basis": "plan task: Create `backend/src/db/migrate.ts` exporting `runMigrations()`. Inside"
+        }
+      ]
+    },
+    {
+      "label": "5a-4",
+      "cost": 0.00201238,
+      "exitCode": 0,
+      "durationMs": 14059,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 208,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 209,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 210,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 211,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 212,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 213,
+          "disposition": "keep",
+          "basis": "plan task: Add password reset to `backend/src/features/auth/service.ts`."
+        },
+        {
+          "findingId": 214,
+          "disposition": "keep",
+          "basis": "plan task: Create `backend/src/db/migrate.ts` exporting `runMigrations()`. Inside"
+        }
+      ]
+    },
+    {
+      "label": "5a-5",
+      "cost": 0.00182488,
+      "exitCode": 0,
+      "durationMs": 12210,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 208,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 209,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 210,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 211,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 212,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 213,
+          "disposition": "keep",
+          "basis": "plan task: Add password reset to `backend/src/features/auth/service.ts`."
+        },
+        {
+          "findingId": 214,
+          "disposition": "keep",
+          "basis": "plan task: Create `backend/src/db/migrate.ts` exporting"
+        }
+      ]
+    },
+    {
+      "label": "5a-6",
+      "cost": 0.00258388,
+      "exitCode": 0,
+      "durationMs": 17959,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 208,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 209,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 210,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 211,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 212,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 213,
+          "disposition": "keep",
+          "basis": "plan task: Add password reset to `backend/src/features/auth/service.ts`."
+        },
+        {
+          "findingId": 214,
+          "disposition": "keep",
+          "basis": "plan task: Create `backend/src/db/migrate.ts` exporting `runMigrations()`. Inside"
+        }
+      ]
+    },
+    {
+      "label": "5a-7",
+      "cost": 0.0020048799999999997,
+      "exitCode": 0,
+      "durationMs": 14965,
+      "problems": [
+        "finding 214 reject excerpt not in spec"
+      ],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 208,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 209,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 210,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 211,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 212,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 213,
+          "disposition": "reject",
+          "rationale": "The request is for rollback-error diagnostics and pool-connection hygiene beyond the spec, which already fixes the client-facing behavior for unexpected errors as a generic 500 with server-side logging.",
+          "excerpt": "Any other error is logged on the server only. The client receives HTTP 500 with a fixed generic message."
+        },
+        {
+          "findingId": 214,
+          "disposition": "reject",
+          "rationale": "The spec requires only that a failed migration rolls back, and the code does roll back; preserving the original error in startup diagnostics is beyond the spec.",
+          "excerpt": "If any statement fails, the transaction rolls back."
+        }
+      ]
+    },
+    {
+      "label": "5a-8",
+      "cost": 0.00218438,
+      "exitCode": 0,
+      "durationMs": 15487,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 208,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 209,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 210,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 211,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 212,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 213,
+          "disposition": "keep",
+          "basis": "plan task: Add password reset to `backend/src/features/auth/service.ts`."
+        },
+        {
+          "findingId": 214,
+          "disposition": "keep",
+          "basis": "plan task: Create `backend/src/db/migrate.ts` exporting `runMigrations()`. Inside"
+        }
+      ]
+    },
+    {
+      "label": "5a-9",
+      "cost": 0.00282188,
+      "exitCode": 0,
+      "durationMs": 22258,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 208,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 209,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 210,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 211,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 212,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 213,
+          "disposition": "reject",
+          "rationale": "The client-facing error behavior already matches the specification's error policy, and the connection-release detail goes beyond what the specification states.",
+          "excerpt": "Any other error is logged on the server only. The client receives HTTP 500 with a fixed generic message."
+        },
+        {
+          "findingId": 214,
+          "disposition": "keep",
+          "basis": "plan task: Create `backend/src/db/migrate.ts` exporting `runMigrations()`. Inside"
+        }
+      ]
+    },
+    {
+      "label": "5a-10",
+      "cost": 0.00224338,
+      "exitCode": 0,
+      "durationMs": 16838,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 208,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 209,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 210,
+          "disposition": "keep",
+          "basis": "AC-015"
+        },
+        {
+          "findingId": 211,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 212,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 213,
+          "disposition": "keep",
+          "basis": "plan task: Add password reset to `backend/src/features/auth/service.ts`."
+        },
+        {
+          "findingId": 214,
+          "disposition": "keep",
+          "basis": "plan task: Create `backend/src/db/migrate.ts` exporting `runMigrations()`. Inside"
+        }
+      ]
+    },
+    {
+      "label": "5b-1",
+      "cost": 0.01264788,
+      "exitCode": 0,
+      "durationMs": 24314,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [
+          905
+        ],
+        "pass": false
+      },
+      "decisions": [
+        {
+          "findingId": 901,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 902,
+          "disposition": "keep",
+          "basis": "plan task: Create the account functions in"
+        },
+        {
+          "findingId": 903,
+          "disposition": "keep",
+          "basis": "plan task: Create `backend/src/features/notes/routes.ts`: a"
+        },
+        {
+          "findingId": 904,
+          "disposition": "keep",
+          "basis": "crash"
+        },
+        {
+          "findingId": 905,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 906,
+          "disposition": "keep",
+          "basis": "data-loss"
+        }
+      ]
+    },
+    {
+      "label": "5b-2",
+      "cost": 0.00265711,
+      "exitCode": 0,
+      "durationMs": 21433,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 901,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 902,
+          "disposition": "keep",
+          "basis": "wrong-result"
+        },
+        {
+          "findingId": 903,
+          "disposition": "keep",
+          "basis": "AC-012"
+        },
+        {
+          "findingId": 904,
+          "disposition": "keep",
+          "basis": "crash"
+        },
+        {
+          "findingId": 905,
+          "disposition": "reject",
+          "rationale": "The spec's stated session baseline is cookie clearing at sign-out, and AC-004 scopes the 401 requirement to requests from that browser, so server-side revocation and reset-time session invalidation go beyond what the spec asks for.",
+          "excerpt": "Sign-out clears the cookie."
+        },
+        {
+          "findingId": 906,
+          "disposition": "keep",
+          "basis": "data-loss"
+        }
+      ]
+    },
+    {
+      "label": "5b-3",
+      "cost": 0.00282811,
+      "exitCode": 0,
+      "durationMs": 23116,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [
+          906
+        ],
+        "missedRejects": [],
+        "pass": false
+      },
+      "decisions": [
+        {
+          "findingId": 901,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 902,
+          "disposition": "keep",
+          "basis": "plan task: Create the account functions in"
+        },
+        {
+          "findingId": 903,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 904,
+          "disposition": "keep",
+          "basis": "crash"
+        },
+        {
+          "findingId": 905,
+          "disposition": "reject",
+          "rationale": "The specification defines the session as a cookie that sign-out clears and sets no server-side revocation or password-version requirement, so copied-token revocation is policy beyond the specified baseline.",
+          "excerpt": "Sign-out clears the cookie."
+        },
+        {
+          "findingId": 906,
+          "disposition": "reject",
+          "rationale": "Keeping the leave-page prompt while an unsaved edit remains is the specified behavior, and the queued draft is retried on the next online event rather than dropped, so clearing it on a 401 is beyond the specification.",
+          "excerpt": "While an edit is unsaved or a save request is pending, closing or reloading the browser tab triggers the browser's leave-page confirmation prompt."
+        }
+      ]
+    },
+    {
+      "label": "5b-4",
+      "cost": 0.00238911,
+      "exitCode": 0,
+      "durationMs": 18456,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 901,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 902,
+          "disposition": "keep",
+          "basis": "wrong-result"
+        },
+        {
+          "findingId": 903,
+          "disposition": "keep",
+          "basis": "wrong-result"
+        },
+        {
+          "findingId": 904,
+          "disposition": "keep",
+          "basis": "crash"
+        },
+        {
+          "findingId": 905,
+          "disposition": "reject",
+          "rationale": "The specification defines the session model as a cookie cleared at sign-out, and the reset requirement is met by replacing the password hash, so server-side token revocation is beyond the approved baseline.",
+          "excerpt": "The session is a signed JWT in an httpOnly cookie. Sign-out clears the cookie."
+        },
+        {
+          "findingId": 906,
+          "disposition": "keep",
+          "basis": "data-loss"
+        }
+      ]
+    },
+    {
+      "label": "5b-5",
+      "cost": 0.00297311,
+      "exitCode": 0,
+      "durationMs": 24521,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 901,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 902,
+          "disposition": "keep",
+          "basis": "plan task: Create the account functions in"
+        },
+        {
+          "findingId": 903,
+          "disposition": "keep",
+          "basis": "plan task: Create `frontend/src/features/notes/EditorToolbar.tsx`. It takes the"
+        },
+        {
+          "findingId": 904,
+          "disposition": "keep",
+          "basis": "crash"
+        },
+        {
+          "findingId": 905,
+          "disposition": "reject",
+          "rationale": "The specification's only sign-out requirement is cookie clearing, which the diff implements and AC-004 verifies, and it does not require server-side revocation of session tokens on sign-out or password reset.",
+          "excerpt": "Sign-out clears the cookie."
+        },
+        {
+          "findingId": 906,
+          "disposition": "keep",
+          "basis": "data-loss"
+        }
+      ]
+    },
+    {
+      "label": "5b-6",
+      "cost": 0.00248511,
+      "exitCode": 0,
+      "durationMs": 19752,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [
+          905
+        ],
+        "pass": false
+      },
+      "decisions": [
+        {
+          "findingId": 901,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 902,
+          "disposition": "keep",
+          "basis": "plan task: Create the account functions in"
+        },
+        {
+          "findingId": 903,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 904,
+          "disposition": "keep",
+          "basis": "crash"
+        },
+        {
+          "findingId": 905,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 906,
+          "disposition": "keep",
+          "basis": "plan task: Add offline handling to"
+        }
+      ]
+    },
+    {
+      "label": "5b-7",
+      "cost": 0.00362361,
+      "exitCode": 0,
+      "durationMs": 28832,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 901,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 902,
+          "disposition": "keep",
+          "basis": "plan task: Create the account functions in"
+        },
+        {
+          "findingId": 903,
+          "disposition": "keep",
+          "basis": "plan task: Create `frontend/src/features/notes/EditorToolbar.tsx`. It takes the"
+        },
+        {
+          "findingId": 904,
+          "disposition": "keep",
+          "basis": "crash"
+        },
+        {
+          "findingId": 905,
+          "disposition": "reject",
+          "rationale": "The specification sets the sign-out baseline as clearing the cookie and the reset baseline as replacing the password hash, and it does not require server-side session revocation.",
+          "excerpt": "Sign-out clears the cookie."
+        },
+        {
+          "findingId": 906,
+          "disposition": "keep",
+          "basis": "plan task: Add offline handling to `frontend/src/lib/useAutosave.ts`."
+        }
+      ]
+    },
+    {
+      "label": "5b-8",
+      "cost": 0.00254161,
+      "exitCode": 0,
+      "durationMs": 19320,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 901,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 902,
+          "disposition": "keep",
+          "basis": "plan task: Create the account functions in"
+        },
+        {
+          "findingId": 903,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 904,
+          "disposition": "keep",
+          "basis": "plan task: Create the account functions in"
+        },
+        {
+          "findingId": 905,
+          "disposition": "reject",
+          "rationale": "The specification defines sign-out as clearing the cookie and AC-004 requires only that API requests from that browser return HTTP 401, so server-side session revocation is beyond the stated baseline.",
+          "excerpt": "Sign-out clears the cookie."
+        },
+        {
+          "findingId": 906,
+          "disposition": "keep",
+          "basis": "data-loss"
+        }
+      ]
+    },
+    {
+      "label": "5b-9",
+      "cost": 0.00245961,
+      "exitCode": 0,
+      "durationMs": 18851,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [
+          905
+        ],
+        "pass": false
+      },
+      "decisions": [
+        {
+          "findingId": 901,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 902,
+          "disposition": "keep",
+          "basis": "plan task: Create the account functions in"
+        },
+        {
+          "findingId": 903,
+          "disposition": "keep",
+          "basis": "plan task: Create `backend/src/features/notes/routes.ts`: a Router that"
+        },
+        {
+          "findingId": 904,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 905,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 906,
+          "disposition": "keep",
+          "basis": "data-loss"
+        }
+      ]
+    },
+    {
+      "label": "5b-10",
+      "cost": 0.00246511,
+      "exitCode": 0,
+      "durationMs": 20127,
+      "problems": [],
+      "verdict": {
+        "wrongRejects": [],
+        "missedRejects": [],
+        "pass": true
+      },
+      "decisions": [
+        {
+          "findingId": 901,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 902,
+          "disposition": "keep",
+          "basis": "wrong-result"
+        },
+        {
+          "findingId": 903,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 904,
+          "disposition": "keep",
+          "basis": "crash"
+        },
+        {
+          "findingId": 905,
+          "disposition": "reject",
+          "rationale": "The specification defines sign-out as clearing the cookie and requires only that the old password stop signing in after a reset, so server-side session revocation is beyond its stated baseline.",
+          "excerpt": "Sign-out clears the cookie."
+        },
+        {
+          "findingId": 906,
+          "disposition": "keep",
+          "basis": "data-loss"
+        }
+      ]
+    }
+  ]
+}

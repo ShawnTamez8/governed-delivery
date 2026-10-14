@@ -39,10 +39,11 @@ stage or behaviour inherits either one.
 
 ## Code-review operating contract
 
-The implemented `code_review` loop has three independent release-policy knobs
+The implemented `code_review` loop has four independent release-policy knobs
 in `src/policy.ts`: `CODE_REVIEW_PANEL_SIZE` permits 2-5 reviewers and defaults
 to 3; `CODE_REVIEW_MAX_ROUNDS` permits 1-5 complete panel executions and
-defaults to 2; and `CODE_REVIEW_BLOCKING_SEVERITY` defaults to `high`. These
+defaults to 2; `CODE_REVIEW_BLOCKING_SEVERITY` defaults to `high`; and
+`CODE_REVIEW_RECONCILER_CALLS` permits 2-3 reconciler calls and defaults to 2. These
 values freeze at run start. Raising panel size also requires enough registered
 `code-findings` agents with distinct, non-empty specialist instructions; an
 unstaffable profile refuses before the run spends money. Before dispatching
@@ -61,15 +62,22 @@ sequential. An incomplete or integrity-failed panel blocks without a review
 record, remediation, or gate decision; clean valid sibling reports remain
 evidence when another reviewer fails.
 
-Every non-empty panel before the final configured round sends all actionable
-findings together to the frozen implementer, commits the guarded patch, runs
-the frozen verification commands, and reviews that verified commit with the
-full panel. The final panel applies the frozen severity threshold without an
+Every non-empty panel before the final configured round sends every finding the
+code-review reconciler keeps, together, to the frozen implementer, commits the
+guarded patch, runs the frozen verification commands, and reviews that verified
+commit with the full panel. The code-review reconciler (operator decision
+2026-10-13, `docs/features/code-review-reconciler/plan.md`) runs first: a
+finding is withheld only when every one of the frozen calls rejects it with an
+excerpt found in the approved specification; any failed call or check keeps it;
+each rejection is recorded as a `rejected_with_rationale` decision in the
+existing `finding_decision` table; a round whose every finding is rejected is
+decided by the severity gate as a final panel; and the calls run under their own
+setting `code-review-reconciler`, seeded at Haiku 5.5 `medium`. The final panel
+is never reconciled and applies the frozen severity threshold without an
 unreviewed patch; below-threshold findings remain recorded and non-blocking.
 Code reviewers may report only actionable defects in the current code. They do
-not create a human gate, waiver, proposal, spike, upstream route, or findings
-reconciliation schema. Do not change `spec_review` or `plan_review` while
-maintaining this loop.
+not create a human gate, waiver, proposal, spike, or upstream route. Do not
+change `spec_review` or `plan_review` while maintaining this loop.
 
 `docs/features/code-review-remediation/plan.md` is `Implemented`; its review is
 `reconciled`, and Task 10 is complete. A separately authorized live chain on
@@ -302,9 +310,16 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
   `deliver`, `approval-request`, `approve`, `decide`, `verify-audit`,
   `proposal-export`. Their numeric/path/raw-payload outputs remain unchanged.
   `decide --run --finding (--approve | --deny | --answer-file <path>)` records
-  one operator answer to a spec-review question and dispatches nothing. `new-run` requires
+  one operator answer to a spec-review question and dispatches nothing. The
+  design-split question (a spec declaring more files than the frozen
+  `designSplitPathThreshold`, 30) takes only `--approve` (split; the run ends
+  blocked with one exportable design per feature) or `--deny` (build as one).
+  `new-run` requires
   project, feature, slug, change-kind and model; it never selects these
-  implicitly. Each agent's, and the reconciler's, model and effort are frozen at
+  implicitly. Optional `--after <run-id>` names the feature this one follows: that
+  run must belong to the same project, be completed, and have its delivered commit
+  an ancestor of this checkout's HEAD (merge, never squash), and the link is
+  frozen into the profile. Each agent's, and both reconcilers', model and effort are frozen at
   `new-run`: `--model` is required and covers only `reconciler`,
   the other settings take the seeded defaults in `src/policy.ts`, and optional
   `--effort` (never reaches a reviewer), `--model-for` and `--effort-for` override
@@ -329,7 +344,8 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
   the historical $1.25–$2.50 range predates the three-reviewer default and the
   per-agent settings. The one measurement under the current defaults is $1.66350
   in 14 dispatches (2026-09-29, no remediation); one sample is not a range.
-  Remediation adds an implementer dispatch and another full three-reviewer panel. The committed default design is the
+  Remediation adds up to `CODE_REVIEW_RECONCILER_CALLS` reconciler calls before
+  an implementer dispatch and another full three-reviewer panel. The committed default design is the
   20-requirement `web-calculator-design.md` beside the driver.
   Change what a run exercises with `--design <path>` and `--slug <slug>`
   (such as `.claude/skills/run-buildworks/target-tap-design.md`), or by editing

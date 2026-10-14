@@ -233,7 +233,7 @@ export function inspectReadiness(rootDir: string, options: { slug?: string } = {
   }
   const authorErrors: string[] = [];
   for (const [id, outputs] of [
-    ["spec-author", ["spec", "spec-self-critique", "spec-reconciliation"]],
+    ["spec-author", ["spec", "spec-self-critique", "spec-reconciliation", "spec-split"]],
     ["plan-author", ["plan", "plan-self-critique", "plan-reconciliation"]],
     ["implementer", ["patches"]],
   ] as const) {

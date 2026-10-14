@@ -1898,6 +1898,29 @@ test("finding status comes from recorded dispositions and final-panel results, n
   }
 });
 
+test("a code-review finding the reconciler rejected reads rejected, unless the final panel it decided blocks on it", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const { snapshot, ids } = seedDecidedRun(root, parent, "reconciled");
+    // Reuse the document review's recorded rejection so the decision is a
+    // store-written row, then move it onto the code-review findings.
+    const recorded = snapshot.evidence.findings.find((f) => f.id === ids.rejected)!.decision!;
+    assert.equal(recorded.disposition, "rejected_with_rationale");
+    const card = (intent: string) => {
+      const finding = snapshot.evidence.findings.find((f) => f.id === ids[intent])!;
+      return findingCard({ ...finding, decision: recorded });
+    };
+    // The reconciler emptied the round, so the stage decided it as the final panel.
+    assert.equal(findingStatus(card("final-blocking"), "code_review"), "blocking");
+    assert.equal(findingStatus(card("final-clear"), "code_review"), "rejected");
+    // A rejected finding outside any final-panel result is withheld, not blocking.
+    assert.equal(findingStatus(card("earlier-round"), "code_review"), "rejected");
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 test("the attention queue holds blocked runs, then blocking and open findings only", () => {
   const parent = workspace();
   try {
@@ -2381,21 +2404,24 @@ test("the run view shows each frozen setting's model and effort, and each stage'
     const root = repository(parent);
     const created = spawnSync(process.execPath, [
       CLI, "new-run", "--repo", root, "--project", "project", "--feature", "feature", "--slug", "settings",
-      "--change-kind", "feature", "--model", "test-model", "--effort-for", "code-reviewer-security=max,implementer=low",
+      "--change-kind", "feature", "--model", "test-model",
+      "--effort-for", "code-reviewer-security=max,implementer=low,code-review-reconciler=xhigh",
     ], { cwd: parent, encoding: "utf8" });
     assert.equal(created.status, 0, created.stderr);
     const snapshot = readSnapshot(root, parent, Number(created.stdout.trim()));
     const settings = snapshotProjection(snapshot, "C:\\cli.ts").governance.configuration.dispatchSettings!;
     assert.deepEqual(Object.keys(settings).sort(), [
-      "code-reviewer-correctness", "code-reviewer-security", "code-reviewer-state-integrity", "implementer", "plan-author",
+      "code-review-reconciler", "code-reviewer-correctness", "code-reviewer-security", "code-reviewer-state-integrity",
+      "implementer", "plan-author",
       "reconciler", "spec-author", "spec-reviewer-consistency", "spec-reviewer-security", "spec-reviewer-traceability",
     ]);
     assert.deepEqual(settings["code-reviewer-security"], { model: "claude-haiku-5-5", effort: "max" });
 
-    // The expected text is the operator's seeded table plus the two overrides above.
+    // The expected text is the operator's seeded table plus the three overrides above.
     // A reconciliation dispatch is recorded on the spec and plan rows, and the
-    // remediation dispatch (the implementer) on the code_review row, so each row
-    // lists those settings beside its own.
+    // remediation and code-review reconciler dispatches on the code_review row,
+    // so each row lists those settings beside its own. The reconciler's seeded
+    // pair equals the panel's, so its override makes it a distinct pair here.
     assert.equal(stageSettingsText(settings, "spec"), "claude-opus-5-5 · high; test-model · medium");
     assert.equal(stageSettingsText(settings, "spec_review"), "claude-haiku-5-5 · medium");
     assert.equal(stageSettingsText(settings, "spec_decision"), "test-model · medium");
@@ -2403,8 +2429,8 @@ test("the run view shows each frozen setting's model and effort, and each stage'
     assert.equal(stageSettingsText(settings, "plan_review"), "claude-haiku-5-5 · medium");
     assert.equal(stageSettingsText(settings, "implementation"), "claude-sonnet-5-5 · low");
     assert.equal(stageSettingsText(settings, "code_review"),
-      "claude-sonnet-5-5 · low; claude-haiku-5-5 · medium; claude-haiku-5-5 · max",
-      "the remediation setting and the panel's distinct pairs each appear once");
+      "claude-sonnet-5-5 · low; claude-haiku-5-5 · xhigh; claude-haiku-5-5 · medium; claude-haiku-5-5 · max",
+      "the remediation and reconciler settings and the panel's distinct pairs each appear once");
     assert.equal(stageSettingsText(settings, "awaiting_approval"), "Not configured");
     assert.equal(stageSettingsText({}, "spec"), "Not configured", "a missing setting is stated, not guessed");
 

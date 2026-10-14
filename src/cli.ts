@@ -195,6 +195,7 @@ async function main(): Promise<void> {
               modelFor: parseSettingList(args.get("model-for")),
               effortFor: parseSettingList(args.get("effort-for")),
             },
+            after: args.has("after") ? Number(args.get("after")) : undefined,
           });
           console.log(String(created.run.id));
         } catch (error) {

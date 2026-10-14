@@ -6,6 +6,7 @@ import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { CLAUDE_CODE, type ExecutorDefinition } from "./executor.ts";
 import { profileDir, profilePath } from "./paths.ts";
 import {
+  CODE_REVIEW_RECONCILER,
   DEFAULT_SETTINGS,
   EFFORT_LEVELS,
   RECONCILER,
@@ -41,7 +42,9 @@ export interface Profile {
   /**
    * The model and effort each dispatch setting resolves to, frozen at run start
    * (section 10). Keyed by setting name: every registered agent's id, plus
-   * `reconciler`, which governs the reconciliation dispatches. The values are
+   * `reconciler`, which governs the reconciliation dispatches, and
+   * `code-review-reconciler`, which governs the calls that judge code-review
+   * findings before remediation. The values are
    * the resolved ones, not the seeded defaults in `src/policy.ts`, so a later
    * edit to a default never changes a run already frozen (hard rule 6).
    */
@@ -74,11 +77,23 @@ export interface Profile {
    * could change.
    */
   verification: VerificationConfig;
+  /**
+   * The earlier feature this run follows, checked by `new-run --after` before
+   * the run row existed: that run was completed and its delivered commit was an
+   * ancestor of this run's starting commit. Null when the run follows nothing.
+   */
+  after: AfterLink | null;
   frozenAt: string;
   agents: AgentDefinition[];
   executor: ExecutorDefinition;
   policy: Policy;
   policyHash: string;
+}
+
+/** The link `new-run --after` freezes (docs/features/design-split-into-features/plan.md). */
+export interface AfterLink {
+  runId: number;
+  deliveredCommit: string;
 }
 
 /**
@@ -126,7 +141,7 @@ export function validateModelName(model: string): string | null {
 /**
  * Per-run overrides of the seeded model and effort settings, as `new-run`
  * parses them. `effort` is the run-wide level; `modelFor` and `effortFor` name
- * one setting each (an agent id or `reconciler`).
+ * one setting each (an agent id, `reconciler` or `code-review-reconciler`).
  */
 export interface SettingsInput {
   effort?: string;
@@ -147,7 +162,7 @@ export function validateEffort(value: string): string | null {
 
 /**
  * Resolve the model and effort of every dispatch setting: each agent in the
- * registry being frozen, and `reconciler`.
+ * registry being frozen, `reconciler` and `code-review-reconciler`.
  *
  * Refusals, in this order: an invalid run-wide effort; each `modelFor` entry,
  * then each `effortFor` entry, in argument order (an unknown setting name, an
@@ -156,15 +171,16 @@ export function validateEffort(value: string): string | null {
  * Precedence for one setting. Model: its `modelFor` entry, else its seeded
  * model, else the run's `--model` (a null seeded model means "the run's").
  * Effort: its `effortFor` entry, else the run-wide `effort` (never for a
- * reviewer, so `--effort high` cannot put a reviewer at `high`), else its
- * seeded effort.
+ * reviewer, so `--effort high` cannot put a reviewer at `high`, and never for
+ * the code-review reconciler, which was measured only at its seeded level),
+ * else its seeded effort.
  */
 function resolveDispatchSettings(
   agents: readonly AgentDefinition[],
   runModel: string,
   settings: SettingsInput
 ): Record<string, { model: string; effort: EffortLevel }> {
-  const names = [...agents.map((a) => a.id), RECONCILER];
+  const names = [...agents.map((a) => a.id), RECONCILER, CODE_REVIEW_RECONCILER];
   if (settings.effort !== undefined) {
     const error = validateEffort(settings.effort);
     if (error !== null) throw new Error(error);
@@ -185,7 +201,11 @@ function resolveDispatchSettings(
       if (error !== null) throw new Error(error);
     }
   }
-  const reviewers = new Set(agents.filter((a) => a.role === "reviewer").map((a) => a.id));
+  // The settings the run-wide effort never reaches.
+  const reviewers = new Set([
+    ...agents.filter((a) => a.role === "reviewer").map((a) => a.id),
+    CODE_REVIEW_RECONCILER,
+  ]);
   const resolved: Record<string, { model: string; effort: EffortLevel }> = {};
   for (const name of names) {
     const seeded = DEFAULT_SETTINGS[name];
@@ -220,7 +240,8 @@ export function freezeProfile(
   // both the check and the frozen agent list, because a refusal has to be
   // about the registry the run would actually work with.
   deps: { agents?: readonly AgentDefinition[] } = {},
-  settings: SettingsInput = {}
+  settings: SettingsInput = {},
+  after: AfterLink | null = null
 ): { path: string; hash: string; profile: Profile } {
   const agents = deps.agents ?? AGENTS;
   const modelError = validateModelName(model);
@@ -277,6 +298,7 @@ export function freezeProfile(
     dispatchSettings,
     approvalSigner: key.ok ? key.signer : null,
     verification,
+    after,
     frozenAt: new Date().toISOString(),
     agents: [...agents].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     executor: CLAUDE_CODE,
@@ -308,7 +330,8 @@ export function loadProfile(rootDir: string, runId: number): { profile: Profile;
 
 /**
  * The model and effort a dispatch setting resolves to, from the profile frozen
- * at run start. `name` is a registered agent's id or `reconciler`.
+ * at run start. `name` is a registered agent's id, `reconciler` or
+ * `code-review-reconciler`.
  *
  * Section 10 requires this to fail at configuration time — before any
  * invocation — rather than at dispatch, so an unmapped setting is a refusal
@@ -338,11 +361,12 @@ export function resolveSettings(
 
 /**
  * Is the frozen `dispatchSettings` one the stages can read? It must name every
- * agent the profile froze and `reconciler`, each with a model that passes the
- * name rule and an effort from the closed set. Returns the reason, or null.
+ * agent the profile froze, `reconciler` and `code-review-reconciler`, each with
+ * a model that passes the name rule and an effort from the closed set. Returns
+ * the reason, or null.
  */
 function invalidDispatchSettingsReason(settings: Record<string, unknown>, agents: unknown[]): string | null {
-  const required = [...agents.map((a) => (a as { id?: unknown }).id), RECONCILER];
+  const required = [...agents.map((a) => (a as { id?: unknown }).id), RECONCILER, CODE_REVIEW_RECONCILER];
   for (const name of required) {
     const entry = typeof name === "string" ? settings[name] : undefined;
     if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
@@ -395,6 +419,12 @@ export function invalidProfileReason(profile: unknown): string | null {
   if (typeof p.approvalSigner !== "string" && p.approvalSigner !== null) {
     return `the frozen profile approvalSigner must be a string or null, found ${JSON.stringify(p.approvalSigner)}`;
   }
+  if (!("after" in p)) {
+    return "the frozen profile carries no after: it predates the field, and a run frozen without it cannot record which feature it follows";
+  }
+  if (p.after !== null && !isAfterLink(p.after)) {
+    return `the frozen profile after must be null or { runId, deliveredCommit }, found ${JSON.stringify(p.after)}`;
+  }
   if (typeof p.frozenAt !== "string" || p.frozenAt === "") {
     return `the frozen profile frozenAt must be a non-empty string, found ${JSON.stringify(p.frozenAt)}`;
   }
@@ -445,6 +475,18 @@ export function invalidProfileReason(profile: unknown): string | null {
 
 function isPositiveInt(v: unknown): boolean {
   return typeof v === "number" && Number.isInteger(v) && v > 0;
+}
+
+/** Exactly `{ runId, deliveredCommit }`: a positive run id and a full sha1 or sha256 commit. */
+function isAfterLink(v: unknown): boolean {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+  const link = v as Record<string, unknown>;
+  return (
+    Object.keys(link).sort().join(",") === "deliveredCommit,runId" &&
+    isPositiveInt(link.runId) &&
+    typeof link.deliveredCommit === "string" &&
+    /^([0-9a-f]{40}|[0-9a-f]{64})$/.test(link.deliveredCommit)
+  );
 }
 
 /**

@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { mkdirSync, rmSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import type { VerifyCommand } from "./governed-config.ts";
 import { runVerifyCommand } from "./verify-command.ts";
 
@@ -34,7 +34,7 @@ export interface CommitVerificationInput {
   retentionMaxBytes: number;
   envPassthrough: string[];
   evidenceDir: string;
-  audit: (action: "command.pass" | "command.fail", summary: string) => void;
+  audit: (action: "command.pass" | "command.fail" | "cleanup", summary: string) => void;
   progress?: (command: VerifyCommand, blockedBecause: string | null, durationMs: number) => void;
 }
 
@@ -90,6 +90,41 @@ export function checkCommitState(
   return when === "before verification"
     ? `the worktree is not clean before verification: ${dirty.slice(0, 3).join(", ")}`
     : `the command left the worktree dirty in: ${dirty.slice(0, 3).join(", ")}`;
+}
+
+/**
+ * Remove what passing commands left in ignored paths (`npm ci`'s
+ * `node_modules/`, a build's `dist/`). Code review's clean-tree guard counts
+ * ignored entries so that a reviewer or the remediation implementer writing
+ * into an ignored path is visible; verification output left in the same
+ * worktree would trip that guard for every target whose commands install or
+ * build. No agent runs between the last command and this removal, so it hides
+ * nothing an agent wrote. A path holding this verification's own evidence is
+ * kept. Returns the removed entries, or why removal failed.
+ */
+function removeIgnoredOutput(
+  worktreePath: string,
+  evidenceDir: string
+): { ok: true; removed: string[] } | { ok: false; detail: string } {
+  const status = runGit(["status", "--porcelain", "-z", "--untracked-files=all", "--ignored=matching"], worktreePath);
+  if (!status.ok) return { ok: false, detail: status.detail };
+  const evidence = resolve(evidenceDir);
+  const removed: string[] = [];
+  for (const entry of status.stdout.split("\0").filter((e) => e !== "")) {
+    if (!entry.startsWith("!! ")) {
+      return { ok: false, detail: `unexpected non-ignored entry ${entry}` };
+    }
+    const path = entry.slice(3);
+    const target = resolve(worktreePath, path);
+    if (evidence === target || evidence.startsWith(`${target}${sep}`)) continue;
+    try {
+      rmSync(target, { recursive: true, force: true });
+    } catch (err) {
+      return { ok: false, detail: `cannot remove ${path}: ${(err as Error).message}` };
+    }
+    removed.push(path);
+  }
+  return { ok: true, removed };
 }
 
 /** Run the frozen commands against one exact commit and retain all evidence. */
@@ -161,6 +196,23 @@ export async function verifyCommit(
         reason: because,
       };
     }
+  }
+  const cleanup = removeIgnoredOutput(input.worktreePath, input.evidenceDir);
+  if (!cleanup.ok) {
+    const reason = `every command passed, but the ignored output they left could not be removed: ${cleanup.detail}`;
+    input.audit("cleanup", reason);
+    return {
+      record: {
+        expectedCommit: input.expectedCommit,
+        outcome: "block",
+        blockingCommand: null,
+        commands: recorded,
+      },
+      reason,
+    };
+  }
+  if (cleanup.removed.length > 0) {
+    input.audit("cleanup", `removed ignored output the commands left: ${cleanup.removed.join(", ")}`);
   }
   return {
     record: {

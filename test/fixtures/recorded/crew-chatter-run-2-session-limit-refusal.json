@@ -1,0 +1,369 @@
+{
+  "provenance": {
+    "run": "crew-chatter run 2, operator-authorized paid run, implementation phase 6 of 6, 2026-10-07",
+    "capturedOn": "2026-10-07",
+    "source": "Two retained streams under .governance/raw/2 in the crew-chatter target (C:\\Users\\Shawn-work\\repositories\\testing-repos\\crew-chatter): the refused phase 6 dispatch and the phase 5 dispatch that ended four seconds before it. Each stream is the whole stream-json stdout, one JSON object per line.",
+    "rawFiles": [
+      {
+        "name": "2026-10-07T17-24-58-795Z-ac9fa84b8cf8.json",
+        "role": "phase 6, refused",
+        "bytes": 36712,
+        "lines": 48,
+        "sha256": "f5605ef7a7d40d5730b55b75f0717852126a93e49eec9f69b29a531c98eb28cb"
+      },
+      {
+        "name": "2026-10-07T17-24-54-412Z-8766c451b235.json",
+        "role": "phase 5, completed",
+        "bytes": 1985444,
+        "lines": 5421,
+        "sha256": "191dc5b64337a625a0faea881f79d31f63c7c6562146cd693c3cbaf7492a9447"
+      }
+    ],
+    "kept": "From the refused stream: a trimmed system/init line, every rate_limit_event line, the one synthetic assistant message, and the final result line, each parsed and unaltered. From the phase 5 stream: every rate_limit_event line whose status is not `allowed`, and a count of its rate_limit_event lines by status. Line numbers are 1-based positions in the raw file.",
+    "dropped": "Every other line of both streams: stream_event deltas, assistant tool calls, tool results (they hold the crew-chatter source files the agents read), system status lines. The init line keeps only type, subtype, cwd, session_id, tools, model and claude_code_version.",
+    "note": "The raw file name's timestamp is when the file was retained, not a measured dispatch start. The refused dispatch's own duration is the result line's duration_ms."
+  },
+  "refusedStream": {
+    "init": {
+      "line": 1,
+      "type": "system",
+      "subtype": "init",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\testing-repos\\crew-chatter\\.governance\\worktrees\\2",
+      "session_id": "79ac6d46-ac8b-4aa9-89d4-f651435c2761",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "model": "claude-sonnet-5-5",
+      "claude_code_version": "2.1.292"
+    },
+    "rateLimitEvents": [
+      {
+        "line": 43,
+        "value": {
+          "type": "rate_limit_event",
+          "rate_limit_info": {
+            "status": "allowed_warning",
+            "resetsAt": 1791395400,
+            "rateLimitType": "five_hour",
+            "utilization": 0.99,
+            "isUsingOverage": false,
+            "surpassedThreshold": 0.9,
+            "unifiedWindows": {
+              "five_hour": {
+                "utilization": 0.99,
+                "resetsAt": 1791395400
+              },
+              "seven_day": {
+                "utilization": 0.61,
+                "resetsAt": 1791583200
+              }
+            }
+          },
+          "uuid": "2dcae04d-cfac-4a9f-8c24-34a8de07c87d",
+          "session_id": "79ac6d46-ac8b-4aa9-89d4-f651435c2761"
+        }
+      },
+      {
+        "line": 46,
+        "value": {
+          "type": "rate_limit_event",
+          "rate_limit_info": {
+            "status": "rejected",
+            "resetsAt": 1791395400,
+            "rateLimitType": "five_hour",
+            "overageStatus": "rejected",
+            "overageDisabledReason": "out_of_credits",
+            "isUsingOverage": false,
+            "unifiedWindows": {
+              "five_hour": {
+                "utilization": 1.01,
+                "resetsAt": 1791395400
+              },
+              "seven_day": {
+                "utilization": 0.61,
+                "resetsAt": 1791583200
+              }
+            }
+          },
+          "uuid": "cafa5e7d-d7a7-4673-a80b-6078e6712fda",
+          "session_id": "79ac6d46-ac8b-4aa9-89d4-f651435c2761"
+        }
+      }
+    ],
+    "syntheticAssistantMessage": {
+      "line": 47,
+      "value": {
+        "type": "assistant",
+        "message": {
+          "diagnostics": null,
+          "id": "f5c4332e-5514-4f5a-a4f1-0aaf51a4daa3",
+          "container": null,
+          "model": "<synthetic>",
+          "role": "assistant",
+          "stop_details": null,
+          "stop_reason": "stop_sequence",
+          "stop_sequence": "",
+          "type": "message",
+          "usage": {
+            "output_tokens_details": null,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "server_tool_use": {
+              "web_search_requests": 0,
+              "web_fetch_requests": 0
+            },
+            "service_tier": null,
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 0,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "inference_geo": null,
+            "iterations": null,
+            "speed": null,
+            "fallback_credit": null
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "You've hit your session limit · resets 12:50pm (America/Chicago)"
+            }
+          ],
+          "context_management": null
+        },
+        "parent_tool_use_id": null,
+        "session_id": "79ac6d46-ac8b-4aa9-89d4-f651435c2761",
+        "uuid": "3aab968c-b73f-45b1-91cf-773b44fb1b76",
+        "timestamp": "2026-10-07T17:24:58.396Z",
+        "error": "rate_limit",
+        "request_id": "req_011CfoGRSepYbq6uX3CoZNab",
+        "is_api_error_message": true,
+        "api_error": "usage_limit_reached",
+        "api_error_params": {
+          "rate_limit_info": {
+            "status": "rejected",
+            "resetsAt": 1791395400,
+            "rateLimitType": "five_hour",
+            "overageStatus": "rejected",
+            "overageDisabledReason": "out_of_credits",
+            "isUsingOverage": false
+          }
+        }
+      }
+    },
+    "result": {
+      "line": 48,
+      "value": {
+        "duration_api_ms": 2662,
+        "stop_reason": "stop_sequence",
+        "session_id": "79ac6d46-ac8b-4aa9-89d4-f651435c2761",
+        "total_cost_usd": 0.12911140000000002,
+        "usage": {
+          "input_tokens": 2,
+          "cache_creation_input_tokens": 31405,
+          "cache_read_input_tokens": 3937,
+          "output_tokens": 270,
+          "output_tokens_details": {
+            "thinking_tokens": 0
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 31405,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "not_available",
+          "iterations": [
+            {
+              "input_tokens": 2,
+              "output_tokens": 270,
+              "cache_read_input_tokens": 3937,
+              "cache_creation_input_tokens": 31405,
+              "cache_creation": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 31405
+              },
+              "type": "message"
+            }
+          ],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "modelUsage": {
+          "claude-sonnet-5-5": {
+            "inputTokens": 2,
+            "outputTokens": 270,
+            "cacheReadInputTokens": 3937,
+            "cacheCreationInputTokens": 31405,
+            "webSearchRequests": 0,
+            "costUSD": 0.12911140000000002,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 0,
+            "canonicalModel": "claude-sonnet-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        },
+        "permission_denials": [],
+        "terminal_reason": "api_error",
+        "fast_mode_state": "off",
+        "fast_mode_disabled_reason": "sdk_opt_in_required",
+        "subagent_stats": {
+          "spawned": 0,
+          "requested": {
+            "background": 0,
+            "foreground": 0,
+            "unset": 0
+          },
+          "started_in_background": 0,
+          "max_depth": 0,
+          "spawned_by_subagents": 0,
+          "completed": 0,
+          "failed": 0,
+          "killed": {
+            "parent": 0,
+            "user": 0,
+            "system": 0
+          },
+          "refused": {
+            "depth_limit": 0,
+            "concurrency_limit": 0,
+            "budget": 0
+          },
+          "by_type": {}
+        },
+        "safety_stops": 0,
+        "is_error": true,
+        "num_turns": 3,
+        "subtype": "success",
+        "api_error_status": 429,
+        "api_error": "usage_limit_reached",
+        "result": "You've hit your session limit · resets 12:50pm (America/Chicago)",
+        "type": "result",
+        "duration_ms": 2999,
+        "uuid": "01f5ff51-4b55-49da-b0b3-a33112b4605a",
+        "queued_turn_count": 0,
+        "result_index": 0
+      }
+    }
+  },
+  "priorStream": {
+    "rateLimitEventCountByStatus": {
+      "allowed": 3,
+      "allowed_warning": 4
+    },
+    "nonAllowedRateLimitEvents": [
+      {
+        "line": 390,
+        "value": {
+          "type": "rate_limit_event",
+          "rate_limit_info": {
+            "status": "allowed_warning",
+            "resetsAt": 1791395400,
+            "rateLimitType": "five_hour",
+            "utilization": 0.9,
+            "isUsingOverage": false,
+            "surpassedThreshold": 0.9,
+            "unifiedWindows": {
+              "five_hour": {
+                "utilization": 0.9,
+                "resetsAt": 1791395400
+              },
+              "seven_day": {
+                "utilization": 0.61,
+                "resetsAt": 1791583200
+              }
+            }
+          },
+          "uuid": "4a72990b-73ca-471b-8d83-5985c7c08169",
+          "session_id": "af258ae5-500a-4019-accd-58a766bfc253"
+        }
+      },
+      {
+        "line": 438,
+        "value": {
+          "type": "rate_limit_event",
+          "rate_limit_info": {
+            "status": "allowed_warning",
+            "resetsAt": 1791395400,
+            "rateLimitType": "five_hour",
+            "utilization": 0.91,
+            "isUsingOverage": false,
+            "surpassedThreshold": 0.9,
+            "unifiedWindows": {
+              "five_hour": {
+                "utilization": 0.91,
+                "resetsAt": 1791395400
+              },
+              "seven_day": {
+                "utilization": 0.61,
+                "resetsAt": 1791583200
+              }
+            }
+          },
+          "uuid": "503412a5-bc62-4cf5-8c01-a4392cca0b76",
+          "session_id": "af258ae5-500a-4019-accd-58a766bfc253"
+        }
+      },
+      {
+        "line": 605,
+        "value": {
+          "type": "rate_limit_event",
+          "rate_limit_info": {
+            "status": "allowed_warning",
+            "resetsAt": 1791395400,
+            "rateLimitType": "five_hour",
+            "utilization": 0.92,
+            "isUsingOverage": false,
+            "surpassedThreshold": 0.9,
+            "unifiedWindows": {
+              "five_hour": {
+                "utilization": 0.92,
+                "resetsAt": 1791395400
+              },
+              "seven_day": {
+                "utilization": 0.61,
+                "resetsAt": 1791583200
+              }
+            }
+          },
+          "uuid": "9c6f6945-c1e1-4424-a374-5a62db6bb4bf",
+          "session_id": "af258ae5-500a-4019-accd-58a766bfc253"
+        }
+      },
+      {
+        "line": 5420,
+        "value": {
+          "type": "rate_limit_event",
+          "rate_limit_info": {
+            "status": "allowed_warning",
+            "resetsAt": 1791395400,
+            "rateLimitType": "five_hour",
+            "utilization": 0.94,
+            "isUsingOverage": false,
+            "surpassedThreshold": 0.9,
+            "unifiedWindows": {
+              "five_hour": {
+                "utilization": 0.94,
+                "resetsAt": 1791395400
+              },
+              "seven_day": {
+                "utilization": 0.61,
+                "resetsAt": 1791583200
+              }
+            }
+          },
+          "uuid": "f545051d-a433-4c55-9b3c-4d6a36a1a102",
+          "session_id": "af258ae5-500a-4019-accd-58a766bfc253"
+        }
+      }
+    ]
+  }
+}

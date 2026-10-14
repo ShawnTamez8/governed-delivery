@@ -301,6 +301,7 @@ ${scope.map((p) => `- ${p}`).join("\n")}
                 changedPaths: [ARTIFACT],
                 findings: [],
                 blocking: [],
+                reconciliation: null,
                 remediation: {
                   author: "implementer",
                   baseCommit: verifiedCommit,
@@ -320,6 +321,7 @@ ${scope.map((p) => `- ${p}`).join("\n")}
                 changedPaths: [ARTIFACT],
                 findings: [],
                 blocking: [],
+                reconciliation: null,
                 remediation: null,
               },
             ]
@@ -332,6 +334,7 @@ ${scope.map((p) => `- ${p}`).join("\n")}
                 blocking: blockedReview
                   ? [{ findingId: 1, severity: "high", location: ARTIFACT }]
                   : [],
+                reconciliation: null,
                 remediation: null,
               },
             ],

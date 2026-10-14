@@ -131,8 +131,8 @@ model and effort per setting, and the driver passes only `--model`, so a paid
 chain takes the seeded defaults in `src/policy.ts`: `claude-opus-5-5` for the
 spec and plan authors, `claude-haiku-5-5` for the spec reviewers and the code
 reviewers (changed on 2026-10-08 from Haiku 4.5 and Sonnet 5.5), and
-`claude-sonnet-5-5` for the implementer, with `--model` covering only the
-reconciler. One paid run has been measured under the earlier defaults, with
+`claude-sonnet-5-5` for the implementer, `claude-haiku-5-5` for the code-review
+reconciler, with `--model` covering only the reconciler. One paid run has been measured under the earlier defaults, with
 Haiku 4.5 spec reviewers and Sonnet 5.5 code reviewers, and it is one sample, not
 a range. None has run with the Haiku 5.5 reviewers.
 
@@ -245,9 +245,11 @@ replayed by `test/reconciliation.test.ts`.
 **The historical $1.25–$2.50 budget predates the three-reviewer default.** The
 clean default now adds three code-reviewer dispatches, each carrying the full
 diff of the run's patch range plus the approved specification and plan. A
-finding before the final configured panel adds one implementer dispatch,
-post-patch verification, and another three-reviewer panel: three dispatches for
-a clean one-panel review and seven for the default remediated path. Reviewers
+finding before the final configured panel adds up to two code-review reconciler
+calls (the second is skipped when the first fails or rejects nothing), then,
+unless both calls rejected every finding, one implementer dispatch, post-patch
+verification, and another three-reviewer panel: three dispatches for a clean
+one-panel review and eight or nine for the default remediated path. Reviewers
 inside one panel start concurrently, so a fast failure does not avoid the cost
 of siblings already launched. No current paid evidence establishes a revised
 dollar range. The free `smoke` still costs nothing: it reaches no dispatch.
@@ -276,7 +278,10 @@ full-panel executions. The defaults in `src/policy.ts` are three reviewers and
 two panels. Reviewers within one panel launch concurrently against the same
 commit and inputs; the stage drains all of them, performs one quiescent
 worktree-integrity check, and consumes their results in frozen panel order.
-Any non-final panel findings go together to the frozen implementer; guarded
+Non-final panel findings first go to the code-review reconciler, which may
+reject one only when every frozen call agrees, each quoting the approved
+specification; the findings it keeps go together
+to the frozen implementer; guarded
 patches are committed, the frozen verification commands run, and the full
 panel reviews the new commit. Remediation and later rounds remain sequential.
 The final panel blocks only at or above the independently frozen

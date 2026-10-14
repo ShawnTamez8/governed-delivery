@@ -406,6 +406,31 @@ support what was added or rejected; neither the grounding match nor the
 mechanical artifact gates are evidence of semantic correctness, and no panel
 independently confirms either.
 
+**The code-review counterpart, 2026-10-13.** Code-review remediation has the
+same shape one stage later: the implementer receives every finding, so a
+finding that asks for more than the approved specification states becomes code
+nobody asked for. Crew-chatter run 6 traced it end to end. Round-1 finding #200
+asked for sessions to be invalidated on a password reset, which the
+specification does not require ("A successful reset replaces the password hash,
+so the old password no longer signs in."); the remediation added that code, and
+round 2 found #211, a real lost-edit defect inside it. The remedy is the
+code-review reconciler (`ARCHITECTURE.md` section 12): before each remediation,
+the frozen number of calls (two by default) judge every finding, and a finding
+is withheld only when every call rejects it with an excerpt that occurs in the
+approved specification. Two paid replays on run 6's findings, 30 Haiku 5.5 calls
+for $0.12858311 in total, preceded it
+(`test/fixtures/recorded/code-review-reconciler-replay-crew-chatter-run-6.json`
+and `test/fixtures/recorded/code-review-reconciler-test-5-crew-chatter-run-6.json`).
+All ten calls of the first rejected #200 with that exact sentence and rejected
+no finding labelled keep. Across the twenty calls of the second, one call wrongly
+rejected a finding labelled keep (#906) and three calls kept a finding labelled
+reject (#905). The limit is this entry's own: one call in the second replay
+rejected #213 with an exact quote about password reset that does not support
+the rejection, so the excerpt check proves the words exist, not that they apply.
+That is why a rejection needs every call to agree. What this does not show: the
+replays used one project's specification, no live run has used the
+reconciler, and how often two calls agree on a wrong rejection is unmeasured.
+
 ## 17. A reconciliation that answers a finding by deleting the obligation
 
 The mechanism, as it stood before the remedy below shipped: the normative-delta
@@ -517,6 +542,15 @@ specification, and plan exceed the frozen prompt ceiling is refused rather than
 reviewed in part. A verification configuration that proves nothing about the
 artifact — `node --version` against a calculator — is still accepted: a
 stronger `governed.yaml` is the operator's decision, not the system's.
+
+**2026-10-12: a split is the route past the review-prompt ceiling.** The 1 MiB
+prompt ceiling bounds the diff one panel can read, which the project learnings
+estimate at roughly 130 to 160 plan items. Building in segments cannot lift it,
+because code review reads the whole range once. A design that large is now
+offered a split into features after spec review, each of at most the frozen
+threshold of declared files (entry 20), and each feature is reviewed whole by
+the unchanged panel. Nothing reviews less. Whether a real feature's diff stays
+under the ceiling is unmeasured.
 
 ## 19. An inactivity budget over non-streaming output is a wall clock
 
@@ -649,6 +683,25 @@ run once, on the whole range, so a large implementation still sends its entire
 diff to each reviewer under the prompt ceiling (entry 18's residual), and whether
 a 57-task diff fits is unmeasured.
 
+**2026-10-12: an oversized design is offered a split before the plan is paid
+for.** A plan with more items than the ceiling is still refused at
+implementation. But a specification that declares more files than the frozen
+`designSplitPathThreshold` now gets a split proposal right after spec review,
+before approval and the plan (`ARCHITECTURE.md` section 12). Crew-chatter run 4
+is the motivating case: 62 declared files, then an 86-item plan refused at the
+ceiling of 80 after $4.94. The threshold, 30, is the ceiling divided by the
+highest recorded ratio of plan items to declared files. Across eleven runs of
+two test designs that ratio ran from 1.0 to 2.6, highest on team-notes run 10
+(20 files, 52 items); the runs are committed at
+`test/fixtures/recorded/declared-paths-vs-plan-items.json`.
+
+What this does not show. The ratio comes from two designs. A design under 30
+files can still produce more than 80 items, and most designs over 30 would have
+fit: crew-chatter runs 2 and 3 built 51 and 52 items from 51 and 52 files, and
+nine of the eleven recorded runs would have been offered a split. An operator
+who denies the split goes on to the same ceiling. No real model has proposed a
+split, and no pair of features has been built.
+
 ## 21. Agents are never told the gate that will judge their work
 
 The frozen `governed.yaml` commands decide whether delivered code is accepted at
@@ -737,3 +790,41 @@ What this does not show.
   words such as `self-critique`, so command data containing one would misroute a
   fixture. A test keeps the fixtures' command names clear of those words; the
   emitters are unchanged.
+
+**2026-10-12.** The launch-directory gap above is closed for authors. The spec
+and plan author dispatches (draft, self-critique, reconciliation, decision fold
+and split) now run with the target's root as their working directory, and the
+spec prompts say so (`ARCHITECTURE.md` section 7). The spec and plan reviewers
+still start in the launch directory, because the target's `.governance/` holds
+the other reviewers' raw reports and nothing enforces the executor's denied
+paths (entry 14). Whether a spec author now reads the target before asking is
+unmeasured.
+
+## 22. A guard that counts ignored files, after a stage that writes them
+
+Two guards can each be right and still block every run between them. Code
+review's clean-tree guard counts git-ignored entries, so that a reviewer or the
+remediation implementer writing into an ignored path is visible (entry 15). The
+verification stage runs the frozen commands in that same worktree, and
+`npm ci` and a build write `node_modules/` and `dist/`, which are ignored. Every
+target whose commands install packages or build output therefore failed the
+guard after verification passed. Every run that had reached code review before
+used version-only commands, which write nothing, so nothing showed it.
+
+**Measured, 2026-10-13, $4.16645777 recorded before the refusal.** Crew-chatter
+run 6 (the first feature of an approved split) built four phases and passed
+`npm ci`, typecheck, lint and build. The run then refused to enter code review:
+"worktree is not clean at the code_review boundary: !! backend/dist/ !!
+backend/node_modules/ !! frontend/dist/ !! frontend/node_modules/ !!
+node_modules/". No dispatch was lost: the refusal came before code review
+spent anything.
+
+**Remedy.** When every command passes, `verifyCommit`
+(`src/commit-verification.ts`) removes the ignored entries the commands left,
+records each removed path in a `cleanup` audit event, and blocks if a removal
+fails. It keeps a path that holds the verification's own evidence. No agent runs
+between the last command and the removal, so the guard still sees anything an
+agent writes. The same function serves the verification stage and code-review
+remediation, so both are covered. What this does not show: a command that writes
+an ignored path outside the worktree is untouched, and whether removal of a large
+`node_modules/` ever fails on Windows (a locked file, a long path) is untested.

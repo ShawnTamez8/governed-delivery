@@ -6,6 +6,7 @@ import { appendAudit } from "./audit.ts";
 import { approvalPayload, loadPublicKey, validateExpiry } from "./approval.ts";
 import { approveRun, buildBinding } from "./approval-stage.ts";
 import { answerQuestion } from "./spec-decision-stage.ts";
+import { readSplitRecord } from "./design-split.ts";
 import { acquireLock } from "./lock.ts";
 import { readRunSnapshot, type RunSnapshot } from "./operator-state.ts";
 import { formatGuidedApproval, formatGuidedTerminal } from "./operator-output.ts";
@@ -412,27 +413,48 @@ async function decisionHandoff(
       observed.workflowAction.reasons.map((reason) => `${reason.code}: ${reason.reason}`).join("; ")}`);
   }
   const open = observed.questions.filter((question) => question.answer === null);
+  // The design split's question, named by the system's own record as
+  // `answerQuestion` finds it: approve splits and deny builds as one, and it
+  // takes no written answer, so it gets its own menu.
+  const reader = openStore(rootDir, { readOnly: true });
+  let splitFindingId: number | undefined;
+  try {
+    splitFindingId = readSplitRecord(reader.getAuditEvents(runId))?.findingId;
+  } finally {
+    reader.close();
+  }
   stdout.write(`Step 4: The specification review needs ${open.length} operator decision(s) for run ${runId}. Answers are immutable.\n`);
   for (const question of open) {
+    const isSplit = question.findingId === splitFindingId;
     stdout.write(
       `\nFinding ${question.findingId}: ${question.text}\n` +
       question.options.map((option, index) =>
         `  ${index + 1}. ${option.label}${index === question.recommended ? " (recommended)" : ""}: ${option.answer}\n`).join("") +
       `  Why recommended: ${question.why}\n\n` +
       "Decision options:\n" +
-      "  1. Approve - Accept the recommended answer\n" +
-      "  2. Deny    - Leave this question open in the specification\n" +
-      "  3. Modify  - Write your own answer\n" +
-      "  4. Exit    - Leave the run paused to decide later\n\n",
+      (isSplit
+        ? "  1. Split        - Store one design per feature and end this run\n" +
+          "  2. Build as one - Build the whole design in this run; its plan may still be refused at the plan ceiling\n" +
+          "  4. Exit         - Leave the run paused to decide later\n\n"
+        : "  1. Approve - Accept the recommended answer\n" +
+          "  2. Deny    - Leave this question open in the specification\n" +
+          "  3. Modify  - Write your own answer\n" +
+          "  4. Exit    - Leave the run paused to decide later\n\n"),
     );
     let action: "approve" | "deny" | "modify" | null = null;
     let answer: string | undefined;
     for (let attempt = 0; action === null; attempt++) {
       if (attempt === 3) throw new GuidedCommandError(`no valid decision was selected for finding ${question.findingId}`, 3);
-      const choice = (await prompt(`Action for finding ${question.findingId} (1-4) [default 4]: `)).trim().toLowerCase();
+      const choice = (await prompt(`Action for finding ${question.findingId} (${isSplit ? "1, 2 or 4" : "1-4"}) [default 4]: `)).trim().toLowerCase();
       if (choice === "" || choice === "4" || choice === "exit") {
         stdout.write(`Run ${runId} remains paused awaiting operator decisions.\n`);
         return "paused";
+      }
+      if (isSplit) {
+        if (choice === "1" || choice === "split") action = "approve";
+        else if (choice === "2" || choice === "build as one") action = "deny";
+        else stdout.write("Invalid selection. This question takes 1 (split), 2 (build as one), or 4 (exit).\n");
+        continue;
       }
       if (choice === "1" || choice === "approve") action = "approve";
       else if (choice === "2" || choice === "deny") action = "deny";

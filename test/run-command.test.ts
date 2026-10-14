@@ -174,7 +174,7 @@ test("guided preview requires invocation consent without writing, opening a lock
       assert.match(output.text(), /Consent covers EVERY listed group/);
       assert.match(output.text(), /no intermediate voluntary stop control or hard monetary cap/);
       assert.ok(output.text().includes(JSON.stringify(profile.dispatchSettings)));
-      const ceiling = 2 + profile.policy.specReviewRounds * (profile.policy.panelSizeMax + 1);
+      const ceiling = 3 + profile.policy.specReviewRounds * (profile.policy.panelSizeMax + 1);
       assert.ok(output.text().includes(`spec=${ceiling}; total ${ceiling}`));
       assert.doesNotMatch(output.text(), /Type yes|group spec start/);
       input.destroy();
@@ -461,7 +461,14 @@ test("Task 8 guided review respects frozen panels, remediation, and final severi
       const agents = store.query<AgentRunRow>("SELECT * FROM agent_run WHERE stage_id = ? ORDER BY id", [stage.id]);
       assert.equal(agents.filter((agent) => agent.role === "reviewer").length,
         profile.policy.codeReviewPanelSize * record.rounds.length);
-      assert.equal(agents.filter((agent) => agent.role === "author").length, remediations.length);
+      // The code-review reconciler also dispatches as an author, under its own setting.
+      assert.equal(agents.filter((agent) => agent.role === "author" && agent.setting === "implementer").length, remediations.length);
+      assert.equal(
+        agents.filter((agent) => agent.setting === "code-review-reconciler").length,
+        record.rounds.reduce((sum, round) => sum + (round.reconciliation?.calls.length ?? 0), 0)
+      );
+      assert.equal(agents.length, profile.policy.codeReviewPanelSize * record.rounds.length + remediations.length +
+        record.rounds.reduce((sum, round) => sum + (round.reconciliation?.calls.length ?? 0), 0));
       assert.equal(data(result).execution.groupsAttempted.filter((group) => group === "code_review").length, 1);
       assert.equal((output.text().match(/group code_review start/g) ?? []).length, 1);
       const snapshot = data(result).snapshot!;

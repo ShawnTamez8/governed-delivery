@@ -9,7 +9,11 @@ import {
   CODE_REVIEW_PANEL_SIZE,
   CODE_REVIEW_PANEL_SIZE_CEILING,
   CODE_REVIEW_PANEL_SIZE_FLOOR,
+  CODE_REVIEW_RECONCILER_CALLS,
+  CODE_REVIEW_RECONCILER_CALLS_CEILING,
+  CODE_REVIEW_RECONCILER_CALLS_FLOOR,
   DEFAULT_SETTINGS,
+  DESIGN_SPLIT_PATH_THRESHOLD,
   IMPLEMENTATION_MAX_PHASES,
   IMPLEMENTATION_PHASE_TASKS,
   PANEL_SIZE_CEILING,
@@ -48,8 +52,10 @@ test("every policy value is the one the enforcing module actually uses", () => {
   assert.equal(p.panelSizeMax, PANEL_SIZE_MAX);
   assert.equal(p.codeReviewPanelSize, CODE_REVIEW_PANEL_SIZE);
   assert.equal(p.codeReviewMaxRounds, CODE_REVIEW_MAX_ROUNDS);
+  assert.equal(p.codeReviewReconcilerCalls, CODE_REVIEW_RECONCILER_CALLS);
   assert.equal(p.implementationPhaseTasks, IMPLEMENTATION_PHASE_TASKS);
   assert.equal(p.implementationMaxPhases, IMPLEMENTATION_MAX_PHASES);
+  assert.equal(p.designSplitPathThreshold, DESIGN_SPLIT_PATH_THRESHOLD);
   assert.deepEqual(p.severities, [...SEVERITIES]);
   assert.equal(p.codeReviewBlockingSeverity, CODE_REVIEW_BLOCKING_SEVERITY);
   assert.deepEqual(p.requiredSpecialties, [...REQUIRED_SPECIALTIES]);
@@ -86,8 +92,10 @@ test("any change to policy changes its hash", () => {
   assert.notEqual(policyHash({ ...base, panelSizeMax: base.panelSizeMax + 1 }), before);
   assert.notEqual(policyHash({ ...base, codeReviewPanelSize: base.codeReviewPanelSize + 1 }), before);
   assert.notEqual(policyHash({ ...base, codeReviewMaxRounds: base.codeReviewMaxRounds + 1 }), before);
+  assert.notEqual(policyHash({ ...base, codeReviewReconcilerCalls: base.codeReviewReconcilerCalls + 1 }), before);
   assert.notEqual(policyHash({ ...base, implementationPhaseTasks: base.implementationPhaseTasks + 1 }), before);
   assert.notEqual(policyHash({ ...base, implementationMaxPhases: base.implementationMaxPhases + 1 }), before);
+  assert.notEqual(policyHash({ ...base, designSplitPathThreshold: base.designSplitPathThreshold + 1 }), before);
 });
 
 test("every value computeRisk can return is a declared risk value", () => {
@@ -119,6 +127,9 @@ test("the configured code-review values lie within their independent bounds", ()
   assert.ok(Number.isInteger(CODE_REVIEW_MAX_ROUNDS));
   assert.ok(CODE_REVIEW_MAX_ROUNDS >= CODE_REVIEW_MAX_ROUNDS_FLOOR);
   assert.ok(CODE_REVIEW_MAX_ROUNDS <= CODE_REVIEW_MAX_ROUNDS_CEILING);
+  assert.ok(Number.isInteger(CODE_REVIEW_RECONCILER_CALLS));
+  assert.ok(CODE_REVIEW_RECONCILER_CALLS >= CODE_REVIEW_RECONCILER_CALLS_FLOOR);
+  assert.ok(CODE_REVIEW_RECONCILER_CALLS <= CODE_REVIEW_RECONCILER_CALLS_CEILING);
 });
 
 test("no registered reviewer is seeded at an effort of high or above", () => {
@@ -170,7 +181,32 @@ test("a round count that is not a positive integer is refused", () => {
       /codeReviewMaxRounds must be a positive integer/,
       `codeReviewMaxRounds ${JSON.stringify(bad)} must be refused`
     );
+    assert.match(
+      String(invalidPolicyReason({ ...buildPolicy(), codeReviewReconcilerCalls: bad })),
+      /codeReviewReconcilerCalls must be a positive integer/,
+      `codeReviewReconcilerCalls ${JSON.stringify(bad)} must be refused`
+    );
   }
+});
+
+test("a profile frozen before the code-review reconciler existed is refused, naming its call count", () => {
+  // Every run frozen before 2026-10-13. Filling the count in would decide how
+  // many calls a rejection needs by a value the run never froze (hard rule 6).
+  const { codeReviewReconcilerCalls, ...before } = buildPolicy();
+  assert.match(String(invalidPolicyReason(before)), /missing codeReviewReconcilerCalls$/);
+});
+
+test("the code-review reconciler call count accepts only 2-3", () => {
+  // The floor is two: one call wrongly rejected a must-keep finding once in 30
+  // recorded calls, and no pair did.
+  for (const bad of [1, 4]) {
+    assert.match(
+      String(invalidPolicyReason({ ...buildPolicy(), codeReviewReconcilerCalls: bad })),
+      new RegExp(`codeReviewReconcilerCalls ${bad} is outside the permitted 2-3`)
+    );
+  }
+  assert.equal(invalidPolicyReason({ ...buildPolicy(), codeReviewReconcilerCalls: 2 }), null);
+  assert.equal(invalidPolicyReason({ ...buildPolicy(), codeReviewReconcilerCalls: 3 }), null);
 });
 
 test("a profile frozen before the implementation phase fields existed is refused, naming both", () => {
@@ -183,8 +219,15 @@ test("a profile frozen before the implementation phase fields existed is refused
   );
 });
 
-test("the implementation phase size and phase ceiling must be positive integers", () => {
-  for (const field of ["implementationPhaseTasks", "implementationMaxPhases"]) {
+test("a profile frozen before the design split threshold existed is refused, naming it", () => {
+  // Every run frozen before 2026-10-12. Filling the threshold in would decide
+  // whether a run is asked to split by a value it never froze (hard rule 6).
+  const { designSplitPathThreshold, ...before } = buildPolicy();
+  assert.match(String(invalidPolicyReason(before)), /missing designSplitPathThreshold$/);
+});
+
+test("the implementation phase size, the phase ceiling and the split threshold must be positive integers", () => {
+  for (const field of ["implementationPhaseTasks", "implementationMaxPhases", "designSplitPathThreshold"]) {
     for (const bad of [0, -1, 2.5, "10", null, undefined]) {
       assert.match(
         String(invalidPolicyReason({ ...buildPolicy(), [field]: bad })),
@@ -343,8 +386,10 @@ const FROZEN_ONLY = [
   "CODE_REVIEW_BLOCKING_SEVERITY",
   "CODE_REVIEW_PANEL_SIZE",
   "CODE_REVIEW_MAX_ROUNDS",
+  "CODE_REVIEW_RECONCILER_CALLS",
   "IMPLEMENTATION_PHASE_TASKS",
   "IMPLEMENTATION_MAX_PHASES",
+  "DESIGN_SPLIT_PATH_THRESHOLD",
 ];
 
 /** The modules that execute a run, as opposed to those that configure one. */
@@ -401,12 +446,13 @@ test("configured round counts are read from the frozen profile, and the legacy c
   }
 });
 
-test("code review reads size, total rounds, and threshold from the frozen profile", () => {
+test("code review reads size, total rounds, threshold and reconciler calls from the frozen profile", () => {
   const source = readFileSync(join(SRC, "code-review-stage.ts"), "utf8");
   for (const field of [
     "codeReviewPanelSize",
     "codeReviewMaxRounds",
     "codeReviewBlockingSeverity",
+    "codeReviewReconcilerCalls",
   ]) {
     assert.ok(source.includes(`profile.policy.${field}`), `code-review-stage.ts must activate ${field}`);
   }

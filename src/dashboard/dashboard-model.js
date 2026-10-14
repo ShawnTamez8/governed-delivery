@@ -1304,9 +1304,12 @@ export const BLOCKING_DECISIONS = ["cannot_determine", "upstream_blocking"];
 /**
  * A finding's status from recorded fields only. A recorded disposition speaks
  * first, using the document gate's own blocking rule. Without one, a document
- * finding is open; a code-review finding never carries a disposition, so its
- * status is the final panel's recorded result, and a finding outside the final
- * panel is remediation input from an earlier round rather than an open item.
+ * finding is open. A code-review finding carries a disposition only when the
+ * code-review reconciler rejected it before a remediation; a final panel that
+ * recorded it as blocking outranks that rejection, because the gate counts
+ * every finding. Otherwise its status is the final panel's recorded result,
+ * and a finding outside the final panel is remediation input from an earlier
+ * round rather than an open item.
  * An operator's answer to the finding's spec_review question outranks its
  * blocking disposition: approve or modify folds it into the spec (addressed),
  * and deny leaves it open without holding the run (non-blocking). An
@@ -1319,12 +1322,12 @@ export const BLOCKING_DECISIONS = ["cannot_determine", "upstream_blocking"];
 export function findingStatus(card, stageKind, answer = null) {
   if (answer === "approve" || answer === "modify") return "addressed";
   if (answer === "deny") return "non_blocking";
+  if (stageKind === "code_review" && card.finalPanelBlocking === true) return "blocking";
   const disposition = card.decision?.disposition ?? null;
   if (disposition === "addressed") return "addressed";
   if (disposition === "rejected_with_rationale") return "rejected";
   if (disposition !== null) return BLOCKING_DECISIONS.includes(disposition) ? "blocking" : "non_blocking";
   if (stageKind !== "code_review") return "open";
-  if (card.finalPanelBlocking === true) return "blocking";
   return card.finalPanelBlocking === false ? "non_blocking" : "earlier_round";
 }
 

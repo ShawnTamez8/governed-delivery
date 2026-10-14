@@ -13,7 +13,9 @@ import { approvalHandoffDir, profilePath } from "../src/paths.ts";
 import { createRunIntake } from "../src/run-intake.ts";
 import { openStore, type AgentRunRow, type RunRow } from "../src/store.ts";
 import { runVerifyCommand } from "../src/verify-command.ts";
-import { VERIFY_ENV_PASSTHROUGH, VERIFY_RETENTION_MAX_BYTES } from "../src/policy.ts";
+import { policyHash, VERIFY_ENV_PASSTHROUGH, VERIFY_RETENTION_MAX_BYTES } from "../src/policy.ts";
+import { validateSpecDoc } from "../src/spec-doc.ts";
+import { computeScope } from "../src/scope.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { loadProfile } from "../src/profile.ts";
 import { readRunSnapshot } from "../src/operator-state.ts";
@@ -1029,6 +1031,109 @@ test("guided decisions pause on exit, then record the recommendation through ans
       store.close();
     }
     assert.ok(existsSync(join(approvalHandoffDir(root, run.id), "payload.txt")));
+  } finally {
+    if (beforeKey === undefined) delete process.env.BW_APPROVAL_PUBLIC_KEY;
+    else process.env.BW_APPROVAL_PUBLIC_KEY = beforeKey;
+    rmSync(root, { recursive: true, force: true });
+    rmSync(authority, { recursive: true, force: true });
+  }
+});
+
+test("guided split question offers split, build as one, or exit, and refuses modify without recording an answer", { timeout: 120_000 }, async () => {
+  const root = workspace();
+  const authority = `${root}-authority`;
+  const beforeKey = process.env.BW_APPROVAL_PUBLIC_KEY;
+  try {
+    mkdirSync(authority);
+    const keys = generateKeyPairSync("ed25519");
+    const publicPath = join(authority, "approval.pub");
+    writeFileSync(publicPath, keys.publicKey.export({ type: "spki", format: "pem" }));
+    process.env.BW_APPROVAL_PUBLIC_KEY = publicPath;
+    repository(root);
+    writeFileSync(join(root, "docs", "features", "guided-feature", "design.md"),
+      "# guided-feature\n\nOperator-authored design. FIXTURE-SPLIT-CRITERIA\n");
+    git(root, "add", "-A");
+    git(root, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "split");
+    const run = createRun(root);
+    useFixtureExecutor(root, run.id);
+    // A threshold under the stand-in spec's declared file count that its two
+    // halves still fit, read from the emitter's own BASE_SPEC (as
+    // test/spec-stage.test.ts derives it), so the review proposes a split.
+    const literal = /const BASE_SPEC = `([\s\S]*?)`;/.exec(
+      normalizeText(readFileSync(resolve("test", "fixtures", "harness", "emit-spec-stage.mjs"), "utf8")));
+    const base = validateSpecDoc(literal![1]!);
+    assert.ok(base.ok, base.ok ? "" : base.reason);
+    const { profile } = loadProfile(root, run.id);
+    profile.policy = { ...profile.policy, designSplitPathThreshold: Math.ceil(computeScope(base.value.declaredArtifacts).length / 2) };
+    profile.policyHash = policyHash(profile.policy);
+    const serialized = canonicalJson(profile);
+    writeFileSync(profilePath(root, run.id), serialized);
+    const writer = openStore(root);
+    writer.setProfileRef(run.id, sha256Hex(serialized));
+    writer.close();
+    const answers = () => {
+      const store = openStore(root, { readOnly: true });
+      try {
+        return store.getAuditEvents(run.id).filter((event) => event.action === "decision.answer").map((event) => event.summary);
+      } finally {
+        store.close();
+      }
+    };
+
+    // Three attempts at modify exhaust the prompt and record nothing.
+    const refusedOut = capture();
+    await assert.rejects(
+      runGuidedCommand(root, {
+        stdout: refusedOut.stream,
+        stderr: capture().stream,
+        prompt: async (message) => {
+          if (/Execute every group/.test(message)) return "yes";
+          if (/Action for finding \d+ \(1, 2 or 4\)/.test(message)) return "3";
+          throw new Error(`unexpected split prompt: ${message}`);
+        },
+      }),
+      (error: unknown) => {
+        assert.equal((error as { exitCode?: number }).exitCode, 3);
+        assert.match((error as Error).message, /no valid decision was selected/);
+        return true;
+      },
+    );
+    assert.match(refusedOut.text(), /1\. Split {8}- Store one design per feature and end this run/);
+    assert.match(refusedOut.text(), /2\. Build as one - Build the whole design in this run/);
+    assert.doesNotMatch(refusedOut.text(), /3\. Modify/);
+    assert.equal(refusedOut.text().split("This question takes 1 (split), 2 (build as one), or 4 (exit).").length, 4);
+    assert.deepEqual(answers(), []);
+
+    // A refused choice still leaves the question answerable: 2 builds as one.
+    const asked: string[] = [];
+    const denied = await runGuidedCommand(root, {
+      stdout: capture().stream,
+      stderr: capture().stream,
+      prompt: async (message) => {
+        asked.push(message);
+        if (/Action for finding \d+ \(1, 2 or 4\)/.test(message)) return asked.length === 1 ? "3" : "2";
+        if (/Execute every group/.test(message)) return "yes";
+        if (/Action \(1-4\)/.test(message)) return "4";
+        throw new Error(`unexpected split prompt: ${message}`);
+      },
+    });
+    // The run builds as one and passes spec_decision. It stops there with exit
+    // 1, not at the approval handoff: the threshold this test froze differs
+    // from the policy in force, and approval refuses a policy changed since intake.
+    assert.equal(denied, 1);
+    const recorded = answers();
+    assert.equal(recorded.length, 1);
+    assert.match(recorded[0]!, /answered deny;/);
+    const store = openStore(root, { readOnly: true });
+    try {
+      const snapshot = readRunSnapshot(store, root, run.id).snapshot;
+      assert.deepEqual(snapshot.stages.map((stage) => [stage.kind, stage.status]),
+        [["spec", "passed"], ["spec_review", "passed"], ["spec_decision", "passed"]]);
+      assert.equal(snapshot.phase, "awaiting_approval");
+      assert.match(snapshot.workflowAction.reasons[0]!.reason, /policy has changed since intake/);
+    } finally {
+      store.close();
+    }
   } finally {
     if (beforeKey === undefined) delete process.env.BW_APPROVAL_PUBLIC_KEY;
     else process.env.BW_APPROVAL_PUBLIC_KEY = beforeKey;

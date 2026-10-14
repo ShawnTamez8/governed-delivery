@@ -12,6 +12,7 @@ import { findingIdentity } from "./finding.ts";
 import { computeRisk, selectReviewers, staffingShortfall, validatePanelRequest } from "./select.ts";
 import { computeScope, touchesProtected } from "./scope.ts";
 import {
+  buildDesignSplitPrompt,
   buildSpecAuthorPrompt,
   buildSpecReconcilePrompt,
   buildSpecReviewPrompt,
@@ -31,6 +32,19 @@ import { deriveRoute, proposalIdentity, writeProposalEvidence } from "./proposal
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
 import { BLOCKING_DISPOSITIONS } from "./plan-gate.ts";
+import {
+  DESIGN_SPLIT_INTENT,
+  DESIGN_SPLIT_LOCATION,
+  featureSlugsInUse,
+  minimumSplitPieces,
+  SPLIT_OPTIONS,
+  SPLIT_RECOMMENDED,
+  SPLIT_WHY,
+  splitIsPossible,
+  splitQuestionText,
+  validateDesignSplit,
+  writeSplitEvidence,
+} from "./design-split.ts";
 
 export const DISCLOSED_OPEN_DECISION_INTENT = "disclosed-open-decision";
 
@@ -232,6 +246,12 @@ export async function runSpecStage(
         `configured agent ${author.id} does not allow spec-reconciliation output`
       );
     }
+    // Checked even though most runs never propose a split: whether one is
+    // proposed is known only after the review spends, and a run that would
+    // need one must not find out then that its author cannot make it.
+    if (!author.outputs.includes("spec-split")) {
+      return abort(specStage.id, "spec.split.failed", `configured agent ${author.id} does not allow spec-split output`);
+    }
     const authorDispatch = await dispatchOnce(
       store,
       executor,
@@ -243,6 +263,7 @@ export async function runSpecStage(
         requestedEffort: authorSettings.effort,
         setting: author.id,
         prompt: buildSpecAuthorPrompt(author, design, profile.verification),
+        invocation: { cwd: rootDir },
       },
       rootDir
     );
@@ -320,6 +341,7 @@ export async function runSpecStage(
           },
           profile.verification
         ),
+        invocation: { cwd: rootDir },
       },
       rootDir
     );
@@ -515,6 +537,11 @@ export async function runSpecStage(
             requestedModel: seat.model,
             requestedEffort: seat.effort,
             setting: reviewer.id,
+            // No target cwd, unlike the author's dispatches: the target's
+            // `.governance/` holds the other reviewers' raw reports, and nothing
+            // enforces the sandbox's denied paths, so a reviewer started there
+            // could read its siblings (hazard 14). The prompt carries both
+            // documents it judges.
             prompt: buildSpecReviewPrompt(reviewer, design, specContent),
           },
           rootDir
@@ -602,6 +629,7 @@ export async function runSpecStage(
           requestedEffort: reconcilerSettings.effort,
           setting: RECONCILER,
           prompt: buildSpecReconcilePrompt(author, design, specContent, reconcileFindings, profile.verification),
+          invocation: { cwd: rootDir },
         },
         rootDir
       );
@@ -823,10 +851,124 @@ export async function runSpecStage(
 
     // --- decision gate: over every round this stage ran, not the last one ---
     const decisions = store.getFindingDecisions(reviewStage.id);
-    const questions = store.getDecisionQuestions(reviewStage.id);
+    let questions = store.getDecisionQuestions(reviewStage.id);
     const gate = specReviewGate(decisions, new Set(questions.map((q) => q.finding_id)));
     if (gate.pass) {
       const specHash = sha256Hex(normalizeText(specContent));
+      // --- design split (docs/features/design-split-into-features/plan.md) ---
+      // A reviewed spec declaring more files than the frozen threshold is
+      // estimated to need more plan items than one run can build. The author
+      // proposes features built one after another, the split is checked
+      // against the reviewed spec, and it becomes one more question at the
+      // existing pause. Strictly greater: a spec at the threshold is one run.
+      const declaredCount = computeScope(written.doc.declaredArtifacts).length;
+      const threshold = profile.policy.designSplitPathThreshold;
+      const criteriaCount = written.doc.acceptanceCriteria.length;
+      if (declaredCount > threshold && !splitIsPossible(criteriaCount, declaredCount, threshold)) {
+        // No reply could pass the validator, so nothing is dispatched and the
+        // run continues as one, as a denied split would.
+        audit(
+          reviewStage.id,
+          "spec.split.skipped",
+          `declared=${declaredCount}; threshold=${threshold}; criteria=${criteriaCount}: a split needs at least ${minimumSplitPieces(declaredCount, threshold)} criteria, one per feature`
+        );
+      } else if (declaredCount > threshold) {
+        const slugsInUse = featureSlugsInUse(rootDir);
+        // On the spec stage, like the self-critique and reconciliation: the
+        // review stage's agent_run rows stay reviewer seats.
+        const splitDispatch = await dispatchOnce(
+          store,
+          executor,
+          {
+            stageId: specStage.id,
+            agent: author.id,
+            role: "author",
+            requestedModel: authorSettings.model,
+            requestedEffort: authorSettings.effort,
+            setting: author.id,
+            prompt: buildDesignSplitPrompt(author, design, specContent, {
+              threshold,
+              declaredCount,
+              slugsInUse,
+              runSlug: run.slug,
+            }),
+            invocation: { cwd: rootDir },
+          },
+          rootDir
+        );
+        if (!splitDispatch.ok) {
+          return abort(reviewStage.id, "spec.split.failed", splitDispatch.reason);
+        }
+        const splitBody = extractJsonBody(splitDispatch.envelope.resultText);
+        if (splitBody.kind === "refused") {
+          return abort(reviewStage.id, "spec.split.invalid", `design split body refused: ${splitBody.reason}`);
+        }
+        const splitResult = validateAgentResult(author.id, splitBody.value);
+        if (!splitResult.ok) {
+          return abort(reviewStage.id, "spec.split.invalid", `design split result refused: ${splitResult.reason}`);
+        }
+        if (splitResult.value.status !== "proposed") {
+          return abort(
+            reviewStage.id,
+            "spec.split.invalid",
+            `spec author returned status ${splitResult.value.status} for the design split, not proposed`
+          );
+        }
+        const splitContent = splitResult.value.proposedContentChanges as { split?: unknown } | undefined;
+        if (splitContent?.split === undefined) {
+          return abort(reviewStage.id, "spec.split.invalid", "design split result is missing proposedContentChanges.split");
+        }
+        const split = validateDesignSplit(splitContent.split, {
+          spec: written.doc,
+          runSlug: run.slug,
+          slugsInUse,
+          maxPathsPerPiece: threshold,
+        });
+        if (!split.ok) {
+          return abort(reviewStage.id, "spec.split.invalid", split.reason);
+        }
+        const evidence = writeSplitEvidence(rootDir, runId, { split: split.value, specHash, declaredCount, threshold });
+        // The last round's finding, decision and question, as the reconciler
+        // records them, so the decision path and every reader stay one path.
+        // The decision carries no proposal: the features become proposals only
+        // when the operator approves them.
+        const finding = store.upsertCanonicalFinding(reviewStage.id, rounds, DESIGN_SPLIT_INTENT, DESIGN_SPLIT_LOCATION);
+        store.insertFindingReport({
+          findingId: finding.id,
+          agentRunId: splitDispatch.agentRunId,
+          severity: "high",
+          classification: "upstream",
+          subject: `design split into ${split.value.pieces.length} features`,
+        });
+        store.insertFindingDecision({
+          findingId: finding.id,
+          agentRunId: splitDispatch.agentRunId,
+          disposition: "upstream_blocking",
+          rationale: split.value.rationale,
+          changedLocations: [],
+          grounding: null,
+          normativeChanges: null,
+          artifactHashBefore: specHash,
+          artifactHashAfter: specHash,
+        });
+        store.insertDecisionQuestion({
+          findingId: finding.id,
+          text: splitQuestionText(split.value, threshold, declaredCount),
+          options: SPLIT_OPTIONS,
+          recommended: SPLIT_RECOMMENDED,
+          why: SPLIT_WHY(
+            threshold,
+            declaredCount,
+            profile.policy.implementationPhaseTasks * profile.policy.implementationMaxPhases
+          ),
+        });
+        audit(
+          reviewStage.id,
+          "spec.split.record",
+          `finding=${finding.id}; pieces=${split.value.pieces.length}; declared=${declaredCount}; threshold=${threshold}; evidence=${evidence.ref}; evidenceHash=${evidence.hash}`
+        );
+        questions = store.getDecisionQuestions(reviewStage.id);
+      }
       audit(
         reviewStage.id,
         "spec.gate.pass",

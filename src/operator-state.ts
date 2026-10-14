@@ -12,6 +12,7 @@ import { inspectLock, type LockObservation } from "./lock.ts";
 import {
   codeReviewEvidenceRef, deliveryEvidenceRef, rawOutputDir, worktreePath,
 } from "./paths.ts";
+import { readSplitApproval, readSplitRecord } from "./design-split.ts";
 import { APPROVAL_DEFAULT_LIFETIME_SECONDS, buildPolicy, policyHash } from "./policy.ts";
 import { loadVerifiedProfile, requireFrozenBinding, type Profile } from "./profile.ts";
 import { computeScope } from "./scope.ts";
@@ -374,14 +375,21 @@ export function readRunSnapshot(store: Store, rootDir: string, runId: number,
     kind: command, command, args: ["--repo", rootDir, ...(command === "verify-audit" ? [] : ["--run", String(runId)])],
     eligible: true, reason: null, proposalId: null, route: null, title: null, evidenceRef: null,
   }));
+  // A feature of an approved design split exports under its own slug, the name
+  // its design moves to under docs/features/; any other proposal derives one
+  // from its title.
+  const splitSlugs = readSplitApproval(audit);
   for (const p of proposals) {
-    const name = p.title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    const splitSlug = splitSlugs.get(p.id);
+    const name = splitSlug ?? p.title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
     const usable = /^[a-z0-9]+(-[a-z0-9]+)*$/.test(name);
     const collision = usable && existsSync(resolve(rootDir, "docs", "proposals", `${name}.md`));
     actions.push({ kind: "proposal_export", command: "proposal-export",
-      args: ["--repo", rootDir, "--proposal", String(p.id), ...(!usable || collision ? ["--name", "<new-slug>"] : [])],
+      args: ["--repo", rootDir, "--proposal", String(p.id),
+        ...(!usable || collision ? ["--name", "<new-slug>"] : splitSlug !== undefined ? ["--name", splitSlug] : [])],
       eligible: true, reason: !usable ? "The title cannot derive a default name; choose --name."
         : collision ? "The default export path exists; choose a new --name. Export never overwrites."
+        : splitSlug !== undefined ? "A split feature exports under its slug; export does not continue the run."
         : "Export rechecks its exclusive-create rule; it does not continue the run.",
       proposalId: p.id, route: p.route, title: p.title, evidenceRef: p.evidenceRef });
   }
@@ -813,12 +821,19 @@ function interpretBoundary(
       } else if (review.status === "blocked" && value.outcome === "block" && profile !== null) {
         const final: unknown = Array.isArray(value.rounds) ? value.rounds.at(-1) : null;
         const gate = event(review, "code_review.gate.block");
+        const maxRounds = profile.policy.codeReviewMaxRounds;
+        // A round before the last is final only when the code-review reconciler
+        // rejected every finding in it, so the stage decided it by the gate.
+        const everyFindingRejected = object(final) && Array.isArray(final.findings) && final.findings.length > 0 &&
+          final.findings.every((f) => object(f) &&
+            rows.decisions.some((d) => d.finding_id === f.id && d.disposition === "rejected_with_rationale"));
         if (object(final) && typeof final.round === "number" && final.remediation === null &&
             Array.isArray(final.findings) && Array.isArray(final.blocking) && Array.isArray(value.blocking) &&
             verified?.ok && value.runId === run.id && value.stageId === review.id &&
             value.patchBase === verified.value.patchBase && value.initialVerifiedCommit === verified.value.verifiedCommit &&
             value.worktreePath === verified.value.worktreePath && commit(final.reviewedCommit) &&
-            value.finalVerifiedCommit === final.reviewedCommit && final.round === profile.policy.codeReviewMaxRounds &&
+            value.finalVerifiedCommit === final.reviewedCommit &&
+            (final.round === maxRounds || (final.round < maxRounds && everyFindingRejected)) &&
             value.panelSize === profile.policy.codeReviewPanelSize && value.maxRounds === profile.policy.codeReviewMaxRounds &&
             value.blockingSeverity === profile.policy.codeReviewBlockingSeverity &&
             strings(value.severities) && strings(value.panel) &&
@@ -914,11 +929,16 @@ function interpretBoundary(
     // Answering is the operator's free, dispatch-free input; each open
     // question is its own action.
     const answered = new Set(rows.answers.map((a) => a.question_id));
+    // The design split takes approve or deny only; `answerQuestion` refuses modify.
+    const split = readSplitRecord(audit)?.findingId;
     for (const q of rows.questions.filter((q) => !answered.has(q.id))) {
       snapshot.operatorActions.push({
         kind: "decision_answer", command: "decide",
         args: ["--repo", root, "--run", String(run.id), "--finding", String(q.finding_id)],
-        eligible: true, reason: "Choose exactly one of --approve, --deny, or --answer-file <path>.",
+        eligible: true,
+        reason: q.finding_id === split
+          ? "Choose exactly one of --approve (split) or --deny (build as one); this question takes no --answer-file."
+          : "Choose exactly one of --approve, --deny, or --answer-file <path>.",
         proposalId: null, route: null, title: q.text, evidenceRef: specReview?.output_ref ?? null,
       });
     }

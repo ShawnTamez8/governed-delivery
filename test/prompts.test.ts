@@ -7,7 +7,9 @@ import { pathToFileURL } from "node:url";
 import * as promptBuilders from "../src/prompts.ts";
 import {
   buildCodeReviewPrompt,
+  buildCodeReviewReconcilerPrompt,
   buildCodeReviewRemediationPrompt,
+  buildDesignSplitPrompt,
   buildImplementationAuthorPrompt,
   buildPlanAuthorPrompt,
   buildPlanReconcilePrompt,
@@ -30,7 +32,8 @@ import { CODE_REVIEWER_STATE_INTEGRITY } from "../src/agents/code-reviewer-state
 import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
 import { SPEC_REVIEWER_TRACEABILITY } from "../src/agents/spec-reviewer-traceability.ts";
 import { validatePanelRequest } from "../src/select.ts";
-import { validateSpecDoc } from "../src/spec-doc.ts";
+import { readSpecDeclaredArtifacts, validateSpecDoc } from "../src/spec-doc.ts";
+import { validateDesignSplit } from "../src/design-split.ts";
 import { planPhases, validatePlanDoc, type PlanPhase } from "../src/plan-doc.ts";
 import { validateAgentResult, type AgentResult } from "../src/agent-result.ts";
 import { CLAUDE_CODE } from "../src/executor.ts";
@@ -45,6 +48,7 @@ import {
 import { validateCodeReviewReports } from "../src/code-review.ts";
 import { normalizeText, sha256Hex } from "../src/canonical.ts";
 import { parseGovernedConfig, type VerificationConfig } from "../src/governed-config.ts";
+import { DESIGN_SPLIT_PATH_THRESHOLD } from "../src/policy.ts";
 import { disclosedOpenDecisionReports } from "../src/spec-stage.ts";
 
 // Hazard 3: every constrained field the prompts request must state its
@@ -105,7 +109,7 @@ const VERIFICATION_BLOCK_SENTENCES = [
  * asserted whole against the generated prompt.
  */
 const SPEC_VERIFICATION_SENTENCES = [
-  "Your working directory may not be the target repository.",
+  "Your working directory is the target repository's working tree; read what each command runs there.",
   "Treat a file as evidence of what a command runs only if it belongs to the repository the design describes; if you cannot tell, what the command requires is not established.",
   "The commands are not obligations the design states: never restate a command as an acceptance criterion, and never declare an artifact only because a command exists.",
   "A command that only reports a tool version depends on nothing and needs no decision.",
@@ -411,6 +415,14 @@ const CONSTRAINT_STRINGS = [
   ...IMPLEMENTER_VERIFICATION_SENTENCES,
   PLAN_DRAFT_VERIFICATION_SENTENCE,
   PLAN_RECONCILE_VERIFICATION_SENTENCE,
+  // The design split's rules (docs/features/design-split-into-features/plan.md):
+  // every rule validateDesignSplit enforces is stated where the split is requested.
+  "proposedContentChanges.split",
+  "differs from every other piece's slug",
+  "is in exactly one piece",
+  "A file may be listed in several pieces",
+  "distinct declared files",
+  "dependsOn lists the 1-based positions of earlier pieces",
   // What a criterion may say (docs/features/spec-criterion-testability/plan.md).
   // Measured 2026-09-27, $1.6186: team-notes run 3 copied the design's
   // "meaningful content change" into AC-041, and its tone guidance reached
@@ -418,10 +430,15 @@ const CONSTRAINT_STRINGS = [
   "Every acceptance criterion must be decidable by one objective pass/fail check: a specific input, action, value, or observable outcome, never a subjective or unquantified term such as fast, meaningful, intuitive, or clean.",
   "Where the design states a behavior in subjective or unquantified terms, write only its checkable part as a criterion, and record the undecided part under ## Open decisions instead of choosing a threshold the design does not state.",
   "Guidance with no checkable part, such as visual tone or typographic feel, belongs in an Out of scope note, not in a criterion.",
+  // The code-review reconciler's checked fields (docs/features/code-review-reconciler/plan.md):
+  // the excerpt is checked against the specification and every listed finding
+  // needs exactly one decision. Both sentences are the measured template's own.
+  "A rejection must quote that baseline: words copied exactly from the approved specification, which the system checks.",
+  "The decisions list has exactly one entry per finding id listed below, no more and no fewer.",
 ];
 
 /** The criterion-quality rule, asserted per prompt: two builders carry it. */
-const CRITERION_QUALITY_RULE = CONSTRAINT_STRINGS.slice(-3);
+const CRITERION_QUALITY_RULE = CONSTRAINT_STRINGS.slice(-5, -2);
 
 test("every constrained field's constraint appears in the prompt source", () => {
   for (const constraint of CONSTRAINT_STRINGS) {
@@ -1763,6 +1780,199 @@ test("the remediation prompt carries every report and advertises a valid patch r
   assert.equal(result.ok, true, result.ok ? "" : result.reason);
 });
 
+// --- code-review reconciler (code-review-reconciler Task 4) -----------------
+
+/**
+ * The measured template, read from the replay fixture rather than written here
+ * (hazard 4): the script that produced the 30 recorded reconciler calls.
+ */
+const RECONCILER_SOURCE: string = (JSON.parse(
+  readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "code-review-reconciler-replay-crew-chatter-run-6.json"), "utf8")
+) as { reconcilerSource: string }).reconcilerSource;
+const TEMPLATE_START = "const prompt = `";
+const RECONCILER_TEMPLATE = RECONCILER_SOURCE.slice(
+  RECONCILER_SOURCE.indexOf(TEMPLATE_START) + TEMPLATE_START.length,
+  RECONCILER_SOURCE.indexOf("`;\n\nconst collapse")
+);
+/** Run 6's round-1 findings as stored: the replay's input. */
+const RUN_6_ROUND_1 = (JSON.parse(
+  readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "code-review-crew-chatter-run-6.json"), "utf8")
+) as {
+  codeReviewFindings: Array<{
+    findingId: number;
+    round: number;
+    location: string;
+    intentKey: string;
+    reports: Array<{ reviewer: string; severity: string; subject: string }>;
+  }>;
+}).codeReviewFindings.filter((finding) => finding.round === 1);
+
+function buildRun6ReconcilerPrompt(spec: string, plan: string, diff: string, commit: string): string {
+  return buildCodeReviewReconcilerPrompt(
+    RUN_6_ROUND_1.map((finding) => ({
+      findingId: finding.findingId,
+      location: finding.location,
+      intentKey: finding.intentKey,
+      reports: finding.reports.map((report) => ({
+        reviewerId: report.reviewer,
+        severity: report.severity,
+        classification: "current_artifact" as const,
+        subject: report.subject,
+      })),
+    })),
+    spec,
+    plan,
+    diff,
+    commit
+  );
+}
+
+test("the reconciler prompt is byte for byte the measured replay template", () => {
+  assert.equal(RUN_6_ROUND_1.length, 13);
+  assert.ok(RECONCILER_TEMPLATE.startsWith("you are the code-review reconciler\n"), "the template was found in the replay source");
+  // The replay's own render and template, evaluated over the replay's own inputs.
+  const render = RECONCILER_SOURCE.slice(
+    RECONCILER_SOURCE.indexOf("const rendered = findings"),
+    RECONCILER_SOURCE.indexOf("const ids = ")
+  );
+  const body = render + "return `" + RECONCILER_TEMPLATE + "`;";
+  const replay = new Function("findings", "ids", "HEAD", "spec", "plan", "diff", body) as (
+    findings: unknown,
+    ids: number[],
+    head: string,
+    spec: string,
+    plan: string,
+    diff: string
+  ) => string;
+  const commit = "c".repeat(40);
+  const expected = replay(RUN_6_ROUND_1, RUN_6_ROUND_1.map((f) => f.findingId), commit, "SPEC-TEXT", "PLAN-TEXT", "DIFF-TEXT");
+  assert.equal(buildRun6ReconcilerPrompt("SPEC-TEXT", "PLAN-TEXT", "DIFF-TEXT", commit), expected);
+});
+
+test("every fixed line of the measured template appears in the reconciler prompt, in order", () => {
+  const fixed = RECONCILER_TEMPLATE.split("\n").filter((line) => line.trim() !== "" && !line.includes("${"));
+  assert.ok(fixed.length >= 10, `${fixed.length} fixed lines`);
+  const lines = buildRun6ReconcilerPrompt("SPEC-TEXT", "PLAN-TEXT", "DIFF-TEXT", "c".repeat(40)).split("\n");
+  let at = -1;
+  for (const line of fixed) {
+    const next = lines.indexOf(line, at + 1);
+    assert.ok(next > at, `reconciler prompt missing, or out of order: ${line}`);
+    at = next;
+  }
+});
+
+test("the reconciler prompt opens with its role, ends with the diff, and states no consequence", () => {
+  const commit = "c".repeat(40);
+  const prompt = buildRun6ReconcilerPrompt("SPEC-TEXT", "PLAN-TEXT", "DIFF-TEXT", commit);
+  assert.ok(prompt.startsWith(`${promptBuilders.CODE_REVIEW_RECONCILER_PROMPT_PREFIX}\n`));
+  assert.ok(prompt.endsWith("Diff of the change:\n\nDIFF-TEXT"));
+  assert.ok(prompt.includes(`Your working directory is the repository checkout at commit ${commit}; you may read it.`));
+  // One advertised entry per listed finding, in prompt order.
+  assert.deepEqual(
+    [...prompt.matchAll(/\{"findingId": (\d+), </g)].map((m) => Number(m[1])),
+    RUN_6_ROUND_1.map((f) => f.findingId)
+  );
+  for (const word of ["threshold", "blocks the run", "second call", "agree"]) {
+    assert.ok(!prompt.includes(word), `the reconciler prompt states a consequence: ${word}`);
+  }
+});
+
+// --- design split (design-split-into-features Task 5) -----------------------
+
+/** Crew-chatter run 4, the run that motivated the split: its reviewed spec as its decision gate passed it. */
+const SPLIT_RUN_4: { specMarkdown: string; provenance: { declaredPaths: number } } = JSON.parse(
+  readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "spec-crew-chatter-run-4.json"), "utf8")
+);
+
+/** A split context no default produces, for the routing and wording tests. */
+const SPLIT_CONTEXT = { threshold: 17, declaredCount: 23, slugsInUse: ["other-feature"], runSlug: "demo" };
+
+test("the split prompt built from crew-chatter run 4's spec states its counts, the limit, every rule in order and the slugs in use", () => {
+  const spec = validateSpecDoc(SPLIT_RUN_4.specMarkdown);
+  assert.ok(spec.ok, spec.ok ? "" : spec.reason);
+  const declared = readSpecDeclaredArtifacts(SPLIT_RUN_4.specMarkdown)!;
+  assert.equal(declared.length, SPLIT_RUN_4.provenance.declaredPaths);
+  const prompt = buildDesignSplitPrompt(SPEC_AUTHOR, "DESIGN-TEXT", SPLIT_RUN_4.specMarkdown, {
+    threshold: DESIGN_SPLIT_PATH_THRESHOLD, declaredCount: declared.length,
+    slugsInUse: ["crew-chatter", "other-feature"], runSlug: "crew-chatter",
+  });
+  assert.ok(prompt.startsWith(promptBuilders.DESIGN_SPLIT_PROMPT_PREFIX));
+  assert.ok(prompt.includes(`declares ${declared.length} files`), "the declared count");
+  assert.ok(prompt.includes(`at most ${DESIGN_SPLIT_PATH_THRESHOLD} declared files within its plan ceiling`), "the threshold");
+  assert.ok(prompt.includes(`Each piece lists at most ${DESIGN_SPLIT_PATH_THRESHOLD} distinct declared files.`), "the per-feature limit");
+  assert.ok(prompt.includes("none of these slugs already in use: crew-chatter, other-feature."));
+  for (const criterion of spec.value.acceptanceCriteria) assert.ok(prompt.includes(criterion.id), criterion.id);
+  for (const path of declared) assert.ok(prompt.includes(path), path);
+  // The rules in the order validateDesignSplit checks them, so the first rule
+  // the model reads as broken is the one the refusal will name.
+  const order = [
+    "only the keys pieces and rationale",
+    "at least 2 features",
+    "lowercase kebab-case",
+    "one non-empty line",
+    "at least one acceptance criterion ID and at least one declared file",
+    "Every acceptance criterion ID of the specification is in exactly one piece",
+    "Every declared file of the specification is in at least one piece",
+    `at most ${DESIGN_SPLIT_PATH_THRESHOLD} distinct declared files`,
+    "dependsOn lists the 1-based positions of earlier pieces",
+    "rationale is a non-empty string",
+  ].map((text) => {
+    const index = prompt.indexOf(text);
+    assert.ok(index >= 0, `split prompt missing: ${text}`);
+    return index;
+  });
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), "the rules follow the validator's order");
+  assert.ok(prompt.includes("JSON-standard escaping"));
+  assert.ok(prompt.includes("never put a raw line break or tab inside a string literal"));
+});
+
+test("the split prompt follows the numbers and slugs it is given", () => {
+  const prompt = buildDesignSplitPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", SPLIT_CONTEXT);
+  assert.ok(prompt.includes("declares 23 files"));
+  assert.ok(prompt.includes("Each piece lists at most 17 distinct declared files."));
+  assert.ok(prompt.includes("none of these slugs already in use: demo, other-feature."));
+  assert.ok(!prompt.includes(`at most ${DESIGN_SPLIT_PATH_THRESHOLD} `), "no live constant in place of the frozen value");
+});
+
+test("the split result and example the prompt advertises validate against the receiving validators", () => {
+  const prompt = buildDesignSplitPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", SPLIT_CONTEXT);
+  const envelope = /proposedContentChanges\.split:\n(\{[^\n]+\})$/m.exec(prompt);
+  assert.ok(envelope, "the prompt advertises one AgentResult shape");
+  const result = validateAgentResult(SPEC_AUTHOR.id, JSON.parse(envelope![1]!));
+  assert.ok(result.ok, result.ok ? "" : result.reason);
+  assert.equal(result.value.status, "proposed");
+  // The example names the two-criterion specification it is for; that
+  // specification is built here and the example is checked against it.
+  assert.ok(prompt.includes("whose criteria are AC-001 and AC-002 and whose declared files are src/a.ts and src/b.ts"));
+  const spec = validateSpecDoc(`feature: example
+change_kind: feature
+
+## Declared artifacts
+
+- src/a.ts
+- src/b.ts
+
+## Acceptance criteria
+
+- AC-001: the core behaviour works
+- AC-002: the extras work
+`);
+  assert.ok(spec.ok, spec.ok ? "" : spec.reason);
+  const example = /this split is valid:\n(\{[^\n]+\})$/m.exec(prompt);
+  assert.ok(example, "the prompt advertises one example split");
+  const split = validateDesignSplit(JSON.parse(example![1]!), {
+    spec: spec.value, runSlug: SPLIT_CONTEXT.runSlug, slugsInUse: SPLIT_CONTEXT.slugsInUse, maxPathsPerPiece: 1,
+  });
+  assert.ok(split.ok, split.ok ? "" : split.reason);
+});
+
+test("the split prompt carries no word the spec emitter routes its other prompts on", () => {
+  const prompt = buildDesignSplitPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", SPLIT_CONTEXT).toLowerCase();
+  for (const word of ["self-critique", "spec reviewer", "reconcile", "spec author", "operator answers to fold:"]) {
+    assert.ok(!prompt.includes(word), `split prompt carries the routing word ${word}`);
+  }
+});
+
 const CLI_ROUTER = resolve("test", "fixtures", "harness", "emit-cli-run.mjs");
 const ROUTE_PREFIXES = {
   SPEC_AUTHOR_PROMPT_PREFIX: promptBuilders.SPEC_AUTHOR_PROMPT_PREFIX,
@@ -1772,6 +1982,8 @@ const ROUTE_PREFIXES = {
   IMPLEMENTATION_PROMPT_PREFIX: promptBuilders.IMPLEMENTATION_PROMPT_PREFIX,
   CODE_REVIEW_PROMPT_PREFIX: promptBuilders.CODE_REVIEW_PROMPT_PREFIX,
   CODE_REVIEW_REMEDIATION_PROMPT_PREFIX: promptBuilders.CODE_REVIEW_REMEDIATION_PROMPT_PREFIX,
+  CODE_REVIEW_RECONCILER_PROMPT_PREFIX: promptBuilders.CODE_REVIEW_RECONCILER_PROMPT_PREFIX,
+  DESIGN_SPLIT_PROMPT_PREFIX: promptBuilders.DESIGN_SPLIT_PROMPT_PREFIX,
 };
 interface PromptRoute {
   name: string;
@@ -1800,6 +2012,8 @@ function routingPrompts(document: string) {
     { builder: "buildImplementationAuthorPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, document, document, scope, base, ONLY_PHASE, [], VERIFICATION) },
     { builder: "buildCodeReviewPrompt", prefix: "CODE_REVIEW_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, document, document, scope, document, base) },
     { builder: "buildCodeReviewRemediationPrompt", prefix: "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, document, document, scope, base, scope, document, []) },
+    { builder: "buildCodeReviewReconcilerPrompt", prefix: "CODE_REVIEW_RECONCILER_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewReconcilerPrompt([], document, document, document, base) },
+    { builder: "buildDesignSplitPrompt", prefix: "DESIGN_SPLIT_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildDesignSplitPrompt(SPEC_AUTHOR, document, document, SPLIT_CONTEXT) },
   ];
 }
 

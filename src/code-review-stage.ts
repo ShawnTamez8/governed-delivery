@@ -10,10 +10,16 @@ import {
   formatCodeReviewGatePass,
   validateCodeReviewReports,
   type CodeReviewBlock,
+  type CodeReviewReconciliation,
   type CodeReviewRecord,
   type CodeReviewRound,
   type RecordedFinding,
 } from "./code-review.ts";
+import {
+  agreedRejections,
+  validateReconcilerReply,
+  type ReconcilerDecision,
+} from "./code-review-reconcile.ts";
 import { verifyCommit } from "./commit-verification.ts";
 import { dispatchOnce } from "./dispatch.ts";
 import { type ExecutorDefinition } from "./executor.ts";
@@ -25,8 +31,14 @@ import {
   codeReviewEvidenceRef,
   codeReviewVerificationDir,
 } from "./paths.ts";
+import { CODE_REVIEW_RECONCILER } from "./policy.ts";
 import { loadVerifiedProfile, requireFrozenBinding, resolveSettings } from "./profile.ts";
-import { buildCodeReviewPrompt, buildCodeReviewRemediationPrompt } from "./prompts.ts";
+import {
+  buildCodeReviewPrompt,
+  buildCodeReviewReconcilerPrompt,
+  buildCodeReviewRemediationPrompt,
+  type CodeReviewRemediationFindingInput,
+} from "./prompts.ts";
 import {
   upstreamPrefixFor,
   validateReviewerReports,
@@ -72,7 +84,21 @@ function runGit(
   return { ok: true, stdout: result.stdout ?? "" };
 }
 
-/** One code-review stage containing every bounded panel and repair attempt. */
+/**
+ * One code-review stage containing every bounded panel and repair attempt.
+ *
+ * Before each remediation, the code-review reconciler judges every finding
+ * against the approved specification (`docs/features/code-review-reconciler/plan.md`;
+ * the operator chose "before fixes only" on 2026-10-13). A finding is withheld
+ * from the implementer only when every one of the frozen
+ * `codeReviewReconcilerCalls` calls rejects it validly, quoting the
+ * specification; the rejection is stored as a `rejected_with_rationale`
+ * finding decision. A failed dispatch, an unparsed reply or a failed check
+ * means keep: the reconciler can only narrow what remediation fixes, so an
+ * unusable answer leaves remediation as it was. A round whose every finding
+ * is rejected is decided by the severity gate, as a final panel is. The final
+ * panel is never reconciled, and its gate counts every finding.
+ */
 export async function runCodeReviewStage(
   store: Store,
   executor: ExecutorDefinition,
@@ -110,13 +136,18 @@ export async function runCodeReviewStage(
   const implementerSettings = resolveSettings(profile, "implementer");
   if (!implementerSettings.ok) return { ok: false, reason: implementerSettings.reason };
   // Asserted against the implementer setting: `--model` never named a
-  // reviewer, and this stage's only author-side dispatch is remediation.
+  // reviewer, and it names the remediation dispatch only. The code-review
+  // reconciler is also author-side but has its own frozen setting, below.
   if (requestedModel !== undefined && requestedModel !== implementerSettings.model) {
     return {
       ok: false,
       reason: `--model ${requestedModel} does not match the model frozen at run start (${implementerSettings.model}): config is frozen at run start`,
     };
   }
+  // The reconciler runs as the implementer under its own setting, as the
+  // document reconciler runs as its stage's author under `reconciler`.
+  const reconcilerSettings = resolveSettings(profile, CODE_REVIEW_RECONCILER);
+  if (!reconcilerSettings.ok) return { ok: false, reason: reconcilerSettings.reason };
   const binding = requireFrozenBinding(profile, executor, "code_review");
   if (!binding.ok) return { ok: false, reason: binding.reason };
 
@@ -223,6 +254,8 @@ export async function runCodeReviewStage(
   if (gatedPlan[2] !== specHash) {
     return { ok: false, reason: `the spec does not match the plan the gate approved: planFor ${gatedPlan[2]}, on disk ${specHash}` };
   }
+  // The grounding location of every reconciler rejection.
+  const specLocation = approvalStage.output_ref;
 
   if (!existsSync(worktreePath)) {
     return { ok: false, reason: `the worktree for run ${runId} is missing at ${worktreePath}` };
@@ -574,7 +607,7 @@ export async function runCodeReviewStage(
           subject: report.subject,
         })),
       }));
-      const decision = decideCodeReviewRound(
+      let decision = decideCodeReviewRound(
         withReports,
         profile.policy.codeReviewBlockingSeverity,
         profile.policy.severities,
@@ -586,9 +619,156 @@ export async function runCodeReviewStage(
         changedPaths,
         findings: recordedFindings,
         blocking: decision.action === "block" ? decision.blocking : [],
+        reconciliation: null,
         remediation: null,
       };
       rounds.push(roundRecord);
+      const toRemediationInput = (finding: RecordedFinding): CodeReviewRemediationFindingInput => ({
+        findingId: finding.id,
+        location: finding.location,
+        intentKey: finding.intentKey,
+        reports: finding.reports.map((report) => ({
+          reviewerId: report.agent,
+          severity: report.severity,
+          classification: report.classification,
+          subject: report.subject,
+        })),
+      });
+
+      let remediationFindings = recordedFindings;
+      let decidedEarly = false;
+      if (decision.action === "remediate") {
+        const findingIds = recordedFindings.map((finding) => finding.id);
+        const reconcilerPrompt = buildCodeReviewReconcilerPrompt(
+          recordedFindings.map(toRemediationInput),
+          specContent,
+          planContent,
+          diff,
+          currentCommit
+        );
+        const calls: CodeReviewReconciliation["calls"] = [];
+        const callDecisions: Array<Map<number, ReconcilerDecision> | null> = [];
+        for (let call = 1; call <= profile.policy.codeReviewReconcilerCalls; call += 1) {
+          const reconcileDispatch = await dispatchOnce(
+            store,
+            executor,
+            {
+              stageId: stage.id,
+              agent: author.id,
+              role: "author",
+              requestedModel: reconcilerSettings.model,
+              requestedEffort: reconcilerSettings.effort,
+              setting: CODE_REVIEW_RECONCILER,
+              prompt: reconcilerPrompt,
+              invocation: { cwd: worktreePath },
+            },
+            rootDir
+          );
+          // Checked whatever the dispatch returned: a call that failed after
+          // writing still left its writes in the worktree (hazard 15).
+          const headAfterReconciler = runGit(["rev-parse", "HEAD"], worktreePath);
+          if (!headAfterReconciler.ok || headAfterReconciler.stdout.trim() !== currentCommit) {
+            return abort(
+              stage.id,
+              "code_review.worktree.dirty",
+              !headAfterReconciler.ok
+                ? `round ${roundNumber}: the worktree head could not be re-read after reconciler call ${call}: ${headAfterReconciler.detail}`
+                : `round ${roundNumber}: reconciler call ${call} moved the worktree head from ${currentCommit} to ${headAfterReconciler.stdout.trim()}`
+            );
+          }
+          const cleanAfterReconciler = checkWorktreeClean(worktreePath);
+          if (!cleanAfterReconciler.ok) {
+            return abort(
+              stage.id,
+              "code_review.worktree.dirty",
+              cleanAfterReconciler.detail !== undefined
+                ? `round ${roundNumber}: cannot check worktree cleanliness after reconciler call ${call}: ${cleanAfterReconciler.detail}`
+                : `round ${roundNumber}: reconciler call ${call} left the worktree dirty in: ${cleanAfterReconciler.entries.join(", ")}`
+            );
+          }
+          if (!reconcileDispatch.ok) {
+            calls.push({ agentRunId: null, status: "failed", reason: reconcileDispatch.reason, problems: [] });
+            callDecisions.push(null);
+            break;
+          }
+          const reconcileBody = extractJsonBody(reconcileDispatch.envelope.resultText);
+          if (reconcileBody.kind === "refused") {
+            calls.push({ agentRunId: reconcileDispatch.agentRunId, status: "unparsed", reason: reconcileBody.reason, problems: [] });
+            callDecisions.push(null);
+            break;
+          }
+          const checked = validateReconcilerReply(reconcileBody.value, {
+            findingIds,
+            spec: specContent,
+            plan: planContent,
+            specLocation,
+          });
+          calls.push({ agentRunId: reconcileDispatch.agentRunId, status: "valid", reason: null, problems: checked.problems });
+          callDecisions.push(checked.decisions);
+          // A later call can only take rejections away, so stop once none is left.
+          if (agreedRejections(callDecisions, callDecisions.length).length === 0) break;
+        }
+
+        const rejectedIds = agreedRejections(callDecisions, profile.policy.codeReviewReconcilerCalls);
+        const rejected: CodeReviewReconciliation["rejected"] = rejectedIds.map((findingId) => {
+          const answers = callDecisions.map((decisions) => decisions!.get(findingId)!);
+          const rejects = answers.filter(
+            (answer): answer is Extract<ReconcilerDecision, { disposition: "reject" }> => answer.disposition === "reject"
+          );
+          return {
+            findingId,
+            rationales: rejects.map((answer) => answer.rationale),
+            excerpts: rejects.map((answer) => answer.excerpt),
+            agentRunIds: calls.map((entry) => entry.agentRunId!),
+          };
+        });
+        for (const entry of rejected) {
+          // The decision changes no artifact, so both hashes are the reviewed commit.
+          store.insertFindingDecision({
+            findingId: entry.findingId,
+            agentRunId: entry.agentRunIds[0]!,
+            disposition: "rejected_with_rationale",
+            rationale: entry.rationales[0]!,
+            changedLocations: [],
+            grounding: { source: "specification", location: specLocation, excerpt: entry.excerpts[0]! },
+            normativeChanges: null,
+            artifactHashBefore: currentCommit,
+            artifactHashAfter: currentCommit,
+          });
+          // The excerpt is free text that may hold `;` or line breaks: last field.
+          audit(
+            stage.id,
+            "code_review.reconcile.reject",
+            `round=${roundNumber}/${profile.policy.codeReviewMaxRounds}; commit=${currentCommit}; finding=${entry.findingId}; agentRuns=${entry.agentRunIds.join(",")}; excerpt=${entry.excerpts[0]}`
+          );
+        }
+        const kept = findingIds.filter((id) => !rejectedIds.includes(id));
+        audit(
+          stage.id,
+          "code_review.reconcile.done",
+          `round=${roundNumber}/${profile.policy.codeReviewMaxRounds}; commit=${currentCommit}; findings=${findingIds.length}; kept=${kept.length}; rejected=${rejected.length}; calls=${calls.map((entry) => entry.status).join(",")}`
+        );
+        process.stderr.write(
+          `round ${roundNumber}/${profile.policy.codeReviewMaxRounds} reconciled ${findingIds.length} finding(s) at ${currentCommit.slice(0, 8)}: kept ${kept.length}, rejected ${rejected.length} in ${calls.length} call(s)\n`
+        );
+        roundRecord.reconciliation = { calls, rejected, kept };
+
+        if (kept.length === 0) {
+          // Nothing left to fix: another panel over this commit would change
+          // nothing, so the round is decided by the gate over every finding.
+          decision = decideCodeReviewRound(
+            withReports,
+            profile.policy.codeReviewBlockingSeverity,
+            profile.policy.severities,
+            false
+          );
+          // The round record was built from the `remediate` decision.
+          roundRecord.blocking = decision.action === "block" ? decision.blocking : [];
+          decidedEarly = true;
+        } else {
+          remediationFindings = recordedFindings.filter((finding) => kept.includes(finding.id));
+        }
+      }
 
       if (decision.action === "pass") {
         const { resultRef } = writeRecord("pass", [], currentCommit);
@@ -611,7 +791,7 @@ export async function runCodeReviewStage(
         const named = decision.blocking
           .map((entry) => `${entry.findingId} (${entry.severity}, severity, ${entry.location})`)
           .join(", ");
-        const reason = `code_review blocked after round ${roundNumber}/${profile.policy.codeReviewMaxRounds}: finding id(s) ${named}; threshold ${profile.policy.codeReviewBlockingSeverity}`;
+        const reason = `code_review blocked after round ${roundNumber}/${profile.policy.codeReviewMaxRounds}: finding id(s) ${named}; threshold ${profile.policy.codeReviewBlockingSeverity}${decidedEarly ? "; every finding was rejected by the code-review reconciler, so the round was decided as a final panel" : ""}`;
         store.completeStage(stage.id, resultRef, "block");
         store.setRunStatus(runId, "blocked");
         audit(stage.id, "code_review.gate.block", `round=${roundNumber}/${profile.policy.codeReviewMaxRounds}; commit=${currentCommit}; findings=${recordedFindings.length}; blocking=${decision.blocking.length}; threshold=${profile.policy.codeReviewBlockingSeverity}`);
@@ -636,17 +816,7 @@ export async function runCodeReviewStage(
             currentCommit,
             changedPaths,
             diff,
-            recordedFindings.map((finding) => ({
-              findingId: finding.id,
-              location: finding.location,
-              intentKey: finding.intentKey,
-              reports: finding.reports.map((report) => ({
-                reviewerId: report.agent,
-                severity: report.severity,
-                classification: report.classification,
-                subject: report.subject,
-              })),
-            }))
+            remediationFindings.map(toRemediationInput)
           ),
           invocation: { cwd: worktreePath },
         },
@@ -786,6 +956,26 @@ function buildReport(record: CodeReviewRecord): string {
         lines.push(`- **${report.agent}** — ${report.severity}, ${report.classification} — ${report.subject}`);
       }
       lines.push("");
+    }
+    if (round.reconciliation !== null) {
+      lines.push("### Reconciliation", "");
+      round.reconciliation.calls.forEach((call, index) => {
+        lines.push(
+          `- Call ${index + 1}: ${call.status}, agent run ${call.agentRunId ?? "none"}, ${call.problems.length} problem(s)${call.reason !== null ? ` — ${call.reason}` : ""}`
+        );
+      });
+      lines.push("");
+      for (const entry of round.reconciliation.rejected) {
+        const location = round.findings.find((finding) => finding.id === entry.findingId)?.location ?? "unknown";
+        lines.push(`- Rejected finding ${entry.findingId} (${location})`);
+        entry.rationales.forEach((rationale, index) => {
+          lines.push(`  - Call ${index + 1} rationale: ${rationale}`, `  - Call ${index + 1} excerpt: ${entry.excerpts[index]}`);
+        });
+      }
+      lines.push(`- Kept: ${round.reconciliation.kept.length === 0 ? "none" : round.reconciliation.kept.join(", ")}`, "");
+      if (round.reconciliation.kept.length === 0) {
+        lines.push("Every finding was rejected, so this round was decided as a final panel.", "");
+      }
     }
     if (round.remediation !== null) {
       lines.push(

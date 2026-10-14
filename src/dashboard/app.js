@@ -1058,7 +1058,7 @@ export function buildFindingDetailDrawer(row, application) {
     ["Stage", `${readableIntent(row.stageKind)} · stage ${card.stageId} · round ${card.round}`],
     ["Intent key", element("span", card.intentKey, "mono")],
     ["Disposition", card.decision === null
-      ? row.stageKind === "code_review" ? "None: code-review findings carry no disposition" : "None recorded"
+      ? row.stageKind === "code_review" ? "None: kept for remediation or judged by the final panel" : "None recorded"
       : card.decision.disposition],
     ["Final panel", card.finalPanelBlocking === true ? "Blocking"
       : card.finalPanelBlocking === false ? "Below threshold" : "Not a final-panel result"],
@@ -1762,7 +1762,7 @@ function renderStatusCards(data, application) {
     label: "Active findings",
     info: metricInfoButton("Finding states",
       "Require attention: blocking (a final code-review panel result at or above the frozen threshold, or a blocking recorded decision) and open (a document-review finding with no recorded decision).",
-      "Non-blocking: a final-panel result below the threshold. Earlier round: code-review input the remediation loop consumed. Addressed and rejected: recorded decisions."),
+      "Non-blocking: a final-panel result below the threshold. Earlier round: code-review input the remediation loop consumed. Addressed and rejected: recorded decisions; a rejected code-review finding was withheld from remediation because every one of the run's frozen code-review reconciler calls quoted the specification against it. Reconciler costs appear under the implementer, because its dispatches record agent implementer."),
     value: snapshotValue(data, () => String(counts.requireAttention)), unit: "require attention",
     breakdown: fragment(toned(counts.blocking, "danger", `${counts.blocking} blocking`), " · ",
       toned(counts.open, "warning", `${counts.open} open`)),
@@ -4018,7 +4018,8 @@ function runTarget(application, selected) {
  * The dispatch settings each recorded stage kind draws on: named settings, a
  * reviewer panel by agent-id prefix, or both. A reconciliation dispatch is
  * recorded on the `spec` or `plan` stage row, not on its review stage, and the
- * code-review remediation dispatch (the implementer) on the `code_review` row.
+ * code-review remediation and code-review reconciler dispatches (both agent
+ * `implementer`) on the `code_review` row.
  * @type {Record<string, { names?: string[], prefix?: string }>}
  */
 const STAGE_SETTINGS = {
@@ -4028,7 +4029,7 @@ const STAGE_SETTINGS = {
   plan: { names: ["plan-author", "reconciler"] },
   plan_review: { prefix: "spec-reviewer-" },
   implementation: { names: ["implementer"] },
-  code_review: { names: ["implementer"], prefix: "code-reviewer-" },
+  code_review: { names: ["implementer", "code-review-reconciler"], prefix: "code-reviewer-" },
 };
 
 /**

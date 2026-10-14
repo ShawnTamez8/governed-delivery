@@ -65,6 +65,23 @@ export const CODE_REVIEW_MAX_ROUNDS_CEILING = 5;
 export const CODE_REVIEW_MAX_ROUNDS = 2;
 
 /**
+ * How many code-review reconciler calls must each reject a finding before it
+ * is withheld from remediation (`docs/features/code-review-reconciler/plan.md`).
+ * The calls run in sequence before a remediation, and a later call runs only
+ * while some finding is still rejected by every earlier call, so this is also
+ * the most reconciler dispatches one remediated round can make.
+ *
+ * The floor is 2 because a single call wrongly rejected a must-keep finding
+ * once in 30 recorded calls (crew-chatter run 6, test 5, #906); no pair of calls
+ * rejected it. The ceiling exists because every limit needs one; raising the
+ * count only makes a rejection harder to reach. Frozen at run start (hard rule
+ * 6); the stage reads `profile.policy.codeReviewReconcilerCalls`.
+ */
+export const CODE_REVIEW_RECONCILER_CALLS_FLOOR = 2;
+export const CODE_REVIEW_RECONCILER_CALLS_CEILING = 3;
+export const CODE_REVIEW_RECONCILER_CALLS = 2;
+
+/**
  * The implementation stage dispatches the `implementer` once per phase, and a
  * phase is this many consecutive tasks of the approved plan's `## Tasks`
  * section, in plan order. One dispatch over a whole plan was refused or failed
@@ -84,6 +101,25 @@ export const CODE_REVIEW_MAX_ROUNDS = 2;
  */
 export const IMPLEMENTATION_PHASE_TASKS = 10;
 export const IMPLEMENTATION_MAX_PHASES = 8;
+
+/**
+ * A reviewed specification declaring more files than this gets a proposal to
+ * split the design into features, after the spec review gate passes and before
+ * approval (`docs/features/design-split-into-features/plan.md`). The comparison
+ * is strictly greater, on the deduplicated scope (`computeScope`).
+ *
+ * 30 is the frozen 80-task ceiling (`IMPLEMENTATION_PHASE_TASKS` times
+ * `IMPLEMENTATION_MAX_PHASES`) divided by the highest recorded ratio of plan
+ * items to declared files, 2.6 (team-notes run 10: 20 files, 52 items), rounded
+ * down. The ratio comes from eleven runs of two test designs, copied with their
+ * sources into `test/fixtures/recorded/declared-paths-vs-plan-items.json`. It is
+ * an estimate: a design under the threshold, or a split the operator denies, may
+ * still be refused at the plan ceiling.
+ *
+ * Frozen at run start (hard rule 6); the spec stage reads
+ * `profile.policy.designSplitPathThreshold`, never this constant.
+ */
+export const DESIGN_SPLIT_PATH_THRESHOLD = 30;
 
 /**
  * The lowest severity at which one code-review report blocks the run.
@@ -128,6 +164,16 @@ export type EffortLevel = (typeof EFFORT_LEVELS)[number];
  */
 export const RECONCILER = "reconciler";
 
+/**
+ * The setting that governs the code-review reconciler: the calls that judge
+ * each finding of a non-final code-review panel before remediation. Separate
+ * from `RECONCILER`, which takes the run's `--model`, because this one was
+ * measured only on Haiku 5.5 at `medium` (the run 6 replays). A setting name,
+ * not a registered agent; its dispatches record the `implementer`, the code
+ * review stage's author.
+ */
+export const CODE_REVIEW_RECONCILER = "code-review-reconciler";
+
 export interface SettingDefault {
   /** null means "the run's --model". */
   model: string | null;
@@ -143,20 +189,23 @@ const CODE_REVIEWER: SettingDefault = { model: "claude-haiku-5-5", effort: "medi
 
 /**
  * Seeded model and effort per dispatch setting: one entry per registered agent
- * plus `RECONCILER`. These are starting points with no measurement behind them
- * for this workload. They are read only when a run is frozen, so changing one
- * affects new runs only; the profile freezes the resolved values, not these
- * constants (hard rule 6). They are deliberately not part of `Policy` or
- * `policyHash`.
+ * plus `RECONCILER` and `CODE_REVIEW_RECONCILER`. These are starting points
+ * with no measurement behind them for this workload, except the code-review
+ * reconciler's, which is the one setting its replays measured. They are read
+ * only when a run is frozen, so changing one affects new runs only; the profile
+ * freezes the resolved values, not these constants (hard rule 6). They are
+ * deliberately not part of `Policy` or `policyHash`.
  *
  * No reviewer is seeded at `high` or above, and a run-wide `--effort` never
- * reaches a reviewer; only that reviewer's own `--effort-for` moves it.
+ * reaches a reviewer or the code-review reconciler; only its own
+ * `--effort-for` moves it.
  */
 export const DEFAULT_SETTINGS: Readonly<Record<string, SettingDefault>> = {
   "spec-author": { model: "claude-opus-5-5", effort: "high" },
   "plan-author": { model: "claude-opus-5-5", effort: "high" },
   "implementer": { model: "claude-sonnet-5-5", effort: "medium" },
   [RECONCILER]: { model: null, effort: "medium" },
+  [CODE_REVIEW_RECONCILER]: { model: "claude-haiku-5-5", effort: "medium" },
   "spec-reviewer-traceability": SPEC_REVIEWER,
   "spec-reviewer-security": SPEC_REVIEWER,
   "spec-reviewer-consistency": SPEC_REVIEWER,
@@ -267,9 +316,11 @@ export interface Policy {
   panelSizeMax: number;
   codeReviewPanelSize: number;
   codeReviewMaxRounds: number;
+  codeReviewReconcilerCalls: number;
   codeReviewBlockingSeverity: string;
   implementationPhaseTasks: number;
   implementationMaxPhases: number;
+  designSplitPathThreshold: number;
   severities: string[];
   requiredSpecialties: string[];
   protectedPathPrefixes: string[];
@@ -297,9 +348,11 @@ export function buildPolicy(): Policy {
     panelSizeMax: PANEL_SIZE_MAX,
     codeReviewPanelSize: CODE_REVIEW_PANEL_SIZE,
     codeReviewMaxRounds: CODE_REVIEW_MAX_ROUNDS,
+    codeReviewReconcilerCalls: CODE_REVIEW_RECONCILER_CALLS,
     codeReviewBlockingSeverity: CODE_REVIEW_BLOCKING_SEVERITY,
     implementationPhaseTasks: IMPLEMENTATION_PHASE_TASKS,
     implementationMaxPhases: IMPLEMENTATION_MAX_PHASES,
+    designSplitPathThreshold: DESIGN_SPLIT_PATH_THRESHOLD,
     severities: [...SEVERITIES],
     requiredSpecialties: [...REQUIRED_SPECIALTIES],
     protectedPathPrefixes: [...PROTECTED_PATH_PREFIXES],
@@ -331,8 +384,10 @@ const POSITIVE_INT_FIELDS = [
   "specReviewRounds",
   "planReviewRounds",
   "codeReviewMaxRounds",
+  "codeReviewReconcilerCalls",
   "implementationPhaseTasks",
   "implementationMaxPhases",
+  "designSplitPathThreshold",
   "promptMaxBytes",
   "resultMaxBytes",
   "approvalMaxLifetimeSeconds",
@@ -447,6 +502,13 @@ export function invalidPolicyReason(policy: unknown): string | null {
     codeReviewMaxRounds > CODE_REVIEW_MAX_ROUNDS_CEILING
   ) {
     return `the frozen policy field codeReviewMaxRounds ${codeReviewMaxRounds} is outside the permitted ${CODE_REVIEW_MAX_ROUNDS_FLOOR}-${CODE_REVIEW_MAX_ROUNDS_CEILING}`;
+  }
+  const codeReviewReconcilerCalls = p.codeReviewReconcilerCalls as number;
+  if (
+    codeReviewReconcilerCalls < CODE_REVIEW_RECONCILER_CALLS_FLOOR ||
+    codeReviewReconcilerCalls > CODE_REVIEW_RECONCILER_CALLS_CEILING
+  ) {
+    return `the frozen policy field codeReviewReconcilerCalls ${codeReviewReconcilerCalls} is outside the permitted ${CODE_REVIEW_RECONCILER_CALLS_FLOOR}-${CODE_REVIEW_RECONCILER_CALLS_CEILING}`;
   }
   return null;
 }

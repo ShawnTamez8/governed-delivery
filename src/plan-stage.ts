@@ -284,6 +284,7 @@ export async function runPlanStage(
         requestedEffort: authorSettings.effort,
         setting: author.id,
         prompt: buildPlanAuthorPrompt(author, specContent, specHash, scope, profile.verification),
+        invocation: { cwd: rootDir },
       },
       rootDir
     );
@@ -383,6 +384,7 @@ export async function runPlanStage(
           },
           profile.verification
         ),
+        invocation: { cwd: rootDir },
       },
       rootDir
     );
@@ -558,6 +560,9 @@ export async function runPlanStage(
             requestedModel: seat.model,
             requestedEffort: seat.effort,
             setting: reviewer.id,
+            // No target cwd, as in `runSpecStage`: the target's `.governance/`
+            // holds the other reviewers' raw reports, and nothing enforces the
+            // sandbox's denied paths (hazard 14).
             prompt: buildPlanReviewPrompt(reviewer, planContent, specContent),
           },
           rootDir
@@ -653,6 +658,7 @@ export async function runPlanStage(
             reconcileFindings,
             profile.verification
           ),
+          invocation: { cwd: rootDir },
         },
         rootDir
       );

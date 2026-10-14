@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkCommitState, verifyCommit } from "../src/commit-verification.ts";
@@ -12,11 +12,14 @@ function git(cwd: string, args: string[]): string {
   return (result.stdout ?? "").trim();
 }
 
-async function withRepository(fn: (root: string, head: string) => Promise<void>): Promise<void> {
+async function withRepository(
+  fn: (root: string, head: string) => Promise<void>,
+  ignore: string[] = []
+): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "bw-verify-helper-"));
   try {
     git(root, ["init", "-q"]);
-    writeFileSync(join(root, ".gitignore"), ".governance/\n");
+    writeFileSync(join(root, ".gitignore"), [".governance/", ...ignore].join("\n") + "\n");
     writeFileSync(join(root, "a.txt"), "base\n");
     git(root, ["add", "-A"]);
     git(root, [
@@ -95,6 +98,35 @@ test("verifyCommit blocks on command failure and retained residue", async () => 
     assert.equal(dirty.record.outcome, "block");
     assert.match(dirty.reason!, /left the worktree dirty/);
   });
+});
+
+test("verifyCommit removes ignored output after a pass and keeps the evidence directory", async () => {
+  await withRepository(async (root, head) => {
+    const audits: string[] = [];
+    const evidenceDir = join(root, ".governance", "verification-ignored");
+    const result = await verifyCommit({
+      rootDir: root,
+      worktreePath: root,
+      expectedCommit: head,
+      commands: [{ name: "build", command: ["node", join(process.cwd(), "test", "fixtures", "verify", "write-ignored.mjs")] }],
+      timeoutSeconds: 30,
+      maxBytes: 1024 * 1024,
+      retentionMaxBytes: 1024 * 1024,
+      envPassthrough: env,
+      evidenceDir,
+      audit: (action, summary) => audits.push(`${action}: ${summary}`),
+    });
+    assert.equal(result.reason, null);
+    assert.equal(result.record.outcome, "pass");
+    assert.equal(existsSync(join(root, "node_modules")), false);
+    assert.equal(existsSync(join(root, "frontend", "dist")), false);
+    // Here the evidence sits inside the checked worktree; it must survive.
+    assert.equal(existsSync(join(evidenceDir, "build.log")), true);
+    assert.deepEqual(
+      audits.filter((a) => a.startsWith("cleanup:")),
+      ["cleanup: removed ignored output the commands left: frontend/dist/, node_modules/"]
+    );
+  }, ["node_modules/", "dist/"]);
 });
 
 test("checkCommitState names an entry head mismatch before commands run", async () => {

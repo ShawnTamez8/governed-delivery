@@ -104,6 +104,7 @@ function fixtureExecutor(
         "BW_TEST_REVIEW_BARRIER_DIR",
         "BW_TEST_REVIEW_BARRIER_COUNT",
         "BW_TEST_REVIEW_DELAY_MS",
+        "BW_TEST_RECONCILE_STATE_DIR",
       ],
       network: "inherit",
     },
@@ -675,7 +676,8 @@ test("a below-threshold final finding passes after one remediation and is retain
       assert.deepEqual(record.blocking, []);
       assert.match(eventsOf(ctx, "code_review.gate.pass")[0]!.summary, /findings=1; blocking=0/);
       assert.equal(eventsOf(ctx, "code_review.finding.record").length, 2);
-      assert.equal(agentRuns(ctx, stage.id).length, 7);
+      // Two panels, one code-review reconciler call (it keeps, so no second), one remediation.
+      assert.equal(agentRuns(ctx, stage.id).length, 8);
       assert.equal(verifyAuditChain(ctx.store), null);
     }, "low");
   });
@@ -697,6 +699,8 @@ test("high-then-clean remediates once, verifies, and passes the full second pane
           "code-reviewer-security",
           "code-reviewer-state-integrity",
           "code-reviewer-state-integrity",
+          // The code-review reconciler runs as the implementer; its one call keeps the finding.
+          "implementer",
           "implementer",
         ]
       );
@@ -704,6 +708,8 @@ test("high-then-clean remediates once, verifies, and passes the full second pane
       assert.equal(record.rounds.length, 2);
       assert.equal(record.rounds[0]!.reviewedCommit, ctx.verifiedCommit);
       assert.equal(record.rounds[0]!.findings.length, 1);
+      assert.deepEqual(record.rounds[0]!.reconciliation?.kept, [record.rounds[0]!.findings[0]!.id]);
+      assert.equal(record.rounds[1]!.reconciliation, null, "the final panel is never reconciled");
       assert.equal(record.rounds[0]!.remediation?.verification.outcome, "pass");
       assert.equal(
         record.rounds[1]!.reviewedCommit,
@@ -734,15 +740,16 @@ test("each reviewer and the remediation implementer dispatch under their own fro
       for (const [name, effort] of Object.entries(efforts)) {
         profile.dispatchSettings[name] = { model: `${MODEL}-${name}`, effort: effort as never };
       }
+      profile.dispatchSettings["code-review-reconciler"] = { model: `${MODEL}-code-review-reconciler`, effort: "xhigh" };
     });
     await withMode(async () => {
       const result = await review(ctx);
       assert.equal(result.ok, true, result.ok ? "" : result.reason);
-      const rows = ctx.store.query<{ setting: string; agent: string; requested_model: string; requested_effort: string }>(
-        "SELECT ar.setting, ar.agent, ar.requested_model, ar.requested_effort FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ?",
+      const rows = ctx.store.query<{ setting: string; agent: string; role: string; requested_model: string; requested_effort: string }>(
+        "SELECT ar.setting, ar.agent, ar.role, ar.requested_model, ar.requested_effort FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ?",
         [ctx.runId]
       );
-      assert.equal(rows.length, 7, "two full panels and one remediation");
+      assert.equal(rows.length, 8, "two full panels, one code-review reconciler call and one remediation");
       for (const [name, effort] of Object.entries(efforts)) {
         const own = rows.filter((r) => r.setting === name);
         assert.equal(own.length, name === "implementer" ? 1 : 2, `${name} dispatches`);
@@ -750,6 +757,12 @@ test("each reviewer and the remediation implementer dispatch under their own fro
         assert.ok(own.every((r) => r.requested_effort === effort), `${name} carries its own effort`);
         assert.ok(own.every((r) => r.requested_model === `${MODEL}-${name}`), `${name} carries its own model`);
       }
+      // Outside the loop: the reconciler runs as the implementer, under its own setting.
+      const reconciler = rows.filter((r) => r.setting === "code-review-reconciler");
+      assert.deepEqual(
+        reconciler.map(({ agent, role, requested_model, requested_effort }) => ({ agent, role, requested_model, requested_effort })),
+        [{ agent: "implementer", role: "author", requested_model: `${MODEL}-code-review-reconciler`, requested_effort: "xhigh" }]
+      );
     }, "high-then-clean");
   });
 });
@@ -804,6 +817,9 @@ test("mixed-duration findings and their remediation prompt stay in canonical pan
           "persisted findings follow frozen panel order, not completion order"
         );
         assert.ok(record.rounds[0]!.findings.every((finding) => finding.reports.length === 1));
+        // The code-review reconciler kept all three in one call.
+        assert.equal(reconcilerRuns(ctx).length, 1);
+        assert.equal(record.rounds[0]!.reconciliation?.kept.length, 3);
         assert.equal(record.rounds[0]!.remediation?.verification.outcome, "pass");
         assert.deepEqual(record.rounds[1]!.findings, []);
         assert.equal(verifyAuditChain(ctx.store), null);
@@ -857,7 +873,8 @@ test("invalid remediation outputs fail closed before a second panel", async () =
         assert.match(result.reason, message);
         const stage = stageOf(ctx)!;
         assert.equal(stage.status, "blocked");
-        assert.equal(agentRuns(ctx, stage.id).length, 4, `${mode} must stop before round 2`);
+        // Panel, one code-review reconciler call, remediation.
+        assert.equal(agentRuns(ctx, stage.id).length, 5, `${mode} must stop before round 2`);
         assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
       }, mode);
     });
@@ -877,7 +894,8 @@ test("failed remediation verification retains its round record and stops", async
       if (result.ok) return;
       assert.match(result.reason, /remediation verification blocked/);
       const stage = stageOf(ctx)!;
-      assert.equal(agentRuns(ctx, stage.id).length, 4);
+      // Panel, one code-review reconciler call, remediation.
+      assert.equal(agentRuns(ctx, stage.id).length, 5);
       const record = readRecord(ctx.root, ctx.runId);
       assert.equal(record.rounds.length, 1);
       assert.equal(record.rounds[0]!.remediation?.verification.outcome, "block");
@@ -890,6 +908,232 @@ test("failed remediation verification retains its round record and stops", async
       assert.notEqual(record.rounds[0]!.remediation?.resultingCommit, record.finalVerifiedCommit);
       assert.equal(stage.output_ref, codeReviewEvidenceRef(ctx.runId, "result.json"));
     }, "high-then-clean");
+  });
+});
+
+// --- the code-review reconciler (docs/features/code-review-reconciler) --------
+
+function reconcilerRuns(ctx: Ctx) {
+  return ctx.store.query<{ id: number; agent: string; role: string }>(
+    "SELECT ar.id, ar.agent, ar.role FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? AND ar.setting = 'code-review-reconciler' ORDER BY ar.id",
+    [ctx.runId]
+  );
+}
+
+function remediationRuns(ctx: Ctx) {
+  return ctx.store.query<{ id: number }>(
+    "SELECT ar.id FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? AND s.kind = 'code_review' AND ar.setting = 'implementer'",
+    [ctx.runId]
+  );
+}
+
+function decisionsOf(ctx: Ctx) {
+  return ctx.store.query<{
+    finding_id: number;
+    agent_run_id: number;
+    disposition: string;
+    rationale: string;
+    changed_locations: string;
+    grounding_source: string;
+    grounding_location: string;
+    grounding_excerpt: string;
+    normative_changes: string | null;
+    artifact_hash_before: string;
+    artifact_hash_after: string;
+  }>(
+    "SELECT fd.* FROM finding_decision fd JOIN finding f ON f.id = fd.finding_id JOIN stage s ON s.id = f.stage_id WHERE s.run_id = ? ORDER BY fd.id",
+    [ctx.runId]
+  );
+}
+
+/** The first acceptance criterion's text, read from this test's own spec. */
+function firstCriterion(ctx: Ctx): string {
+  return /^- AC-\d{3,}: (.+)$/m.exec(readFileSync(ctx.specPath, "utf8"))![1]!;
+}
+
+function findingByIntent(ctx: Ctx, intentKey: string) {
+  return ctx.store.getCanonicalFindings(stageOf(ctx)!.id).find((finding) => finding.intent_key === intentKey)!;
+}
+
+test("two agreeing reconciler calls withhold one finding from remediation and record the rejection", async () => {
+  await withVerifiedRun(async (ctx) => {
+    await withMode(async () => {
+      // The emitter throws if the rejected finding reaches the remediation prompt.
+      const result = await review(ctx);
+      assert.equal(result.ok, true, result.ok ? "" : result.reason);
+
+      const calls = reconcilerRuns(ctx);
+      assert.equal(calls.length, 2);
+      assert.ok(calls.every((call) => call.agent === "implementer" && call.role === "author"));
+      assert.equal(remediationRuns(ctx).length, 1);
+
+      const rejectedFinding = findingByIntent(ctx, "beyond-spec-hardening");
+      const keptFinding = findingByIntent(ctx, "needs-remediation");
+      const decisions = decisionsOf(ctx);
+      assert.equal(decisions.length, 1);
+      const decision = decisions[0]!;
+      assert.equal(decision.finding_id, rejectedFinding.id);
+      assert.equal(decision.agent_run_id, calls[0]!.id);
+      assert.equal(decision.disposition, "rejected_with_rationale");
+      assert.equal(decision.grounding_source, "specification");
+      assert.equal(decision.grounding_location, ctx.specPath);
+      assert.equal(decision.grounding_excerpt, firstCriterion(ctx));
+      assert.equal(decision.changed_locations, "[]");
+      assert.equal(decision.normative_changes, null);
+      assert.equal(decision.artifact_hash_before, ctx.verifiedCommit);
+      assert.equal(decision.artifact_hash_after, ctx.verifiedCommit);
+
+      const record = readRecord(ctx.root, ctx.runId);
+      assert.equal(record.outcome, "pass");
+      assert.equal(record.rounds.length, 2);
+      const reconciliation = record.rounds[0]!.reconciliation!;
+      assert.deepEqual(reconciliation.calls.map((call) => [call.status, call.agentRunId]), calls.map((call) => ["valid", call.id]));
+      assert.deepEqual(reconciliation.kept, [keptFinding.id]);
+      assert.equal(reconciliation.rejected.length, 1);
+      assert.equal(reconciliation.rejected[0]!.findingId, rejectedFinding.id);
+      assert.deepEqual(reconciliation.rejected[0]!.excerpts, [firstCriterion(ctx), firstCriterion(ctx)]);
+      assert.deepEqual(reconciliation.rejected[0]!.agentRunIds, calls.map((call) => call.id));
+      assert.equal(reconciliation.rejected[0]!.rationales.length, 2);
+      assert.deepEqual(record.rounds[1]!.findings, []);
+
+      const report = readFileSync(join(ctx.root, ".governance", "code-review", String(ctx.runId), "report.md"), "utf8");
+      assert.match(report, /### Reconciliation/);
+      assert.match(report, new RegExp(`- Rejected finding ${rejectedFinding.id} \\(`));
+      assert.match(report, new RegExp(`- Kept: ${keptFinding.id}\\n`));
+
+      assert.equal(
+        eventsOf(ctx, "code_review.reconcile.reject")[0]!.summary,
+        `round=1/2; commit=${ctx.verifiedCommit}; finding=${rejectedFinding.id}; agentRuns=${calls[0]!.id},${calls[1]!.id}; excerpt=${firstCriterion(ctx)}`
+      );
+      assert.equal(
+        eventsOf(ctx, "code_review.reconcile.done")[0]!.summary,
+        `round=1/2; commit=${ctx.verifiedCommit}; findings=2; kept=1; rejected=1; calls=valid,valid`
+      );
+      assert.equal(verifyAuditChain(ctx.store), null);
+    }, "reconcile-reject-one");
+  });
+});
+
+test("reconciler calls that disagree reject nothing, and remediation receives both findings", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "bw-reconcile-split-"));
+  try {
+    await withVerifiedRun(async (ctx) => {
+      await withReviewEnvironment(async () => {
+        const result = await review(ctx);
+        assert.equal(result.ok, true, result.ok ? "" : result.reason);
+        assert.equal(reconcilerRuns(ctx).length, 2);
+        assert.equal(decisionsOf(ctx).length, 0);
+        assert.equal(remediationRuns(ctx).length, 1);
+        assert.match(eventsOf(ctx, "code_review.reconcile.done")[0]!.summary, /; kept=2; rejected=0; calls=valid,valid$/);
+      }, { EMIT_MODE: "reconcile-split", BW_TEST_RECONCILE_STATE_DIR: stateDir });
+    });
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("an unusable first reconciler call keeps every finding and makes no second call", async () => {
+  for (const [mode, status, rows] of [
+    ["reconcile-bad-excerpt", "valid", 1],
+    ["reconcile-prose", "unparsed", 1],
+    ["reconcile-exit", "failed", 0],
+  ] as const) {
+    await withVerifiedRun(async (ctx) => {
+      await withMode(async () => {
+        const result = await review(ctx);
+        assert.equal(result.ok, true, `${mode}: ${result.ok ? "" : result.reason}`);
+        assert.equal(reconcilerRuns(ctx).length, rows, `${mode} reconciler rows`);
+        assert.equal(decisionsOf(ctx).length, 0, `${mode} records no decision`);
+        assert.equal(remediationRuns(ctx).length, 1, `${mode} remediates`);
+        assert.match(
+          eventsOf(ctx, "code_review.reconcile.done")[0]!.summary,
+          new RegExp(`; findings=2; kept=2; rejected=0; calls=${status}$`),
+          mode
+        );
+        const record = readRecord(ctx.root, ctx.runId);
+        assert.equal(record.outcome, "pass");
+        assert.equal(record.rounds.length, 2);
+        const call = record.rounds[0]!.reconciliation!.calls[0]!;
+        if (mode === "reconcile-bad-excerpt") {
+          assert.match(call.problems.join("\n"), /reject excerpt not in spec/);
+        } else {
+          assert.notEqual(call.reason, null, `${mode} records why the call was unusable`);
+        }
+        if (mode === "reconcile-exit") {
+          // A failed dispatch writes no agent_run row; its audit names the implementer.
+          const failed = ctx.store
+            .getAuditEvents(ctx.runId)
+            .filter((event) => event.action === "agent.dispatch.failed");
+          assert.equal(failed.length, 1);
+          assert.equal(failed[0]!.actor, "implementer");
+          assert.equal(call.agentRunId, null);
+        }
+      }, mode);
+    });
+  }
+});
+
+test("a reconciler call that writes into the worktree blocks before any remediation", async () => {
+  await withVerifiedRun(async (ctx) => {
+    await withMode(async () => {
+      const result = await review(ctx);
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(result.reason, /reconciler call 1 left the worktree dirty in: .*reconciler-residue\.txt/);
+      assert.equal(eventsOf(ctx, "code_review.worktree.dirty").length, 1);
+      assert.equal(remediationRuns(ctx).length, 0);
+      assert.equal(decisionsOf(ctx).length, 0);
+      assert.equal(stageOf(ctx)!.status, "blocked");
+      assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+    }, "reconcile-mutate");
+  });
+});
+
+test("a round whose every finding is rejected below the threshold passes as a final panel without remediation", async () => {
+  await withVerifiedRun(async (ctx) => {
+    await withMode(async () => {
+      const result = await review(ctx);
+      assert.equal(result.ok, true, result.ok ? "" : result.reason);
+      assert.equal(reconcilerRuns(ctx).length, 2);
+      assert.equal(remediationRuns(ctx).length, 0);
+      assert.equal(decisionsOf(ctx).length, 1);
+      assert.equal(
+        eventsOf(ctx, "code_review.gate.pass")[0]!.summary,
+        `round=1/2; commit=${ctx.verifiedCommit}; findings=1; blocking=0; threshold=high`
+      );
+      const record = readRecord(ctx.root, ctx.runId);
+      assert.equal(record.rounds.length, 1);
+      assert.equal(record.rounds[0]!.remediation, null);
+      assert.deepEqual(record.rounds[0]!.reconciliation!.kept, []);
+      assert.equal(record.finalVerifiedCommit, ctx.verifiedCommit);
+      const report = readFileSync(join(ctx.root, ".governance", "code-review", String(ctx.runId), "report.md"), "utf8");
+      assert.match(report, /Every finding was rejected, so this round was decided as a final panel\./);
+    }, "reconcile-reject-all-low");
+  });
+});
+
+test("a round whose every finding is rejected at the threshold still blocks, as a final panel", async () => {
+  await withVerifiedRun(async (ctx) => {
+    await withMode(async () => {
+      const result = await review(ctx);
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      const rejected = findingByIntent(ctx, "beyond-spec-hardening");
+      assert.match(
+        result.reason,
+        new RegExp(
+          `^code_review blocked after round 1/2: finding id\\(s\\) ${rejected.id} \\(high, severity, src/a1\\.ts:1\\); threshold high; every finding was rejected by the code-review reconciler, so the round was decided as a final panel$`
+        )
+      );
+      assert.equal(remediationRuns(ctx).length, 0);
+      assert.equal(decisionsOf(ctx).length, 1);
+      assert.match(eventsOf(ctx, "code_review.gate.block")[0]!.summary, /^round=1\/2; /);
+      const record = readRecord(ctx.root, ctx.runId);
+      assert.equal(record.outcome, "block");
+      assert.equal(record.blocking.length, 1);
+      assert.deepEqual(record.rounds[0]!.blocking, record.blocking, "the round record is reset from the re-decision");
+      assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+    }, "reconcile-reject-all-high");
   });
 });
 
@@ -923,7 +1167,8 @@ test("a finding at the frozen threshold blocks the run and retains the record", 
       assert.equal(eventsOf(ctx, "code_review.gate.block").length, 1);
       assert.ok(existsSync(ctx.worktreePath), "the worktree survives a block");
       // The panel completes before the gate decides, as the spec panel does.
-      assert.equal(agentRuns(ctx, stage.id).length, 7);
+      // Two panels, one code-review reconciler call, one remediation.
+      assert.equal(agentRuns(ctx, stage.id).length, 8);
       assert.equal(verifyAuditChain(ctx.store), null);
     }, "high");
   });

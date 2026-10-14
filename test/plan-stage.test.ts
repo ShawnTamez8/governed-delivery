@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
@@ -1894,6 +1894,32 @@ test("the plan reconciliation prompt carries the approved specification", async 
     const records = auditSummaries(store, runId, "plan.reconcile.record");
     assert.ok(records[0].includes("spec-seen"), "the reconciler saw the approved specification");
   });
+});
+
+test("every plan author dispatch runs in the target root, and no reviewer does", async () => {
+  // Plan prompts carry the specification and never the design, so the marker
+  // that makes the emitter report its working directory goes in the spec.
+  const marked = SPEC.replace("change_kind: feature\n", "change_kind: feature\n\nFIXTURE-REPORT-CWD\n");
+  assert.notEqual(marked, SPEC, "the marker substitution must apply");
+  await withApprovedRun(
+    async ({ store, root, runId }) => {
+      const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
+      assert.equal(result.ok, true, (result as { reason?: string }).reason);
+      assert.notEqual(realpathSync(process.cwd()), realpathSync(root));
+      const dir = join(root, ".governance", "raw", String(runId));
+      const cwds = readdirSync(dir)
+        .map((name) => readFileSync(join(dir, name), "utf8"))
+        .filter((text) => text.startsWith("--- stderr ---\n"))
+        .flatMap((text) => [...text.matchAll(/^cwd=(.*)$/gm)].map((m) => m[1]!.trim()));
+      // A reviewer started in the target could read its siblings' raw reports
+      // under `.governance/` (hazard 14), so reviewers report somewhere else.
+      const target = realpathSync(root);
+      const inTarget = cwds.filter((cwd) => realpathSync(cwd) === target).length;
+      assert.deepEqual({ inTarget, elsewhere: cwds.length - inTarget }, { inTarget: 3, elsewhere: 2 });
+      assert.deepEqual(agentRunCounts(store, runId), { author: 3, reviewer: 2 }, "one report per dispatch");
+    },
+    { spec: marked }
+  );
 });
 
 test("the plan author, self-critique and reconcile prompts carry the frozen profile's verification commands, and the reviewers' prompts do not follow them", async () => {

@@ -1,0 +1,773 @@
+{
+  "provenance": {
+    "what": "Paid replay of a candidate code-review reconciler (not built), operator-chosen 2026-10-13 (\"Option 2\", cap $0.10). One Haiku 5.5 call per round decides keep or reject for each round-1 finding of crew-chatter run 6; a rejection must quote the approved spec's baseline, checked by exact (whitespace-collapsed) match; a keep names a basis (an existing AC ID, \"plan task: \" plus the task's first five words found in the plan, or crash/data-loss/wrong-result/unauthorized-access).",
+    "inputs": "The 13 round-1 findings exactly as stored (test/fixtures/recorded/code-review-crew-chatter-run-6.json), the approved spec and plan from crew-chatter docs/features/crew-chatter-foundation/, and git diff 01f9a111..bb7f3f67. Executor flags unchanged (CLAUDE_CODE), model claude-haiku-5-5, effort medium, cwd a clone at bb7f3f67.",
+    "labels": "Fixed before any call from the spec text: reject 200 (spec baseline lines 47 and 49); keep 195 (AC-019), 197 (AC-004), 198, 199 and 203 (AC-016), 201 (AC-075), 202 (AC-018), 204, 205; either answer accepted for 196, 206, 207.",
+    "promptChange": "Call rec-1 used a basis wording (\"the words plan task followed by the task's first five words\") that it misread: 4 keeps gave the task words without the prefix, which the check refused; its decisions were otherwise correct. Calls rec-2 to rec-10 used the explicit form \"plan task: <first five words>\" with the words checked against the plan. The final script is in reconcilerSource.",
+    "result": "All 10 calls rejected 200, each quoting \"A successful reset replaces the password hash, so the old password no longer signs in.\" (exact match); 3 also rejected 207 (allowed); no must-keep finding was rejected in any call; rec-2 to rec-10 had zero format problems.",
+    "captured": "2026-10-13",
+    "totalCost": 0.05681854,
+    "dropped": "Raw stream-json outputs and the 125,867-byte prompt text (kept in the session scratchpad only). Each record keeps label, cost, exit code, duration, the check's problems and the decisions unabridged."
+  },
+  "reconcilerSource": "// Paid replay of a code-review reconciler, operator-chosen 2026-10-13\n// (\"Option 2\", cap $0.10): Haiku 5.5, medium effort, BuildWorks' executor\n// flags unchanged, cwd the clone at bb7f3f6. Input: run 6's 13 round-1\n// findings exactly as stored, the approved spec and plan, the reviewed diff.\n// Labels (fixed before any call): reject 200; keep 195 197 198 199 201 202\n// 203 204 205; either 196 206 207.\nimport { readFileSync, writeFileSync, appendFileSync, existsSync } from \"node:fs\";\nimport { join } from \"node:path\";\nimport { spawnSync } from \"node:child_process\";\nconst BW = \"file:///C:/Users/Shawn-work/repositories/governed-delivery/\";\nconst { invokeHarness, parseEnvelope } = await import(BW + \"src/harness.ts\");\nconst { CLAUDE_CODE } = await import(BW + \"src/executor.ts\");\nconst { extractJsonBody } = await import(BW + \"src/parse-output.ts\");\n\nconst DIR = process.argv[2];\nconst N = Number(process.argv[3] ?? \"10\");\nconst CAP = 0.1;\nconst CWD = join(DIR, \"cc6\");\nconst OUT = join(DIR, \"out-reconciler\");\nconst LOG = join(OUT, \"results.jsonl\");\nconst T = \"C:/Users/Shawn-work/repositories/testing-repos/crew-chatter\";\nconst spec = readFileSync(join(T, \"docs/features/crew-chatter-foundation/spec.md\"), \"utf8\");\nconst plan = readFileSync(join(T, \"docs/features/crew-chatter-foundation/plan.md\"), \"utf8\");\nconst BASE = \"01f9a11180c6b6f24e7f00d828e4b348e31e36ba\", HEAD = \"bb7f3f673a3b4d452d07782c54f13881f281fbd5\";\nconst diff = spawnSync(\"git\", [\"diff\", \"--no-color\", BASE, HEAD], { cwd: T, encoding: \"utf8\", maxBuffer: 64 << 20 }).stdout;\nconst fx = JSON.parse(readFileSync(\"C:/Users/Shawn-work/repositories/governed-delivery/test/fixtures/recorded/code-review-crew-chatter-run-6.json\", \"utf8\"));\nconst findings = fx.codeReviewFindings.filter((f) => f.round === 1);\nif (findings.length !== 13) throw new Error(`expected 13 round-1 findings, got ${findings.length}`);\n\nconst rendered = findings\n  .map((f) => `- finding ${f.findingId}; location ${f.location}; intentKey ${f.intentKey}\\n${f.reports.map((r) => `  - reviewer ${r.reviewer}; severity ${r.severity}; subject ${r.subject}`).join(\"\\n\")}`)\n  .join(\"\\n\");\nconst ids = findings.map((f) => f.findingId);\n\nconst prompt = `you are the code-review reconciler\n\nCode reviewers reported the findings below against a committed change. Decide, for each finding, whether the implementer must fix it before the next review. Your working directory is the repository checkout at commit ${HEAD}; you may read it. Run no git commands and do not create, modify, or delete any file.\n\nKeep a finding when the code fails a behavior the approved specification or plan states, or breaks in ordinary use: it crashes, loses or corrupts data, returns a wrong result, or lets a user read or change data the specification does not allow.\nReject a finding only when it asks for protection, limits, or policy beyond what the approved specification states, and the specification already states a workable baseline for that behavior. A rejection must quote that baseline: words copied exactly from the approved specification, which the system checks.\nWhen you are unsure, keep the finding: a kept finding costs one fix, and a wrongly rejected one ships a defect.\n\nReturn exactly one JSON object, with no surrounding prose and no markdown fences:\n{\"decisions\": [${ids.map((id) => `{\"findingId\": ${id}, <the remaining fields of one shape below>}`).join(\", \")}]}\n\nThe decisions list has exactly one entry per finding id listed below, no more and no fewer. Each decision takes exactly one of these shapes:\n- keep: {\"findingId\": <id>, \"disposition\": \"keep\", \"basis\": \"<basis>\"} where basis is exactly one of: an acceptance criterion ID copied from the approved specification (for example AC-001); the text \"plan task: \" followed by the first five words of that task, copied exactly from the approved plan (for example \"plan task: Create the notes API in\"); or one of crash, data-loss, wrong-result, unauthorized-access.\n- reject: {\"findingId\": <id>, \"disposition\": \"reject\", \"rationale\": \"<one sentence>\", \"excerpt\": \"<the specification's exact words stating the baseline>\"}\n\nFindings:\n\n${rendered}\n\nApproved specification:\n\n${spec}\n\nApproved plan:\n\n${plan}\n\nDiff of the change:\n\n${diff}`;\n\nconst collapse = (s) => s.replace(/\\s+/g, \" \").trim();\nconst specFlat = collapse(spec);\nconst planFlat = collapse(plan);\nconst acIds = new Set([...spec.matchAll(/^- (AC-\\d{3,}):/gm)].map((m) => m[1]));\nfunction check(decisions) {\n  const problems = [];\n  if (!Array.isArray(decisions)) return [\"decisions is not an array\"];\n  const seen = decisions.map((d) => d.findingId);\n  for (const id of ids) if (seen.filter((x) => x === id).length !== 1) problems.push(`finding ${id} has ${seen.filter((x) => x === id).length} decisions`);\n  for (const d of decisions) {\n    if (!ids.includes(d.findingId)) problems.push(`unknown finding ${d.findingId}`);\n    if (d.disposition === \"reject\") {\n      if (typeof d.excerpt !== \"string\" || d.excerpt.trim() === \"\" || !specFlat.includes(collapse(d.excerpt))) problems.push(`finding ${d.findingId} reject excerpt not in spec`);\n    } else if (d.disposition === \"keep\") {\n      const b = String(d.basis ?? \"\");\n      const taskWords = /^plan task: (.+)$/.exec(b)?.[1];\n      const ok = (/^AC-\\d{3,}$/.test(b) && acIds.has(b)) || (taskWords !== undefined && planFlat.includes(collapse(taskWords))) || [\"crash\", \"data-loss\", \"wrong-result\", \"unauthorized-access\"].includes(b);\n      if (!ok) problems.push(`finding ${d.findingId} keep basis invalid: ${b}`);\n    } else problems.push(`finding ${d.findingId} disposition ${d.disposition}`);\n  }\n  return problems;\n}\n\nlet spent = 0;\nif (existsSync(LOG)) for (const l of readFileSync(LOG, \"utf8\").split(\"\\n\").filter(Boolean)) spent += JSON.parse(l).cost ?? 0;\nwriteFileSync(join(OUT, \"prompt.txt\"), prompt);\nfor (let i = 1; i <= N; i++) {\n  if (existsSync(join(OUT, `rec-${i}.raw.jsonl`))) continue;\n  if (spent >= CAP) { console.log(`stop before rec-${i}: spent ${spent.toFixed(4)} >= ${CAP}`); break; }\n  const outcome = await invokeHarness(CLAUDE_CODE, { prompt, model: \"claude-haiku-5-5\", effort: \"medium\", cwd: CWD });\n  writeFileSync(join(OUT, `rec-${i}.raw.jsonl`), outcome.raw);\n  let env = null; try { env = parseEnvelope(CLAUDE_CODE, outcome.raw); } catch {}\n  const cost = env?.cost ?? 0; spent += cost;\n  let decisions = null, parseError = null;\n  if (env) { const b = extractJsonBody(env.resultText); if (b.kind === \"ok\") decisions = b.value?.decisions ?? null; else parseError = b.reason; }\n  const problems = decisions ? check(decisions) : [parseError ?? \"no envelope\"];\n  appendFileSync(LOG, JSON.stringify({ label: `rec-${i}`, cost, exitCode: outcome.exitCode, durationMs: outcome.durationMs, problems, decisions }) + \"\\n\");\n  const rejected = (decisions ?? []).filter((d) => d.disposition === \"reject\").map((d) => d.findingId);\n  console.log(`rec-${i}: cost ${cost.toFixed(4)} rejected [${rejected.join(\",\")}] problems ${problems.length} total ${spent.toFixed(4)}`);\n}\nconsole.log(`done; total ${spent.toFixed(4)}`);\n",
+  "calls": [
+    {
+      "label": "rec-1",
+      "cost": 0.01406418,
+      "exitCode": 0,
+      "durationMs": 32109,
+      "problems": [
+        "finding 195 keep basis invalid: Wire auto-save and paste in",
+        "finding 196 keep basis invalid: Lay out `frontend/src/features/notes/Dashboard.tsx`.",
+        "finding 197 keep basis invalid: Create the data handling in",
+        "finding 204 keep basis invalid: Create the data handling in"
+      ],
+      "decisions": [
+        {
+          "findingId": 195,
+          "disposition": "keep",
+          "basis": "Wire auto-save and paste in"
+        },
+        {
+          "findingId": 196,
+          "disposition": "keep",
+          "basis": "Lay out `frontend/src/features/notes/Dashboard.tsx`."
+        },
+        {
+          "findingId": 197,
+          "disposition": "keep",
+          "basis": "Create the data handling in"
+        },
+        {
+          "findingId": 198,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 199,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 200,
+          "disposition": "reject",
+          "rationale": "The specification defines the reset outcome and sets a seven-day session lifetime, and it does not require ending existing sessions on reset, so the requested session invalidation goes beyond the approved baseline.",
+          "excerpt": "A successful reset replaces the password hash, so the old password no longer signs in."
+        },
+        {
+          "findingId": 201,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 202,
+          "disposition": "keep",
+          "basis": "AC-018"
+        },
+        {
+          "findingId": 203,
+          "disposition": "keep",
+          "basis": "wrong-result"
+        },
+        {
+          "findingId": 204,
+          "disposition": "keep",
+          "basis": "Create the data handling in"
+        },
+        {
+          "findingId": 205,
+          "disposition": "keep",
+          "basis": "AC-018"
+        },
+        {
+          "findingId": 206,
+          "disposition": "keep",
+          "basis": "crash"
+        },
+        {
+          "findingId": 207,
+          "disposition": "reject",
+          "rationale": "The specification sets no request timeout and says only that opening another note or view saves the pending edit first, so the requested timeout is a limit beyond the approved baseline, and the reviewer's stalled-request case does not match the ordinary use the specification describes.",
+          "excerpt": "Opening a different note or view inside the application while an edit is unsaved saves that edit first, so reopening the original note shows the edit."
+        }
+      ]
+    },
+    {
+      "label": "rec-2",
+      "cost": 0.013304880000000002,
+      "exitCode": 0,
+      "durationMs": 25259,
+      "problems": [],
+      "decisions": [
+        {
+          "findingId": 195,
+          "disposition": "keep",
+          "basis": "AC-019"
+        },
+        {
+          "findingId": 196,
+          "disposition": "keep",
+          "basis": "wrong-result"
+        },
+        {
+          "findingId": 197,
+          "disposition": "keep",
+          "basis": "plan task: The sign-out handler flushes any"
+        },
+        {
+          "findingId": 198,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 199,
+          "disposition": "keep",
+          "basis": "AC-016"
+        },
+        {
+          "findingId": 200,
+          "disposition": "reject",
+          "rationale": "The specification defines the reset baseline as replacing the password hash, and session invalidation on reset is protection beyond that baseline.",
+          "excerpt": "A successful reset replaces the password hash, so the old password no longer signs in."
+        },
+        {
+          "findingId": 201,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 202,
+          "disposition": "keep",
+          "basis": "AC-018"
+        },
+        {
+          "findingId": 203,
+          "disposition": "keep",
+          "basis": "AC-019"
+        },
+        {
+          "findingId": 204,
+          "disposition": "keep",
+          "basis": "plan task: The sign-out handler flushes any"
+        },
+        {
+          "findingId": 205,
+          "disposition": "keep",
+          "basis": "AC-018"
+        },
+        {
+          "findingId": 206,
+          "disposition": "keep",
+          "basis": "plan task: Rewrite `backend/src/index.ts`. The code"
+        },
+        {
+          "findingId": 207,
+          "disposition": "keep",
+          "basis": "wrong-result"
+        }
+      ]
+    },
+    {
+      "label": "rec-3",
+      "cost": 0.00367731,
+      "exitCode": 0,
+      "durationMs": 29102,
+      "problems": [],
+      "decisions": [
+        {
+          "findingId": 195,
+          "disposition": "keep",
+          "basis": "AC-019"
+        },
+        {
+          "findingId": 196,
+          "disposition": "keep",
+          "basis": "plan task: Create the data handling in"
+        },
+        {
+          "findingId": 197,
+          "disposition": "keep",
+          "basis": "plan task: Create the data handling in"
+        },
+        {
+          "findingId": 198,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 199,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 200,
+          "disposition": "reject",
+          "rationale": "The specification's stated baseline is that the old password stops working after a reset, and it does not require revoking existing session tokens.",
+          "excerpt": "A successful reset replaces the password hash, so the old password no longer signs in."
+        },
+        {
+          "findingId": 201,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 202,
+          "disposition": "keep",
+          "basis": "AC-018"
+        },
+        {
+          "findingId": 203,
+          "disposition": "keep",
+          "basis": "AC-019"
+        },
+        {
+          "findingId": 204,
+          "disposition": "keep",
+          "basis": "plan task: Create the data handling in"
+        },
+        {
+          "findingId": 205,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 206,
+          "disposition": "keep",
+          "basis": "plan task: Rewrite `backend/src/index.ts`. The code that"
+        },
+        {
+          "findingId": 207,
+          "disposition": "keep",
+          "basis": "plan task: Create the fetch wrapper in"
+        }
+      ]
+    },
+    {
+      "label": "rec-4",
+      "cost": 0.00340331,
+      "exitCode": 0,
+      "durationMs": 26768,
+      "problems": [],
+      "decisions": [
+        {
+          "findingId": 195,
+          "disposition": "keep",
+          "basis": "plan task: Wire auto-save and paste in"
+        },
+        {
+          "findingId": 196,
+          "disposition": "keep",
+          "basis": "plan task: Create the data handling in"
+        },
+        {
+          "findingId": 197,
+          "disposition": "keep",
+          "basis": "AC-004"
+        },
+        {
+          "findingId": 198,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 199,
+          "disposition": "keep",
+          "basis": "AC-016"
+        },
+        {
+          "findingId": 200,
+          "disposition": "reject",
+          "rationale": "The spec's stated reset baseline replaces the password hash and does not require revoking sessions that were already issued, so server-side session invalidation is beyond the specification.",
+          "excerpt": "A successful reset replaces the password hash, so the old password no longer signs in."
+        },
+        {
+          "findingId": 201,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 202,
+          "disposition": "keep",
+          "basis": "AC-018"
+        },
+        {
+          "findingId": 203,
+          "disposition": "keep",
+          "basis": "AC-019"
+        },
+        {
+          "findingId": 204,
+          "disposition": "keep",
+          "basis": "plan task: Create the data handling in"
+        },
+        {
+          "findingId": 205,
+          "disposition": "keep",
+          "basis": "AC-018"
+        },
+        {
+          "findingId": 206,
+          "disposition": "keep",
+          "basis": "crash"
+        },
+        {
+          "findingId": 207,
+          "disposition": "keep",
+          "basis": "plan task: Create the fetch wrapper in"
+        }
+      ]
+    },
+    {
+      "label": "rec-5",
+      "cost": 0.00381731,
+      "exitCode": 0,
+      "durationMs": 29435,
+      "problems": [],
+      "decisions": [
+        {
+          "findingId": 195,
+          "disposition": "keep",
+          "basis": "plan task: Wire auto-save and paste in"
+        },
+        {
+          "findingId": 196,
+          "disposition": "keep",
+          "basis": "plan task: Create the data handling in"
+        },
+        {
+          "findingId": 197,
+          "disposition": "keep",
+          "basis": "plan task: Create the data handling in"
+        },
+        {
+          "findingId": 198,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 199,
+          "disposition": "keep",
+          "basis": "AC-016"
+        },
+        {
+          "findingId": 200,
+          "disposition": "reject",
+          "rationale": "The finding asks for server-side session invalidation on password reset, which the specification does not require, and its stated reset behavior is the password-hash replacement.",
+          "excerpt": "A successful reset replaces the password hash, so the old password no longer signs in."
+        },
+        {
+          "findingId": 201,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 202,
+          "disposition": "keep",
+          "basis": "AC-018"
+        },
+        {
+          "findingId": 203,
+          "disposition": "keep",
+          "basis": "AC-019"
+        },
+        {
+          "findingId": 204,
+          "disposition": "keep",
+          "basis": "plan task: Create the data handling in"
+        },
+        {
+          "findingId": 205,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 206,
+          "disposition": "keep",
+          "basis": "crash"
+        },
+        {
+          "findingId": 207,
+          "disposition": "keep",
+          "basis": "plan task: Create the fetch wrapper in"
+        }
+      ]
+    },
+    {
+      "label": "rec-6",
+      "cost": 0.004158810000000001,
+      "exitCode": 0,
+      "durationMs": 35399,
+      "problems": [],
+      "decisions": [
+        {
+          "findingId": 195,
+          "disposition": "keep",
+          "basis": "AC-019"
+        },
+        {
+          "findingId": 196,
+          "disposition": "keep",
+          "basis": "wrong-result"
+        },
+        {
+          "findingId": 197,
+          "disposition": "keep",
+          "basis": "wrong-result"
+        },
+        {
+          "findingId": 198,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 199,
+          "disposition": "keep",
+          "basis": "AC-016"
+        },
+        {
+          "findingId": 200,
+          "disposition": "reject",
+          "rationale": "The spec's stated baseline for a successful reset is that the password hash is replaced so the old password fails, and it does not require invalidating existing sessions.",
+          "excerpt": "A successful reset replaces the password hash, so the old password no longer signs in."
+        },
+        {
+          "findingId": 201,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 202,
+          "disposition": "keep",
+          "basis": "AC-018"
+        },
+        {
+          "findingId": 203,
+          "disposition": "keep",
+          "basis": "AC-019"
+        },
+        {
+          "findingId": 204,
+          "disposition": "keep",
+          "basis": "wrong-result"
+        },
+        {
+          "findingId": 205,
+          "disposition": "keep",
+          "basis": "wrong-result"
+        },
+        {
+          "findingId": 206,
+          "disposition": "keep",
+          "basis": "crash"
+        },
+        {
+          "findingId": 207,
+          "disposition": "reject",
+          "rationale": "The spec requires flushing the pending save before a switch, which the code does, and it sets no request timeout, so a timeout would be policy beyond the specification.",
+          "excerpt": "it flushes the pending save before the app switches notes or views."
+        }
+      ]
+    },
+    {
+      "label": "rec-7",
+      "cost": 0.00358431,
+      "exitCode": 0,
+      "durationMs": 27851,
+      "problems": [],
+      "decisions": [
+        {
+          "findingId": 195,
+          "disposition": "keep",
+          "basis": "plan task: Wire auto-save and paste in"
+        },
+        {
+          "findingId": 196,
+          "disposition": "keep",
+          "basis": "wrong-result"
+        },
+        {
+          "findingId": 197,
+          "disposition": "keep",
+          "basis": "plan task: Create the data handling in"
+        },
+        {
+          "findingId": 198,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 199,
+          "disposition": "keep",
+          "basis": "AC-016"
+        },
+        {
+          "findingId": 200,
+          "disposition": "reject",
+          "rationale": "The specification defines the reset's effect as replacing the password hash and says nothing about invalidating existing sessions, so session revocation is protection beyond the approved baseline.",
+          "excerpt": "A successful reset replaces the password hash, so the old password no longer signs in."
+        },
+        {
+          "findingId": 201,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 202,
+          "disposition": "keep",
+          "basis": "AC-018"
+        },
+        {
+          "findingId": 203,
+          "disposition": "keep",
+          "basis": "AC-019"
+        },
+        {
+          "findingId": 204,
+          "disposition": "keep",
+          "basis": "plan task: Create the data handling in"
+        },
+        {
+          "findingId": 205,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 206,
+          "disposition": "keep",
+          "basis": "plan task: Rewrite `backend/src/index.ts`. The code that"
+        },
+        {
+          "findingId": 207,
+          "disposition": "keep",
+          "basis": "plan task: Create the fetch wrapper in"
+        }
+      ]
+    },
+    {
+      "label": "rec-8",
+      "cost": 0.00378381,
+      "exitCode": 0,
+      "durationMs": 36585,
+      "problems": [],
+      "decisions": [
+        {
+          "findingId": 195,
+          "disposition": "keep",
+          "basis": "AC-019"
+        },
+        {
+          "findingId": 196,
+          "disposition": "keep",
+          "basis": "wrong-result"
+        },
+        {
+          "findingId": 197,
+          "disposition": "keep",
+          "basis": "plan task: The sign-out handler flushes any"
+        },
+        {
+          "findingId": 198,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 199,
+          "disposition": "keep",
+          "basis": "AC-016"
+        },
+        {
+          "findingId": 200,
+          "disposition": "reject",
+          "rationale": "The finding asks for server-side session revocation on password reset, which the specification does not require; it states only that the reset replaces the password hash, and the 7-day session lifetime is part of the approved plan.",
+          "excerpt": "A successful reset replaces the password hash, so the old password no longer signs in."
+        },
+        {
+          "findingId": 201,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 202,
+          "disposition": "keep",
+          "basis": "AC-018"
+        },
+        {
+          "findingId": 203,
+          "disposition": "keep",
+          "basis": "AC-019"
+        },
+        {
+          "findingId": 204,
+          "disposition": "keep",
+          "basis": "plan task: The sign-out handler flushes any"
+        },
+        {
+          "findingId": 205,
+          "disposition": "keep",
+          "basis": "AC-018"
+        },
+        {
+          "findingId": 206,
+          "disposition": "keep",
+          "basis": "crash"
+        },
+        {
+          "findingId": 207,
+          "disposition": "keep",
+          "basis": "AC-019"
+        }
+      ]
+    },
+    {
+      "label": "rec-9",
+      "cost": 0.00385431,
+      "exitCode": 0,
+      "durationMs": 29673,
+      "problems": [],
+      "decisions": [
+        {
+          "findingId": 195,
+          "disposition": "keep",
+          "basis": "plan task: Wire auto-save and paste in"
+        },
+        {
+          "findingId": 196,
+          "disposition": "keep",
+          "basis": "wrong-result"
+        },
+        {
+          "findingId": 197,
+          "disposition": "keep",
+          "basis": "plan task: Create the data handling in"
+        },
+        {
+          "findingId": 198,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 199,
+          "disposition": "keep",
+          "basis": "AC-016"
+        },
+        {
+          "findingId": 200,
+          "disposition": "reject",
+          "rationale": "The finding asks for server-side session revocation on password reset, which the specification does not require; it defines the reset outcome as replacing the password hash, and the session is a signed JWT in an httpOnly cookie.",
+          "excerpt": "A successful reset replaces the password hash, so the old password no longer signs in."
+        },
+        {
+          "findingId": 201,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 202,
+          "disposition": "keep",
+          "basis": "AC-018"
+        },
+        {
+          "findingId": 203,
+          "disposition": "keep",
+          "basis": "plan task: Wire auto-save and paste in"
+        },
+        {
+          "findingId": 204,
+          "disposition": "keep",
+          "basis": "plan task: Create the data handling in"
+        },
+        {
+          "findingId": 205,
+          "disposition": "keep",
+          "basis": "plan task: Add offline handling to `frontend/src/lib/useAutosave.ts`."
+        },
+        {
+          "findingId": 206,
+          "disposition": "keep",
+          "basis": "plan task: Rewrite `backend/src/index.ts`. The code that"
+        },
+        {
+          "findingId": 207,
+          "disposition": "reject",
+          "rationale": "The finding asks for a request timeout that the specification does not require; it states only that the hook flushes the pending save before the app switches notes or views, which is the baseline the implementation follows.",
+          "excerpt": "it flushes the pending save before the app switches notes or views."
+        }
+      ]
+    },
+    {
+      "label": "rec-10",
+      "cost": 0.00317031,
+      "exitCode": 0,
+      "durationMs": 25066,
+      "problems": [],
+      "decisions": [
+        {
+          "findingId": 195,
+          "disposition": "keep",
+          "basis": "plan task: The save function first writes"
+        },
+        {
+          "findingId": 196,
+          "disposition": "keep",
+          "basis": "wrong-result"
+        },
+        {
+          "findingId": 197,
+          "disposition": "keep",
+          "basis": "plan task: The sign-out handler flushes any"
+        },
+        {
+          "findingId": 198,
+          "disposition": "keep",
+          "basis": "unauthorized-access"
+        },
+        {
+          "findingId": 199,
+          "disposition": "keep",
+          "basis": "AC-016"
+        },
+        {
+          "findingId": 200,
+          "disposition": "reject",
+          "rationale": "The specification's baseline for a successful reset is that the old password stops working; it does not require ending existing sessions, so session invalidation is beyond the approved scope.",
+          "excerpt": "A successful reset replaces the password hash, so the old password no longer signs in."
+        },
+        {
+          "findingId": 201,
+          "disposition": "keep",
+          "basis": "AC-075"
+        },
+        {
+          "findingId": 202,
+          "disposition": "keep",
+          "basis": "AC-018"
+        },
+        {
+          "findingId": 203,
+          "disposition": "keep",
+          "basis": "AC-019"
+        },
+        {
+          "findingId": 204,
+          "disposition": "keep",
+          "basis": "plan task: The sign-out handler flushes any"
+        },
+        {
+          "findingId": 205,
+          "disposition": "keep",
+          "basis": "data-loss"
+        },
+        {
+          "findingId": 206,
+          "disposition": "keep",
+          "basis": "plan task: Rewrite `backend/src/index.ts`. The code that"
+        },
+        {
+          "findingId": 207,
+          "disposition": "keep",
+          "basis": "AC-019"
+        }
+      ]
+    }
+  ]
+}

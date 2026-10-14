@@ -15,6 +15,10 @@ import { specNormativeNodes, upstreamPrefixFor, validateReconciliation } from ".
 import { computeRisk } from "./select.ts";
 import { computeScope, touchesProtected } from "./scope.ts";
 import { DISCLOSED_OPEN_DECISION_INTENT } from "./spec-stage.ts";
+import {
+  featureSlugsInUse, readSplitRecord, renderPieceDesign, validateDesignSplit, type SplitEvidence, type SplitRecord,
+} from "./design-split.ts";
+import { deriveRoute, proposalIdentity } from "./proposal.ts";
 
 /**
  * The `spec_decision` boundary (architecture section 12). A `spec_review`
@@ -104,6 +108,11 @@ export function answerQuestion(
   }
   if (!DECISION_ACTIONS.includes(action)) {
     return refuse(`invalid decision action ${action}: allowed values are ${DECISION_ACTIONS.join(", ")}`);
+  }
+  // Refused here, not by each writer, so the CLI, guided mode and the
+  // dashboard refuse it the same way.
+  if (action === "modify" && readSplitRecord(store.getAuditEvents(runId))?.findingId === findingId) {
+    return refuse("the design-split question takes approve (split) or deny (build as one); modify is not accepted");
   }
   let answer: string;
   if (action === "modify") {
@@ -232,7 +241,16 @@ export async function runSpecDecisionStage(
   if (unanswered.length > 0) {
     return { ok: false, reason: `question(s) for finding(s) ${unanswered.join(", ")} are unanswered` };
   }
-  const folds = questions.filter((q) => answers.get(q.id)!.action !== "deny");
+  // The design split's question (docs/features/design-split-into-features/plan.md),
+  // found by the finding its `spec.split.record` event names: a reviewer may use
+  // the split's intent key. An approved split ends the run with one stored
+  // design per feature and folds nothing; the other answers reach every feature
+  // through its rendered design. A denied split is left out of the fold entirely.
+  const splitRecord = readSplitRecord(store.getAuditEvents(runId));
+  const splitQuestion = questions.find((q) => q.finding_id === splitRecord?.findingId);
+  const splitApproved = splitQuestion !== undefined && answers.get(splitQuestion.id)!.action === "approve";
+  const others = questions.filter((q) => q !== splitQuestion);
+  const folds = splitApproved ? [] : others.filter((q) => answers.get(q.id)!.action !== "deny");
   // Configuration failures precede the stage row and any spend, as in
   // `runSpecStage`: the fold is a reconciliation, so it runs as the spec author
   // under the `reconciler` setting.
@@ -283,11 +301,71 @@ export async function runSpecDecisionStage(
     );
     return { ok: true, stageId: id, specPath: path, folded };
   };
+  // The approved split: re-check what the review recorded, store one proposal
+  // per feature, and end the run. The evidence must be the bytes the
+  // `spec.split.record` event bound, and the reviewed spec the one it was
+  // proposed against; the split is validated again against both, with the
+  // slugs in use now.
+  const approveSplit = (id: number, question: DecisionQuestionRow, record: SplitRecord): DecisionStageResult => {
+    const invalid = (reason: string) => abort(id, "spec_decision.split.invalid", reason);
+    const ref = record.evidenceRef;
+    const expectedHash = record.evidenceHash;
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(resolve(rootDir, ref));
+    } catch (err) {
+      return invalid(`design split refused: cannot read the split evidence ${ref}: ${(err as Error).message}`);
+    }
+    if (sha256Hex(bytes) !== expectedHash) {
+      return invalid(`design split refused: the split evidence ${ref} has changed since spec review recorded it`);
+    }
+    const evidence = JSON.parse(bytes.toString("utf8")) as SplitEvidence;
+    if (evidence.specHash !== sha256Hex(normalizeText(reviewedContent))) {
+      return invalid(`design split refused: the reviewed spec ${specPath} has changed since the split was proposed`);
+    }
+    const split = validateDesignSplit(evidence.split, {
+      spec: reviewed.value,
+      runSlug: run.slug,
+      slugsInUse: featureSlugsInUse(rootDir),
+      maxPathsPerPiece: profile.policy.designSplitPathThreshold,
+    });
+    if (!split.ok) return invalid(split.reason);
+    // Every other answer, in question order, copied into each feature's design.
+    const decisions = others.map((q) => {
+      const recorded = answers.get(q.id)!;
+      return { question: q.text, action: recorded.action, answer: recorded.answer };
+    });
+    const route = deriveRoute("upstream_blocking");
+    const pieces = split.value.pieces;
+    // The rows and the event that names them commit together or not at all.
+    const proposalIds = store.transaction(() => {
+      const ids = pieces.map((piece, index) => {
+        const problem = renderPieceDesign({ originalSlug: run.slug, runId, spec: reviewed.value, split: split.value, index: index + 1, decisions });
+        const earlier = pieces.slice(0, index).map((p) => p.slug);
+        const whyUpstream = `Feature ${index + 1} of ${pieces.length} split from run ${runId}'s design (${run.slug}), approved by the operator; build after: ${earlier.length > 0 ? earlier.join(", ") : "nothing"}.`;
+        return store.upsertProposal(
+          { runId, stageId: id, findingId: question.finding_id, title: piece.title, problem, whyUpstream, route, evidenceRef: ref },
+          proposalIdentity(id, piece.title, problem, route)
+        ).proposal.id;
+      });
+      audit(id, "spec_decision.split.approve", `proposals=${ids.join(",")}; slugs=${pieces.map((p) => p.slug).join(",")}`);
+      return ids;
+    });
+    const reason = `design split approved: ${pieces.length} features stored as proposals ${pieces
+      .map((p, index) => `${proposalIds[index]} (${p.slug})`)
+      .join(", ")}. This run builds nothing further. Export each with proposal-export --proposal <id> --name <slug>, keep only the text between its ## Problem and ## Why this is upstream headings, move the file to docs/features/<slug>/design.md and git add it (the export is untracked, so git mv refuses it), keep docs/features/${run.slug}/design.md, commit or move aside docs/features/${run.slug}/spec.md, and start the first feature with new-run; start each later feature with new-run --after <the previous feature's run id> once that feature is delivered and merged.`;
+    store.completeStage(id, "", "block");
+    store.setRunStatus(runId, "blocked");
+    // Last, so `status` shows it as the run's last recorded event.
+    audit(id, "spec_decision.split.blocked", reason);
+    return { ok: false, reason };
+  };
 
   try {
     const stage = store.insertStage(runId, "spec_decision", reviewStage.id);
     stageId = stage.id;
     audit(stage.id, "spec_decision.stage.create", `created spec_decision stage ${stage.id}`);
+    if (splitApproved) return approveSplit(stage.id, splitQuestion!, splitRecord!);
     const actions = new Map(questions.map((q) => [q.id, answers.get(q.id)!.action]));
     if (folds.length === 0) {
       const missing = openDecisionRefusals(store, questions, actions, reviewed.value, reviewed.value);
@@ -297,7 +375,7 @@ export async function runSpecDecisionStage(
       return pass(stage.id, specPath, reviewedContent, reviewed.value, 0);
     }
 
-    const foldInputs: FoldQuestionInput[] = questions.map((q) => {
+    const foldInputs: FoldQuestionInput[] = others.map((q) => {
       const answer = answers.get(q.id)!;
       return { findingId: q.finding_id, text: q.text, action: answer.action as FoldQuestionInput["action"], answer: answer.answer };
     });
@@ -312,6 +390,7 @@ export async function runSpecDecisionStage(
         requestedEffort: foldSettings!.effort,
         setting: RECONCILER,
         prompt: buildSpecDecisionFoldPrompt(author!, design, reviewedContent, foldInputs, profile.verification),
+        invocation: { cwd: rootDir },
       },
       rootDir
     );

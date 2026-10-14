@@ -1,15 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AGENTS, agentById } from "../src/agents.ts";
-import { DEFAULT_SETTINGS, RECONCILER } from "../src/policy.ts";
+import { CODE_REVIEW_RECONCILER, DEFAULT_SETTINGS, RECONCILER } from "../src/policy.ts";
 
-test("the seeded default settings cover every registered agent and the reconciler, and nothing else", () => {
+test("the seeded default settings cover every registered agent and both reconcilers, and nothing else", () => {
   // Both directions: a new agent cannot ship without a default, and a removed
   // agent leaves no orphan entry behind (hazard 11: a default installation
   // must be able to freeze a profile and complete a run).
   assert.deepEqual(
     Object.keys(DEFAULT_SETTINGS).sort(),
-    [...AGENTS.map((a) => a.id), RECONCILER].sort()
+    [...AGENTS.map((a) => a.id), RECONCILER, CODE_REVIEW_RECONCILER].sort()
   );
 });
 
@@ -225,5 +225,15 @@ test("no reviewer can produce either reconciliation result kind", () => {
     for (const forbidden of ["spec-reconciliation", "plan-reconciliation"]) {
       assert.ok(!agent.outputs.includes(forbidden), `${agent.id} must not allow ${forbidden} output`);
     }
+  }
+});
+
+test("only the spec author allows the design split output", () => {
+  // The split proposal is an author dispatch on the spec stage
+  // (docs/features/design-split-into-features/plan.md); the dispatcher derives
+  // the required output from the performer, so no other agent may carry it.
+  assert.ok(agentById("spec-author")!.outputs.includes("spec-split"), "the spec author proposes the split");
+  for (const agent of AGENTS.filter((a) => a.id !== "spec-author")) {
+    assert.ok(!agent.outputs.includes("spec-split"), `${agent.id} must not allow spec-split output`);
   }
 });

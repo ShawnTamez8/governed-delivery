@@ -1,0 +1,184 @@
+{
+  "provenance": {
+    "run": "team-notes run 8, operator-authorized paid run, implementation phase 2, 2026-10-04",
+    "capturedOn": "2026-10-07",
+    "source": "One retained stream under .governance/raw/8 in the team-notes target (C:\\Users\\Shawn-work\\repositories\\testing-repos\\team-notes): the refused phase 2 dispatch. The whole stream-json stdout, one JSON object per line.",
+    "rawFiles": [
+      {
+        "name": "2026-10-04T16-28-01-156Z-710b37e8aa56.json",
+        "role": "phase 2, refused",
+        "bytes": 5128,
+        "lines": 5,
+        "sha256": "6b592d8dc481ff82b574fa4e722b8d1c5bccb487ed64454ecfd6ca3d7ed26a9e"
+      }
+    ],
+    "kept": "A trimmed system/init line, every rate_limit_event line, the one synthetic assistant message, and the final result line, each parsed and unaltered. Line numbers are 1-based positions in the raw file. The stream has five lines; the only line dropped entirely is the system status line.",
+    "dropped": "The system status line. The init line keeps only type, subtype, cwd, session_id, tools, model and claude_code_version.",
+    "note": "The claude CLI here is 2.1.289; the crew-chatter run 2 refusal (test/fixtures/recorded/crew-chatter-run-2-session-limit-refusal.json) is 2.1.292. This stream's result line has no api_error field, the later one has api_error usage_limit_reached; the two agree on is_error, api_error_status 429, terminal_reason api_error and a rejected rate_limit_event. The raw file name's timestamp is when the file was retained."
+  },
+  "refusedStream": {
+    "init": {
+      "line": 1,
+      "type": "system",
+      "subtype": "init",
+      "cwd": "C:\\Users\\Shawn-work\\repositories\\testing-repos\\team-notes\\.governance\\worktrees\\8",
+      "session_id": "decb6982-0bbe-4a38-ac91-bae2db7d7395",
+      "tools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "model": "claude-sonnet-5-5",
+      "claude_code_version": "2.1.289"
+    },
+    "rateLimitEvents": [
+      {
+        "line": 3,
+        "value": {
+          "type": "rate_limit_event",
+          "rate_limit_info": {
+            "status": "rejected",
+            "resetsAt": 1791135600,
+            "rateLimitType": "five_hour",
+            "overageStatus": "rejected",
+            "overageDisabledReason": "out_of_credits",
+            "isUsingOverage": false,
+            "unifiedWindows": {
+              "five_hour": {
+                "utilization": 1.05,
+                "resetsAt": 1791135600
+              },
+              "seven_day": {
+                "utilization": 0.16,
+                "resetsAt": 1791583200
+              }
+            }
+          },
+          "uuid": "97de4ecb-d5b7-40d2-8e60-5c8e88588e7e",
+          "session_id": "decb6982-0bbe-4a38-ac91-bae2db7d7395"
+        }
+      }
+    ],
+    "syntheticAssistantMessage": {
+      "line": 4,
+      "value": {
+        "type": "assistant",
+        "message": {
+          "diagnostics": null,
+          "id": "2c7143c3-9f4f-46b2-b8de-1c58c70775bb",
+          "container": null,
+          "model": "<synthetic>",
+          "role": "assistant",
+          "stop_details": null,
+          "stop_reason": "stop_sequence",
+          "stop_sequence": "",
+          "type": "message",
+          "usage": {
+            "output_tokens_details": null,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "server_tool_use": {
+              "web_search_requests": 0,
+              "web_fetch_requests": 0
+            },
+            "service_tier": null,
+            "cache_creation": {
+              "ephemeral_1h_input_tokens": 0,
+              "ephemeral_5m_input_tokens": 0
+            },
+            "inference_geo": null,
+            "iterations": null,
+            "speed": null,
+            "fallback_credit": null
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "You've hit your session limit · resets 12:40pm (America/Chicago)"
+            }
+          ],
+          "context_management": null
+        },
+        "parent_tool_use_id": null,
+        "session_id": "decb6982-0bbe-4a38-ac91-bae2db7d7395",
+        "uuid": "581c8b2f-a231-44d0-a1dd-fecd29aff10b",
+        "timestamp": "2026-10-04T16:28:00.774Z",
+        "error": "rate_limit",
+        "request_id": "req_011CfhWehtp2jvdQiuUChNZY",
+        "is_api_error_message": true
+      }
+    },
+    "result": {
+      "line": 5,
+      "value": {
+        "duration_api_ms": 0,
+        "stop_reason": "stop_sequence",
+        "session_id": "decb6982-0bbe-4a38-ac91-bae2db7d7395",
+        "total_cost_usd": 0,
+        "usage": {
+          "output_tokens_details": {
+            "thinking_tokens": 0
+          },
+          "input_tokens": 0,
+          "cache_creation_input_tokens": 0,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 0,
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 0,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "",
+          "iterations": [],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "modelUsage": {},
+        "permission_denials": [],
+        "terminal_reason": "api_error",
+        "fast_mode_state": "off",
+        "fast_mode_disabled_reason": "sdk_opt_in_required",
+        "subagent_stats": {
+          "spawned": 0,
+          "requested": {
+            "background": 0,
+            "foreground": 0,
+            "unset": 0
+          },
+          "started_in_background": 0,
+          "max_depth": 0,
+          "spawned_by_subagents": 0,
+          "completed": 0,
+          "failed": 0,
+          "killed": {
+            "parent": 0,
+            "user": 0,
+            "system": 0
+          },
+          "refused": {
+            "depth_limit": 0,
+            "concurrency_limit": 0,
+            "budget": 0
+          },
+          "by_type": {}
+        },
+        "is_error": true,
+        "num_turns": 1,
+        "subtype": "success",
+        "api_error_status": 429,
+        "result": "You've hit your session limit · resets 12:40pm (America/Chicago)",
+        "type": "result",
+        "duration_ms": 340,
+        "uuid": "1a444dbe-0fc5-423e-a084-f4f788affbfe",
+        "queued_turn_count": 0,
+        "result_index": 0
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, readdirSync, realpathSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
@@ -16,6 +16,10 @@ import { buildPolicy, policyHash } from "../src/policy.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
+import { validateSpecDoc } from "../src/spec-doc.ts";
+import { computeScope } from "../src/scope.ts";
+import { DESIGN_SPLIT_INTENT, DESIGN_SPLIT_LOCATION } from "../src/design-split.ts";
+import { readRunSnapshot } from "../src/operator-state.ts";
 
 /**
  * One minimal frozen configuration. The stage states it to the author and
@@ -1827,6 +1831,41 @@ test("the reconciliation prompt carries the design document", async () => {
   });
 });
 
+/**
+ * The `cwd=` lines the stand-in emitters wrote to stderr for a run, read back
+ * from the raw files `dispatchOnce` retained. The emitter writes one only when
+ * the prompt carries FIXTURE-REPORT-CWD, so other tests' raw output is unchanged.
+ */
+function reportedCwds(root: string, runId: number): string[] {
+  const dir = join(root, ".governance", "raw", String(runId));
+  return readdirSync(dir)
+    .map((name) => readFileSync(join(dir, name), "utf8"))
+    .filter((text) => text.startsWith("--- stderr ---\n"))
+    .flatMap((text) => [...text.matchAll(/^cwd=(.*)$/gm)].map((m) => m[1]!.trim()));
+}
+
+/** Split reported cwds into those in the target root and those elsewhere. */
+function cwdsByTarget(root: string, runId: number): { inTarget: number; elsewhere: number } {
+  const cwds = reportedCwds(root, runId).map((cwd) => realpathSync(cwd));
+  const target = realpathSync(root);
+  return { inTarget: cwds.filter((cwd) => cwd === target).length, elsewhere: cwds.filter((cwd) => cwd !== target).length };
+}
+
+test("every spec author dispatch runs in the target root, and no reviewer does", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    designWithMarker(root, "FIXTURE-REPORT-CWD");
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    // The test process runs from the BuildWorks checkout, so an author dispatch
+    // that inherited it would report that directory instead.
+    assert.notEqual(realpathSync(process.cwd()), realpathSync(root));
+    // A reviewer started in the target could read its siblings' raw reports
+    // under `.governance/` (hazard 14), so reviewers report somewhere else.
+    assert.deepEqual(cwdsByTarget(root, runId), { inTarget: 3, elsewhere: 2 });
+    assert.deepEqual(agentRunCounts(store, runId), { author: 3, reviewer: 2 }, "one report per dispatch");
+  });
+});
+
 // --- declared artifacts are exact file paths (step 8 task 1) -----------------
 
 test("a spec whose declared artifact names a directory in the starting tree blocks at the draft write", async () => {
@@ -2320,5 +2359,200 @@ test("an upstream_follow_up decision asks no question and the run reaches spec_d
     assert.ok(store.getFindingDecisions(chain[1].id).some((d) => d.disposition === "upstream_follow_up"));
     assert.equal(store.getProposalsForStage(chain[1].id)[0].route, "follow_up");
     assert.equal(store.getDecisionQuestions(chain[1].id).length, 0);
+  });
+});
+
+// --- design split (design-split-into-features Task 6) -------------------------
+
+/**
+ * The stock fixture's declared file count, read from its own BASE_SPEC rather
+ * than typed here, and a threshold under it that its two derived halves still
+ * fit (the larger half is the rounded-up half). Neither value is one the
+ * default policy produces.
+ */
+const BASE_DECLARED = (() => {
+  const literal = /const BASE_SPEC = `([\s\S]*?)`;/.exec(fixtureSource());
+  assert.ok(literal, "the fixture defines BASE_SPEC");
+  const parsed = validateSpecDoc(literal![1]!);
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.reason);
+  return computeScope(parsed.value.declaredArtifacts).length;
+})();
+const SPLIT_THRESHOLD = Math.ceil(BASE_DECLARED / 2);
+
+function splitEvents(store: Store, runId: number, action: string): { summary: string; stage_id: number }[] {
+  return store.query<{ summary: string; stage_id: number }>(
+    "SELECT summary, stage_id FROM audit WHERE run_id = ? AND action = ? ORDER BY id",
+    [runId, action]
+  );
+}
+
+function splitFindings(store: Store, runId: number) {
+  return store.query<{ id: number }>(
+    "SELECT f.id FROM finding f JOIN stage s ON s.id = f.stage_id WHERE s.run_id = ? AND f.intent_key = ?",
+    [runId, DESIGN_SPLIT_INTENT]
+  );
+}
+
+test("a reviewed spec declaring more files than the frozen threshold gets a split question and pauses for the operator", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    assert.notEqual(SPLIT_THRESHOLD, buildPolicy().designSplitPathThreshold, "a threshold no default produces");
+    designWithMarker(root, "FIXTURE-SPLIT-CRITERIA\nFIXTURE-REPORT-CWD");
+    freezePolicyInto(store, root, runId, { designSplitPathThreshold: SPLIT_THRESHOLD });
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    if (!result.ok) return;
+    assert.equal(result.stageIds.specDecision, null);
+    const chain = store.getStageChain(runId);
+    assert.deepEqual(chain.map((s) => [s.kind, s.status]), [["spec", "passed"], ["spec_review", "passed"]]);
+    // Draft, self-critique, one reconciliation and the split: one more author
+    // dispatch than the same run below the threshold (the next test).
+    assert.deepEqual(agentRunCounts(store, runId), { author: 4, reviewer: 2 });
+
+    const [finding] = splitFindings(store, runId);
+    assert.ok(finding, "the split is recorded as a finding");
+    const row = store.getCanonicalFinding(finding.id)!;
+    assert.equal(row.stage_id, chain[1].id);
+    assert.equal(row.location, DESIGN_SPLIT_LOCATION);
+    const [report] = store.getFindingReports(finding.id);
+    assert.equal(report!.severity, "high");
+    assert.equal(report!.classification, "upstream");
+    assert.equal(report!.subject, "design split into 2 features");
+    // The split dispatch is on the spec stage, and the review stage's rows are
+    // all reviewer seats (the independence claim counts them).
+    const splitRun = store.getAgentRun(report!.agent_run_id)!;
+    assert.equal(splitRun.stage_id, chain[0].id);
+    assert.equal(splitRun.role, "author");
+    assert.equal(splitRun.agent, "spec-author");
+    const reviewRoles = store.query<{ role: string }>("SELECT role FROM agent_run WHERE stage_id = ?", [chain[1].id]);
+    assert.ok(reviewRoles.length > 0 && reviewRoles.every((r) => r.role === "reviewer"));
+    const decision = store.getFindingDecisions(chain[1].id).find((d) => d.finding_id === finding.id)!;
+    assert.equal(decision.disposition, "upstream_blocking");
+    assert.equal(decision.grounding_source, null);
+    assert.equal(decision.normative_changes, null);
+    assert.equal(store.getProposalsForStage(chain[1].id).length, 0, "no feature is a proposal until the operator approves");
+    const [question] = store.getDecisionQuestions(chain[1].id);
+    assert.equal(question!.finding_id, finding.id);
+    assert.ok(question!.text.includes("demo-part-1") && question!.text.includes("demo-part-2"), question!.text);
+    assert.ok(question!.text.includes(`declares ${BASE_DECLARED} files, more than the split threshold of ${SPLIT_THRESHOLD}`));
+    assert.match(question!.why, new RegExp(`declares ${BASE_DECLARED} files. Above ${SPLIT_THRESHOLD},`));
+
+    const [recorded] = splitEvents(store, runId, "spec.split.record");
+    assert.ok(recorded, "one split event");
+    assert.equal(splitEvents(store, runId, "spec.split.record").length, 1);
+    assert.equal(recorded!.stage_id, chain[1].id);
+    const fields = Object.fromEntries(recorded!.summary.split("; ").map((part) => part.split("=") as [string, string]));
+    assert.equal(fields.finding, String(finding.id));
+    assert.equal(fields.pieces, "2");
+    assert.equal(fields.declared, String(BASE_DECLARED));
+    assert.equal(fields.threshold, String(SPLIT_THRESHOLD));
+    const bytes = readFileSync(join(root, fields.evidence!));
+    assert.equal(sha256Hex(bytes), fields.evidenceHash, "the event binds the evidence bytes");
+    const evidence = JSON.parse(bytes.toString("utf8"));
+    const gate = splitEvents(store, runId, "spec.gate.pass")[0]!;
+    assert.match(gate.summary, new RegExp(`specHash=${evidence.specHash};`), "the evidence names the spec the gate passed");
+    assert.equal(evidence.specHash, sha256Hex(normalizeText(readFileSync(result.specPath, "utf8"))));
+    assert.deepEqual(evidence.split.pieces.map((p: { slug: string }) => p.slug), ["demo-part-1", "demo-part-2"]);
+
+    const open = splitEvents(store, runId, "spec.questions.open");
+    assert.equal(open.length, 1);
+    assert.match(open[0]!.summary, new RegExp(`questions=${finding.id}$`));
+    const observed = readRunSnapshot(store, root, runId).snapshot;
+    assert.equal(observed.phase, "awaiting_decision");
+    // The split dispatch, like every other author dispatch, ran in the target;
+    // the two reviewers did not.
+    assert.deepEqual(cwdsByTarget(root, runId), { inTarget: 4, elsewhere: 2 }, "one report per dispatch, the split included");
+    assert.equal(verifyAuditChain(store), null);
+  });
+});
+
+test("at the default threshold the same spec gets no split and reaches spec_decision as before", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    designWithMarker(root, "FIXTURE-SPLIT-CRITERIA");
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    assert.deepEqual(store.getStageChain(runId).map((s) => s.kind), ["spec", "spec_review", "spec_decision"]);
+    assert.deepEqual(agentRunCounts(store, runId), { author: 3, reviewer: 2 });
+    assert.equal(splitEvents(store, runId, "spec.split.record").length, 0);
+    assert.equal(splitFindings(store, runId).length, 0);
+  });
+});
+
+test("a spec declaring exactly the threshold gets no split: the comparison is strictly greater", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    designWithMarker(root, "FIXTURE-SPLIT-CRITERIA");
+    freezePolicyInto(store, root, runId, { designSplitPathThreshold: BASE_DECLARED });
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    assert.deepEqual(store.getStageChain(runId).map((s) => s.kind), ["spec", "spec_review", "spec_decision"]);
+    assert.deepEqual(agentRunCounts(store, runId), { author: 3, reviewer: 2 });
+    assert.equal(splitEvents(store, runId, "spec.split.record").length, 0);
+  });
+});
+
+test("an invalid split reply blocks the review stage and the run, and records no split finding", async (t) => {
+  for (const [marker, reason] of [
+    ["FIXTURE-SPLIT-DROP-CRITERION", /design split refused: every acceptance criterion .*missing=\[AC-002\]/],
+    ["FIXTURE-SPLIT-BACKWARD", /design split refused: piece 1 dependsOn 2: a piece builds only on earlier pieces/],
+    ["FIXTURE-SPLIT-NOT-JSON", /design split body refused/],
+  ] as const) {
+    await t.test(marker, async () => {
+      await withRun(async ({ store, root, runId }) => {
+        designWithMarker(root, `FIXTURE-SPLIT-CRITERIA\n${marker}`);
+        freezePolicyInto(store, root, runId, { designSplitPathThreshold: SPLIT_THRESHOLD });
+        const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+        assert.match(result.reason, reason);
+        const chain = store.getStageChain(runId);
+        assert.deepEqual(chain.map((s) => [s.kind, s.status]), [["spec", "passed"], ["spec_review", "blocked"]]);
+        assert.equal(store.getRun(runId)!.status, "blocked");
+        const invalid = splitEvents(store, runId, "spec.split.invalid");
+        assert.equal(invalid.length, 1);
+        assert.match(invalid[0]!.summary, reason);
+        assert.equal(splitFindings(store, runId).length, 0);
+        assert.equal(splitEvents(store, runId, "spec.split.record").length, 0);
+        assert.equal(splitEvents(store, runId, "spec.gate.pass").length, 0, "the gate pass is recorded only after the split");
+        assert.ok(!existsSync(join(root, ".governance", "proposals", String(runId), "split.json")));
+        assert.equal(verifyAuditChain(store), null);
+      });
+    });
+  }
+});
+
+test("a review whose gate blocks never dispatches the split", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    designWithMarker(root, "FIXTURE-SPLIT-CRITERIA\nFIXTURE-UNGROUNDED-REJECTION");
+    freezePolicyInto(store, root, runId, { designSplitPathThreshold: SPLIT_THRESHOLD });
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /spec_review blocked: finding id\(s\)/);
+    assert.deepEqual(agentRunCounts(store, runId), { author: 3, reviewer: 2 }, "no split dispatch");
+    assert.equal(splitFindings(store, runId).length, 0);
+    for (const action of ["spec.split.record", "spec.split.invalid", "spec.split.failed"]) {
+      assert.equal(splitEvents(store, runId, action).length, 0, action);
+    }
+  });
+});
+
+test("an author whose frozen definition cannot propose a split blocks before the first dispatch", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    // Refused at the default threshold, where this spec would never be split:
+    // whether a split is needed is known only after the review has spent.
+    const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+    const profile = JSON.parse(readFileSync(path, "utf8")) as { agents: { id: string; outputs: string[] }[] };
+    const author = profile.agents.find((a) => a.id === "spec-author")!;
+    author.outputs = author.outputs.filter((o) => o !== "spec-split");
+    const serialized = canonicalJson(profile);
+    writeFileSync(path, serialized);
+    store.setProfileRef(runId, sha256Hex(serialized));
+
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /does not allow spec-split output/);
+    assert.equal(store.query("SELECT * FROM agent_run").length, 0, "nothing was spent");
+    assert.equal(splitEvents(store, runId, "spec.split.failed").length, 1);
+    assert.equal(store.getRun(runId)!.status, "blocked");
   });
 });

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync, readdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
@@ -15,6 +15,10 @@ import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { parseGovernedConfig, type VerificationConfig } from "../src/governed-config.ts";
 import { buildSpecDecisionFoldPrompt, type FoldQuestionInput } from "../src/prompts.ts";
 import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
+import { computeScope } from "../src/scope.ts";
+import { policyHash } from "../src/policy.ts";
+import { DESIGN_SPLIT_INTENT, readSplitRecord, renderPieceDesign, type SplitEvidence } from "../src/design-split.ts";
+import { readRunSnapshot } from "../src/operator-state.ts";
 
 /**
  * One minimal frozen configuration. The fold prompt states it; the command name
@@ -23,6 +27,7 @@ import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
  */
 const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
 const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-spec-stage.mjs");
+const CLI = join(process.cwd(), "src", "cli.ts");
 
 function fixtureExecutor(scriptPath: string): ExecutorDefinition {
   return {
@@ -642,4 +647,352 @@ test("the fold prompt carries the frozen profile's commands, and another config 
   assert.equal(recorded.sent, recorded.expected, "the fold sent the prompt built from the frozen commands");
   assert.equal(changed.sent, changed.expected);
   assert.notEqual(recorded.sent, changed.sent, "the fold prompt follows the frozen config");
+});
+
+// --- the design split (design-split-into-features Task 7) --------------------
+
+/**
+ * A threshold under the stock fixture's declared file count that its two
+ * derived halves still fit, read from the fixture's own BASE_SPEC (the same
+ * derivation test/spec-stage.test.ts uses), so the spec stage proposes a split.
+ */
+const SPLIT_THRESHOLD = (() => {
+  const literal = /const BASE_SPEC = `([\s\S]*?)`;/.exec(normalizeText(readFileSync(FIXTURE, "utf8")));
+  assert.ok(literal, "the fixture defines BASE_SPEC");
+  const parsed = validateSpecDoc(literal![1]!);
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.reason);
+  return Math.ceil(computeScope(parsed.value.declaredArtifacts).length / 2);
+})();
+
+/** Rewrite the frozen threshold and re-freeze, recomputing both hashes. */
+function freezeSplitThreshold(ctx: Ctx): void {
+  const path = join(ctx.root, ".governance", "profiles", String(ctx.runId), "profile.json");
+  const profile = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  const policy = { ...(profile.policy as Record<string, unknown>), designSplitPathThreshold: SPLIT_THRESHOLD };
+  profile.policy = policy;
+  profile.policyHash = policyHash(policy as never);
+  const serialized = canonicalJson(profile);
+  writeFileSync(path, serialized);
+  ctx.store.setProfileRef(ctx.runId, sha256Hex(serialized));
+}
+
+/** Run the spec stage under the lowered threshold to its pause; `split` is the split question's finding. */
+async function pausedAtSplit(ctx: Ctx): Promise<Paused & { split: number }> {
+  freezeSplitThreshold(ctx);
+  const result = await paused(ctx);
+  const record = readSplitRecord(ctx.store.getAuditEvents(ctx.runId));
+  const question = result.questions.find((q) => q.finding_id === record?.findingId);
+  assert.ok(question, "the spec stage proposed a split");
+  return { ...result, split: question!.finding_id };
+}
+
+/** The split the review recorded: the evidence the `spec.split.record` event names. */
+function recordedSplit(ctx: Ctx): { ref: string; path: string; evidence: SplitEvidence } {
+  const summary = lastSummary(ctx.store, ctx.runId, "spec.split.record")!;
+  const ref = /evidence=([^;]+);/.exec(summary)![1]!;
+  const path = join(ctx.root, ref);
+  return { ref, path, evidence: JSON.parse(readFileSync(path, "utf8")) as SplitEvidence };
+}
+
+/** The proposals the decision group stored: a review-stage question's proposal is not one. */
+function splitProposals(ctx: Ctx) {
+  return ctx.store.query<{ id: number; title: string; problem: string; why_upstream: string; route: string; evidence_ref: string; stage_id: number }>(
+    "SELECT p.* FROM proposal p JOIN stage s ON s.id = p.stage_id WHERE p.run_id = ? AND s.kind = 'spec_decision' ORDER BY p.id",
+    [ctx.runId]
+  );
+}
+
+test("an approved split stores one rendered design per feature, folds nothing, and ends the run blocked with the next steps", async () => {
+  await withRun("FIXTURE-SPLIT-CRITERIA", async (ctx) => {
+    const { questions, specPath, split } = await pausedAtSplit(ctx);
+    assert.deepEqual(questions.map((q) => q.finding_id), [split], "the split is the only question");
+    answer(ctx, split, "approve");
+    const result = await runSpecDecisionStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(decisionAgentRuns(ctx.store, ctx.runId), 0, "no fold dispatch");
+    const chain = ctx.store.getStageChain(ctx.runId);
+    assert.deepEqual(chain.map((s) => [s.kind, s.status]), [["spec", "passed"], ["spec_review", "passed"], ["spec_decision", "blocked"]]);
+    assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+
+    // Each stored design is the renderer's output for that piece, computed
+    // here from the retained evidence and the reviewed spec on disk.
+    const { ref, evidence } = recordedSplit(ctx);
+    const spec = validateSpecDoc(readFileSync(specPath, "utf8"));
+    assert.ok(spec.ok, spec.ok ? "" : spec.reason);
+    const proposals = splitProposals(ctx);
+    assert.equal(proposals.length, 2);
+    for (const [index, proposal] of proposals.entries()) {
+      const piece = evidence.split.pieces[index]!;
+      assert.equal(proposal.stage_id, chain[2].id);
+      assert.equal(proposal.title, piece.title);
+      assert.equal(proposal.route, "blocking_dependency");
+      assert.equal(proposal.evidence_ref, ref);
+      assert.equal(
+        proposal.problem,
+        renderPieceDesign({ originalSlug: "demo", runId: ctx.runId, spec: spec.value, split: evidence.split, index: index + 1, decisions: [] })
+      );
+      assert.match(proposal.why_upstream, new RegExp(`^Feature ${index + 1} of 2 split from run ${ctx.runId}'s design \\(demo\\)`));
+      assert.deepEqual(ctx.store.getProposalSources(proposal.id), [split]);
+    }
+    assert.match(proposals[1]!.why_upstream, /build after: demo-part-1\.$/);
+    for (const [index, proposal] of proposals.entries()) {
+      assert.ok(result.reason.includes(`${proposal.id} (demo-part-${index + 1})`), result.reason);
+    }
+    assert.match(result.reason, /^design split approved: 2 features stored as proposals /);
+    assert.match(result.reason, /new-run --after/);
+    const approved = events(ctx.store, ctx.runId, "spec_decision.split.approve");
+    assert.equal(approved.length, 1);
+    assert.equal(approved[0]!.summary, `proposals=${proposals.map((p) => p.id).join(",")}; slugs=demo-part-1,demo-part-2`);
+    const last = ctx.store.getAuditEvents(ctx.runId).at(-1)!;
+    assert.equal(last.action, "spec_decision.split.blocked");
+    assert.equal(last.summary, result.reason);
+    const observed = readRunSnapshot(ctx.store, ctx.root, ctx.runId).snapshot;
+    assert.equal(observed.phase, "blocked");
+    assert.ok(observed.workflowAction.reasons.some((r) => r.reason.includes(result.reason)), "status shows the split reason");
+    // status suggests exporting each feature under its slug, the name its
+    // design moves to, not a name derived from its title.
+    const exports = observed.operatorActions.filter((a) => a.kind === "proposal_export");
+    assert.deepEqual(
+      exports.map((a) => a.args.slice(a.args.indexOf("--proposal"))),
+      proposals.map((p, index) => ["--proposal", String(p.id), "--name", `demo-part-${index + 1}`])
+    );
+    assert.equal(verifyAuditChain(ctx.store), null);
+
+    // The operator's export step: the stored design reaches docs/proposals/
+    // through proposal-export, never through the run.
+    const exported = spawnSync(process.execPath, [CLI, "proposal-export", "--repo", ctx.root, "--proposal", String(proposals[0]!.id), "--name", "demo-part-1"], {
+      cwd: ctx.root, encoding: "utf8",
+    });
+    assert.equal(exported.status, 0, exported.stderr);
+    const file = readFileSync(join(ctx.root, "docs", "proposals", "demo-part-1.md"), "utf8");
+    assert.ok(file.includes(`## Problem\n\n${proposals[0]!.problem}`), "the export carries the rendered design under ## Problem");
+  });
+});
+
+test("an approved split carries the operator's other answers into every feature's design", async () => {
+  await withRun("FIXTURE-SPLIT-CRITERIA FIXTURE-DISCLOSE-OD FIXTURE-ASK-OPERATOR", async (ctx) => {
+    const { questions, split, disclosed } = await pausedAtSplit(ctx);
+    assert.notEqual(disclosed, null);
+    assert.deepEqual(questions.map((q) => q.finding_id).sort((a, b) => a - b), [disclosed!, split].sort((a, b) => a - b));
+    const asked = questions.find((q) => q.finding_id === disclosed)!;
+    const modified = "Exports are kept for ninety days.";
+    answer(ctx, disclosed!, "modify", modified);
+    answer(ctx, split, "approve");
+    const result = await runSpecDecisionStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+    assert.equal(result.ok, false);
+    assert.equal(decisionAgentRuns(ctx.store, ctx.runId), 0, "the answers are carried, not folded");
+    const proposals = splitProposals(ctx);
+    assert.equal(proposals.length, 2);
+    for (const proposal of proposals) {
+      const section = proposal.problem.split("## Decisions already made\n\n")[1] ?? "";
+      assert.ok(section.startsWith(`${asked.text}\n\nAnswer: ${modified}\n`), section);
+    }
+  });
+});
+
+test("a denied split folds nothing and the run continues to approval with the reviewed spec", async () => {
+  await withRun("FIXTURE-SPLIT-CRITERIA", async (ctx) => {
+    const { specPath, split } = await pausedAtSplit(ctx);
+    const before = readFileSync(specPath, "utf8");
+    answer(ctx, split, "deny");
+    const result = await runSpecDecisionStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+    assert.ok(result.ok, result.ok ? "" : result.reason);
+    assert.equal(result.folded, 0);
+    assert.equal(decisionAgentRuns(ctx.store, ctx.runId), 0);
+    assert.equal(readFileSync(specPath, "utf8"), before);
+    assert.equal(splitProposals(ctx).length, 0, "a denied split leaves no feature behind");
+    assert.equal(ctx.store.getStageChain(ctx.runId).at(-1)!.status, "passed");
+    assert.equal(readRunSnapshot(ctx.store, ctx.root, ctx.runId).snapshot.phase, "awaiting_approval");
+    assert.equal(events(ctx.store, ctx.runId, "spec_decision.split.approve").length, 0);
+  });
+});
+
+test("a denied split is left out of the fold of the other answers", async () => {
+  const marker = "FIXTURE-SPLIT-CRITERIA FIXTURE-DISCLOSE-OD FIXTURE-ASK-OPERATOR";
+  await withRun(marker, async (ctx) => {
+    const { questions, specPath, split, disclosed, reviewStageId } = await pausedAtSplit(ctx);
+    const reviewed = readFileSync(specPath, "utf8");
+    answer(ctx, split, "deny");
+    answer(ctx, disclosed!, "approve");
+    const result = await runSpecDecisionStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+    assert.ok(result.ok, result.ok ? "" : result.reason);
+    assert.equal(result.folded, 1);
+    const [sent] = foldPromptHashes(ctx.store, ctx.runId);
+    const recorded = new Map(ctx.store.getDecisionAnswers(reviewStageId).map((a) => [a.question_id, a]));
+    const input = (q: (typeof questions)[number]): FoldQuestionInput => {
+      const a = recorded.get(q.id)!;
+      return { findingId: q.finding_id, text: q.text, action: a.action as FoldQuestionInput["action"], answer: a.answer };
+    };
+    const build = (qs: typeof questions) =>
+      sha256Hex(buildSpecDecisionFoldPrompt(SPEC_AUTHOR, `# design\n\n${marker}\n`, reviewed, qs.map(input), VERIFICATION));
+    assert.equal(sent, build(questions.filter((q) => q.finding_id !== split)), "the fold prompt carries every question but the split");
+    assert.notEqual(sent, build(questions), "and is not the prompt that carries the split");
+    assert.equal(splitProposals(ctx).length, 0);
+  });
+});
+
+test("modify is refused on the split question and still accepted on another", async () => {
+  await withRun("FIXTURE-SPLIT-CRITERIA FIXTURE-DISCLOSE-OD FIXTURE-ASK-OPERATOR", async (ctx) => {
+    const { split, disclosed, reviewStageId } = await pausedAtSplit(ctx);
+    const refused = answerQuestion(ctx.store, { runId: ctx.runId, findingId: split, action: "modify", answer: "split it in three" });
+    assert.equal(refused.ok, false);
+    if (refused.ok) return;
+    assert.equal(refused.reason, "the design-split question takes approve (split) or deny (build as one); modify is not accepted");
+    const audited = events(ctx.store, ctx.runId, "decision.refused");
+    assert.equal(audited.length, 1);
+    assert.equal(audited[0]!.summary, refused.reason);
+    assert.equal(ctx.store.getDecisionAnswers(reviewStageId).length, 0, "no answer was recorded");
+    answer(ctx, disclosed!, "modify", "Only the owner may download exports.");
+    assert.deepEqual(ctx.store.getDecisionAnswers(reviewStageId).map((a) => a.action), ["modify"]);
+  });
+});
+
+test("split evidence or a reviewed spec edited after the pause refuses the approved split and stores nothing", async (t) => {
+  for (const edit of ["evidence", "spec"] as const) {
+    await t.test(edit, async () => {
+      await withRun("FIXTURE-SPLIT-CRITERIA", async (ctx) => {
+        const { specPath, split } = await pausedAtSplit(ctx);
+        answer(ctx, split, "approve");
+        if (edit === "evidence") {
+          const { path } = recordedSplit(ctx);
+          writeFileSync(path, `${readFileSync(path, "utf8")}\n`);
+        } else {
+          const spec = readFileSync(specPath, "utf8");
+          const changed = spec.replace("the second thing works", "the second thing works quickly");
+          assert.notEqual(changed, spec);
+          assert.ok(validateSpecDoc(changed).ok, "a valid spec with a different hash");
+          writeFileSync(specPath, changed);
+        }
+        const result = await runSpecDecisionStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+        assert.match(
+          result.reason,
+          edit === "evidence"
+            ? /design split refused: the split evidence .* has changed since spec review recorded it/
+            : /design split refused: the reviewed spec .* has changed since the split was proposed/
+        );
+        assert.equal(events(ctx.store, ctx.runId, "spec_decision.split.invalid").length, 1);
+        assert.equal(splitProposals(ctx).length, 0);
+        assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+      });
+    });
+  }
+});
+
+test("a reviewer's own design-split concern stays its own question beside the proposed split", async () => {
+  await withRun("FIXTURE-SPLIT-CRITERIA FIXTURE-ASK-OPERATOR FIXTURE-REVIEWER-SPLIT-INTENT", async (ctx) => {
+    const { questions, split, reviewStageId } = await pausedAtSplit(ctx);
+    const reviewer = ctx.store
+      .getCanonicalFindings(reviewStageId)
+      .find((f) => f.intent_key === DESIGN_SPLIT_INTENT && f.id !== split);
+    assert.ok(reviewer, "a reviewer reported the split's intent key");
+    // Two findings, one question each: the split's report, decision and
+    // question did not attach to the reviewer's finding.
+    assert.deepEqual(questions.map((q) => q.finding_id).sort((a, b) => a - b), [reviewer!.id, split].sort((a, b) => a - b));
+    assert.ok(questions[0]!.finding_id === reviewer!.id, "the reviewer's question is the older one");
+    assert.equal(ctx.store.getFindingReports(split).length, 1);
+    // The reviewer's question takes modify like any other; only the split refuses it.
+    const ownWords = "Keep the design whole; the reviewer's concern is noted.";
+    answer(ctx, reviewer!.id, "modify", ownWords);
+    answer(ctx, split, "approve");
+    const result = await runSpecDecisionStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /^design split approved: 2 features stored as proposals /);
+    const proposals = splitProposals(ctx);
+    assert.equal(proposals.length, 2);
+    for (const proposal of proposals) {
+      assert.deepEqual(ctx.store.getProposalSources(proposal.id), [split]);
+      assert.ok(proposal.problem.includes(`Answer: ${ownWords}`), "the reviewer's answered question is carried as another decision");
+    }
+  });
+});
+
+test("a spec with too few criteria to split is not sent for a split, and the run goes on as one", async () => {
+  // The stock spec has one criterion and more files than the lowered
+  // threshold: every split needs at least two pieces with a criterion each.
+  await withRun("no marker", async (ctx) => {
+    freezeSplitThreshold(ctx);
+    const result = await runSpecStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+    assert.ok(result.ok, result.ok ? "" : result.reason);
+    assert.notEqual(result.stageIds.specDecision, null, "no question opened; spec_decision passed");
+    const spec = validateSpecDoc(readFileSync(result.specPath, "utf8"));
+    assert.ok(spec.ok, spec.ok ? "" : spec.reason);
+    assert.equal(spec.value.acceptanceCriteria.length, 1);
+    assert.ok(computeScope(spec.value.declaredArtifacts).length > SPLIT_THRESHOLD, "the spec is over the threshold");
+    const skipped = events(ctx.store, ctx.runId, "spec.split.skipped");
+    assert.equal(skipped.length, 1);
+    assert.match(skipped[0]!.summary, new RegExp(`threshold=${SPLIT_THRESHOLD}; criteria=1: a split needs at least 2 criteria`));
+    assert.equal(events(ctx.store, ctx.runId, "spec.split.record").length, 0);
+    const splitDispatches = ctx.store.query<{ input_hash: string }>(
+      "SELECT ar.input_hash FROM agent_run ar JOIN stage s ON s.id = ar.stage_id WHERE s.run_id = ? AND s.kind = 'spec' AND ar.agent = 'spec-author'",
+      [ctx.runId]
+    );
+    // Author draft, self-critique and one reconciliation per configured round; no split.
+    const rounds = (JSON.parse(readFileSync(join(ctx.root, ".governance", "profiles", String(ctx.runId), "profile.json"), "utf8")) as {
+      policy: { specReviewRounds: number };
+    }).policy.specReviewRounds;
+    assert.equal(splitDispatches.length, 2 + rounds);
+  });
+});
+
+test("status offers the split question approve or deny only, and every other question all three", async () => {
+  await withRun("FIXTURE-SPLIT-CRITERIA FIXTURE-DISCLOSE-OD FIXTURE-ASK-OPERATOR", async (ctx) => {
+    const { split, disclosed } = await pausedAtSplit(ctx);
+    const actions = readRunSnapshot(ctx.store, ctx.root, ctx.runId).snapshot.operatorActions.filter((a) => a.kind === "decision_answer");
+    const reasonFor = (finding: number) => actions.find((a) => a.args.includes(String(finding)))!.reason!;
+    assert.equal(reasonFor(split), "Choose exactly one of --approve (split) or --deny (build as one); this question takes no --answer-file.");
+    assert.equal(reasonFor(disclosed!), "Choose exactly one of --approve, --deny, or --answer-file <path>.");
+  });
+});
+
+test("the decision fold runs in the target root, as the spec author dispatches do, and the reviewers do not", async () => {
+  await withRun("FIXTURE-ASK-OPERATOR FIXTURE-REPORT-CWD", async (ctx) => {
+    const { questions } = await paused(ctx);
+    answer(ctx, questions[0]!.finding_id, "approve");
+    const result = await runSpecDecisionStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+    assert.ok(result.ok, result.ok ? "" : result.reason);
+    assert.equal(decisionAgentRuns(ctx.store, ctx.runId), 1, "the fold dispatched");
+    // The emitter reports its working directory to stderr, which dispatchOnce
+    // retains in its own raw file; the test process runs from the checkout.
+    assert.notEqual(realpathSync(process.cwd()), realpathSync(ctx.root));
+    const dir = join(ctx.root, ".governance", "raw", String(ctx.runId));
+    const cwds = readdirSync(dir)
+      .map((name) => readFileSync(join(dir, name), "utf8"))
+      .filter((text) => text.startsWith("--- stderr ---\n"))
+      .flatMap((text) => [...text.matchAll(/^cwd=(.*)$/gm)].map((m) => m[1]!.trim()));
+    // Draft, self-critique, reconciliation and the fold in the target; the two
+    // spec reviewers elsewhere (hazard 14).
+    const target = realpathSync(ctx.root);
+    const inTarget = cwds.filter((cwd) => realpathSync(cwd) === target).length;
+    assert.deepEqual({ inTarget, elsewhere: cwds.length - inTarget }, { inTarget: 4, elsewhere: 2 }, "one report per dispatch, the fold's included");
+    const dispatches = ctx.store.query("SELECT ar.id FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ?", [ctx.runId]);
+    assert.equal(cwds.length, dispatches.length);
+  });
+});
+
+test("a failed split approval event leaves no stored feature", async () => {
+  await withRun("FIXTURE-SPLIT-CRITERIA", async (ctx) => {
+    const { split } = await pausedAtSplit(ctx);
+    answer(ctx, split, "approve");
+    const realExec = ctx.store.exec.bind(ctx.store);
+    (ctx.store as { exec: unknown }).exec = (sql: string, params?: unknown[]) => {
+      if (sql.startsWith("INSERT INTO audit") && params?.includes("spec_decision.split.approve")) {
+        throw new Error("simulated crash mid-approval");
+      }
+      return realExec(sql, params as never);
+    };
+    try {
+      const result = await runSpecDecisionStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(result.reason, /simulated crash mid-approval/);
+    } finally {
+      (ctx.store as { exec: unknown }).exec = realExec;
+    }
+    assert.equal(splitProposals(ctx).length, 0, "the proposals rolled back with the event that names them");
+    assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+  });
 });

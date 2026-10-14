@@ -178,6 +178,11 @@ starting commit, and a resolved `BW_APPROVAL_PUBLIC_KEY`. Git-ignoring the
 governance directory is reported as a `doctor` readiness failure and is strongly
 recommended, but intake filters that directory rather than blocking on it.
 
+Guided mode does not run your project's verification commands before the first
+paid range. For an existing project, do the
+[fresh-worktree check](#prove-the-verification-commands-run-in-a-fresh-worktree-before-you-spend)
+yourself before you consent.
+
 ### 4. Commit the design and create or resume the exact run
 
 Rerun the same command:
@@ -229,6 +234,17 @@ approved and modified answers into the specification; if every answer is a
 deny, it completes without a dispatch. A fold that fails validation blocks the
 run. On success the run stops at the approval handoff below, and approval binds
 the folded specification.
+
+When the reviewed spec declares more files than the frozen threshold (30 by
+default), one of the questions proposes splitting the design into ordered
+features. Its menu offers only `1` Split, `2` Build as one (the whole design in
+this run, which may still be refused at the plan ceiling), and `4` Exit. Any
+other entry is refused and asked again; three refused entries exit with code 3
+without recording an answer. An approved split ends the run
+blocked instead of stopping at approval; follow
+[When BuildWorks proposes a split](#when-buildworks-proposes-a-split) below to
+build the features. Guided mode does not offer `--after`, so each feature after
+the first starts from the advanced commands.
 
 ### 6. Complete the external approval handoff
 
@@ -433,6 +449,51 @@ Do not commit secrets or unrelated work. Intake requires a readable HEAD and a
 clean working tree. The verification configuration must be committed, not merely
 present on disk.
 
+#### Prove the verification commands run in a fresh worktree before you spend
+
+BuildWorks first runs the frozen verification commands after specification,
+planning and implementation have been paid for. A command that cannot run in the
+run worktree at all, such as one whose tool is not installed, blocks the run at
+that point and the spend is lost. The run cannot be retried; a fresh run is the
+repair. Nothing in BuildWorks checks this earlier, so check it yourself. It costs
+nothing and takes the time the commands take.
+
+Create a throwaway worktree of the committed starting state under the same
+directory the run worktree will use. The location matters: dependency lookup
+walks up from the worktree to your project's own ignored `node_modules`, and a
+worktree elsewhere would not see it.
+
+```powershell
+$PreCheck = Join-Path $Target '.governance\worktrees\precheck'
+git -C $Target worktree add --detach $PreCheck HEAD
+if ($LASTEXITCODE -ne 0) { throw 'Could not create the precheck worktree.' }
+Get-Content -LiteralPath (Join-Path $PreCheck 'governed.yaml')
+```
+
+Run each command that file lists, in order, with exactly its argv, from inside
+`$PreCheck`. Then judge the result:
+
+| Result | Meaning and action |
+| --- | --- |
+| Every command exits 0 | The commands can run there. Continue to intake. |
+| A command fails because a tool or module is missing (a Node `MODULE_NOT_FOUND` error, `command not found`, a missing SDK or restore) | The environment is wrong. Repair the project's install, for example `npm ci`, `pnpm install --frozen-lockfile` or `dotnet restore`, and repeat this check in a **new** throwaway worktree. A repair made only inside `$PreCheck` is not reproduced in the run worktree. |
+| A command fails because the code it checks does not exist yet, as in a feature that creates the application | This is expected for a project that starts red. Instead run each tool's own version command from `$PreCheck`, for example `npx tsc --version`, and require it to exit 0. A tool that does not start cannot check anything later. |
+
+Remove the throwaway worktree when finished. It is your scratch directory, not a
+run worktree, and `--force` is needed because commands may have written ignored
+files into it:
+
+```powershell
+git -C $Target worktree remove --force $PreCheck
+git -C $Target status --short
+```
+
+This check is not exact. Verification runs with the restricted environment named
+by `VERIFY_ENV_PASSTHROUGH` in [the policy source](../../src/policy.ts), and your
+shell has more variables, so a command that needs a variable outside that list
+passes here and fails in the run. A pass shows the commands can run, not that the
+feature will work.
+
 ### 3. Configure an external approval key
 
 The approval authority keeps a PEM Ed25519 private key outside the filesystem
@@ -513,8 +574,8 @@ change kind, and model are explicit inputs; `runs` never picks one for you.
 Record the target path, checkout revision, and numeric run ID.
 
 `--model` names the model for `reconciler` only. The other
-settings (`spec-author`, `plan-author`, `implementer`, the three spec reviewers and the three
-code reviewers) take the seeded models and efforts in `DEFAULT_SETTINGS` in
+settings (`spec-author`, `plan-author`, `implementer`, `code-review-reconciler`, the three
+spec reviewers and the three code reviewers) take the seeded models and efforts in `DEFAULT_SETTINGS` in
 [the policy source](../../src/policy.ts); the table in the
 [README](../../README.md#create-an-explicit-run-and-consent-to-execution) lists
 them. Add any of these to `new-run` to change one run's settings:
@@ -526,10 +587,11 @@ them. Add any of these to `new-run` to change one run's settings:
     --effort-for implementer=medium,code-reviewer-security=high
 ```
 
-`--effort` sets the four non-reviewer settings and never reaches a reviewer.
+`--effort` sets the four non-reviewer settings and never reaches a reviewer or
+the code-review reconciler.
 `--model-for` and `--effort-for` take `<setting>=<value>` pairs separated by
 commas, and `--effort-for` beats `--effort`. It is the only way to change a
-reviewer's effort. Levels are `low`, `medium`, `high`, `xhigh` and `max`. A bad
+reviewer's or the code-review reconciler's effort. Levels are `low`, `medium`, `high`, `xhigh` and `max`. A bad
 level or model name is a usage error before any run exists; an unknown setting
 name is refused at freeze and leaves a blocked run. Effort is what each dispatch
 requests: the provider does not report the effort it applied.
@@ -606,6 +668,76 @@ Redirected stdin or `--json` requires `--yes`; use that flag only when you have
 already authorized the full previewed range. Costs depend on the project,
 model, output, and review/remediation work. There is no fixed price or enforced
 dollar cap.
+
+#### When BuildWorks proposes a split
+
+A run's plan is capped at 80 task items. When the reviewed spec declares more
+files than the frozen threshold (30 by default), specification review also
+proposes splitting the design into ordered features, at the cost of one more
+dispatch. The run pauses at `awaiting_decision` with the split as one more
+question. Its text lists the features in build order, each with its slug,
+title, and counts of criteria and files, and says the threshold is an estimate.
+The full split is retained under `.governance\proposals\<run-id>\split.json`.
+A spec with too few acceptance criteria to fill that many features gets no
+split proposal: the audit records `spec.split.skipped` and the run goes on as
+one build.
+
+Answer it with `decide --approve` to split the design, or `--deny` to build it
+as one run, which may still be refused at the plan ceiling after the plan is
+paid for. `--answer-file` is refused for this question. Answer the other
+questions at the same pause as usual; an approved split copies each of those
+answers into every feature's design.
+
+After the last answer, `run --yes` on an approved split stores one design per
+feature as a proposal and ends the run `blocked` with exit 1. The reason names
+each proposal ID and feature slug. For each feature, in the listed order:
+
+1. Export its design, naming the file by the feature's slug. The
+   `proposal_export` action `status` lists for each feature already carries
+   `--name <feature-slug>`, unless `docs\proposals\` already holds a file of
+   that name:
+
+   ```powershell
+   & node $BwCli proposal-export --repo $Target --proposal $ProposalId --name $FeatureSlug
+   if ($LASTEXITCODE -ne 0) { throw 'Proposal export failed.' }
+   ```
+
+2. In that new file under `docs\proposals\`, delete the lines from the top
+   through the `## Problem` heading, and from the `## Why this is upstream`
+   heading to the end. What remains starts "This is feature k of n" and keeps
+   its own `##` headings unchanged.
+3. Move it to `docs\features\<feature-slug>\design.md` and stage it. The export
+   is untracked, so `git mv` refuses it:
+
+   ```powershell
+   $Exported = Join-Path $Target "docs\proposals\$FeatureSlug.md"
+   $FeatureDir = Join-Path $Target "docs\features\$FeatureSlug"
+   New-Item -ItemType Directory -Force -Path $FeatureDir | Out-Null
+   Move-Item -LiteralPath $Exported -Destination (Join-Path $FeatureDir 'design.md')
+   git -C $Target add -- "docs/features/$FeatureSlug/design.md"
+   if ($LASTEXITCODE -ne 0) { throw 'Staging the feature design failed.' }
+   ```
+
+Keep the original `docs\features\<slug>\design.md` committed, because every
+feature's design names it. Commit or move aside the original run's untracked
+`docs\features\<slug>\spec.md`; `new-run` refuses a dirty tree. Then commit.
+
+Build feature 1 with `new-run` and `run` from step 4 onward. Once it is
+delivered, merge its branch `gov/<feature-slug>/<run-id>` into your branch, by
+merge or fast-forward but never by squash, and commit. Start feature 2 with
+`--after` naming feature 1's run, and so on:
+
+```powershell
+$RunIdText = & node $BwCli new-run --repo $Target `
+    --project $Project --feature $FeatureId --slug $FeatureSlug `
+    --change-kind feature --model $Model --after $PreviousRunId
+if ($LASTEXITCODE -ne 0) { throw 'Run creation failed; read the --after reason.' }
+```
+
+`--after` refuses, and creates no run, unless the named run belongs to the same
+project, is completed, its delivery record verifies, and its delivered commit
+is in this checkout's history. A squash merge does not count. The link is
+frozen into the new run's profile.
 
 ### 6. Review, sign, and submit approval
 
@@ -706,10 +838,14 @@ and committed there, not to the default branch. Document projections may also
 appear in the original target during earlier stages; do not assume that original
 working copy will stay clean for the next intake.
 
-The current code-review defaults are two reviewers, two complete panel
-executions, and a final blocking threshold of `high`. Non-final findings are
-sent together for remediation, followed by renewed verification and a complete
-panel. The final panel applies the threshold without an unreviewed patch;
+The current code-review defaults are three reviewers, two complete panel
+executions, two code-review reconciler calls, and a final blocking threshold of
+`high`. Before a remediation, the reconciler checks each non-final finding
+against the approved specification; it rejects a finding only when every frozen
+call agrees, each quoting the specification, and a failed call keeps every
+finding. A quote proves the words exist, not that they support the rejection. Rejected findings stay in the record. The kept
+findings are sent together for remediation, followed by renewed verification
+and a complete panel. The final panel applies the threshold without an unreviewed patch;
 lower-severity findings can remain. Consult the frozen snapshot for this run
 rather than assuming today's defaults were used.
 
@@ -848,10 +984,11 @@ no persistence, transmission, config parsing, or repair.
 | Doctor passes but a provider dispatch fails | Inspect the returned diagnostic and available retained output. Doctor does not establish authentication, model access, or quota. Preserve the failed run; renewed provider access does not make failed stages retryable. |
 | No readable HEAD, dirty tree, or uncommitted config/design | Commit the intended target inputs and deliberately resolve working-copy changes before intake. Confirm the target and slug. |
 | Invalid verification token or shape | Use the documented fixed YAML subset and argv constraints. Do not add shell command strings. Configuration changes require a fresh run. |
-| Verification fails in the run worktree | Read the named command's retained output. Check actual test failures, fresh-worktree dependencies, environment requirements, and generated tracked changes. Do not weaken the gate or rerun a failed group blindly. |
+| Verification fails in the run worktree | Read the named command's retained output. Check actual test failures, fresh-worktree dependencies, environment requirements, and generated tracked changes. Do not weaken the gate or rerun a failed group blindly. To catch this before spending, run the [fresh-worktree check](#prove-the-verification-commands-run-in-a-fresh-worktree-before-you-spend) before consenting to a run. |
 | Public key missing/mismatched at approval | Restore the intended external public-key setup and compare its fingerprint with the frozen run. Do not replace the run's profile or private key to force acceptance. |
 | Private signing material is present on the BuildWorks host | Stop before execution. Move signing authority to a separate host or identity that verification cannot access; retain only the public key and returned detached signature on the BuildWorks host. |
 | `decide` refuses an answer | Read the reason. Each question takes one answer; answers are accepted only while the run is at `awaiting_decision` and only for that run's own questions. A mistaken answer needs a fresh run. |
+| `new-run` refuses with `--after: ...` | Read the reason. The named run must belong to the same `--project`, be completed with a verifying delivery record, and have its delivered commit in your checkout's history: merge (not squash) its branch and commit, then rerun. |
 | Fold blocks the run | Read the `spec_decision` gate diagnostic. The folded spec failed a spec gate, added an ungrounded obligation, or changed a denied open decision. Retain the evidence and start a fresh run. |
 | Run is `interrupted_or_inconsistent` with `chain_incomplete` after upgrading | Runs recorded before the `spec_decision` stage existed have no such stage and cannot continue. Start a fresh run; `status` still reads the old one. |
 | Payload/signature filename already exists | Use new transport filenames; never overwrite canonical approval bytes. |

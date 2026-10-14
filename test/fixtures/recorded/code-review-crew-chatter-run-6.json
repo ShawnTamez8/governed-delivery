@@ -1,0 +1,470 @@
+{
+  "provenance": {
+    "run": "crew-chatter run 6 (feature 1, crew-chatter-foundation), operator-authorized paid run, 2026-10-13",
+    "target": "C:\\Users\\Shawn-work\\repositories\\testing-repos\\crew-chatter",
+    "store": ".governance/state.db, read-only queries over finding, finding_report, finding_decision, agent_run",
+    "branch": "gov/crew-chatter-foundation/6",
+    "phaseHead": "bb7f3f6 (phase 4/4, the last implementation commit)",
+    "remediationCommit": "ca0bd0e6961a7f08e79a8ce2ad9043faf14ff704 bw run 6: code review remediation round 1 (base bb7f3f67)",
+    "remediationDiffStat": [
+      "backend/src/db/migrate.ts                  |   1 +",
+      "backend/src/features/auth/routes.ts        |   4 +-",
+      "backend/src/features/auth/service.ts       |   9 +-",
+      "backend/src/features/notes/routes.ts       |  26 ++++-",
+      "backend/src/index.ts                       |   6 +-",
+      "backend/src/lib/auth.ts                    |  46 ++++++--",
+      "frontend/src/App.tsx                       |  11 +-",
+      "frontend/src/features/auth/AuthScreen.tsx  |   2 +",
+      "frontend/src/features/notes/Dashboard.tsx  |  21 ++--",
+      "frontend/src/features/notes/NoteEditor.tsx |  30 ++++-",
+      "frontend/src/lib/api.ts                    |  48 ++++----",
+      "frontend/src/lib/useAutosave.ts            | 171 ++++++++++++++++++-----------",
+      "12 files changed, 259 insertions(+), 116 deletions(-)"
+    ],
+    "passwordChangedAtBeforeRemediation": "absent (git grep found no match at bb7f3f6)",
+    "codeReviewDispatches": [
+      {
+        "id": 65,
+        "agent": "code-reviewer-state-integrity",
+        "role": "reviewer",
+        "requestedModel": "claude-haiku-5-5",
+        "effectiveModel": "claude-haiku-5-5",
+        "cost": 0.01811389,
+        "durationMs": 69074,
+        "rawOutputRef": ".governance\\raw\\6\\2026-10-13T17-59-44-913Z-ccba3fe8b9f3.json"
+      },
+      {
+        "id": 66,
+        "agent": "code-reviewer-security",
+        "role": "reviewer",
+        "requestedModel": "claude-haiku-5-5",
+        "effectiveModel": "claude-haiku-5-5",
+        "cost": 0.018262590000000002,
+        "durationMs": 72473,
+        "rawOutputRef": ".governance\\raw\\6\\2026-10-13T17-59-48-276Z-4c9ae30c0a2b.json"
+      },
+      {
+        "id": 67,
+        "agent": "code-reviewer-correctness",
+        "role": "reviewer",
+        "requestedModel": "claude-haiku-5-5",
+        "effectiveModel": "claude-haiku-5-5",
+        "cost": 0.020800990000000002,
+        "durationMs": 90652,
+        "rawOutputRef": ".governance\\raw\\6\\2026-10-13T18-00-06-425Z-939a04f49bc8.json"
+      },
+      {
+        "id": 68,
+        "agent": "implementer",
+        "role": "author",
+        "requestedModel": "claude-sonnet-5-5",
+        "effectiveModel": "claude-sonnet-5-5",
+        "cost": 0.5517149,
+        "durationMs": 186759,
+        "rawOutputRef": ".governance\\raw\\6\\2026-10-13T18-03-13-567Z-d6728e8d034d.json"
+      },
+      {
+        "id": 69,
+        "agent": "code-reviewer-security",
+        "role": "reviewer",
+        "requestedModel": "claude-haiku-5-5",
+        "effectiveModel": "claude-haiku-5-5",
+        "cost": 0.01800728,
+        "durationMs": 66824,
+        "rawOutputRef": ".governance\\raw\\6\\2026-10-13T18-04-50-005Z-4df935411b52.json"
+      },
+      {
+        "id": 70,
+        "agent": "code-reviewer-state-integrity",
+        "role": "reviewer",
+        "requestedModel": "claude-haiku-5-5",
+        "effectiveModel": "claude-haiku-5-5",
+        "cost": 0.01839008,
+        "durationMs": 68517,
+        "rawOutputRef": ".governance\\raw\\6\\2026-10-13T18-04-51-733Z-7c075bc72574.json"
+      },
+      {
+        "id": 71,
+        "agent": "code-reviewer-correctness",
+        "role": "reviewer",
+        "requestedModel": "claude-haiku-5-5",
+        "effectiveModel": "claude-haiku-5-5",
+        "cost": 0.02444918,
+        "durationMs": 119104,
+        "rawOutputRef": ".governance\\raw\\6\\2026-10-13T18-05-42-252Z-61c2b3ad79dd.json"
+      }
+    ],
+    "captured": "2026-10-13",
+    "dropped": "Store columns not listed here (artifact hashes, grounding columns of decisions that carry none). Raw dispatch output under .governance/raw/6/ is not copied; the subjects and rationales are the stored values, unabridged.",
+    "whatThisRecords": "Every high finding of code review round 2 traces to the round 1 remediation: #208/#210 re-impose the one-request-in-flight rule that plan reconciliation removed for AC-015 (#187); #211 and #213 come from session invalidation the remediator added for #200, which plan reconciliation had routed upstream as an obligation the specification lacks (#189); #209 is the NUL-byte defect of #201 left in a second input. Motivates the implementation self-review and the remediation-prompt rules (2026-10-13)."
+  },
+  "planReviewDecisions": [
+    {
+      "findingId": 187,
+      "round": 1,
+      "intentKey": "autosave-latency-bound-broken-by-serialized-requests",
+      "location": "frontend/src/lib/useAutosave.ts",
+      "reports": [
+        {
+          "reviewer": "spec-reviewer-traceability",
+          "agentRunId": 58,
+          "severity": "medium",
+          "classification": "current_artifact",
+          "subject": "AC-015 requires the latest content to be sent no later than 1,000 ms after the last keystroke, but the plan's one-request-in-flight rule defers the send until the prior request settles, so a slow save can push it past that bound."
+        }
+      ],
+      "decision": {
+        "agentRunId": 60,
+        "disposition": "addressed",
+        "rationale": "The one-request-in-flight rule could delay the latest send past 1,000 ms behind a slow save. The flush task now sends immediately and never queues behind an earlier request. Version tracking stops stale responses from changing the status. Navigation still waits for in-flight saves, so AC-019 is kept.",
+        "changedLocations": [
+          "Tasks: useAutosave.ts flush() bullet (AC-015)"
+        ],
+        "normativeChanges": [
+          {
+            "artifactLocation": "Tasks",
+            "artifactText": "`flush()` clears the timer and sends the latest draft if its version is newer than the last saved version. Only one request is in flight at a time; if newer edits arrived meanwhile, it sends again as soon as that request settles. While offline it resolves immediately without sending, so navigation never waits on the network.",
+            "grounding": {
+              "source": "specification",
+              "location": "Acceptance criteria AC-015",
+              "excerpt": "a save request carrying the latest content is sent no earlier than 500 ms and no later than 1,000 ms after the last keystroke"
+            }
+          },
+          {
+            "artifactLocation": "Tasks",
+            "artifactText": "`flush()` clears the timer and sends the latest draft if its version is newer than the last saved version. A send is never deferred behind an earlier request: each flush sends immediately, so the latest content goes out within the debounce window even while a slower save is in flight, and a response for an older version never overwrites the status of a newer edit. The promise `flush` returns settles once its own request and any earlier in-flight request have settled. While offline it resolves immediately without sending, so navigation never waits on the network.",
+            "grounding": {
+              "source": "specification",
+              "location": "Acceptance criteria AC-015",
+              "excerpt": "a save request carrying the latest content is sent no earlier than 500 ms and no later than 1,000 ms after the last keystroke"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "findingId": 189,
+      "round": 1,
+      "intentKey": "reset-keeps-existing-sessions-valid",
+      "location": "upstream:specification:session-revocation-on-password-reset",
+      "reports": [
+        {
+          "reviewer": "spec-reviewer-security",
+          "agentRunId": 59,
+          "severity": "high",
+          "classification": "upstream",
+          "subject": "The specification does not decide whether a successful password reset ends existing sessions, so JWT sessions issued before the reset stay valid for seven days after it."
+        }
+      ],
+      "decision": {
+        "agentRunId": 60,
+        "disposition": "upstream_follow_up",
+        "rationale": "The specification states that a successful reset replaces the password hash. It does not say whether sessions issued before the reset must end. Ending them needs a token-version or issued-at check that the specification does not contain, so the plan does not invent it.",
+        "changedLocations": [],
+        "normativeChanges": null
+      }
+    }
+  ],
+  "codeReviewFindings": [
+    {
+      "findingId": 195,
+      "round": 1,
+      "intentKey": "offline-draft-missing-from-note-cache",
+      "location": "frontend/src/lib/useAutosave.ts",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-correctness",
+          "agentRunId": 67,
+          "severity": "high",
+          "classification": "current_artifact",
+          "subject": "When the browser is offline, flush returns before calling the save function, so the ['note', id] cache never receives the edit, and reopening that note while the edit is queued offline does not show the edit, which the plan requires."
+        }
+      ]
+    },
+    {
+      "findingId": 196,
+      "round": 1,
+      "intentKey": "cached-data-hidden-behind-refetch-error",
+      "location": "frontend/src/features/notes/Dashboard.tsx",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-correctness",
+          "agentRunId": 67,
+          "severity": "medium",
+          "classification": "current_artifact",
+          "subject": "Dashboard checks isError before rendering data, and react-query keeps stale data after a failed background refetch, so with the network down (queries retry 3 times on status 0) opening the list or a note shows 'Unable to reach the server.' instead of the cached notes."
+        }
+      ]
+    },
+    {
+      "findingId": 197,
+      "round": 1,
+      "intentKey": "draft-resent-after-sign-out",
+      "location": "frontend/src/features/notes/Dashboard.tsx",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-correctness",
+          "agentRunId": 67,
+          "severity": "medium",
+          "classification": "current_artifact",
+          "subject": "If a save failed before sign-out, handleSignOut still signs out, then the NoteEditor unmount calls flush, which sends the PATCH again after the session cookie is cleared, and re-queues the draft so the leave prompt stays active and the request keeps retrying with 401s after sign-out."
+        }
+      ]
+    },
+    {
+      "findingId": 198,
+      "round": 1,
+      "intentKey": "stale-cache-cross-account-data-exposure",
+      "location": "frontend/src/App.tsx:8",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-security",
+          "agentRunId": 66,
+          "severity": "high",
+          "classification": "current_artifact",
+          "subject": "The QueryCache 401 handler only nulls the session, so after session expiry the previous account's cached notes list and open note remain in the query cache and the store, and a different user who signs in on the same browser sees the previous user's note titles, previews, and possibly the open note body until the refetch completes."
+        }
+      ]
+    },
+    {
+      "findingId": 199,
+      "round": 1,
+      "intentKey": "out-of-order-autosave-overwrites-newer-edit",
+      "location": "frontend/src/lib/useAutosave.ts:107",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-security",
+          "agentRunId": 66,
+          "severity": "high",
+          "classification": "current_artifact",
+          "subject": "Because each flush sends immediately while earlier PATCH requests are still in flight, a slow older PATCH can reach the server after a newer one, so the database keeps the older body and title while the client shows Saved, and the latest edit is lost after reload."
+        }
+      ]
+    },
+    {
+      "findingId": 200,
+      "round": 1,
+      "intentKey": "sessions-survive-password-reset",
+      "location": "backend/src/lib/auth.ts:49",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-security",
+          "agentRunId": 66,
+          "severity": "medium",
+          "classification": "current_artifact",
+          "subject": "requireAuth accepts any unexpired JWT with no server-side session or password-version check, so a session cookie stolen before a password reset keeps reading and writing that user's notes for up to 7 days after the reset completes."
+        }
+      ]
+    },
+    {
+      "findingId": 201,
+      "round": 1,
+      "intentKey": "nul-character-rejected-by-postgres",
+      "location": "backend/src/features/notes/routes.ts:44",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-security",
+          "agentRunId": 66,
+          "severity": "low",
+          "classification": "current_artifact",
+          "subject": "A title or body containing U+0000 passes validation but Postgres rejects it in a text or jsonb column, so every PATCH for that note returns a generic HTTP 500 and the note can never be saved again."
+        }
+      ]
+    },
+    {
+      "findingId": 202,
+      "round": 1,
+      "intentKey": "beforeunload-guard-removed-while-edit-pending",
+      "location": "frontend/src/lib/useAutosave.ts:23",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "agentRunId": 65,
+          "severity": "high",
+          "classification": "current_artifact",
+          "subject": "The module-level syncQueueGuard removes the beforeunload listener whenever the offline queue empties, even while another mounted editor still has an unsaved edit, so closing or reloading the tab after a queued draft is sent for another note shows no leave-page prompt and the pending edit is lost, violating AC-018."
+        }
+      ]
+    },
+    {
+      "findingId": 203,
+      "round": 1,
+      "intentKey": "out-of-order-save-response-overwrites-cache",
+      "location": "frontend/src/features/notes/NoteEditor.tsx:47",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "agentRunId": 65,
+          "severity": "medium",
+          "classification": "current_artifact",
+          "subject": "The save function writes every successful response into the ['note', id] cache without checking whether its version is still the newest, so a slower older request that resolves last replaces the newer content, and reopening the note shows the older text while the server holds the newer edit."
+        }
+      ]
+    },
+    {
+      "findingId": 204,
+      "round": 1,
+      "intentKey": "sign-out-requeues-unsent-draft",
+      "location": "frontend/src/features/notes/Dashboard.tsx:66",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "agentRunId": 65,
+          "severity": "medium",
+          "classification": "current_artifact",
+          "subject": "handleSignOut calls discardQueuedDrafts before reset() unmounts NoteEditor, so the unmount cleanup re-queues any draft that failed to save, leaving a stale queue entry and a permanent beforeunload prompt after sign-out."
+        }
+      ]
+    },
+    {
+      "findingId": 205,
+      "round": 1,
+      "intentKey": "unauthorized-draft-queued-forever",
+      "location": "frontend/src/lib/useAutosave.ts:105",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "agentRunId": 65,
+          "severity": "medium",
+          "classification": "current_artifact",
+          "subject": "A save that fails with 401 after session expiry is re-queued on unmount and retried on every online event with no removal path except sign-out, so the beforeunload prompt stays active and the draft is never persisted."
+        }
+      ]
+    },
+    {
+      "findingId": 206,
+      "round": 1,
+      "intentKey": "listen-error-bypasses-startup-handler",
+      "location": "backend/src/index.ts:9",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "agentRunId": 65,
+          "severity": "low",
+          "classification": "current_artifact",
+          "subject": "Server listen failures such as EADDRINUSE are emitted as an asynchronous 'error' event outside the try/catch, so main()'s failure path never logs the startup error or ends the pool and the process dies with an uncaught exception."
+        }
+      ]
+    },
+    {
+      "findingId": 207,
+      "round": 1,
+      "intentKey": "request-without-timeout-blocks-navigation",
+      "location": "frontend/src/lib/api.ts:36",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "agentRunId": 65,
+          "severity": "low",
+          "classification": "current_artifact",
+          "subject": "The fetch wrapper sets no timeout or abort signal, so a stalled PATCH keeps the flush promise pending and openNote or openView never resolves while the browser is online, leaving the user unable to switch notes."
+        }
+      ]
+    },
+    {
+      "findingId": 208,
+      "round": 2,
+      "intentKey": "autosave-latest-draft-deferred-behind-inflight-save",
+      "location": "frontend/src/lib/useAutosave.ts",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-correctness",
+          "agentRunId": 71,
+          "severity": "high",
+          "classification": "current_artifact",
+          "subject": "When a save request is still in flight, flush() returns the running drain loop instead of sending the newer draft, so an edit made 750 ms after the last keystroke waits for the slow earlier response and can be sent more than 1,000 ms after the last keystroke, violating AC-015 and the plan's rule that a send is never deferred behind an earlier request."
+        }
+      ]
+    },
+    {
+      "findingId": 209,
+      "round": 2,
+      "intentKey": "email-nul-byte-validation-bypass",
+      "location": "backend/src/features/auth/service.ts:24",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-security",
+          "agentRunId": 69,
+          "severity": "high",
+          "classification": "current_artifact",
+          "subject": "validateEmail's regex lets U+0000 through, so a request such as POST /api/auth/register with an email containing a NUL byte reaches Postgres, which rejects the text parameter, and the client gets a generic HTTP 500 instead of a 400 naming the email field, failing AC-075."
+        }
+      ]
+    },
+    {
+      "findingId": 210,
+      "round": 2,
+      "intentKey": "autosave-latest-edit-deferred-behind-inflight-save",
+      "location": "frontend/src/lib/useAutosave.ts:181",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "agentRunId": 70,
+          "severity": "high",
+          "classification": "current_artifact",
+          "subject": "When a save request is still in flight, flush() returns the running drain instead of sending the newer draft, so the latest edit is held until the earlier request settles (up to the 15 s api timeout), which violates AC-015's requirement to send the latest content within 1,000 ms of the last keystroke."
+        }
+      ]
+    },
+    {
+      "findingId": 211,
+      "round": 2,
+      "intentKey": "unauthorized-save-drops-unsaved-edit",
+      "location": "frontend/src/lib/useAutosave.ts:141",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "agentRunId": 70,
+          "severity": "high",
+          "classification": "current_artifact",
+          "subject": "When a PATCH returns 401 (for example after a password reset invalidates the session), the hook only sets an error status and never routes the user back to sign-in, so switching notes discards the unsent edit while the user is still shown an editor."
+        }
+      ]
+    },
+    {
+      "findingId": 212,
+      "round": 2,
+      "intentKey": "queued-draft-never-retried-after-server-error",
+      "location": "frontend/src/lib/useAutosave.ts:147",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "agentRunId": 70,
+          "severity": "medium",
+          "classification": "current_artifact",
+          "subject": "A non-offline save failure (for example a 500) during unmount is queued, but the queue is only retried on a browser 'online' event that never fires while the browser stays online, so the draft stays unsent and is lost on reload."
+        }
+      ]
+    },
+    {
+      "findingId": 213,
+      "round": 2,
+      "intentKey": "rollback-error-masks-original-failure",
+      "location": "backend/src/features/auth/service.ts",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "agentRunId": 70,
+          "severity": "low",
+          "classification": "current_artifact",
+          "subject": "If ROLLBACK itself throws in resetPassword (for example after a dropped connection), the rollback error replaces the original error and the client is released to the pool without an error argument, so a broken connection can be reused by later requests."
+        }
+      ]
+    },
+    {
+      "findingId": 214,
+      "round": 2,
+      "intentKey": "rollback-error-masks-migration-failure",
+      "location": "backend/src/db/migrate.ts",
+      "reports": [
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "agentRunId": 70,
+          "severity": "low",
+          "classification": "current_artifact",
+          "subject": "If ROLLBACK throws after a failed migration statement, the rollback error replaces the original migration error and the client is released without an error argument, so startup diagnostics lose the real cause and a broken client can return to the pool."
+        }
+      ]
+    }
+  ]
+}

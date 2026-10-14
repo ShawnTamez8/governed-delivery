@@ -168,6 +168,8 @@ test("malformed command lines refuse before target resolution, lock, migration, 
       { args: NEW_RUN.map((arg) => arg === "f-1" ? "f\nscope: all" : arg), reason: /invalid feature_id/ },
       { args: NEW_RUN.map((arg) => arg === "feature" ? "unknown" : arg), reason: /invalid change_kind/ },
       { args: NEW_RUN.map((arg) => arg === "test-model" ? "bad model" : arg), reason: /invalid model name/ },
+      { args: [...NEW_RUN, "--after=0"], reason: /--after must be a positive run id, got 0/ },
+      { args: [...NEW_RUN, "--after=x"], reason: /--after must be a non-negative integer, got x/ },
       { args: ["spec", "--run=1", "--model=bad model"], reason: /invalid model name/ },
       { args: ["doctor", "--slug=Bad"], reason: /invalid slug/ },
       { args: ["proposal-export", "--proposal=1", "--name=Bad"], reason: /invalid --name/ },
@@ -462,6 +464,30 @@ test("decide records one answer through the core, reads --answer-file from the i
     }
     assert.ok(!existsSync(join(root, answerFile)));
     assert.equal(inspectLock(root).status, "absent");
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("new-run --after reaches the intake check and refuses an unknown run without creating one", () => {
+  const parent = workspace();
+  try {
+    const root = repository(parent);
+    const first = cli(parent, parent, ...NEW_RUN, "--repo", root);
+    assert.equal(first.status, 0, first.stderr);
+    const refused = cli(parent, parent, ...NEW_RUN, "--after", "42", "--repo", root);
+    assert.equal(refused.status, 1, refused.stderr);
+    assert.match(refused.stderr, /--after: run 42 does not exist/);
+    const notCompleted = cli(parent, parent, ...NEW_RUN, "--after", first.stdout.trim(), "--repo", root);
+    assert.equal(notCompleted.status, 1, notCompleted.stderr);
+    assert.match(notCompleted.stderr, new RegExp(`--after: run ${first.stdout.trim()} is ready, not completed`));
+    const store = openStore(root, { readOnly: true });
+    try {
+      assert.equal(store.query("SELECT * FROM run").length, 1, "neither refusal created a run");
+    } finally {
+      store.close();
+    }
+    assert.match(cli(parent, parent, "help", "new-run").stdout, /\[--after <run-id>\][\s\S]*--after names the run of the feature this one follows/);
   } finally {
     rmSync(parent, { recursive: true, force: true });
   }
@@ -935,7 +961,7 @@ interface CliSpawnObservation {
   credentials: string[];
 }
 
-function journeyFixture(parent: string, externalPublicKey?: string) {
+function journeyFixture(parent: string, externalPublicKey?: string, codeReviewMode = "ok") {
   const root = repository(parent);
   const design = join(root, "docs", "features", "s", "design.md");
   mkdirSync(dirname(design), { recursive: true });
@@ -1049,7 +1075,7 @@ function journeyFixture(parent: string, externalPublicKey?: string) {
   assert.ok(loaded.ok, loaded.ok ? "" : loaded.reason);
   const profile = loaded.profile;
   profile.executor.command = [process.execPath, resolve("test", "fixtures", "harness", "emit-cli-run.mjs"),
-    "--implementation-mode", "ok", "--code-review-mode", "ok"];
+    "--implementation-mode", "ok", "--code-review-mode", codeReviewMode];
   profile.executor.probe = [process.execPath, "--version"];
   profile.executor.sandbox.envPassthrough = ["PATH", "SystemRoot", "TEMP", "TMP", "NODE_OPTIONS"];
   profile.executor.sandbox.idleTimeoutSeconds = 30;
@@ -1372,6 +1398,53 @@ test("Task 8 external CLI journey delivers every declared artifact without GitHu
       assert.doesNotMatch([entry.file, ...entry.args].join(" "), /github(?:usercontent)?\.com|\b(?:fetch|push|pull|ls-remote|clone)\b/i);
     }
     t.diagnostic("Observed local Git/Node/fixture argv with GitHub variables absent and a calibrated failing gh sentinel. Verification ran version commands only; neither arbitrary verification nor the real provider is claimed network-sandboxed.");
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+    if (keys !== undefined) rmSync(keys.directory, { recursive: true, force: true });
+  }
+});
+
+test("code-review reconciler journey withholds one finding from remediation, delivers, and shows the rejection in status", () => {
+  // The stand-in emitter throws if the rejected finding reaches the remediation prompt.
+  const parent = workspace();
+  let keys: ReturnType<typeof externalSigner> | undefined;
+  try {
+    keys = externalSigner();
+    const { root, run, invoke, execute } = journeyFixture(parent, keys.publicKey, "reconcile-reject-one");
+    const first = invoke(["run", "--run", String(run.id), "--yes", "--json"]);
+    assert.equal(first.status, 3, first.stderr || first.stdout);
+    const request = (operatorEnvelope(first, "run").result as RunCommandResult).snapshot!.operatorActions
+      .find((action) => action.kind === "approval_request")!;
+    const expires = actionValue(request.args, "--expires");
+    const payloadPath = join(parent, "reconciler payload.txt");
+    assert.equal(invoke(["approval-request", "--run", String(run.id), "--expires", expires, "--out", payloadPath]).status, 0);
+    const signed = execute(SIGNER, ["sign", "--key", keys.key], { input: readFileSync(payloadPath) });
+    assert.equal(signed.status, 0, signed.stderr);
+    const signaturePath = join(parent, "reconciler signature.txt");
+    writeFileSync(signaturePath, signed.stdout, "utf8");
+    const granted = invoke(["approve", "--run", String(run.id), "--expires", expires, "--signature-file", signaturePath]);
+    assert.equal(granted.status, 0, granted.stderr);
+
+    const continued = invoke(["run", "--run", String(run.id), "--yes", "--json"]);
+    const completed = operatorEnvelope(continued, "run");
+    assert.equal(continued.status, 0, continued.stderr || continued.stdout);
+    assert.equal(completed.outcome, "completed");
+    const snapshot = (completed.result as RunCommandResult).snapshot!;
+    assert.equal(snapshot.stages.find((stage) => stage.kind === "delivery_check")!.status, "passed");
+    const delivery = snapshot.delivery;
+    const remediations = git(delivery.worktreePath!, "log", "--format=%s", `${delivery.initialVerifiedCommit}..${delivery.deliveredCommit}`)
+      .split(/\r?\n/).filter(Boolean);
+    assert.equal(remediations.length, 1);
+    assert.match(remediations[0]!, /code review remediation round 1/);
+
+    const status = invoke(["status", "--run", String(run.id), "--json"]);
+    assert.equal(status.status, 0, status.stderr);
+    const codeReview = snapshot.stages.find((stage) => stage.kind === "code_review")!;
+    const findings = (operatorEnvelope(status, "status").result as RunSnapshot).evidence.findings
+      .filter((finding) => finding.stageId === codeReview.id);
+    const rejected = findings.filter((finding) => finding.decision?.disposition === "rejected_with_rationale");
+    assert.equal(rejected.length, 1);
+    assert.equal(rejected[0]!.intentKey, "beyond-spec-hardening");
   } finally {
     rmSync(parent, { recursive: true, force: true });
     if (keys !== undefined) rmSync(keys.directory, { recursive: true, force: true });
@@ -1711,7 +1784,7 @@ test("Task 6 run requires explicit consent for JSON and redirected input and pri
         assert.ok(called.stderr.includes(`Frozen verification commands: ${JSON.stringify(
           profile.verification.commands.map((command) => ({ name: command.name, argv: command.command })))}`));
         assert.match(called.stderr, /Remaining groups: spec\r?\n/);
-        const ceiling = 2 + profile.policy.specReviewRounds * (profile.policy.panelSizeMax + 1);
+        const ceiling = 3 + profile.policy.specReviewRounds * (profile.policy.panelSizeMax + 1);
         assert.ok(called.stderr.includes(`Dispatch ceilings for this range: spec=${ceiling}; total ${ceiling}.`));
         assert.ok(called.stderr.includes(`spec ${profile.policy.specReviewRounds} round(s)`));
         assert.ok(called.stderr.includes(`${profile.policy.codeReviewPanelSize} reviewers * ${profile.policy.codeReviewMaxRounds} panel(s)`));
@@ -1863,6 +1936,48 @@ test("Task 7 run pauses at awaiting_decision, then previews exactly the decision
     } finally {
       store.close();
     }
+    assert.equal(inspectLock(root).status, "absent");
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("design split: run pauses on the proposed split, decide approves it, and the next run ends blocked with the split reason", () => {
+  const parent = workspace();
+  try {
+    const { root, doctor, run, profile } = preapprovalFixture(parent);
+    // Below the stock fixture's declared file count, so spec review proposes a split.
+    profile.policy.designSplitPathThreshold = 6;
+    profile.policyHash = policyHash(profile.policy);
+    freezeDoctorProfile(root, run.id, profile);
+    writeFileSync(join(root, "docs", "features", run.slug, "design.md"), "# design\n\nFIXTURE-SPLIT-CRITERIA\n");
+    const timeout = profile.executor.sandbox.absoluteTimeoutSeconds * 1000;
+    const first = doctor.run(root, ["--run", String(run.id), "--yes", "--json"], { timeout });
+    const asked = operatorEnvelope(first, "run");
+    assert.equal(first.status, 3, first.stderr || first.stdout);
+    assert.equal(asked.outcome, "awaiting_decision");
+    const questions = (asked.result as RunCommandResult).snapshot!.questions;
+    assert.equal(questions.length, 1, "the split is the only question");
+    const split = questions[0]!;
+    assert.match(split.text, /split/i);
+
+    const decided = doctor.command(root, ["decide", "--run", String(run.id), "--finding", String(split.findingId), "--approve"]);
+    assert.equal(decided.status, 0, decided.stderr);
+    assert.match(decided.stderr, /0 question\(s\) still open/);
+
+    const ended = doctor.run(root, ["--run", String(run.id), "--yes", "--json"], { timeout });
+    const body = operatorEnvelope(ended, "run");
+    assert.equal(ended.status, 1, ended.stderr || ended.stdout);
+    assert.equal(body.outcome, "blocked");
+    assert.equal(body.errorCode, "policy_block");
+    assert.match(body.reason!, /^design split approved: 2 features stored as proposals \d+ \(s-part-1\), \d+ \(s-part-2\)\./);
+    assert.match(body.reason!, /new-run --after/);
+    const snapshot = (body.result as RunCommandResult).snapshot!;
+    assert.equal(snapshot.run.status, "blocked");
+    assert.deepEqual(snapshot.stages.map((stage) => [stage.kind, stage.status]),
+      [["spec", "passed"], ["spec_review", "passed"], ["spec_decision", "blocked"]]);
+    assert.deepEqual(snapshot.proposals.filter((p) => p.route === "blocking_dependency").map((p) => p.title),
+      ["The first part", "The second part"]);
     assert.equal(inspectLock(root).status, "absent");
   } finally {
     rmSync(parent, { recursive: true, force: true });
@@ -3001,6 +3116,12 @@ test("readiness names actual current staffing and capability failures using rece
     report = inspectReadiness(root);
     assert.equal(report.checks.find((check) => check.name === "author_bindings")!.status, "fail");
     assert.match(report.checks.find((check) => check.name === "author_bindings")!.evidence, /configured agent spec-author is missing/);
+    registry.splice(0, registry.length, ...saved.map((agent) => agent.id === "spec-author"
+      ? { ...agent, outputs: agent.outputs.filter((output) => output !== "spec-split") } : agent));
+    report = inspectReadiness(root);
+    assert.equal(report.checks.find((check) => check.name === "author_bindings")!.status, "fail");
+    assert.equal(report.checks.find((check) => check.name === "author_bindings")!.evidence,
+      "configured agent spec-author does not allow spec-split output");
   } finally {
     registry.splice(0, registry.length, ...saved);
     CLAUDE_CODE.capabilities = capabilities;

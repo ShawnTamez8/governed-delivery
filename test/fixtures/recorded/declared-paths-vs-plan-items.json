@@ -1,0 +1,109 @@
+{
+  "provenance": {
+    "captured": "2026-10-12",
+    "method": "For every run in the crew-chatter and team-notes targets with both a signed approval and a plan.gate.pass event: declaredPaths is the length of the approval row's signed scope (computeScope of the spec's declared artifacts); planItems is validatePlanDoc(plan).taskItems.length (the count the implementation stage phases by) of the plan whose normalized SHA-256 equals the planHash in that run's last plan.gate.pass event. The plan text was taken from a committed fixture where one exists, else the run's delivery branch, else the target checkout. Runs with no approval are left out. The plan texts are not copied here.",
+    "stores": "C:\\Users\\Shawn-work\\repositories\\testing-repos\\{crew-chatter,team-notes}\\.governance\\state.db, read-only",
+    "note": "The 2026-10-10 learnings figure used five of these runs (crew-chatter 2, 3, 4; team-notes 6, 12) and a highest ratio of 1.84. The six other team-notes runs were found recoverable on 2026-10-12; team-notes run 10 (20 files, 52 items, 2.6) is the highest."
+  },
+  "runs": [
+    {
+      "target": "crew-chatter",
+      "run": 2,
+      "declaredPaths": 51,
+      "planItems": 51,
+      "planHash": "8e09f0b4f89b345cbdd89d55f35ec6e9747a1c141c66ec6d48aa034fb1fe0448",
+      "planGateAuditId": 172,
+      "source": "test/fixtures/recorded/plan-crew-chatter-run-2.json (repository fixture)"
+    },
+    {
+      "target": "crew-chatter",
+      "run": 3,
+      "declaredPaths": 52,
+      "planItems": 52,
+      "planHash": "0e3d7c240fc6e4a86aad88ad177894e874ed92daca24e92de9f9e9dfd1ecd88e",
+      "planGateAuditId": 282,
+      "source": "git show gov/crew-chatter/3:docs/features/crew-chatter/plan.md in the crew-chatter target"
+    },
+    {
+      "target": "crew-chatter",
+      "run": 4,
+      "declaredPaths": 62,
+      "planItems": 86,
+      "planHash": "fa06c2561be10bae5f4e3f547c71303e39819cb4e9dcc6507bb07944457d0605",
+      "planGateAuditId": 416,
+      "source": "docs/features/crew-chatter/plan.md in the crew-chatter target checkout (untracked)"
+    },
+    {
+      "target": "team-notes",
+      "run": 4,
+      "declaredPaths": 24,
+      "planItems": 31,
+      "planHash": "50dcc6b564fb0dd89618451dbdc312ada1ad057b9a07ce5d511c13539bbf8712",
+      "planGateAuditId": 145,
+      "source": "git show gov/team-notes/4:docs/features/team-notes/plan.md in the team-notes target"
+    },
+    {
+      "target": "team-notes",
+      "run": 5,
+      "declaredPaths": 38,
+      "planItems": 44,
+      "planHash": "f6672f0d5829a7b328695e728a57f177792071850fa8db81ff25dddd9b293aa0",
+      "planGateAuditId": 221,
+      "source": "git show gov/team-notes/5:docs/features/team-notes/plan.md in the team-notes target"
+    },
+    {
+      "target": "team-notes",
+      "run": 6,
+      "declaredPaths": 31,
+      "planItems": 57,
+      "planHash": "d4936b104316013987f0a33141d4e91542476370a241bedc4d7fe44a9680ae8d",
+      "planGateAuditId": 330,
+      "source": "test/fixtures/recorded/plan-team-notes-run-6.json (repository fixture)"
+    },
+    {
+      "target": "team-notes",
+      "run": 7,
+      "declaredPaths": 32,
+      "planItems": 73,
+      "planHash": "318d53562917bdcca676b4a05ff9f1ea3574d2cd1441d74c77bfe3582e4abc1f",
+      "planGateAuditId": 449,
+      "source": "git show gov/team-notes/7:docs/features/team-notes/plan.md in the team-notes target"
+    },
+    {
+      "target": "team-notes",
+      "run": 8,
+      "declaredPaths": 35,
+      "planItems": 36,
+      "planHash": "8ae3ec7f8e364d3599bc4853901e9ac05b8d261d9f61fa32325c01b052f784ce",
+      "planGateAuditId": 567,
+      "source": "git show gov/team-notes/8:docs/features/team-notes/plan.md in the team-notes target"
+    },
+    {
+      "target": "team-notes",
+      "run": 9,
+      "declaredPaths": 33,
+      "planItems": 46,
+      "planHash": "298e90425b99a73937161448d90c2a2db865c3293b5c28788027926222a38b38",
+      "planGateAuditId": 681,
+      "source": "git show gov/team-notes/9:docs/features/team-notes/plan.md in the team-notes target"
+    },
+    {
+      "target": "team-notes",
+      "run": 10,
+      "declaredPaths": 20,
+      "planItems": 52,
+      "planHash": "4fec483dac527466926e34f817410dd1e333b568b464de1a6eca35e88d01ea2b",
+      "planGateAuditId": 772,
+      "source": "git show gov/team-notes/10:docs/features/team-notes/plan.md in the team-notes target"
+    },
+    {
+      "target": "team-notes",
+      "run": 12,
+      "declaredPaths": 40,
+      "planItems": 53,
+      "planHash": "8d2956d7773ce4536b94c926fdc6796c5c2ebf77bdf0f07eae57aebad0a023da",
+      "planGateAuditId": 971,
+      "source": "test/fixtures/recorded/plan-team-notes-run-12.json (repository fixture)"
+    }
+  ]
+}

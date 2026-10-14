@@ -74,13 +74,17 @@ export const COMMANDS: Readonly<Record<string, CommandDefinition>> = {
   migrate: { description: "apply pending migrations", options: [] },
   "new-run": {
     description: "create a run and freeze its configuration",
-    notes: "Model and effort are frozen per setting: each of the nine agents and the reconciler.\n"
+    notes: "Model and effort are frozen per setting: each of the nine agents, the reconciler and\n"
+      + "the code-review reconciler.\n"
       + "--model is required and covers only the reconciler; every other setting\n"
       + "takes its seeded model unless --model-for names it.\n"
-      + "--effort sets every non-reviewer setting and never reaches a reviewer; a reviewer's\n"
-      + "effort changes only through its own --effort-for.\n"
-      + "--model-for and --effort-for take <setting>=<value>[,...]; a setting is an agent id\n"
-      + "or reconciler. Levels: low, medium, high, xhigh, max.\n",
+      + "--effort never reaches a reviewer or the code-review reconciler; their effort changes\n"
+      + "only through their own --effort-for.\n"
+      + "--model-for and --effort-for take <setting>=<value>[,...]; a setting is an agent id,\n"
+      + "reconciler or code-review-reconciler. Levels: low, medium, high, xhigh, max.\n"
+      + "--after names the run of the feature this one follows. It must be completed, and its\n"
+      + "delivered commit must be in this checkout's history (merge, never squash); the link\n"
+      + "is frozen into the profile.\n",
     options: [
       { name: "project", value: "p", required: true },
       { name: "feature", value: "f", required: true, validate: (value) => validateRunIdentity({ featureId: value }) },
@@ -90,6 +94,10 @@ export const COMMANDS: Readonly<Record<string, CommandDefinition>> = {
       { name: "effort", value: "level", validate: validateEffort },
       settingListOption("model-for", validateModelName),
       settingListOption("effort-for", validateEffort),
+      {
+        name: "after", value: "run-id",
+        validate: (value, name) => validateNumber(value, name) ?? (Number(value) === 0 ? `--${name} must be a positive run id, got ${value}` : null),
+      },
     ],
   },
   "stage-add": {

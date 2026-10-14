@@ -1027,6 +1027,29 @@ test("final code-review findings are labelled from the bound recorded panel, not
   }, { mode: blocked ? "high" : "low", blockedReview: blocked });
 });
 
+test("a round the code-review reconciler emptied reads as the final panel only while every finding carries its rejection", async () => {
+  for (const blocked of [false, true]) await withBoundary(9, ({ store, root, runId, profile }) => {
+    const stage = store.getStageChain(runId).at(-1)!;
+    const record = JSON.parse(readFileSync(resolve(root, stage.output_ref!), "utf8"));
+    assert.ok(record.rounds.at(-1).round < profile.policy.codeReviewMaxRounds, "the reconciler decided an earlier round");
+    const reference = (s: ReturnType<typeof readRunSnapshot>["snapshot"]) =>
+      s.evidence.references.find((r) => r.stageId === stage.id && r.ref === stage.output_ref)!;
+    const snapshot = readRunSnapshot(store, root, runId).snapshot;
+    assert.equal(reference(snapshot).availability, "available", JSON.stringify(snapshot.workflowAction.reasons));
+    const finding = snapshot.evidence.findings.find((f) => f.stageId === stage.id)!;
+    assert.equal(finding.decision!.disposition, "rejected_with_rationale");
+    assert.equal(finding.finalPanelBlocking, blocked);
+    assert.equal(snapshot.phase, blocked ? "blocked" : "ready");
+    assert.equal(snapshot.workflowAction.eligible, !blocked);
+    if (!blocked) return;
+    store.exec("DELETE FROM finding_decision WHERE finding_id = ?", [finding.id]);
+    const unrejected = readRunSnapshot(store, root, runId).snapshot;
+    assert.equal(reference(unrejected).availability, "inconsistent");
+    assert.ok(unrejected.workflowAction.reasons.some((r) => r.code === "evidence_invalid"
+      && /blocked final code-review panel/.test(r.reason)), JSON.stringify(unrejected.workflowAction.reasons));
+  }, { mode: blocked ? "reconcile-reject-all-high" : "reconcile-reject-all-low", blockedReview: blocked });
+});
+
 test("scope metadata reuses the specification reader without requiring unrelated downstream schema fields", async () => {
   await withBoundary(4, ({ specPath }) => {
     const original = readFileSync(specPath, "utf8");

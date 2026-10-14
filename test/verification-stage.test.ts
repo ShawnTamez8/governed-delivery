@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
 import { runVerificationStage } from "../src/verification-stage.ts";
+import { checkWorktreeClean } from "../src/patch-application.ts";
 import { freezeProfile, loadProfile } from "../src/profile.ts";
 import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, sha256Hex } from "../src/canonical.ts";
@@ -33,6 +34,7 @@ const FLOOD: VerifyCommand = { name: "flood", command: ["node", join(FIXTURES, "
 const TOUCH: VerifyCommand = { name: "touch", command: ["node", join(FIXTURES, "touch-tracked.mjs")] };
 const MOVE: VerifyCommand = { name: "move", command: ["node", join(FIXTURES, "commit-empty.mjs")] };
 const MISSING: VerifyCommand = { name: "missing", command: ["definitely-not-a-real-binary"] };
+const WRITE_IGNORED: VerifyCommand = { name: "build", command: ["node", join(FIXTURES, "write-ignored.mjs")] };
 
 function git(cwd: string, args: string[]): { status: number; stdout: string; stderr: string } {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -58,6 +60,8 @@ interface Opts {
   implementationStatus?: "blocked";
   /** Skip creating the worktree, so the path does not exist. */
   worktree?: false;
+  /** Extra `.gitignore` lines after `.governance/`. */
+  ignore?: string[];
 }
 
 /**
@@ -72,7 +76,7 @@ function withImplementedRun(fn: (ctx: Ctx) => Promise<void>, opts: Opts = {}): P
   const store = openStore(root);
   try {
     assert.equal(git(root, ["init", "-q"]).status, 0);
-    writeFileSync(join(root, ".gitignore"), ".governance/\n");
+    writeFileSync(join(root, ".gitignore"), [".governance/", ...(opts.ignore ?? [])].join("\n") + "\n");
     writeFileSync(join(root, "base.txt"), "base\n");
     assert.equal(git(root, ["add", "-A"]).status, 0);
     const commit = git(root, [
@@ -228,6 +232,27 @@ test("every configured command runs, in frozen order, when they all pass", async
       );
     },
     { commands: [OK, CWD] }
+  );
+});
+
+test("ignored output the passing commands left is removed, so code review's clean guard passes", async () => {
+  await withImplementedRun(
+    async (ctx) => {
+      const result = await runVerificationStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+      assert.ok(result.ok, result.ok ? "" : result.reason);
+      // The guard code review applies before its stage row exists
+      // (src/code-review-stage.ts), which counts ignored entries.
+      assert.deepEqual(checkWorktreeClean(ctx.worktreePath), { ok: true });
+      const cleanup = ctx.store.getAuditEvents(ctx.runId).filter((e) => e.action === "verification.cleanup");
+      assert.equal(cleanup.length, 1);
+      assert.match(cleanup[0]!.summary, /frontend\/dist\//);
+      assert.match(cleanup[0]!.summary, /node_modules\//);
+      // The evidence lives outside the worktree and survives.
+      const record = readRecord(ctx.root, result.resultRef);
+      assert.match(readFileSync(join(ctx.root, record.commands[0]!.evidenceRef), "utf8"), /WROTE_IGNORED/);
+      assert.equal(verifyAuditChain(ctx.store), null);
+    },
+    { commands: [WRITE_IGNORED], ignore: ["node_modules/", "dist/"] }
   );
 });
 

@@ -1038,6 +1038,7 @@ const SEEDED_WITH_MODEL_FLAG = (model: string): Record<string, { model: string; 
   "plan-author": { model: "claude-opus-5-5", effort: "high" },
   "implementer": { model: "claude-sonnet-5-5", effort: "medium" },
   "reconciler": { model, effort: "medium" },
+  "code-review-reconciler": { model: "claude-haiku-5-5", effort: "medium" },
   "spec-reviewer-traceability": { model: "claude-haiku-5-5", effort: "medium" },
   "spec-reviewer-security": { model: "claude-haiku-5-5", effort: "medium" },
   "spec-reviewer-consistency": { model: "claude-haiku-5-5", effort: "medium" },
@@ -1162,7 +1163,7 @@ test("help new-run lists the three setting flags and what --model and --effort r
     assert.equal(r.status, 0, r.stderr);
     assert.match(r.stdout, /\[--effort <level>\] \[--model-for <list>\] \[--effort-for <list>\]/);
     assert.match(r.stdout, /--model is required and covers only the reconciler/);
-    assert.match(r.stdout, /--effort sets every non-reviewer setting and never reaches a reviewer/);
+    assert.match(r.stdout, /--effort never reaches a reviewer or the code-review reconciler/);
     assert.match(r.stdout, /--model-for and --effort-for take <setting>=<value>/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });

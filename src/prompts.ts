@@ -9,6 +9,10 @@ export const PLAN_REVIEW_PROMPT_PREFIX = "you are the plan reviewer";
 export const IMPLEMENTATION_PROMPT_PREFIX = "you are the implementer";
 export const CODE_REVIEW_PROMPT_PREFIX = "you are the code reviewer";
 export const CODE_REVIEW_REMEDIATION_PROMPT_PREFIX = "you are the code-review remediator";
+export const CODE_REVIEW_RECONCILER_PROMPT_PREFIX = "you are the code-review reconciler";
+// "Reviewed", not "approved": the split is proposed after spec review and
+// before the operator signs anything.
+export const DESIGN_SPLIT_PROMPT_PREFIX = "you are dividing a reviewed specification into separately built features";
 
 /**
  * The author prompt: role, the design document verbatim, the AgentResult
@@ -126,19 +130,22 @@ The first command that fails blocks the run, and no repair round follows.`;
  * What the spec author may do with the verification commands, stated once for
  * the draft and the self-critique so the two cannot drift (hazard 3).
  *
- * The author cannot be assumed able to read the target: spec dispatches inherit
- * the directory the operator launched from, which was the BuildWorks checkout in
- * run 10 and is the target when `buildworks` is run from inside it. So the rule
- * does not say either; it says to treat a file as evidence only if it belongs to
- * the repository the design describes, and otherwise to ask. A commands-as-
- * obligations misreading is the hazard 13 risk, so the rule forbids it.
+ * The spec dispatches run in the target root (`invocation.cwd` in
+ * `src/spec-stage.ts` and `src/spec-decision-stage.ts`), so the author can read
+ * what each command runs. Before that they inherited the directory the operator
+ * launched from, which was the BuildWorks checkout in run 10. The rule names the
+ * working tree, not a commit: the operator can commit while the run waits at a
+ * decision or approval pause, and uncommitted files are visible too, so a file
+ * is still evidence only if it belongs to the repository the design describes.
+ * A commands-as-obligations misreading is the hazard 13 risk, so the rule
+ * forbids it.
  *
  * The question begins `Verification:` so the reconciliation and fold prompts can
  * recognize it by its text; no code reads the word.
  */
 function specVerificationRule(): string {
   return [
-    `Your working directory may not be the target repository.`,
+    `Your working directory is the target repository's working tree; read what each command runs there.`,
     `Treat a file as evidence of what a command runs only if it belongs to the repository the design describes; if you cannot tell, what the command requires is not established.`,
     `The commands are not obligations the design states: never restate a command as an acceptance criterion, and never declare an artifact only because a command exists.`,
     `A command that only reports a tool version depends on nothing and needs no decision.`,
@@ -1058,6 +1065,63 @@ ${renderedDenied}`;
 }
 
 /**
+ * The design split prompt (`docs/features/design-split-into-features/plan.md`):
+ * the spec author proposes how to divide a reviewed specification that declares
+ * more files than the frozen threshold into features built one after another.
+ * Every rule `validateDesignSplit` enforces is stated here, in its order and with
+ * the run's own numbers (hazard 3), and the literal example validates against the
+ * two-criterion specification it describes (`test/prompts.test.ts`).
+ *
+ * The wording avoids every word the stand-in spec emitter routes the other spec
+ * prompts on, and its own leading role line is the route.
+ */
+export function buildDesignSplitPrompt(
+  agent: AgentDefinition,
+  designContent: string,
+  specContent: string,
+  ctx: { threshold: number; declaredCount: number; slugsInUse: string[]; runSlug: string }
+): string {
+  const forbidden = [ctx.runSlug, ...ctx.slugsInUse.filter((s) => s !== ctx.runSlug)];
+  return `${DESIGN_SPLIT_PROMPT_PREFIX}
+You are ${agent.id}.
+
+The reviewed specification below declares ${ctx.declaredCount} files. One run is estimated to build at most ${ctx.threshold} declared files within its plan ceiling, so the design is to be built as several features, one run each, in order. Propose that division. You are dividing an existing specification, not writing a new one: no git operations are involved, and you change no document.
+
+Return exactly a JSON AgentResult object with this shape; the split travels in the AgentResult's proposedContentChanges.split:
+{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"split": {"pieces": [{"slug": "...", "title": "...", "criteria": ["AC-001"], "declaredArtifacts": ["<declared file path>"], "dependsOn": []}], "rationale": "..."}}}
+
+status must be one of proposed, blocked, failed. Output the JSON object
+directly, with no surrounding prose, no markdown fences, and no commentary.
+Every JSON string must use JSON-standard escaping. Use literal UTF-8 for non-ASCII characters or valid \`\\uXXXX\` escapes.
+Write every line break inside a JSON string as \`\\n\` and every tab as \`\\t\`; never put a raw line break or tab inside a string literal.
+
+The split must satisfy every one of these rules, checked in this order; the first rule it breaks ends the run:
+- The split object has only the keys pieces and rationale, and each piece only slug, title, criteria, declaredArtifacts and dependsOn.
+- pieces lists at least 2 features, in the order they will be built.
+- Each slug is lowercase kebab-case matching \`[a-z0-9]+(-[a-z0-9]+)*\`, differs from every other piece's slug, and is none of these slugs already in use: ${forbidden.join(", ")}.
+- Each title is one non-empty line.
+- Each piece lists at least one acceptance criterion ID and at least one declared file.
+- Every acceptance criterion ID of the specification is in exactly one piece, and no piece lists an ID the specification does not have.
+- Every declared file of the specification is in at least one piece, written exactly as the specification declares it, and no piece lists a file the specification does not declare. A file may be listed in several pieces when several features change it.
+- Each piece lists at most ${ctx.threshold} distinct declared files.
+- dependsOn lists the 1-based positions of earlier pieces this piece builds on: only numbers from 1 to the piece's own position minus 1, each at most once. The first piece's dependsOn is [].
+- rationale is a non-empty string saying why the features are divided and ordered this way.
+
+Order the features so that each one builds only on features before it: a feature's criteria must be buildable with the code of the features before it and its own files, never with code a later feature writes. The system checks coverage and order of the lists above; it cannot check that, so the operator who approves the split will.
+
+For example, for a specification whose criteria are AC-001 and AC-002 and whose declared files are src/a.ts and src/b.ts, this split is valid:
+{"pieces": [{"slug": "example-core", "title": "The core behaviour", "criteria": ["AC-001"], "declaredArtifacts": ["src/a.ts"], "dependsOn": []}, {"slug": "example-extras", "title": "The extras built on the core", "criteria": ["AC-002"], "declaredArtifacts": ["src/b.ts"], "dependsOn": [1]}], "rationale": "The extras use the core module, so the core is built first."}
+
+Design document:
+
+${designContent}
+
+The reviewed specification to divide:
+
+${specContent}`;
+}
+
+/**
  * The plan reconciliation prompt: the approved specification, the complete
  * plan, the findings, and the same decision contract with the plan's
  * governing source and normative nodes. It restates `plan_for` and the
@@ -1479,6 +1543,73 @@ Approved plan:
 ${planContent}
 
 Complete diff from the original patch base through ${baseCommit}:
+
+${diff}`;
+}
+
+/**
+ * The code-review reconciler prompt (`docs/features/code-review-reconciler/plan.md`):
+ * before a remediation, decide for each finding of the panel whether the
+ * implementer must fix it, or whether it asks for more than the approved
+ * specification states.
+ *
+ * The text is the measured template, copied word for word from the prompt in
+ * `reconcilerSource` of
+ * `test/fixtures/recorded/code-review-reconciler-replay-crew-chatter-run-6.json`,
+ * which calls rec-2 to rec-10 of that fixture and all 20 calls of
+ * `test/fixtures/recorded/code-review-reconciler-test-5-crew-chatter-run-6.json`
+ * used. Do not reword it without a new replay: the 30 recorded calls describe
+ * this text and no other. The basis example `"plan task: Create the notes API in"`
+ * comes from crew-chatter and stays on purpose: every run receives it, a model
+ * that copies it gives an invalid basis, and an invalid basis still keeps the
+ * finding (`src/code-review-reconcile.ts`).
+ *
+ * Like the review prompts, it states no consequence: it never says that a
+ * rejection needs every call to agree, or that the final panel is never
+ * reconciled. The findings render as the replay rendered them, which is the
+ * remediation input without its classification.
+ */
+export function buildCodeReviewReconcilerPrompt(
+  findings: CodeReviewRemediationFindingInput[],
+  specContent: string,
+  planContent: string,
+  diff: string,
+  reviewedCommit: string
+): string {
+  const rendered = findings
+    .map((finding) => `- finding ${finding.findingId}; location ${finding.location}; intentKey ${finding.intentKey}\n${finding.reports.map((report) => `  - reviewer ${report.reviewerId}; severity ${report.severity}; subject ${report.subject}`).join("\n")}`)
+    .join("\n");
+  const entries = findings
+    .map((finding) => `{"findingId": ${finding.findingId}, <the remaining fields of one shape below>}`)
+    .join(", ");
+  return `${CODE_REVIEW_RECONCILER_PROMPT_PREFIX}
+
+Code reviewers reported the findings below against a committed change. Decide, for each finding, whether the implementer must fix it before the next review. Your working directory is the repository checkout at commit ${reviewedCommit}; you may read it. Run no git commands and do not create, modify, or delete any file.
+
+Keep a finding when the code fails a behavior the approved specification or plan states, or breaks in ordinary use: it crashes, loses or corrupts data, returns a wrong result, or lets a user read or change data the specification does not allow.
+Reject a finding only when it asks for protection, limits, or policy beyond what the approved specification states, and the specification already states a workable baseline for that behavior. A rejection must quote that baseline: words copied exactly from the approved specification, which the system checks.
+When you are unsure, keep the finding: a kept finding costs one fix, and a wrongly rejected one ships a defect.
+
+Return exactly one JSON object, with no surrounding prose and no markdown fences:
+{"decisions": [${entries}]}
+
+The decisions list has exactly one entry per finding id listed below, no more and no fewer. Each decision takes exactly one of these shapes:
+- keep: {"findingId": <id>, "disposition": "keep", "basis": "<basis>"} where basis is exactly one of: an acceptance criterion ID copied from the approved specification (for example AC-001); the text "plan task: " followed by the first five words of that task, copied exactly from the approved plan (for example "plan task: Create the notes API in"); or one of crash, data-loss, wrong-result, unauthorized-access.
+- reject: {"findingId": <id>, "disposition": "reject", "rationale": "<one sentence>", "excerpt": "<the specification's exact words stating the baseline>"}
+
+Findings:
+
+${rendered}
+
+Approved specification:
+
+${specContent}
+
+Approved plan:
+
+${planContent}
+
+Diff of the change:
 
 ${diff}`;
 }
