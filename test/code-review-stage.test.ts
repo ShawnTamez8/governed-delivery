@@ -881,6 +881,27 @@ test("invalid remediation outputs fail closed before a second panel", async () =
   }
 });
 
+test("a remediation reply that never reached the structured channel is a failed dispatch, naming its reported cost", async () => {
+  // docs/features/structured-patch-output/plan.md: remediation sends --json-schema,
+  // so a text reply is refused at the envelope, not at the body.
+  await withVerifiedRun(async (ctx) => {
+    await withMode(async () => {
+      const result = await review(ctx);
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(
+        result.reason,
+        /^round 1, commit [0-9a-f]{40,64}, implementer: dispatched agent implementer \(author\) on stage \d+: envelope parse failed: harness envelope for executor claude-code has a result line without a structured_output object although the dispatch requested --json-schema: line \d+; the line reports total_cost_usd 0 \(requested model m, effort medium\)$/
+      );
+      assert.deepEqual(eventsOf(ctx, "code_review.remediation.failed").map((e) => e.summary), [result.reason]);
+      // Panel and one code-review reconciler call; the refused remediation writes no row.
+      assert.equal(agentRuns(ctx, stageOf(ctx)!.id).length, 4);
+      assert.equal(remediationRuns(ctx).length, 0);
+      assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+    }, "remediation-prose");
+  });
+});
+
 test("failed remediation verification retains its round record and stops", async () => {
   await withVerifiedRun(async (ctx) => {
     refreeze(ctx.root, ctx.store, ctx.runId, (profile) => {

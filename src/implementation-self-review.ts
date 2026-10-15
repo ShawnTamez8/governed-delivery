@@ -1,3 +1,5 @@
+import { PATCH_RESULT_SCHEMA } from "./agent-result.ts";
+
 /**
  * The implementation self-review result
  * (`docs/features/implementation-self-review/plan.md`): the implementer's own
@@ -42,6 +44,38 @@ export function validateImplementationSelfReview(
   }
   return { ok: true, value: { critique: r.critique as string[] } };
 }
+
+/**
+ * The JSON Schema the self-review dispatch sends with `--json-schema`
+ * (`docs/features/structured-patch-output/plan.md`): the patch schema plus the
+ * required `proposedContentChanges.selfReview.critique`, bounded as
+ * `validateImplementationSelfReview` bounds it (at least one entry, none empty).
+ * Built from `PATCH_RESULT_SCHEMA`, so the patch half cannot drift from it.
+ * `minLength` cannot express the validator's whitespace-only refusal; the
+ * validator still makes that check.
+ */
+export const SELF_REVIEW_RESULT_SCHEMA = {
+  ...PATCH_RESULT_SCHEMA,
+  required: [...PATCH_RESULT_SCHEMA.required, "proposedContentChanges"],
+  properties: {
+    ...PATCH_RESULT_SCHEMA.properties,
+    proposedContentChanges: {
+      type: "object",
+      additionalProperties: false,
+      required: ["selfReview"],
+      properties: {
+        selfReview: {
+          type: "object",
+          additionalProperties: false,
+          required: ["critique"],
+          properties: {
+            critique: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+          },
+        },
+      },
+    },
+  },
+};
 
 /** The longest critique entry the audit log records whole. */
 export const SELF_REVIEW_AUDIT_ENTRY_CHARS = 2000;

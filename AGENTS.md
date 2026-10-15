@@ -114,8 +114,13 @@ last phase the implementer self-reviews the whole change once in its own
 dispatch and may return fixes, which commit before verification
 (`docs/features/implementation-self-review/plan.md`, hazard 23); an unusable
 reply skips the self-review and a guard failure blocks the run. The self-review
-is the author's own pass, not independent review. A completed paid run never
-authorizes another spend.
+is the author's own pass, not independent review. A phase drops a returned file
+unchanged at its base, records it as `implementation.phase.dropped`, and blocks
+only when nothing is left. Phases, the self-review and code-review remediation
+receive their answer through the `claude` CLI's `--json-schema` structured
+output, not reply text (`docs/features/structured-patch-output/plan.md`, hazard
+1, item 11); every other dispatch still returns free text. A completed paid run
+never authorizes another spend.
 
 ## Windows harness launch
 

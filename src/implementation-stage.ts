@@ -5,11 +5,15 @@ import { type ExecutorDefinition } from "./executor.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
 import { loadVerifiedProfile, requireFrozenBinding, resolveSettings } from "./profile.ts";
 import { dispatchOnce } from "./dispatch.ts";
-import { validateAgentResult, type ProposedPatch } from "./agent-result.ts";
+import { PATCH_RESULT_SCHEMA, validateAgentResult, type ProposedPatch } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import { worktreePath as governanceWorktreePath } from "./paths.ts";
 import { buildImplementationAuthorPrompt, buildImplementationSelfReviewPrompt } from "./prompts.ts";
-import { critiqueAuditEntries, validateImplementationSelfReview } from "./implementation-self-review.ts";
+import {
+  critiqueAuditEntries,
+  SELF_REVIEW_RESULT_SCHEMA,
+  validateImplementationSelfReview,
+} from "./implementation-self-review.ts";
 import { formatImplementationGate } from "./handoff.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
@@ -475,7 +479,9 @@ export async function runImplementationStage(
             existingPaths,
             profile.verification
           ),
-          invocation: { cwd: worktreePath },
+          // The answer comes back as structured output, never free text
+          // (docs/features/structured-patch-output/plan.md).
+          invocation: { cwd: worktreePath, jsonSchema: PATCH_RESULT_SCHEMA },
         },
         rootDir
       );
@@ -519,6 +525,28 @@ export async function runImplementationStage(
         );
       }
 
+      // A file returned unchanged at the phase's base is dropped and recorded,
+      // by the self-review's rule; a phase left with nothing blocks, as its
+      // prompt says (docs/features/structured-patch-output/plan.md).
+      const unchanged = dropUnchangedFiles(worktreePath, phaseBase, scope, patches as ProposedPatch[]);
+      if (!unchanged.ok) {
+        return abort(stage.id, "implementation.patch.refused", `${where}${unchanged.reason}`);
+      }
+      if (unchanged.dropped.length > 0) {
+        audit(
+          stage.id,
+          "implementation.phase.dropped",
+          `phase ${phase.index} of ${phase.count}: unchanged at ${phaseBase}: ${unchanged.dropped.join(", ")}`
+        );
+      }
+      if (unchanged.kept.length === 0) {
+        return abort(
+          stage.id,
+          "implementation.content.invalid",
+          `${where}every returned file is unchanged at ${phaseBase} (${unchanged.dropped.join(", ")}): a phase that changes nothing blocks the run`
+        );
+      }
+
       // The patch helper is shared with code-review remediation. It owns the
       // complete write-path guard sequence but never mutates run or stage state.
       const applied = applyProposedPatches({
@@ -527,7 +555,7 @@ export async function runImplementationStage(
         slug: run.slug,
         scope,
         proposalBase: phaseBase,
-        patches: patches as ProposedPatch[],
+        patches: unchanged.kept,
         commitMessage:
           phase.count > 1
             ? `bw run ${runId}: phase ${phase.index}/${phase.count} (base ${phaseBase.slice(0, 8)})`
@@ -587,7 +615,8 @@ export async function runImplementationStage(
           changedDiff.stdout,
           profile.verification
         ),
-        invocation: { cwd: worktreePath },
+        // Structured output, as the phases (docs/features/structured-patch-output/plan.md).
+        invocation: { cwd: worktreePath, jsonSchema: SELF_REVIEW_RESULT_SCHEMA },
       },
       rootDir
     );
@@ -616,26 +645,9 @@ export async function runImplementationStage(
       // The reason goes last because it is free text.
       audit(stage.id, "implementation.selfreview.skipped", `base=${base}; reason=self-review: ${reply.reason}`);
     } else {
-      // A file returned unchanged stages nothing, and the applier refuses a patch
-      // whose staged set differs from the proposed set. Only an approved scope
-      // path is dropped; anything else reaches the applier's own refusal.
-      const dropped: string[] = [];
-      const kept: ProposedPatch[] = [];
-      for (const patch of reply.patches) {
-        const files: ProposedPatch["files"] = [];
-        for (const file of patch.files) {
-          if (file.action === "modify" && scope.includes(file.path)) {
-            const same = sameBlobAtCommit(worktreePath, base, file.path, file.content as string);
-            if (!same.ok) return selfReviewFailed(same.reason);
-            if (same.same) {
-              dropped.push(file.path);
-              continue;
-            }
-          }
-          files.push(file);
-        }
-        if (files.length > 0) kept.push({ ...patch, files });
-      }
+      const unchanged = dropUnchangedFiles(worktreePath, base, scope, reply.patches);
+      if (!unchanged.ok) return selfReviewFailed(unchanged.reason);
+      const { kept, dropped } = unchanged;
       let reviewedHead = base;
       if (kept.length > 0) {
         const applied = applyProposedPatches({
@@ -735,6 +747,42 @@ function readSelfReviewReply(
     }
   }
   return { ok: true, critique: critique.value.critique, patches };
+}
+
+/**
+ * The patches with every file returned unchanged at `commit` removed, and the
+ * paths removed. A file returned unchanged stages nothing, and the applier
+ * refuses a patch whose staged set differs from the proposed set (web-calculator
+ * run 1, phase 2, hazard 20). Only a `modify` of an approved scope path with
+ * string content is compared; anything else reaches the applier's own refusal.
+ * A patch the drop empties is removed. Each phase and the self-review use it,
+ * each against the commit it proposed on.
+ */
+function dropUnchangedFiles(
+  worktreePath: string,
+  commit: string,
+  scope: string[],
+  patches: ProposedPatch[]
+): { ok: true; kept: ProposedPatch[]; dropped: string[] } | { ok: false; reason: string } {
+  const dropped: string[] = [];
+  const kept: ProposedPatch[] = [];
+  for (const patch of patches) {
+    const files: ProposedPatch["files"] = [];
+    for (const file of patch.files) {
+      if (file.action === "modify" && scope.includes(file.path) && typeof file.content === "string") {
+        const same = sameBlobAtCommit(worktreePath, commit, file.path, file.content);
+        if (!same.ok) return same;
+        if (same.same) {
+          dropped.push(file.path);
+          continue;
+        }
+      }
+      files.push(file);
+    }
+    // A patch that arrived with no file is kept for the applier to refuse.
+    if (files.length > 0 || patch.files.length === 0) kept.push({ ...patch, files });
+  }
+  return { ok: true, kept, dropped };
 }
 
 /**

@@ -14,6 +14,8 @@ import {
   STREAM_RETAIN_MAX_BYTES,
 } from "../src/harness.ts";
 import { CLAUDE_CODE, type ExecutorDefinition } from "../src/executor.ts";
+import { validateAgentResult } from "../src/agent-result.ts";
+import { IMPLEMENTER } from "../src/agents/implementer.ts";
 
 const FIXTURES = join(process.cwd(), "test", "fixtures", "harness");
 const HARNESS_SOURCE = readFileSync(join(process.cwd(), "src", "harness.ts"), "utf8");
@@ -454,4 +456,62 @@ test("invokeHarness defaults to the inherited working directory", async () => {
   const outcome = await invokeHarness(executor, { prompt: "" });
   assert.equal(outcome.exitCode, 0);
   assert.equal(outcome.raw.trim(), process.cwd());
+});
+
+// --- structured output (docs/features/structured-patch-output/plan.md, Task 3) ---
+
+const SCHEMA_PROBE = JSON.parse(
+  readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "json-schema-probe-web-calculator-phase-2.json"), "utf8")
+) as { provenance: { schema: object }; calls: { argvWithoutSchema: string[]; resultLineVerbatim: string }[] };
+
+test("the schema follows the model and effort on the child argv, as the probes sent it, and is absent when omitted", async () => {
+  const executor = testExecutor(["node", join(FIXTURES, "echo-json.mjs")]);
+  // The recorded argv ends with the model, the effort and the flag; the schema value itself was not recorded there.
+  const recorded = SCHEMA_PROBE.calls[0]!.argvWithoutSchema;
+  const tail = recorded.slice(recorded.indexOf("--model"));
+  assert.deepEqual(tail, ["--model", "claude-sonnet-5-5", "--effort", "medium", "--json-schema"]);
+  const schema = SCHEMA_PROBE.provenance.schema;
+  const sent = await invokeHarness(executor, { prompt: "", model: tail[1], effort: tail[3], jsonSchema: schema });
+  const argv = (JSON.parse(lastLine(sent.raw)) as { argv: string[] }).argv;
+  assert.deepEqual(argv, [...tail, JSON.stringify(schema)]);
+  assert.deepEqual(JSON.parse(argv.at(-1)!), schema);
+  const without = await invokeHarness(executor, { prompt: "", model: "m", effort: "medium" });
+  assert.ok(!(JSON.parse(lastLine(without.raw)) as { argv: string[] }).argv.includes("--json-schema"));
+});
+
+test("parseEnvelope in structured mode reads each recorded structured_output, serialized", () => {
+  assert.equal(SCHEMA_PROBE.calls.length, 2);
+  for (const call of SCHEMA_PROBE.calls) {
+    const line = JSON.parse(call.resultLineVerbatim) as { structured_output: unknown; total_cost_usd: number };
+    const envelope = parseEnvelope(CLAUDE_CODE, call.resultLineVerbatim, true);
+    assert.equal(envelope.resultText, JSON.stringify(line.structured_output));
+    assert.equal(envelope.cost, line.total_cost_usd);
+    const result = validateAgentResult(IMPLEMENTER.id, JSON.parse(envelope.resultText));
+    assert.ok(result.ok, result.ok ? "" : result.reason);
+  }
+});
+
+test("structured mode reads structured_output, not result, when the two differ", () => {
+  const line = JSON.parse(SCHEMA_PROBE.calls[0]!.resultLineVerbatim) as Record<string, unknown>;
+  const differing = JSON.stringify({ ...line, result: "prose the model wrote beside the tool call" });
+  assert.equal(parseEnvelope(CLAUDE_CODE, differing, true).resultText, JSON.stringify(line.structured_output));
+  assert.equal(parseEnvelope(CLAUDE_CODE, differing).resultText, "prose the model wrote beside the tool call");
+});
+
+test("a result line without a structured_output object is refused by name in structured mode and parses in text mode", () => {
+  const line = JSON.parse(SCHEMA_PROBE.calls[0]!.resultLineVerbatim) as Record<string, unknown>;
+  const { structured_output: _dropped, ...rest } = line;
+  // The refused dispatch writes no agent_run row, so the refusal names the
+  // cost the recorded line reports.
+  const refusal = `harness envelope for executor claude-code has a result line without a structured_output object although the dispatch requested --json-schema: line 1; the line reports total_cost_usd ${line.total_cost_usd as number}`;
+  for (const variant of [rest, { ...rest, structured_output: null }, { ...rest, structured_output: [] }, { ...rest, structured_output: "{}" }]) {
+    const raw = JSON.stringify(variant);
+    assert.throws(() => parseEnvelope(CLAUDE_CODE, raw, true), (err: Error) => err.message === refusal);
+    assert.equal(parseEnvelope(CLAUDE_CODE, raw).resultText, line.result);
+  }
+  const { total_cost_usd: _cost, ...uncosted } = rest;
+  assert.throws(
+    () => parseEnvelope(CLAUDE_CODE, JSON.stringify(uncosted), true),
+    (err: Error) => err.message.endsWith("; the line reports no total_cost_usd")
+  );
 });

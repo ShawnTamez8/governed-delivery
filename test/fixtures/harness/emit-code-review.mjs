@@ -44,6 +44,54 @@ function emit(agentResult) {
   emitRaw(JSON.stringify(agentResult));
 }
 
+// The remediation dispatch sends `--json-schema <schema>` after the model and
+// effort (docs/features/structured-patch-output/plan.md); reviewers and the
+// reconciler send none. Each branch below checks its own case, so a stage that
+// sends the flag to the wrong dispatch, or stops sending it, fails here.
+const schemaAt = process.argv.indexOf("--json-schema");
+const schemaArg = schemaAt < 0 ? undefined : process.argv[schemaAt + 1];
+function requireSchema(promptKind, wanted) {
+  if (wanted && schemaArg === undefined) {
+    throw new Error(`emit-code-review: a ${promptKind} prompt arrived without --json-schema`);
+  }
+  if (!wanted && schemaArg !== undefined) {
+    throw new Error(`emit-code-review: a ${promptKind} prompt arrived with --json-schema`);
+  }
+  // Remediation takes the patch schema, never the self-review one.
+  if (wanted && JSON.parse(schemaArg).required.includes("proposedContentChanges")) {
+    throw new Error(`emit-code-review: a ${promptKind} prompt arrived with the wrong --json-schema`);
+  }
+}
+
+// An object reply the way the CLI answers under --json-schema
+// (test/fixtures/recorded/json-schema-probe-web-calculator-phase-2.json): init,
+// the assistant's StructuredOutput tool call, and the result line carrying the
+// reply as structured_output with result its serialization. No partial-message
+// chunk: the recordings keep no input_json_delta to copy.
+function emitStructured(agentResult) {
+  const session_id = "fixture-session";
+  for (const line of [
+    { type: "system", subtype: "init", session_id, model: "fixture-model" },
+    {
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "tool_use", id: "fixture-tool-use", name: "StructuredOutput", input: agentResult }] },
+      session_id,
+    },
+    {
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: JSON.stringify(agentResult),
+      structured_output: agentResult,
+      total_cost_usd: 0,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      modelUsage: { "fixture-model": { inputTokens: 1, outputTokens: 1 } },
+    },
+  ]) {
+    console.log(JSON.stringify(line));
+  }
+}
+
 // The code-review reconciler (docs/features/code-review-reconciler/plan.md).
 // The finding ids and intent keys are scraped from the prompt's findings
 // block, and a rejection's excerpt is the first acceptance criterion's text
@@ -51,6 +99,7 @@ function emit(agentResult) {
 // Every mode not named below keeps every finding, so the stage makes one call
 // and remediates exactly what it did before the reconciler existed.
 if (stdin.startsWith("you are the code-review reconciler")) {
+  requireSchema("reconciler", false);
   const listed = [...stdin.matchAll(/^- finding (\d+); location .*; intentKey (\S+)$/gm)].map((m) => ({
     findingId: Number(m[1]),
     intentKey: m[2],
@@ -101,6 +150,7 @@ if (stdin.startsWith("you are the code-review reconciler")) {
 // executions. Its patch is derived from the prompt and current checkout.
 const remediationMatch = /you are the code-review remediator (\S+)/.exec(stdin);
 if (remediationMatch) {
+  requireSchema("remediation", true);
   const remediator = remediationMatch[1];
   const baseCommit = /baseCommit must be exactly ([0-9a-f]{40,64})/.exec(stdin)?.[1];
   const scopeBlock = /Approved scope:\n\n([\s\S]*?)\n\nFindings to remediate:/.exec(stdin)?.[1];
@@ -148,7 +198,12 @@ if (remediationMatch) {
     content: `${current.trimEnd()}\ncode-review-remediated\n`,
   };
   if (mode === "remediation-mutate") writeFileSync("remediator-residue.txt", "fixture wrote this\n");
-  emit({
+  if (mode === "remediation-prose") {
+    // A reply that never reached the structured channel: text, no structured_output.
+    emitRaw("I fixed every finding.");
+    process.exit(0);
+  }
+  emitStructured({
     status: "proposed",
     agent: remediator,
     role: "author",
@@ -174,6 +229,7 @@ if (!agentMatch) {
   throw new Error("emit-code-review: no agent id found in the prompt");
 }
 const agent = agentMatch[1];
+requireSchema("reviewer", false);
 
 const barrierDir = process.env.BW_TEST_REVIEW_BARRIER_DIR;
 const postMixedRemediation =
@@ -335,7 +391,8 @@ if (mode === "parallel-fail") {
   mode === "remediation-empty" ||
   mode === "remediation-wrong-base" ||
   mode === "remediation-outside-scope" ||
-  mode === "remediation-mutate"
+  mode === "remediation-mutate" ||
+  mode === "remediation-prose"
 ) {
   agentResult = onlyFrom(CORRECTNESS, [
     finding({ severity: "high", location: `${first}:1`, intentKey: "needs-remediation" }),

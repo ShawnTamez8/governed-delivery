@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { validateAgentResult } from "../src/agent-result.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { PATCH_ACTIONS, PATCH_RESULT_SCHEMA, STATUSES, validateAgentResult } from "../src/agent-result.ts";
+import { IMPLEMENTER } from "../src/agents/implementer.ts";
 
 function validResult(): Record<string, unknown> {
   return {
@@ -96,4 +99,36 @@ test("confidence outside 0..1 is accepted — the architecture does not constrai
 test("unknown extra fields are ignored, never an error", () => {
   const result = validateAgentResult("spec-author", { ...validResult(), inventedField: true });
   assert.equal(result.ok, true);
+});
+
+// --- the patch schema (docs/features/structured-patch-output/plan.md, Task 2) ---
+
+const RECORDED = join(process.cwd(), "test", "fixtures", "recorded");
+const SMALL_PROBE: { provenance: { schema: unknown }; calls: { resultLineVerbatim: string }[] } = JSON.parse(
+  readFileSync(join(RECORDED, "json-schema-probe-web-calculator-phase-2.json"), "utf8")
+);
+const GATE_PROBE: { calls: { label: string; resultLineVerbatim: string }[] } = JSON.parse(
+  readFileSync(join(RECORDED, "json-schema-probe-gate.json"), "utf8")
+);
+
+test("the patch schema is the schema the 2026-10-14 probes sent", () => {
+  assert.deepEqual(PATCH_RESULT_SCHEMA, SMALL_PROBE.provenance.schema);
+});
+
+test("the patch schema's enums are the validator's own constants", () => {
+  const properties = PATCH_RESULT_SCHEMA.properties;
+  assert.deepEqual(properties.status.enum, [...STATUSES]);
+  assert.deepEqual(properties.proposedPatches.items.properties.files.items.properties.action.enum, [...PATCH_ACTIONS]);
+});
+
+test("every structured answer recorded under the patch schema passes the validator", () => {
+  const calls = [...SMALL_PROBE.calls, ...GATE_PROBE.calls];
+  assert.equal(calls.length, 4);
+  for (const call of calls) {
+    const output = JSON.parse(call.resultLineVerbatim).structured_output;
+    const result = validateAgentResult(IMPLEMENTER.id, output);
+    assert.ok(result.ok, result.ok ? "" : result.reason);
+    assert.equal(result.value.status, "proposed");
+    assert.ok(result.value.proposedPatches!.length > 0);
+  }
 });

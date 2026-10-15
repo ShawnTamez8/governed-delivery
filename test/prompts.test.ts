@@ -36,11 +36,11 @@ import { validatePanelRequest } from "../src/select.ts";
 import { readSpecDeclaredArtifacts, validateSpecDoc } from "../src/spec-doc.ts";
 import { validateDesignSplit } from "../src/design-split.ts";
 import { planPhases, validatePlanDoc, type PlanPhase } from "../src/plan-doc.ts";
-import { validateAgentResult, type AgentResult } from "../src/agent-result.ts";
+import { PATCH_RESULT_SCHEMA, validateAgentResult, type AgentResult } from "../src/agent-result.ts";
 import { CLAUDE_CODE } from "../src/executor.ts";
 import { parseEnvelope } from "../src/harness.ts";
 import { validateSelfCritique } from "../src/self-critique.ts";
-import { validateImplementationSelfReview } from "../src/implementation-self-review.ts";
+import { SELF_REVIEW_RESULT_SCHEMA, validateImplementationSelfReview } from "../src/implementation-self-review.ts";
 import {
   planNormativeNodes,
   specNormativeNodes,
@@ -202,6 +202,25 @@ const SELF_REVIEW_REPLY_RULES = [
   "Never return a file whose content you did not change.",
   "These commands run right after this review, and the first that fails blocks the run.",
 ];
+
+/**
+ * The three patch prompts' reply rule (docs/features/structured-patch-output/plan.md):
+ * those dispatches run with --json-schema, and the free-text prompts' "Output the
+ * JSON object directly" sentence made the 2026-10-14 large probe write its whole
+ * answer twice (test/fixtures/recorded/json-schema-probe-gate.json).
+ */
+const STRUCTURED_OUTPUT_RULE =
+  "Submit the JSON object once, through the structured output tool, and do not also write it out as text before or after: only the structured output is read.";
+
+/** The three builders whose dispatches send --json-schema, with the reply rule they carry. */
+function structuredPatchPrompts(): Array<{ name: string; prompt: string }> {
+  const base = "b".repeat(40);
+  return [
+    { name: "phase", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", ["src/a.ts"], base, ONLY_PHASE, [], VERIFICATION) },
+    { name: "self-review", prompt: selfReviewPrompt() },
+    { name: "remediation", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, "# spec", "# plan", ["src/a.ts"], base, ["src/a.ts"], "DIFF", []) },
+  ];
+}
 
 // The patch rules (baseCommit, the add/modify action enum, whole-file
 // content, the no-deletion rule) arrived with the implementation stage —
@@ -477,6 +496,9 @@ const CONSTRAINT_STRINGS = [
   SELF_REVIEW_MARKER,
   ...SELF_REVIEW_RULES,
   ...SELF_REVIEW_REPLY_RULES,
+  // The structured-output reply rule (docs/features/structured-patch-output/plan.md),
+  // also kept above the criterion-quality block.
+  STRUCTURED_OUTPUT_RULE,
   // What a criterion may say (docs/features/spec-criterion-testability/plan.md).
   // Measured 2026-09-27, $1.6186: team-notes run 3 copied the design's
   // "meaningful content change" into AC-041, and its tone guidance reached
@@ -752,7 +774,7 @@ test("the generated implementation author prompt states the patch contract", () 
     "Run no git commands",
     "This checkout is read-only for you",
     "Patch only these paths:",
-    "Output the JSON object",
+    STRUCTURED_OUTPUT_RULE,
     "JSON-standard escaping",
     "literal UTF-8",
     "\\uXXXX",
@@ -950,6 +972,27 @@ test("the result and selfReview the self-review prompt advertises validate again
   assert.deepEqual(result.value.proposedPatches, []);
   const selfReview = validateImplementationSelfReview((parsed.proposedContentChanges as { selfReview: unknown }).selfReview);
   assert.ok(selfReview.ok, selfReview.ok ? "" : selfReview.reason);
+});
+
+test("each patch prompt asks for one structured answer and no longer asks for the object as text", () => {
+  for (const { name, prompt } of structuredPatchPrompts()) {
+    assert.ok(prompt.includes(STRUCTURED_OUTPUT_RULE), `${name} prompt missing the structured-output rule`);
+    assert.equal(prompt.split(STRUCTURED_OUTPUT_RULE).length, 2, `${name} prompt states the rule once`);
+    assert.ok(!prompt.includes("Output the JSON object"), `${name} prompt still asks for the object as text`);
+    // The rule sits between the advertised shape and the escaping lines it governs.
+    assert.ok(prompt.indexOf("Return exactly a JSON AgentResult object with this shape:") < prompt.indexOf(STRUCTURED_OUTPUT_RULE), name);
+    assert.ok(prompt.indexOf(STRUCTURED_OUTPUT_RULE) < prompt.indexOf("JSON-standard escaping"), name);
+  }
+  // The dispatches that still read free text keep their sentence and never get the rule.
+  for (const prompt of [
+    buildSpecAuthorPrompt(SPEC_AUTHOR, "DESIGN-TEXT", VERIFICATION),
+    buildPlanAuthorPrompt(PLAN_AUTHOR, "# spec", "a".repeat(64), ["src/a.ts"], VERIFICATION),
+    buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, "SPEC", "PLAN", ["src/a.ts"], "DIFF", "c".repeat(40)),
+    buildDesignSplitPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", SPLIT_CONTEXT),
+  ]) {
+    assert.ok(prompt.includes("Output the JSON object"));
+    assert.ok(!prompt.includes("structured output"));
+  }
 });
 
 test("the phase prompts built from the recorded run 12 plan carry its own lines, each task with its detail lines under it", () => {
@@ -2133,10 +2176,10 @@ function routingPrompts(document: string) {
     { builder: "buildPlanSelfCritiquePrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanSelfCritiquePrompt(PLAN_AUTHOR, document, document, hash, scope, PANEL, VERIFICATION) },
     { builder: "buildPlanReviewPrompt", prefix: "PLAN_REVIEW_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanReviewPrompt(SPEC_REVIEWER_TRACEABILITY, document, document) },
     { builder: "buildPlanReconcilePrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanReconcilePrompt(PLAN_AUTHOR, document, document, hash, scope, PAIR, VERIFICATION) },
-    { builder: "buildImplementationAuthorPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, document, document, scope, base, ONLY_PHASE, [], VERIFICATION) },
-    { builder: "buildImplementationSelfReviewPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationSelfReviewPrompt(IMPLEMENTER, document, document, scope, base, scope, scope, document, VERIFICATION) },
+    { builder: "buildImplementationAuthorPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, document, document, scope, base, ONLY_PHASE, [], VERIFICATION), schema: PATCH_RESULT_SCHEMA },
+    { builder: "buildImplementationSelfReviewPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationSelfReviewPrompt(IMPLEMENTER, document, document, scope, base, scope, scope, document, VERIFICATION), schema: SELF_REVIEW_RESULT_SCHEMA },
     { builder: "buildCodeReviewPrompt", prefix: "CODE_REVIEW_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, document, document, scope, document, base) },
-    { builder: "buildCodeReviewRemediationPrompt", prefix: "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, document, document, scope, base, scope, document, []) },
+    { builder: "buildCodeReviewRemediationPrompt", prefix: "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, document, document, scope, base, scope, document, []), schema: PATCH_RESULT_SCHEMA },
     { builder: "buildCodeReviewReconcilerPrompt", prefix: "CODE_REVIEW_RECONCILER_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewReconcilerPrompt([], document, document, document, base) },
     { builder: "buildDesignSplitPrompt", prefix: "DESIGN_SPLIT_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildDesignSplitPrompt(SPEC_AUTHOR, document, document, SPLIT_CONTEXT) },
   ];
@@ -2205,26 +2248,30 @@ test("CLI fixture directly forwards exact stdin bytes to every selected emitter 
     const fixture = join(harness, "emit-cli-run.mjs");
     copyFileSync(CLI_ROUTER, fixture);
     for (const emitter of new Set(router.PROMPT_ROUTES.map((route) => route.emitter))) {
-      writeFileSync(join(harness, emitter), 'import { readFileSync } from "node:fs"; process.stdout.write(readFileSync(0)); process.stderr.write("child stderr"); process.exitCode = 7;\n');
+      writeFileSync(join(harness, emitter), 'import { readFileSync } from "node:fs"; process.stdout.write(readFileSync(0)); process.stderr.write(`child stderr ${JSON.stringify(process.argv.slice(2))}`); process.exitCode = 7;\n');
     }
-    for (const { builder, prompt } of routingPrompts("# Wrapped\r\nUTF-8 🌙\r\n")) {
+    for (const { builder, prompt, schema } of routingPrompts("# Wrapped\r\nUTF-8 🌙\r\n")) {
       const input = Buffer.concat([Buffer.from(prompt), Buffer.from([0, 255, 13, 10])]);
-      const child = spawnSync(process.execPath, [fixture], { input });
+      // A patch dispatch's schema travels to the selected emitter; nothing else does.
+      const schemaArgs = schema === undefined ? [] : ["--json-schema", JSON.stringify(schema)];
+      const child = spawnSync(process.execPath, [fixture, "--model", "m", ...schemaArgs], { input });
       assert.equal(child.status, 7, child.stderr.toString());
       assert.deepEqual(child.stdout, input, `${builder}: router must forward original bytes, not decoded text`);
-      assert.equal(child.stderr.toString(), "child stderr");
+      assert.equal(child.stderr.toString(), `child stderr ${JSON.stringify(schemaArgs)}`);
     }
   } finally {
     rmSync(mirror, { recursive: true, force: true });
   }
 });
 
-function runRouter(cwd: string, prompt: string, agentId: string, args: string[] = []): AgentResult {
-  const child = spawnSync(process.execPath, [CLI_ROUTER, ...args, "--model", "fixture-model"], {
+/** `schema` is the --json-schema a patch dispatch sends; the answer is then read from structured_output. */
+function runRouter(cwd: string, prompt: string, agentId: string, args: string[] = [], schema?: object): AgentResult {
+  const schemaArgs = schema === undefined ? [] : ["--json-schema", JSON.stringify(schema)];
+  const child = spawnSync(process.execPath, [CLI_ROUTER, ...args, "--model", "fixture-model", ...schemaArgs], {
     cwd, input: prompt, encoding: "utf8",
   });
   assert.equal(child.status, 0, child.stderr);
-  const envelope = parseEnvelope(CLAUDE_CODE, child.stdout);
+  const envelope = parseEnvelope(CLAUDE_CODE, child.stdout, schema !== undefined);
   const result = validateAgentResult(agentId, JSON.parse(envelope.resultText));
   assert.ok(result.ok, result.ok ? "" : result.reason);
   return result.value;
@@ -2302,7 +2349,7 @@ test("CLI fixture composes existing emitters for all builder families with recei
 
     const base = "b".repeat(40);
     const implementationPrompt = buildImplementationAuthorPrompt(IMPLEMENTER, planText as string, specText as string, scope, base, planPhases(plan.value.taskItems, 10)[0]!, [], VERIFICATION);
-    const implemented = runRouter(root, implementationPrompt, IMPLEMENTER.id);
+    const implemented = runRouter(root, implementationPrompt, IMPLEMENTER.id, [], PATCH_RESULT_SCHEMA);
     assert.equal(implemented.status, "proposed");
     const patches = implemented.proposedPatches!;
     assert.deepEqual(patches.flatMap((patch) => patch.files.map((file) => file.path)), scope);
@@ -2316,8 +2363,8 @@ test("CLI fixture composes existing emitters for all builder families with recei
         writeFileSync(path, file.content!);
       }
     }
-    assert.equal(runRouter(root, implementationPrompt, IMPLEMENTER.id, ["--implementation-mode", "non-proposed"]).status, "failed");
-    assert.equal(runRouter(root, implementationPrompt, IMPLEMENTER.id, ["--implementation-mode", "base-mismatch"]).proposedPatches![0]!.baseCommit, "0".repeat(40));
+    assert.equal(runRouter(root, implementationPrompt, IMPLEMENTER.id, ["--implementation-mode", "non-proposed"], PATCH_RESULT_SCHEMA).status, "failed");
+    assert.equal(runRouter(root, implementationPrompt, IMPLEMENTER.id, ["--implementation-mode", "base-mismatch"], PATCH_RESULT_SCHEMA).proposedPatches![0]!.baseCommit, "0".repeat(40));
 
     for (const mode of ["ok", "high", "low", "high-then-clean"]) {
       for (const reviewer of [CODE_REVIEWER_CORRECTNESS, CODE_REVIEWER_SECURITY, CODE_REVIEWER_STATE_INTEGRITY]) {
@@ -2332,7 +2379,7 @@ test("CLI fixture composes existing emitters for all builder families with recei
       }
     }
     const remediationPrompt = buildCodeReviewRemediationPrompt(IMPLEMENTER, specText as string, planText as string, scope, base, scope, "", []);
-    const remediated = runRouter(root, remediationPrompt, IMPLEMENTER.id, ["--code-review-mode", "high-then-clean"]);
+    const remediated = runRouter(root, remediationPrompt, IMPLEMENTER.id, ["--code-review-mode", "high-then-clean"], PATCH_RESULT_SCHEMA);
     assert.equal(remediated.proposedPatches![0]!.baseCommit, base);
     const repaired = remediated.proposedPatches![0]!.files[0]!;
     assert.equal(repaired.path, scope[0]);
@@ -2341,7 +2388,7 @@ test("CLI fixture composes existing emitters for all builder families with recei
     const after = runRouter(root, buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, specText as string, planText as string, scope, "", base), CODE_REVIEWER_CORRECTNESS.id, ["--code-review-mode", "high-then-clean"]);
     assert.deepEqual(proposedChanges(after).findings, []);
     for (const mode of ["remediation-empty", "remediation-wrong-base", "remediation-outside-scope"]) {
-      const result = runRouter(root, remediationPrompt, IMPLEMENTER.id, ["--code-review-mode", mode]);
+      const result = runRouter(root, remediationPrompt, IMPLEMENTER.id, ["--code-review-mode", mode], PATCH_RESULT_SCHEMA);
       if (mode === "remediation-empty") assert.deepEqual(result.proposedPatches, []);
       if (mode === "remediation-wrong-base") assert.equal(result.proposedPatches![0]!.baseCommit, "0".repeat(40));
       if (mode === "remediation-outside-scope") assert.ok(!scope.includes(result.proposedPatches![0]!.files[0]!.path));

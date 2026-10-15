@@ -4,8 +4,10 @@ import {
   critiqueAuditEntries,
   SELF_REVIEW_AUDIT_ENTRY_CHARS,
   SELF_REVIEW_AUDIT_MAX_ENTRIES,
+  SELF_REVIEW_RESULT_SCHEMA,
   validateImplementationSelfReview,
 } from "../src/implementation-self-review.ts";
+import { PATCH_RESULT_SCHEMA } from "../src/agent-result.ts";
 
 // docs/features/implementation-self-review/plan.md, Task 6. The prompt's own
 // advertised example is checked against this validator in test/prompts.test.ts.
@@ -50,4 +52,28 @@ test("51 entries record 50, in critique order", () => {
   const recorded = critiqueAuditEntries(critique);
   assert.equal(recorded.length, 50);
   assert.deepEqual(recorded, critique.slice(0, 50));
+});
+
+// docs/features/structured-patch-output/plan.md, Task 2: the schema the
+// self-review dispatch sends with --json-schema.
+
+test("the self-review schema keeps every patch-schema property and adds the required critique", () => {
+  const { proposedContentChanges, ...patchProperties } = SELF_REVIEW_RESULT_SCHEMA.properties;
+  assert.deepEqual(patchProperties, PATCH_RESULT_SCHEMA.properties);
+  assert.deepEqual(SELF_REVIEW_RESULT_SCHEMA.required, [...PATCH_RESULT_SCHEMA.required, "proposedContentChanges"]);
+  assert.equal(SELF_REVIEW_RESULT_SCHEMA.additionalProperties, false);
+  assert.deepEqual(proposedContentChanges.required, ["selfReview"]);
+  assert.deepEqual(proposedContentChanges.properties.selfReview.required, ["critique"]);
+});
+
+test("the schema's critique bounds forbid what the validator refuses", () => {
+  const critique = SELF_REVIEW_RESULT_SCHEMA.properties.proposedContentChanges.properties.selfReview.properties.critique;
+  // An empty critique: the validator refuses it and minItems forbids it.
+  assert.equal(validateImplementationSelfReview({ critique: [] }).ok, false);
+  assert.equal(critique.minItems, 1);
+  // An empty entry: the validator refuses it and minLength forbids it.
+  assert.equal(validateImplementationSelfReview({ critique: [""] }).ok, false);
+  assert.deepEqual(critique.items, { type: "string", minLength: 1 });
+  // The smallest critique both allow.
+  assert.ok(validateImplementationSelfReview({ critique: ["x"] }).ok);
 });

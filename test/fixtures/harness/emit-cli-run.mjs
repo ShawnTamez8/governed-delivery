@@ -34,19 +34,24 @@ export function selectPromptRoute(prompt) {
   return matches[0];
 }
 
+// The routes whose dispatches send --json-schema (docs/features/structured-patch-output/plan.md);
+// every other route must arrive without it.
+const SCHEMA_ROUTES = new Set(["IMPLEMENTATION_PROMPT_PREFIX", "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX"]);
+
 function options(argv) {
-  const result = { implementationMode: "ok", codeReviewMode: "ok", delayMs: 0 };
+  const result = { implementationMode: "ok", codeReviewMode: "ok", delayMs: 0, jsonSchema: undefined };
   const seen = new Set();
   for (let i = 0; i < argv.length; i += 2) {
     const name = argv[i];
     const value = argv[i + 1];
-    if (!["--implementation-mode", "--code-review-mode", "--delay-ms", "--model", "--effort"].includes(name) ||
+    if (!["--implementation-mode", "--code-review-mode", "--delay-ms", "--model", "--effort", "--json-schema"].includes(name) ||
         seen.has(name) || value === undefined || value === "" || value.startsWith("--")) {
-      throw new Error("emit-cli-run: expected unique --implementation-mode, --code-review-mode, --delay-ms, or harness --model or --effort value pairs");
+      throw new Error("emit-cli-run: expected unique --implementation-mode, --code-review-mode, --delay-ms, or harness --model, --effort or --json-schema value pairs");
     }
     seen.add(name);
     if (name === "--implementation-mode") result.implementationMode = value;
     if (name === "--code-review-mode") result.codeReviewMode = value;
+    if (name === "--json-schema") result.jsonSchema = value;
     if (name === "--delay-ms") {
       if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
         throw new Error("emit-cli-run: --delay-ms must be a non-negative safe integer");
@@ -63,12 +68,18 @@ async function main() {
   const config = options(process.argv.slice(2));
   const input = readFileSync(0);
   const route = selectPromptRoute(input.toString("utf8"));
+  if (SCHEMA_ROUTES.has(route.name) !== (config.jsonSchema !== undefined)) {
+    throw new Error(`emit-cli-run: a ${route.name} prompt arrived ${config.jsonSchema === undefined ? "without" : "with"} --json-schema`);
+  }
   if (config.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, config.delayMs));
   const env = { ...process.env };
   delete env.EMIT_MODE;
   if (route.emitter === "emit-implementation-stage.mjs") env.EMIT_MODE = config.implementationMode;
   if (route.emitter === "emit-code-review.mjs") env.EMIT_MODE = config.codeReviewMode;
-  const child = spawnSync(process.execPath, [fileURLToPath(new URL(route.emitter, import.meta.url))], {
+  // The schema reaches the selected emitter as the real CLI receives it, so that
+  // emitter answers through the structured channel and checks the schema itself.
+  const schemaArgs = config.jsonSchema === undefined ? [] : ["--json-schema", config.jsonSchema];
+  const child = spawnSync(process.execPath, [fileURLToPath(new URL(route.emitter, import.meta.url)), ...schemaArgs], {
     input,
     env,
     shell: false,

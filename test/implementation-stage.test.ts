@@ -20,7 +20,7 @@ import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { parseImplementationGate } from "../src/handoff.ts";
 import { policyHash } from "../src/policy.ts";
 import { deliveryCoverage } from "../src/delivery-coverage.ts";
-import { validateAgentResult } from "../src/agent-result.ts";
+import { PATCH_RESULT_SCHEMA, validateAgentResult } from "../src/agent-result.ts";
 import { parseEnvelope, PROMPT_MAX_BYTES } from "../src/harness.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
@@ -628,6 +628,27 @@ test("a patch path that escapes the repository is refused naming the escape", ()
     /path escapes the repository: \.\.\/evil\.ts/
   ));
 
+test("a phase reply that never reached the structured channel is a failed dispatch, refused at the envelope", () =>
+  expectGateRefusal(
+    { mode: "not-json" },
+    /^dispatched agent implementer \(author\) on stage \d+: envelope parse failed: harness envelope for executor claude-code has a result line without a structured_output object although the dispatch requested --json-schema: line \d+/,
+    async ({ store, runId }) => {
+      // A failed dispatch, not invalid content: no agent_run row, and the author action.
+      assert.equal(agentRunCount(store, runId), 0);
+      assert.equal(auditActionCount(store, runId, "implementation.author.failed"), 1);
+      assert.equal(auditActionCount(store, runId, "implementation.content.invalid"), 0);
+      // With no row, the audit event is where the reported cost survives; the
+      // emitter's result line reports total_cost_usd 0. dispatchOnce appends the
+      // requested model and effort after the refusal.
+      assert.ok(
+        auditSummaries(store, runId, "implementation.author.failed")[0]!.endsWith(
+          "; the line reports total_cost_usd 0 (requested model m, effort medium)"
+        ),
+        auditSummaries(store, runId, "implementation.author.failed")[0]
+      );
+    }
+  ));
+
 test("a non-proposed implementer result is refused naming the status", () =>
   expectGateRefusal({ mode: "non-proposed" }, /implementer returned status failed, not proposed/));
 
@@ -907,9 +928,12 @@ test("the ok fixture body passes the same contract real output is held to", () =
     ].join("\n");
     const env = { ...process.env };
     delete env.EMIT_MODE;
-    const run = spawnSync("node", [FIXTURE], { cwd: scratch, input: prompt, encoding: "utf8", env });
+    // The phase dispatch sends the patch schema, and its answer is read from structured_output.
+    const run = spawnSync("node", [FIXTURE, "--json-schema", JSON.stringify(PATCH_RESULT_SCHEMA)], {
+      cwd: scratch, input: prompt, encoding: "utf8", env,
+    });
     assert.equal(run.status, 0, run.stderr);
-    const envelope = parseEnvelope(fixtureExecutor(), run.stdout);
+    const envelope = parseEnvelope(fixtureExecutor(), run.stdout, true);
     const body = JSON.parse(envelope.resultText) as unknown;
     const verdict = validateAgentResult("implementer", body);
     assert.equal(verdict.ok, true, verdict.ok ? "" : verdict.reason);
@@ -1158,6 +1182,58 @@ test("a later phase adding a path an earlier phase committed is refused by the e
       { plan: run6Plan, scope: phaseScope(1) }
     );
   }, "phased-add-existing");
+});
+
+test("a phase drops a file it returned unchanged, records it, and commits only what changed", async () => {
+  // Web-calculator run 1, phase 2 (test/fixtures/recorded/web-calculator-selfreview-run-1-phase-2-trailing-prose.json):
+  // the reply returned index.html byte-identical to the phase 1 commit, and the
+  // applier refused the whole patch. The emitter sends phase 1's file back
+  // unchanged beside phase 2's own new file.
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId, worktreePath }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        assert.equal(agentRunCount(store, runId), 3, "two phases and the self-review");
+        const applies = auditSummaries(store, runId, "implementation.phase.apply");
+        assert.equal(applies.length, 2);
+        const phase2Base = /base=([0-9a-f]+);/.exec(applies[1]!)![1]!;
+        const phase2Head = /head=([0-9a-f]+)$/.exec(applies[1]!)![1]!;
+        assert.deepEqual(auditSummaries(store, runId, "implementation.phase.dropped"), [
+          `phase 2 of 2: unchanged at ${phase2Base}: src/p1.ts`,
+        ]);
+        const touched = git(worktreePath, ["diff", "--name-only", phase2Base, phase2Head]);
+        assert.deepEqual(touched.stdout.trim().split("\n"), ["src/p2.ts"], "phase 2's commit holds only its own file");
+      },
+      { plan: tasksPlan(20), scope: phaseScope(2) }
+    );
+  }, "phased-unchanged");
+});
+
+test("a phase whose every returned file is unchanged blocks the run, naming the files, and commits nothing", async () => {
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId, worktreePath }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+        const phase1Head = lastPhaseHead(store, runId);
+        assert.equal(
+          result.reason,
+          `phase 2 of 2: every returned file is unchanged at ${phase1Head} (src/p1.ts): a phase that changes nothing blocks the run`
+        );
+        assert.deepEqual(auditSummaries(store, runId, "implementation.content.invalid"), [result.reason]);
+        assert.deepEqual(auditSummaries(store, runId, "implementation.phase.dropped"), [
+          `phase 2 of 2: unchanged at ${phase1Head}: src/p1.ts`,
+        ]);
+        assert.equal(auditActionCount(store, runId, "implementation.phase.apply"), 1, "only phase 1 was applied");
+        assert.equal(git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim(), phase1Head, "no phase 2 commit");
+        assert.equal(agentRunCount(store, runId), 2, "the self-review was never dispatched");
+        assert.equal(store.getRun(runId)!.status, "blocked");
+      },
+      { plan: tasksPlan(20), scope: phaseScope(2) }
+    );
+  }, "phased-all-unchanged");
 });
 
 test("each phase is told which scope paths exist in the worktree now, so a later phase modifies what an earlier one added", async () => {
@@ -1473,7 +1549,9 @@ test("a self-review that returns a file unchanged drops it, commits nothing, and
 
 for (const [mode, expected] of [
   ["self-review-empty-critique", /self-review critique must not be empty/],
-  ["self-review-not-json", /implementer body refused: /],
+  // Under --json-schema a reply that never reached the structured channel is a
+  // failed dispatch, refused at the envelope (docs/features/structured-patch-output/plan.md).
+  ["self-review-not-json", /dispatch failed: dispatched agent implementer \(author\) on stage \d+: envelope parse failed: harness envelope for executor claude-code has a result line without a structured_output object although the dispatch requested --json-schema: line \d+/],
   ["self-review-bad-patch", /a proposed patch has no files/],
   ["self-review-blocked", /implementer returned status blocked, not proposed/],
   // A null entry makes validateAgentResult throw; the stage catches it as a refusal.

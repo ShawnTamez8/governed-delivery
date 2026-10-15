@@ -109,7 +109,8 @@ export async function dispatchOnce(
   }
   let envelope: ReturnType<typeof parseEnvelope>;
   try {
-    envelope = parseEnvelope(executor, outcome.raw);
+    // A dispatch that sent --json-schema reads its answer from structured_output.
+    envelope = parseEnvelope(executor, outcome.raw, input.invocation?.jsonSchema !== undefined);
   } catch (err) {
     return failed(
       `dispatched agent ${input.agent} (${input.role}) on stage ${stage.id}: envelope parse failed: ${(err as Error).message}`

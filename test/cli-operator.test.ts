@@ -1521,7 +1521,10 @@ test("a self-review reply that is not JSON is skipped, and the run completes on 
     const audit = durableCliRun(fixture.root, fixture.run.id).audit;
     const skipped = audit.filter((event) => event.action === "implementation.selfreview.skipped");
     assert.equal(skipped.length, 1);
-    assert.ok(skipped[0]!.summary.startsWith(`base=${head}; reason=self-review: implementer body refused: `), skipped[0]!.summary);
+    // Under --json-schema a reply that never reached the structured channel is a
+    // failed dispatch (docs/features/structured-patch-output/plan.md).
+    assert.ok(skipped[0]!.summary.startsWith(`base=${head}; reason=self-review: dispatch failed: dispatched agent implementer (author) on stage `), skipped[0]!.summary);
+    assert.match(skipped[0]!.summary, /envelope parse failed: harness envelope for executor claude-code has a result line without a structured_output object although the dispatch requested --json-schema: line \d+/);
     assert.ok(!audit.some((event) => event.action === "implementation.selfreview.pass"));
   } finally {
     rmSync(parent, { recursive: true, force: true });

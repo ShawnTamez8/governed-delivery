@@ -26,8 +26,59 @@ export interface AgentResult {
   recommendedTransition?: string;
 }
 
-const STATUSES: readonly string[] = ["proposed", "blocked", "failed"];
-const PATCH_ACTIONS: readonly string[] = ["add", "modify"];
+export const STATUSES: readonly string[] = ["proposed", "blocked", "failed"];
+export const PATCH_ACTIONS: readonly string[] = ["add", "modify"];
+
+/**
+ * The JSON Schema the patch-producing dispatches (each implementation phase and
+ * code-review remediation) send with `--json-schema`
+ * (`docs/features/structured-patch-output/plan.md`). It is the schema the
+ * 2026-10-14 probes sent: `provenance.schema` in
+ * `test/fixtures/recorded/json-schema-probe-web-calculator-phase-2.json`, which
+ * `test/fixtures/recorded/json-schema-probe-gate.json` reused. The enums come
+ * from the validator's own constants, so the two cannot drift.
+ *
+ * It travels per invocation, like model and effort, and is not frozen into a
+ * run's profile: it describes the reply this code reads, as the prompt text
+ * does. The validator above stays the check; the schema holds the model to the
+ * fields the prompt advertises before the reply reaches it.
+ */
+export const PATCH_RESULT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["status", "agent", "role", "executor", "summary", "proposedPatches"],
+  properties: {
+    status: { type: "string", enum: [...STATUSES] },
+    agent: { type: "string" },
+    role: { type: "string", enum: ["author", "reviewer"] },
+    executor: { type: "string" },
+    summary: { type: "string" },
+    proposedPatches: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["baseCommit", "files"],
+        properties: {
+          baseCommit: { type: "string" },
+          files: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["path", "action", "content"],
+              properties: {
+                path: { type: "string" },
+                action: { type: "string", enum: [...PATCH_ACTIONS] },
+                content: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
 
 type Record = { [key: string]: unknown };
 

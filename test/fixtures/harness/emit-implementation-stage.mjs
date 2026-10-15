@@ -34,6 +34,22 @@ if (!isSelfReview && !phaseMatch) {
   throw new Error("emit-implementation-stage: no phase found in the prompt");
 }
 const phaseIndex = isSelfReview ? 0 : Number(phaseMatch[1]);
+
+// Every dispatch this fixture serves sends `--json-schema <schema>` after the
+// model and effort (docs/features/structured-patch-output/plan.md): the patch
+// schema for a phase, the self-review schema (which requires
+// proposedContentChanges) for the self-review. A prompt without it, or with the
+// other one, is refused here, so a stage that stops sending the right schema
+// fails loudly instead of passing on a reply the real CLI would not give it.
+const schemaAt = process.argv.indexOf("--json-schema");
+const schemaArg = schemaAt < 0 ? undefined : process.argv[schemaAt + 1];
+const promptKind = isSelfReview ? "self-review" : "phase";
+if (schemaArg === undefined) {
+  throw new Error(`emit-implementation-stage: a ${promptKind} prompt arrived without --json-schema`);
+}
+if (JSON.parse(schemaArg).required.includes("proposedContentChanges") !== isSelfReview) {
+  throw new Error(`emit-implementation-stage: a ${promptKind} prompt arrived with the wrong --json-schema`);
+}
 // The phase a failing mode acts on; 0 matches no phase.
 const targetPhase = Number(process.env.EMIT_FAIL_PHASE ?? "0");
 
@@ -114,26 +130,41 @@ function proposed(files, base = baseCommit) {
   };
 }
 
-// The line sequence of test/fixtures/recorded/harness-stream-json-envelope.json,
-// reduced: init, one partial-message chunk, the assistant message, and the
-// result line last. `test/harness-stream-fixtures.test.ts` checks the shape.
+// An object reply is emitted the way the CLI answers under --json-schema
+// (test/fixtures/recorded/json-schema-probe-web-calculator-phase-2.json): init,
+// the assistant's StructuredOutput tool call carrying the reply, and the result
+// line carrying it as structured_output, with result its serialization. No
+// partial-message chunk: the recordings keep no input_json_delta to copy.
+// A string reply (the self-review-not-json mode) never reached the structured
+// channel, so it is emitted as text, the line sequence of
+// test/fixtures/recorded/harness-stream-json-envelope.json reduced, with no
+// structured_output. `test/harness-stream-fixtures.test.ts` checks both shapes.
 function emit(agentResult) {
-  // A string is emitted as the reply text itself (the self-review-not-json mode).
-  const resultText = typeof agentResult === "string" ? agentResult : JSON.stringify(agentResult);
+  const structured = typeof agentResult !== "string";
+  const resultText = structured ? JSON.stringify(agentResult) : agentResult;
   const session_id = "fixture-session";
   for (const line of [
     { type: "system", subtype: "init", session_id, model: "fixture-model" },
-    {
-      type: "stream_event",
-      event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: resultText } },
-      session_id,
-    },
-    { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: resultText }] }, session_id },
+    ...(structured
+      ? [{
+          type: "assistant",
+          message: { role: "assistant", content: [{ type: "tool_use", id: "fixture-tool-use", name: "StructuredOutput", input: agentResult }] },
+          session_id,
+        }]
+      : [
+          {
+            type: "stream_event",
+            event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: resultText } },
+            session_id,
+          },
+          { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: resultText }] }, session_id },
+        ]),
     {
       type: "result",
       subtype: "success",
       is_error: false,
       result: resultText,
+      ...(structured ? { structured_output: agentResult } : {}),
       total_cost_usd: 0,
       usage: { input_tokens: 1, output_tokens: 1 },
       modelUsage: { "fixture-model": { inputTokens: 1, outputTokens: 1 } },
@@ -271,6 +302,9 @@ if (isSelfReview) {
   writeFileSync(join(designDir, "design.md"), "# design\n");
   symlinkSync(join(designDir, "design.md"), join(process.cwd(), "src", "alias.md"), "file");
   agentResult = proposed([{ path: "src/alias.md", action: "modify", content: markerContent() }]);
+} else if (mode === "not-json") {
+  // Prose instead of an answer: emitted as text, with no structured_output.
+  agentResult = "I implemented the phase.";
 } else if (mode === "empty") {
   agentResult = { ...proposed([]), proposedPatches: [] };
 } else if (mode === "empty-files") {
@@ -366,6 +400,17 @@ if (isSelfReview) {
   };
   const targets = phaseIndex === 1 ? [paths[0]] : [paths[0], phasePath()];
   agentResult = proposed(targets.map((p) => phasedFile(p, actionFor(p))));
+} else if (mode === "phased-unchanged" || mode === "phased-all-unchanged") {
+  // The shape web-calculator run 1's phase 2 returned: a file an earlier phase
+  // committed, sent back byte for byte as a modify. The copy is read from the
+  // checkout, never built from a literal. phased-unchanged sends it beside the
+  // phase's own new file; phased-all-unchanged sends only the copy.
+  if (phaseIndex === 1) {
+    agentResult = proposed([phasedFile(phasePath(), "add")]);
+  } else {
+    const copy = { path: paths[0], action: "modify", content: readFileSync(paths[0], "utf8") };
+    agentResult = proposed(mode === "phased-unchanged" ? [phasedFile(phasePath(), "add"), copy] : [copy]);
+  }
 } else {
   throw new Error(`emit-implementation-stage: unknown EMIT_MODE ${mode}`);
 }

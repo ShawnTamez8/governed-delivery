@@ -15,6 +15,19 @@ export const CODE_REVIEW_RECONCILER_PROMPT_PREFIX = "you are the code-review rec
 export const DESIGN_SPLIT_PROMPT_PREFIX = "you are dividing a reviewed specification into separately built features";
 
 /**
+ * How the three patch-producing dispatches (each implementation phase, the
+ * implementation self-review, code-review remediation) return their answer: they
+ * run with `--json-schema`, and only the structured output is read
+ * (`docs/features/structured-patch-output/plan.md`). It replaces the free-text
+ * prompts' "Output the JSON object directly" sentence for those three. Under that
+ * sentence the 2026-10-14 large probe wrote its whole 67,514-character answer as
+ * text and then again through the tool, at 81,781 output tokens against 53,154
+ * (`test/fixtures/recorded/json-schema-probe-gate.json`). One source line, so the
+ * constraint scan in `test/prompts.test.ts` matches it.
+ */
+const STRUCTURED_OUTPUT_RULE = `Submit the JSON object once, through the structured output tool, and do not also write it out as text before or after: only the structured output is read.`;
+
+/**
  * The author prompt: role, the design document verbatim, the AgentResult
  * contract with every constrained field stated, and the spec document
  * schema. The draft only — revision is the reconciliation dispatch's job
@@ -1323,8 +1336,8 @@ ${phaseRules}
 Return exactly a JSON AgentResult object with this shape:
 {"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedPatches": [{"baseCommit": "...", "files": [{"path": "...", "action": "add", "content": "<complete new file content>"}]}]}
 
-status must be one of proposed, blocked, failed. Output the JSON object
-directly, with no surrounding prose, no markdown fences, and no commentary.
+status must be one of proposed, blocked, failed.
+${STRUCTURED_OUTPUT_RULE}
 Every JSON string, including file content, must use JSON-standard escaping.
 Use literal UTF-8 for non-ASCII characters or valid \`\\uXXXX\` escapes (two
 UTF-16 surrogate escapes for a character above U+FFFF). Never use Python's
@@ -1426,8 +1439,8 @@ critique holds one entry per problem you found and what you did about it, or one
 proposedPatches holds only the files whose content you change, each with its complete new content, and is [] when nothing needs fixing.
 Never return a file whose content you did not change.
 
-status must be one of proposed, blocked, failed. Output the JSON object
-directly, with no surrounding prose, no markdown fences, and no commentary.
+status must be one of proposed, blocked, failed.
+${STRUCTURED_OUTPUT_RULE}
 Every JSON string, including file content, must use JSON-standard escaping.
 Use literal UTF-8 for non-ASCII characters or valid \`\\uXXXX\` escapes (two
 UTF-16 surrogate escapes for a character above U+FFFF). Never use Python's
@@ -1636,10 +1649,11 @@ Each file path must be one approved scope path below; action is add or modify,
 never deletion; content is the complete new file content, not a diff. Fix the
 code. Do not return finding dispositions, proposals, waivers, questions, or
 edits to the approved specification, plan, governance policy, or agent
-definitions. Output the JSON object directly with no surrounding prose or
-markdown fences. Every JSON string, including file content, must use
-JSON-standard escaping. Use literal UTF-8 for non-ASCII characters or valid
-\`\\uXXXX\` escapes (two UTF-16 surrogate escapes for a character above U+FFFF).
+definitions.
+${STRUCTURED_OUTPUT_RULE}
+Every JSON string, including file content, must use JSON-standard escaping.
+Use literal UTF-8 for non-ASCII characters or valid \`\\uXXXX\` escapes (two
+UTF-16 surrogate escapes for a character above U+FFFF).
 Never use Python's \`\\UXXXXXXXX\` escape syntax; it is not valid JSON.
 Write every line break inside a JSON string, including each line break of a file's content, as \`\\n\` and every tab as \`\\t\`; never put a raw line break or tab inside a string literal.
 Before you return, re-read every task in the approved plan and every acceptance criterion in the approved specification that governs the code you change: a fix that breaks one of them is not a fix, so find a change that keeps both.

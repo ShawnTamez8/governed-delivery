@@ -230,3 +230,40 @@ test("a truncated string stays refused: only control characters are repaired", (
   const result = extractJsonBody('{"a":"x\ny');
   assert.equal(result.kind, "refused");
 });
+
+/**
+ * Hazard 1, item 11. The implementer's phase-2 reply of web-calculator run 1
+ * (2026-10-14, `implementation.content.invalid`): a complete, valid object with
+ * no fence, then one sentence of prose. Its `provenance.outcome` carries the
+ * refusal the live run recorded and `provenance.measured` where the object ends
+ * and what follows it. The extractor still refuses this shape; the patch
+ * dispatches now avoid it by reading `structured_output` instead.
+ */
+const TRAILING_PROSE_RUN = JSON.parse(
+  readFileSync(
+    new URL("./fixtures/recorded/web-calculator-selfreview-run-1-phase-2-trailing-prose.json", import.meta.url),
+    "utf8"
+  )
+) as {
+  resultText: string;
+  provenance: { outcome: string; measured: { strictParseError: string; jsonEndsAt: number; trailingText: string } };
+};
+
+test("11. the recorded reply with prose after an unfenced object is refused as the live run refused it", () => {
+  const body = TRAILING_PROSE_RUN.resultText;
+  const { measured, outcome } = TRAILING_PROSE_RUN.provenance;
+  assert.ok(!body.includes("```"), "the recorded body must carry no fence");
+
+  const result = extractJsonBody(body);
+  assert.equal(result.kind, "refused");
+  if (result.kind !== "refused") return;
+  assert.ok(outcome.includes(result.reason), `the live run's recorded outcome must carry this reason: ${result.reason}`);
+  assert.ok(result.reason.endsWith(measured.strictParseError));
+
+  // The provenance's claim, asserted rather than trusted: the object is complete
+  // and only the trailing text breaks the whole-body parse.
+  const object = JSON.parse(body.slice(0, measured.jsonEndsAt)) as { status?: unknown; agent?: unknown };
+  assert.equal(object.status, "proposed");
+  assert.equal(object.agent, "implementer");
+  assert.equal(body.slice(measured.jsonEndsAt).trimEnd(), measured.trailingText.trimEnd());
+});

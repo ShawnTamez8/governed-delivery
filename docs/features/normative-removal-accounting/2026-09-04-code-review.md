@@ -2,6 +2,7 @@
 
 **Reviewed document:** `docs/features/normative-removal-accounting/plan.md`
 **Review date:** 2026-09-04
+**Status:** reconciled
 **Effort:** high
 **Hazards considered:** 17 is the change under review, and the review's central
 question was whether the implementation follows its remedy paragraph literally
@@ -249,3 +250,9 @@ section.
 some kilobytes duplicated across three recorded fixtures now. Deduplicating
 them would put one fixture's evidence behind another's provenance, and the
 whole value of these files is that each stands alone — not a finding.
+
+## Reconciliation (recorded 2026-10-15)
+
+This record carried no status line. Both first-pass findings were fixed in place when they were reported, as each finding's own text records, and the second pass begins "after the findings above were reconciled"; the second and third passes reported no findings.
+- **Finding 1 — accepted, fixed:** the repeated-claim test was added and the unfalsifiable comment rewritten.
+- **Finding 2 — accepted, fixed:** the fixture's `provenance.fidelity` sentence was scoped to the fields the model returned.

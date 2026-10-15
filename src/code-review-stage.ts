@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { AgentDefinition } from "./agents.ts";
-import { validateAgentResult, type ProposedPatch } from "./agent-result.ts";
+import { PATCH_RESULT_SCHEMA, validateAgentResult, type ProposedPatch } from "./agent-result.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
 import {
@@ -818,7 +818,10 @@ export async function runCodeReviewStage(
             diff,
             remediationFindings.map(toRemediationInput)
           ),
-          invocation: { cwd: worktreePath },
+          // The answer comes back as structured output, never free text
+          // (docs/features/structured-patch-output/plan.md). Reviewers and the
+          // reconciler above still read free text.
+          invocation: { cwd: worktreePath, jsonSchema: PATCH_RESULT_SCHEMA },
         },
         rootDir
       );

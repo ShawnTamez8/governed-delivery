@@ -607,6 +607,18 @@ and `--effort <level>`, both taken from the frozen setting that governs that
 dispatch (section 10). Neither is part of the frozen executor definition above,
 which is why that definition names no model.
 
+**The three patch-producing dispatches also send a schema** (2026-10-14,
+`docs/features/structured-patch-output/plan.md`). Each implementation phase, the
+implementation self-review and code-review remediation append `--json-schema`
+with the JSON Schema of the result they ask for, so the model submits its answer
+through the CLI's structured output tool instead of as reply text. The schema is
+a code constant beside the validator it mirrors (`PATCH_RESULT_SCHEMA` in
+`src/agent-result.ts`, `SELF_REVIEW_RESULT_SCHEMA` in
+`src/implementation-self-review.ts`), not part of the frozen executor definition
+and not hashed into `agent_run.input_hash`. No other dispatch sends one: spec and
+plan authors, self-critiques, reviewers, the split and both reconcilers still
+return free text (hazard 1).
+
 **Probe before any run.** Run the probe command at setup and refuse to proceed
 if the executable does not resolve in the environment that will actually spawn
 it. Verifying it in a developer shell proves nothing about the environment the
@@ -649,7 +661,13 @@ The outer envelope is newline-delimited JSON with exactly one `result` line, and
 it is last. Cost, token counts and the effective model come from that line. A
 stream with a line that is not a JSON object, no result line, more than one, or
 a result line that is not last is refused by name, never repaired. The body
-inside its `result` field is what "Parsing model output" governs.
+inside its `result` field is what "Parsing model output" governs. For a dispatch
+that sent `--json-schema`, the body is the result line's `structured_output`,
+serialized, and `result` is not read: any text the model wrote around its answer
+never reaches the parser. A result line without a `structured_output` object is
+refused by name, so that dispatch fails, and like any failed dispatch it records
+no `agent_run` row (section 15). The refusal names the `total_cost_usd` the line
+reports, so the spend reaches the failure's audit event.
 
 **Take cost and model identity from the harness, never from the model.** A model
 asked what it cost will answer plausibly and wrongly. Read token counts, the
@@ -920,6 +938,12 @@ phase and behaves as it did.
 Each phase's prompt also states which signed-scope paths exist in the worktree
 at that moment and which do not, using the existence test the patch applier
 refuses on, so the implementer does not guess what earlier phases created.
+
+A phase drops a returned `modify` file whose content is unchanged at the
+phase's base, by the self-review's rule below, and records the dropped paths in
+an `implementation.phase.dropped` event, because such a file stages nothing and
+the applier refuses the patch (2026-10-14). A phase left with no file blocks the
+run, as the phase prompt says it will.
 
 **The self-review** (operator decisions, 2026-10-13 and 2026-10-14). After the
 last phase commits, one more implementer dispatch reads the whole change, the

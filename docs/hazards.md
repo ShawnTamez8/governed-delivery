@@ -24,6 +24,7 @@ Every parser that reads model output accepts or explicitly refuses each of:
 9. fenced JSON whose string literals contain markdown code fences
 10. JSON whose string literals contain a raw line break, tab, or other control
     character
+11. prose after an unfenced object, e.g. `{…}\n\nWait — …`
 
 **Choose strictness by consequence.** Where bytes are canonicalized into an
 immutable record, refuse prose outside the fence: dropping it silently corrupts
@@ -122,6 +123,44 @@ survive only in the retained raw file. A control character inside a string in a
 canonicalized artifact such as a specification is now accepted as the line break it
 resembles. Response length is likely a factor, since this was the largest single
 response the phased stage has produced, but one sample does not show it.
+
+**Measured, 2026-10-14, $1.12023 for the run.** The implementer of web-calculator
+run 1, phase 2 of 2 (Sonnet 5.5 at `medium`), finished normally and returned a
+complete, valid `AgentResult` with no fence, then two line breaks and one sentence:
+"Wait — I must not return unchanged files unnecessarily; the above includes
+index.html unchanged, which is harmless." The extractor parses an unfenced body
+from the first `{` to the end, so the sentence made the whole body invalid ("no
+fence, and the text from the first '{' (offset 0) to the end of the body is not
+valid JSON: Unexpected non-whitespace character after JSON at position 4135"). The
+stage recorded `implementation.content.invalid` and the run blocked with phase 1
+committed. The same reply also returned an unchanged file (entry 20). The retained
+reply is committed at
+`test/fixtures/recorded/web-calculator-selfreview-run-1-phase-2-trailing-prose.json`
+and is item 11's contract test; the extractor still refuses it.
+
+**What changed.** The three dispatches that return patches (each implementation
+phase, the implementation self-review and code-review remediation) now pass the
+`claude` CLI's `--json-schema` option, and the harness reads the result line's
+`structured_output` instead of the reply text (`ARCHITECTURE.md` section 11). The
+model submits its answer through a tool call, so prose it writes around the answer
+is never parsed. Two gating calls on 2026-10-14 ($1.2809081,
+`test/fixtures/recorded/json-schema-probe-gate.json`) resent two recorded phase
+prompts with the option: crew-chatter run 3's phase 2 prompt, whose free-text
+reply had broken on 5,314 unescaped characters, came back as ten valid files that
+applied and committed, and the web-calculator prompt above came back as one valid
+file. Two earlier calls on the small prompt
+(`test/fixtures/recorded/json-schema-probe-web-calculator-phase-2.json`) also
+answered through the tool with no text block. The three patch prompts now ask for
+the object once, through the tool, in place of "Output the JSON object directly".
+
+What this does not show. Four calls on two prompts are a sample, not a rate. The
+large call wrote its whole answer as text before submitting it, at 81,781 output
+tokens against 53,154 for the free-text reply ($1.2574650 against $0.7789614); the
+reworded sentence is meant to stop that and has not reached a model. Every other
+dispatch (spec and plan authors, self-critiques, reviewers, the split and both
+reconcilers) still returns free text, and this item applies to them unchanged. What
+the CLI does when a model cannot satisfy the schema is unknown; a result line
+without `structured_output` is refused by name as a failed dispatch.
 
 ## 2. Discarded output is undiagnosable
 
@@ -701,6 +740,25 @@ fit: crew-chatter runs 2 and 3 built 51 and 52 items from 51 and 52 files, and
 nine of the eleven recorded runs would have been offered a split. An operator
 who denies the split goes on to the same ceiling. No real model has proposed a
 split, and no pair of features has been built.
+
+**Measured, 2026-10-14, $1.12023 for the run.** Web-calculator run 1, phase 2 of 2,
+returned `index.html` as a `modify` byte-identical to the phase 1 commit, beside
+the one file it did change. The same reply also broke the parse (entry 1, item 11),
+so the run blocked there. A free replay of its object through `applyProposedPatches`
+on a clone at the phase 1 commit was refused ("staged set differs from the proposed
+patch: staged styles.css, proposed index.html, styles.css"): an unchanged file stages
+nothing. With `index.html` removed it committed. The reply and the replay are in
+`test/fixtures/recorded/web-calculator-selfreview-run-1-phase-2-trailing-prose.json`.
+Each phase now drops a returned `modify` file of the signed scope whose content
+is unchanged at the phase's base, by the rule the self-review already used, records
+the paths in an `implementation.phase.dropped` event and applies the rest. A phase
+whose every file is unchanged blocks the run by name, because it changes nothing.
+
+What this does not show. It is one occurrence, so how often a phase returns an
+unchanged file is unmeasured. The comparison inherits the self-review's CRLF limit
+(a committed blob holding CRLF is not recognized as unchanged, and the applier still
+refuses it). Code-review remediation uses the same applier and still blocks on an
+unchanged file; it was left as it was.
 
 ## 21. Agents are never told the gate that will judge their work
 

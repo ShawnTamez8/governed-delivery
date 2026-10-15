@@ -14,6 +14,14 @@ export interface InvocationInput {
    */
   effort?: string;
   /**
+   * The JSON Schema passed as `--json-schema`, after `--model` and `--effort`
+   * and per invocation, so it is not part of the frozen executor definition.
+   * Only the patch-producing dispatches set it
+   * (`docs/features/structured-patch-output/plan.md`); their answer is then read
+   * from the result line's `structured_output` (`parseEnvelope`).
+   */
+  jsonSchema?: object;
+  /**
    * The working directory the harness process starts in. The implementation
    * stage runs the harness inside the run's worktree so the implementer
    * reads the repository it patches. Raw output retention is unaffected:
@@ -47,6 +55,7 @@ export interface HarnessEnvelope {
 
 interface EnvelopeShape {
   result?: string;
+  structured_output?: unknown;
   total_cost_usd?: number;
   usage?: {
     input_tokens?: number;
@@ -179,8 +188,18 @@ export function buildHarnessEnvironment(
  * chain fixtures, whose envelopes are one-line streams. A match that finds no
  * unique entry yields `null`. Anything the envelope omits stays `null`, never
  * zero.
+ *
+ * `structured` is true for a dispatch that sent `--json-schema`
+ * (`docs/features/structured-patch-output/plan.md`). Its answer is the result
+ * line's `structured_output` object, serialized, and `result` is not read: the
+ * model can write prose in a text block beside the tool call that carries the
+ * answer. The shape is recorded in
+ * `test/fixtures/recorded/json-schema-probe-web-calculator-phase-2.json` and
+ * `test/fixtures/recorded/json-schema-probe-gate.json`, where `result` equalled
+ * that serialization in every call; nothing here depends on that. A result line
+ * without a `structured_output` object is refused by name.
  */
-export function parseEnvelope(executor: ExecutorDefinition, raw: string): HarnessEnvelope {
+export function parseEnvelope(executor: ExecutorDefinition, raw: string, structured = false): HarnessEnvelope {
   const refuse = (cause: string) => new Error(`harness envelope for executor ${executor.id} ${cause}`);
   const results: { line: number; shape: EnvelopeShape }[] = [];
   let lastLine = 0;
@@ -210,6 +229,18 @@ export function parseEnvelope(executor: ExecutorDefinition, raw: string): Harnes
   if (parsed.result !== undefined && typeof parsed.result !== "string") {
     throw refuse(`has a result line whose result is not a string: line ${results[0].line}`);
   }
+  const output = parsed.structured_output;
+  if (structured && (typeof output !== "object" || output === null || Array.isArray(output))) {
+    // A refused envelope writes no agent_run row, so the cost the result line
+    // reports is named here to reach the failure's audit event.
+    const cost =
+      typeof parsed.total_cost_usd === "number"
+        ? `reports total_cost_usd ${parsed.total_cost_usd}`
+        : "reports no total_cost_usd";
+    throw refuse(
+      `has a result line without a structured_output object although the dispatch requested --json-schema: line ${results[0].line}; the line ${cost}`
+    );
+  }
   const usage = parsed.usage ?? {};
   const matches = Object.entries(parsed.modelUsage ?? {}).filter(([, u]) => u.inputTokens === usage.input_tokens);
   return {
@@ -220,7 +251,7 @@ export function parseEnvelope(executor: ExecutorDefinition, raw: string): Harnes
     cacheRead: usage.cache_read_input_tokens ?? null,
     cacheWrite: usage.cache_creation_input_tokens ?? null,
     cost: parsed.total_cost_usd ?? null,
-    resultText: parsed.result ?? "",
+    resultText: structured ? JSON.stringify(output) : parsed.result ?? "",
   };
 }
 
@@ -244,6 +275,7 @@ export function invokeHarness(executor: ExecutorDefinition, input: InvocationInp
   const argv = [...executor.command.slice(1)];
   if (input.model !== undefined) argv.push("--model", input.model);
   if (input.effort !== undefined) argv.push("--effort", input.effort);
+  if (input.jsonSchema !== undefined) argv.push("--json-schema", JSON.stringify(input.jsonSchema));
   const child: ChildProcess = spawn(executor.command[0], argv, {
     // The installed Claude Code launcher is a native executable. Spawn it
     // directly, as PowerShell does, so argv has one parser and no cmd.exe

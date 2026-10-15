@@ -4,7 +4,7 @@
 
 **Review date:** 2026-09-10
 
-**Status:** open
+**Status:** reconciled
 
 **Effort:** high.
 
@@ -151,3 +151,7 @@ GitHub operation, source edit, commit or retained-target cleanup occurs.
 No findings. This review remains `open` under the requested review workflow;
 only a separately authorized disposition can reconcile it. The governing
 plan remains `Implemented`.
+
+## Reconciliation (recorded 2026-10-15)
+
+The operator asked on 2026-10-15 for every plan and review to carry its correct status, which is the disposition this record waited for. The review has zero findings and six rejected candidates, each with its disposition in the table above, so no finding remains open and the record is `reconciled` under the repository's definition. Nothing changes in the code; the governing plan stays `Implemented`.
