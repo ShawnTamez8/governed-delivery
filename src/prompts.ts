@@ -881,6 +881,7 @@ work; inventing a requirement the design never states is not, however
 reasonable that requirement looks. Where the design leaves a decision open,
 route the concern upstream with a complete proposal candidate, or return
 cannot_determine.
+When a change answers a finding, update every other part of the specification that change affects, such as another acceptance criterion, a declared artifact, or an open decision, so the revised specification stays consistent; each normative node that update adds or removes is claimed in normativeChanges like any other.
 
 A finding whose report comes from ${agent.id} is an open decision you disclosed under ## Open decisions.
 Answer it like any other finding: upstream_follow_up or upstream_blocking with a complete proposal when the design must decide it, addressed only when you can ground the resolution in the design, or cannot_determine.
@@ -1172,6 +1173,7 @@ making it consistent is the work; inventing a requirement the specification
 never states is not, however reasonable that requirement looks. Where the
 specification leaves a decision open, route the concern upstream with a
 complete proposal candidate, or return cannot_determine.
+When a change answers a finding, update every other part of the plan that change affects, such as another task or a coverage line, so the revised plan stays consistent; each normative node that update adds or removes is claimed in normativeChanges like any other.
 
 Every task in ## Tasks and every line in ## Coverage is a normative node.
 Do not casually edit, polish, or rephrase coverage entries (whether naming an
@@ -1301,6 +1303,7 @@ export function buildImplementationAuthorPrompt(
       ? [`Later phases will implement the remaining tasks, so do not implement a task outside this phase.`]
       : []),
     `Return at least one file: a phase that changes nothing blocks the run.`,
+    `Before you return, read back each task of this phase, and each acceptance criterion whose line in the plan's Coverage section names a file you return, against the files you return, and correct any file that leaves one unmet.`,
   ].join("\n");
   // The read-only sentence is UX, not a guard: enforcement is the
   // invocation boundary (the read-only executor command) and the stage's
@@ -1366,6 +1369,112 @@ ${planContent}
 Approved specification:
 
 ${specContent}`;
+}
+
+/**
+ * The implementation self-review prompt (`docs/features/implementation-self-review/plan.md`,
+ * operator decisions 2026-10-13 and 2026-10-14): one dispatch after the last
+ * phase, in which the implementer reads its own complete change against the
+ * plan and specification and returns a critique and any fixes together, the
+ * shape the spec and plan self-critique take.
+ *
+ * It opens with the phase prompt's role line, so the stand-in executor routes it
+ * to the implementation emitter, then a marker sentence the emitter checks before
+ * it looks for a phase; the marker never contains `This is phase`. The patch
+ * contract, the scope block and the two existence lists are the phase prompt's,
+ * in the shape the emitter scrapes, with the stage's last commit as the base.
+ *
+ * It is the author's own pass, not review (hazard 14): code review remains the
+ * independent check. The frozen verification commands are stated because they
+ * run straight after it (hazard 21). The prompt states no other consequence:
+ * it never says what happens to a reply the system cannot use. Each rule is one
+ * source line so the constraint scan in `test/prompts.test.ts` matches it.
+ */
+export function buildImplementationSelfReviewPrompt(
+  agent: AgentDefinition,
+  planContent: string,
+  specContent: string,
+  scope: string[],
+  head: string,
+  existingPaths: readonly string[],
+  changedPaths: string[],
+  diff: string,
+  verification: VerificationConfig
+): string {
+  const existing = new Set(existingPaths);
+  const renderPaths = (paths: string[]): string => (paths.length > 0 ? paths.map((p) => `- ${p}`).join("\n") : "none.");
+  return `${IMPLEMENTATION_PROMPT_PREFIX} ${agent.id}
+
+This is your own self-review of the complete change, after the last phase.
+
+Your working directory is the repository checkout at commit ${head}, which holds
+the complete change — read it to see the code. Run no git commands: the system
+applies and commits the patches you propose.
+This checkout is read-only for you: do not create, modify, or delete any file.
+Only the patch content you return is considered.
+
+Read back every task in the approved plan and every acceptance criterion in the approved specification against the code at this commit, and fix any that the code leaves unmet.
+Look for wrong results, unchecked input, races between requests, state left inconsistent after a failure, and errors that are caught and ignored, and fix each one you find.
+When you fix a defect, look for the same defect in every other file of the approved scope and fix it there too.
+A fix that breaks a task or an acceptance criterion is not a fix: find a change that keeps both.
+Fix only with behavior the approved specification already requires; never add an obligation the specification does not state, however reasonable it looks.
+
+Return exactly a JSON AgentResult object with this shape:
+{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"selfReview": {"critique": ["..."]}}, "proposedPatches": []}
+
+critique holds one entry per problem you found and what you did about it, or one entry saying what you checked when you found nothing.
+proposedPatches holds only the files whose content you change, each with its complete new content, and is [] when nothing needs fixing.
+Never return a file whose content you did not change.
+
+status must be one of proposed, blocked, failed. Output the JSON object
+directly, with no surrounding prose, no markdown fences, and no commentary.
+Every JSON string, including file content, must use JSON-standard escaping.
+Use literal UTF-8 for non-ASCII characters or valid \`\\uXXXX\` escapes (two
+UTF-16 surrogate escapes for a character above U+FFFF). Never use Python's
+\`\\UXXXXXXXX\` escape syntax; it is not valid JSON.
+Write every line break inside a JSON string, including each line break of a file's content, as \`\\n\` and every tab as \`\\t\`; never put a raw line break or tab inside a string literal.
+
+Each patch has:
+- baseCommit must be exactly: ${head}
+- files: one entry per file the patch changes, each with path, action, and
+  content
+- path: a repo-relative path, one of the approved scope paths below.
+  A tasks.md path is prohibited because task execution and status belong in
+  run-state database rows
+- action one of add, modify — deletion is refused by the system and must not
+  be proposed
+- content is the complete new file content, not a diff
+
+Patch only these paths:
+
+${scope.map((p) => `- ${p}`).join("\n")}
+
+Of those paths, these exist in the checkout now, so each takes action modify:
+
+${renderPaths(scope.filter((p) => existing.has(p)))}
+
+Of those paths, these do not exist yet, so each takes action add:
+
+${renderPaths(scope.filter((p) => !existing.has(p)))}
+
+${verificationCommandsBlock(verification)}
+These commands run right after this review, and the first that fails blocks the run.
+
+Changed paths:
+
+${changedPaths.map((p) => `- ${p}`).join("\n")}
+
+Approved plan:
+
+${planContent}
+
+Approved specification:
+
+${specContent}
+
+Complete diff of the change through ${head}:
+
+${diff}`;
 }
 
 /**
@@ -1478,7 +1587,19 @@ export interface CodeReviewRemediationFindingInput {
   }>;
 }
 
-/** One code-only repair request containing every report from one panel. */
+/**
+ * One code-only repair request containing every report from one panel.
+ *
+ * The two rules after the escaping lines come from crew-chatter run 6
+ * (`test/fixtures/recorded/code-review-crew-chatter-run-6.json`,
+ * `docs/features/implementation-self-review/plan.md`). The task and criterion
+ * re-read answers #208/#210: the round-1 fix for #199 put back the
+ * one-request-in-flight rule the plan reconciler had removed for AC-015. The
+ * same-defect sweep answers #209: the fix for the NUL byte in the notes route
+ * (#201) left the same defect in the email field. The prompt has no rule for
+ * declining a finding, because the code-review reconciler decides that before
+ * remediation, with a checked quote from the specification.
+ */
 export function buildCodeReviewRemediationPrompt(
   agent: AgentDefinition,
   specContent: string,
@@ -1521,6 +1642,8 @@ JSON-standard escaping. Use literal UTF-8 for non-ASCII characters or valid
 \`\\uXXXX\` escapes (two UTF-16 surrogate escapes for a character above U+FFFF).
 Never use Python's \`\\UXXXXXXXX\` escape syntax; it is not valid JSON.
 Write every line break inside a JSON string, including each line break of a file's content, as \`\\n\` and every tab as \`\\t\`; never put a raw line break or tab inside a string literal.
+Before you return, re-read every task in the approved plan and every acceptance criterion in the approved specification that governs the code you change: a fix that breaks one of them is not a fix, so find a change that keeps both.
+When you fix a defect, look for the same defect in every other file of the approved scope and fix it there too.
 
 Approved scope:
 

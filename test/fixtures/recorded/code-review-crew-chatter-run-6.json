@@ -94,6 +94,12 @@
         "rawOutputRef": ".governance\\raw\\6\\2026-10-13T18-05-42-252Z-61c2b3ad79dd.json"
       }
     ],
+    "runTotal": {
+      "dispatches": 22,
+      "costUsd": 4.83619668,
+      "query": "SELECT COUNT(*) n, SUM(ar.cost) total FROM agent_run ar JOIN stage s ON s.id = ar.stage_id WHERE s.run_id = 6",
+      "queried": "2026-10-14, read-only, against the same store; added for docs/hazards.md entry 23"
+    },
     "captured": "2026-10-13",
     "dropped": "Store columns not listed here (artifact hashes, grounding columns of decisions that carry none). Raw dispatch output under .governance/raw/6/ is not copied; the subjects and rationales are the stored values, unabridged.",
     "whatThisRecords": "Every high finding of code review round 2 traces to the round 1 remediation: #208/#210 re-impose the one-request-in-flight rule that plan reconciliation removed for AC-015 (#187); #211 and #213 come from session invalidation the remediator added for #200, which plan reconciliation had routed upstream as an obligation the specification lacks (#189); #209 is the NUL-byte defect of #201 left in a second input. Motivates the implementation self-review and the remediation-prompt rules (2026-10-13)."

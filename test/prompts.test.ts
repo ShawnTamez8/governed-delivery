@@ -11,6 +11,7 @@ import {
   buildCodeReviewRemediationPrompt,
   buildDesignSplitPrompt,
   buildImplementationAuthorPrompt,
+  buildImplementationSelfReviewPrompt,
   buildPlanAuthorPrompt,
   buildPlanReconcilePrompt,
   buildPlanReviewPrompt,
@@ -39,6 +40,7 @@ import { validateAgentResult, type AgentResult } from "../src/agent-result.ts";
 import { CLAUDE_CODE } from "../src/executor.ts";
 import { parseEnvelope } from "../src/harness.ts";
 import { validateSelfCritique } from "../src/self-critique.ts";
+import { validateImplementationSelfReview } from "../src/implementation-self-review.ts";
 import {
   planNormativeNodes,
   specNormativeNodes,
@@ -159,6 +161,46 @@ const FOLD_VERIFICATION_SENTENCES = [
   "An answer to a question that begins",
   "may name a stack, a layout and declared artifact paths: fold exactly the paths it names into ## Declared artifacts, grounded in that answer, and nothing the answer does not state.",
   "Never restate a command as an acceptance criterion.",
+];
+
+/**
+ * The remediation prompt's two rules (docs/features/implementation-self-review/plan.md,
+ * Task 2), from crew-chatter run 6: the re-read answers #208/#210, the sweep #209.
+ * The sweep sentence is also a self-review rule, so one entry covers both builders.
+ */
+const REMEDIATION_REREAD_RULE =
+  "Before you return, re-read every task in the approved plan and every acceptance criterion in the approved specification that governs the code you change: a fix that breaks one of them is not a fix, so find a change that keeps both.";
+const SAME_DEFECT_SWEEP_RULE =
+  "When you fix a defect, look for the same defect in every other file of the approved scope and fix it there too.";
+
+/** The phase prompt's task check (the same plan, Task 3). */
+const PHASE_READ_BACK_RULE =
+  "Before you return, read back each task of this phase, and each acceptance criterion whose line in the plan's Coverage section names a file you return, against the files you return, and correct any file that leaves one unmet.";
+
+/** The reconcilers' dependent-sections rule (the same plan, Task 4), one per document. */
+const SPEC_RECONCILE_DEPENDENTS_RULE =
+  "When a change answers a finding, update every other part of the specification that change affects, such as another acceptance criterion, a declared artifact, or an open decision, so the revised specification stays consistent; each normative node that update adds or removes is claimed in normativeChanges like any other.";
+const PLAN_RECONCILE_DEPENDENTS_RULE =
+  "When a change answers a finding, update every other part of the plan that change affects, such as another task or a coverage line, so the revised plan stays consistent; each normative node that update adds or removes is claimed in normativeChanges like any other.";
+
+/**
+ * The self-review prompt's marker and rules (the same plan, Task 7). The marker is
+ * what the stand-in emitter checks before it looks for a phase. The same-defect
+ * sweep is SAME_DEFECT_SWEEP_RULE, shared with the remediation prompt.
+ */
+const SELF_REVIEW_MARKER = "This is your own self-review of the complete change, after the last phase.";
+const SELF_REVIEW_RULES = [
+  "Read back every task in the approved plan and every acceptance criterion in the approved specification against the code at this commit, and fix any that the code leaves unmet.",
+  "Look for wrong results, unchecked input, races between requests, state left inconsistent after a failure, and errors that are caught and ignored, and fix each one you find.",
+  SAME_DEFECT_SWEEP_RULE,
+  "A fix that breaks a task or an acceptance criterion is not a fix: find a change that keeps both.",
+  "Fix only with behavior the approved specification already requires; never add an obligation the specification does not state, however reasonable it looks.",
+];
+const SELF_REVIEW_REPLY_RULES = [
+  "critique holds one entry per problem you found and what you did about it, or one entry saying what you checked when you found nothing.",
+  "proposedPatches holds only the files whose content you change, each with its complete new content, and is [] when nothing needs fixing.",
+  "Never return a file whose content you did not change.",
+  "These commands run right after this review, and the first that fails blocks the run.",
 ];
 
 // The patch rules (baseCommit, the add/modify action enum, whole-file
@@ -423,6 +465,18 @@ const CONSTRAINT_STRINGS = [
   "A file may be listed in several pieces",
   "distinct declared files",
   "dependsOn lists the 1-based positions of earlier pieces",
+  // The implementation self-review plan's prompt rules
+  // (docs/features/implementation-self-review/plan.md, Tasks 2-4), from crew-chatter
+  // run 6. Kept above the criterion-quality block: CRITERION_QUALITY_RULE slices
+  // this list from its end.
+  REMEDIATION_REREAD_RULE,
+  SAME_DEFECT_SWEEP_RULE,
+  PHASE_READ_BACK_RULE,
+  SPEC_RECONCILE_DEPENDENTS_RULE,
+  PLAN_RECONCILE_DEPENDENTS_RULE,
+  SELF_REVIEW_MARKER,
+  ...SELF_REVIEW_RULES,
+  ...SELF_REVIEW_REPLY_RULES,
   // What a criterion may say (docs/features/spec-criterion-testability/plan.md).
   // Measured 2026-09-27, $1.6186: team-notes run 3 copied the design's
   // "meaningful content change" into AC-041, and its tone guidance reached
@@ -796,6 +850,8 @@ test("the first phase claims no earlier work, the last claims no later work, and
   for (const [name, prompt] of Object.entries(prompts)) {
     assert.ok(prompt.includes("use action add only for a file that does not exist yet"), name);
     assert.ok(prompt.includes("This is phase "), name);
+    // The task check before returning (implementation-self-review Task 3) is true of every phase.
+    assert.ok(prompt.includes(PHASE_READ_BACK_RULE), `${name} phase prompt missing the read-back rule`);
   }
 });
 
@@ -841,6 +897,59 @@ test("the implementation prompt follows the config it is given", () => {
   assert.notEqual(recorded, changed);
   assert.ok(changed.includes("\n\n- smoke: node --version\n\nA command passes only if"));
   for (const line of RUN_10_COMMAND_LINES) assert.ok(!changed.includes(line), `still carries ${line}`);
+});
+
+// --- implementation self-review (implementation-self-review Task 7) ---------
+
+function selfReviewPrompt(verification: VerificationConfig = VERIFICATION): string {
+  return buildImplementationSelfReviewPrompt(IMPLEMENTER, "PLAN-TEXT", "SPEC-TEXT", ["src/a.ts", "src/b.ts", "src/c.ts"],
+    "d".repeat(40), ["src/a.ts", "src/c.ts"], ["src/a.ts", "src/c.ts"], "DIFF-TEXT", verification);
+}
+
+test("the self-review prompt states its marker and every rule, and is never a phase", () => {
+  const prompt = selfReviewPrompt();
+  assert.ok(prompt.startsWith(`${promptBuilders.IMPLEMENTATION_PROMPT_PREFIX} ${IMPLEMENTER.id}\n\n${SELF_REVIEW_MARKER}\n`));
+  for (const text of [...SELF_REVIEW_RULES, ...SELF_REVIEW_REPLY_RULES, "This checkout is read-only for you",
+    "Run no git commands", "JSON-standard escaping", "deletion is refused by the system", "A tasks.md path is prohibited"]) {
+    assert.ok(prompt.includes(text), `self-review prompt missing: ${text}`);
+  }
+  // The emitter looks for a phase only after this marker, and a phase sentence here would route it as one.
+  assert.ok(!prompt.includes("This is phase"), "the self-review prompt reads as a phase");
+  // It is the author's own pass: no review vocabulary a reader could take as independence (hazard 14).
+  for (const word of ["reviewer", "finding"]) assert.ok(!prompt.includes(word), `self-review prompt says ${word}`);
+});
+
+test("the self-review prompt names the last commit as the base and keeps the scraped blocks in the phase prompt's shape", () => {
+  const prompt = selfReviewPrompt();
+  assert.equal([...prompt.matchAll(/baseCommit must be exactly: ([0-9a-f]{40})/g)].map((m) => m[1]).join(), "d".repeat(40));
+  assert.ok(prompt.includes(`Your working directory is the repository checkout at commit ${"d".repeat(40)}`));
+  const blockAfter = (heading: string): string[] =>
+    /\n\n([\s\S]*?)\n\n/.exec(prompt.slice(prompt.indexOf(heading) + heading.length))![1]!.split("\n");
+  assert.deepEqual(/Patch only these paths:\n\n([\s\S]*?)\n\n/.exec(prompt)![1]!.split("\n"), ["- src/a.ts", "- src/b.ts", "- src/c.ts"]);
+  assert.deepEqual(blockAfter("these exist in the checkout now, so each takes action modify:"), ["- src/a.ts", "- src/c.ts"]);
+  assert.deepEqual(blockAfter("these do not exist yet, so each takes action add:"), ["- src/b.ts"]);
+  assert.deepEqual(blockAfter("Changed paths:"), ["- src/a.ts", "- src/c.ts"]);
+  // The commands follow the lists, then the plan and specification, and the diff comes last.
+  assert.ok(prompt.includes(`\n\n${RUN_10_COMMAND_LINES.join("\n")}\n\n`), "the commands are one block, in order");
+  assert.ok(prompt.indexOf("these do not exist yet") < prompt.indexOf(VERIFICATION_BLOCK_SENTENCES[0]!));
+  assert.ok(prompt.indexOf("Approved plan:") < prompt.indexOf("Approved specification:"));
+  assert.ok(prompt.endsWith(`Complete diff of the change through ${"d".repeat(40)}:\n\nDIFF-TEXT`));
+  const other = selfReviewPrompt({ commands: [{ name: "smoke", command: ["node", "--version"] }] });
+  assert.ok(other.includes("\n\n- smoke: node --version\n\n"));
+  for (const line of RUN_10_COMMAND_LINES) assert.ok(!other.includes(line), `still carries ${line}`);
+});
+
+test("the result and selfReview the self-review prompt advertises validate against their receiving validators", () => {
+  const prompt = selfReviewPrompt();
+  const advertised = /Return exactly a JSON AgentResult object with this shape:\n(\{[^\n]+\})/.exec(prompt);
+  assert.ok(advertised, "the prompt advertises one AgentResult shape");
+  const parsed = JSON.parse(advertised![1]!);
+  const result = validateAgentResult(IMPLEMENTER.id, parsed);
+  assert.ok(result.ok, result.ok ? "" : result.reason);
+  assert.equal(result.value.status, "proposed");
+  assert.deepEqual(result.value.proposedPatches, []);
+  const selfReview = validateImplementationSelfReview((parsed.proposedContentChanges as { selfReview: unknown }).selfReview);
+  assert.ok(selfReview.ok, selfReview.ok ? "" : selfReview.reason);
 });
 
 test("the phase prompts built from the recorded run 12 plan carry its own lines, each task with its detail lines under it", () => {
@@ -1369,6 +1478,15 @@ test("the generated plan reconciliation prompt carries the spec as governing inp
   assert.ok(prompt.includes("severity critical, classification current_artifact"));
 });
 
+test("each reconciliation prompt tells the author to update what a change affects, in its own document's terms", () => {
+  const spec = buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PAIR, VERIFICATION);
+  const plan = buildPlanReconcilePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", "a".repeat(64), ["src/a.ts"], PAIR, VERIFICATION);
+  assert.ok(spec.includes(SPEC_RECONCILE_DEPENDENTS_RULE), "spec reconcile prompt missing its rule");
+  assert.ok(!spec.includes(PLAN_RECONCILE_DEPENDENTS_RULE), "spec reconcile prompt carries the plan's rule");
+  assert.ok(plan.includes(PLAN_RECONCILE_DEPENDENTS_RULE), "plan reconcile prompt missing its rule");
+  assert.ok(!plan.includes(SPEC_RECONCILE_DEPENDENTS_RULE), "plan reconcile prompt carries the spec's rule");
+});
+
 test("a reconciliation prompt with no findings states the none-line, not a bare block", () => {
   for (const prompt of [
     buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", [], VERIFICATION),
@@ -1778,6 +1896,12 @@ test("the remediation prompt carries every report and advertises a valid patch r
   assert.ok(advertised);
   const result = validateAgentResult(IMPLEMENTER.id, JSON.parse(advertised![1]!));
   assert.equal(result.ok, true, result.ok ? "" : result.reason);
+  // The two run 6 rules, asserted on the built prompt and placed before the scope.
+  for (const rule of [REMEDIATION_REREAD_RULE, SAME_DEFECT_SWEEP_RULE]) {
+    const at = prompt.indexOf(rule);
+    assert.ok(at >= 0, `remediation prompt missing: ${rule}`);
+    assert.ok(at < prompt.indexOf("Approved scope:"), `remediation rule after the scope: ${rule}`);
+  }
 });
 
 // --- code-review reconciler (code-review-reconciler Task 4) -----------------
@@ -2010,6 +2134,7 @@ function routingPrompts(document: string) {
     { builder: "buildPlanReviewPrompt", prefix: "PLAN_REVIEW_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanReviewPrompt(SPEC_REVIEWER_TRACEABILITY, document, document) },
     { builder: "buildPlanReconcilePrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanReconcilePrompt(PLAN_AUTHOR, document, document, hash, scope, PAIR, VERIFICATION) },
     { builder: "buildImplementationAuthorPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, document, document, scope, base, ONLY_PHASE, [], VERIFICATION) },
+    { builder: "buildImplementationSelfReviewPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationSelfReviewPrompt(IMPLEMENTER, document, document, scope, base, scope, scope, document, VERIFICATION) },
     { builder: "buildCodeReviewPrompt", prefix: "CODE_REVIEW_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, document, document, scope, document, base) },
     { builder: "buildCodeReviewRemediationPrompt", prefix: "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, document, document, scope, base, scope, document, []) },
     { builder: "buildCodeReviewReconcilerPrompt", prefix: "CODE_REVIEW_RECONCILER_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewReconcilerPrompt([], document, document, document, base) },

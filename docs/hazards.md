@@ -828,3 +828,69 @@ agent writes. The same function serves the verification stage and code-review
 remediation, so both are covered. What this does not show: a command that writes
 an ignored path outside the worktree is untouched, and whether removal of a large
 `node_modules/` ever fails on Windows (a locked file, a long path) is untested.
+
+## 23. A fix that never sees the decisions behind the code it changes
+
+Code-review remediation hands the implementer the findings, the approved
+specification and plan, and the full diff. It does not hand it the plan-review
+decisions that shaped the plan: which rule a reconciler removed and why, or
+which obligation it routed upstream as one the specification lacks. A fix for
+one finding can therefore put back a rule the plan removed, add an obligation
+nobody approved, or fix one instance of a defect and leave its twin. The next
+panel reviews that fix, and when it is the final panel nothing can repair what
+it finds.
+
+**Measured, 2026-10-13, $4.83619668 over 22 dispatches.** Crew-chatter run 6 (the
+total is the sum of the run's `agent_run` costs, queried read-only from its store
+on 2026-10-14 and recorded in the fixture's provenance). Round 1 reported 13 findings. One remediation dispatch
+(`claude-sonnet-5-5`, $0.5517149) committed `ca0bd0e`. Round 2 reported 7
+findings, four with a `high` report (#208 to #211), and the gate blocked. Every
+one traces to the remediation or to round 1
+(`test/fixtures/recorded/code-review-crew-chatter-run-6.json`; the facts below
+are pinned in `test/code-review-run-6-evidence.test.ts`):
+- **#208 and #210** (one defect, two reviewers): the latest edit waited behind a
+  save already in progress, against AC-015. To fix #199, the remediation put back
+  the one-request-in-flight rule that plan reconciliation had removed for AC-015
+  (#187). The approved plan it received said "A send is never deferred behind an
+  earlier request"; nothing told it why.
+- **#211**: a 401 on save dropped the unsaved edit. It sits inside session
+  invalidation the remediation added for #200, which plan reconciliation had
+  routed upstream as an obligation the specification lacks (#189).
+- **#209**: a NUL byte in the email reached Postgres. That defect was already in
+  the round-1 reviewed commit `bb7f3f6`, and the round-1 panel missed it. The
+  remediation fixed the NUL byte in the notes route (#201) and nowhere else. A
+  paid replay of the round-1 security prompt against `bb7f3f6`
+  (`test/fixtures/recorded/code-review-replay-crew-chatter-run-6-security.json`)
+  found #209 itself, `validateEmail` admitting a NUL byte, in 1 of 10 control
+  calls (`control-4`) and in 1 of 10 calls of a reworded prompt (`b-8`). One more
+  control call (`control-6`) found a NUL byte in the email on the sign-in path, so
+  a NUL byte in the email was found in 2 of 10 control calls.
+
+**What answers it, and how strongly.**
+- #211's cause has a check: the code-review reconciler (entry 16,
+  `ARCHITECTURE.md` section 12) withholds a finding from remediation only when
+  every frozen call rejects it with an excerpt found in the approved
+  specification. Its replay rejected #200 in 10 of 10 calls.
+- The rest are requests. The remediation prompt now tells the implementer to
+  re-read, before returning, every plan task and acceptance criterion that
+  governs the code it changes, because a fix that breaks one is not a fix, and
+  to look for the same defect in every other file of the approved scope. Each
+  phase prompt tells the implementer to read back its tasks, and the criteria
+  whose Coverage line names a file it returns, against the files it returns. After the
+  last phase, one self-review dispatch reads the whole change against the plan
+  and specification and may fix what it finds (`ARCHITECTURE.md` section 12).
+
+These mitigate the mechanism; they do not close it. The remediator still never
+sees the plan-review decisions; giving it them is a separate operator decision,
+not taken. The self-review is the implementer checking its own work: its
+`agent_run` row reads `configured_standalone`, which describes process
+isolation, not review independence (entry 14), and code review stays the
+independent check.
+
+What this does not show. No paid run has used these prompts or the self-review,
+so whether a model follows the rules, or whether a self-review finds or fixes
+anything, is unmeasured. Hazard 21's prompt rule did not stop crew-chatter run
+2's lint failure. A rule that asks for a sweep does not raise a reviewer's
+recall: #209 was missed by the panel, not by the rule. The self-review costs one
+implementer dispatch per run, roughly a remediation dispatch on a change of this
+size [Inference], and saves money only when it prevents a remediation round.

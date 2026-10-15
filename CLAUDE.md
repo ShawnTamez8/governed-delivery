@@ -108,8 +108,14 @@ deterministic (`planPhases` in `src/plan-doc.ts`). `IMPLEMENTATION_PHASE_TASKS`
 run start; a plan needing more phases than the ceiling refuses before the first
 dispatch. Each phase commits before the next starts, a failed phase blocks the
 run with no retry, and the stage still records one gate event spanning the head
-before phase one to the last phase's commit. No code review runs between
-phases. A completed paid run never authorizes another spend.
+before phase one to the last phase's commit, or to the self-review's commit when
+the self-review changed anything. No code review runs between phases. After the
+last phase the implementer self-reviews the whole change once in its own
+dispatch and may return fixes, which commit before verification
+(`docs/features/implementation-self-review/plan.md`, hazard 23); an unusable
+reply skips the self-review and a guard failure blocks the run. The self-review
+is the author's own pass, not independent review. A completed paid run never
+authorizes another spend.
 
 ## Windows harness launch
 

@@ -251,8 +251,11 @@ unless both calls rejected every finding, one implementer dispatch, post-patch
 verification, and another three-reviewer panel: three dispatches for a clean
 one-panel review and eight or nine for the default remediated path. Reviewers
 inside one panel start concurrently, so a fast failure does not avoid the cost
-of siblings already launched. No current paid evidence establishes a revised
-dollar range. The free `smoke` still costs nothing: it reaches no dispatch.
+of siblings already launched. Since 2026-10-14 the implementation stage also
+adds one implementer self-review dispatch after its last phase (hazard 23),
+which carries the same full diff; its cost is unmeasured. No current paid
+evidence establishes a revised dollar range. The free `smoke` still costs
+nothing: it reaches no dispatch.
 
 **Cost is not fixed.** That run took 7 dispatches, not 5, because the plan gate
 passed in round 2 — `plan.gate.pass | plan_review gate passed in round 2` after

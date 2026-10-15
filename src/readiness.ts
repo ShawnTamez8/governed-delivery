@@ -235,7 +235,7 @@ export function inspectReadiness(rootDir: string, options: { slug?: string } = {
   for (const [id, outputs] of [
     ["spec-author", ["spec", "spec-self-critique", "spec-reconciliation", "spec-split"]],
     ["plan-author", ["plan", "plan-self-critique", "plan-reconciliation"]],
-    ["implementer", ["patches"]],
+    ["implementer", ["patches", "implementation-self-review"]],
   ] as const) {
     const author = AGENTS.find((agent) => agent.id === id);
     if (!author) authorErrors.push(`configured agent ${id} is missing`);

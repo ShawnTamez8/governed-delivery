@@ -1,6 +1,6 @@
 # Implementation Self-Review Implementation Plan
 
-**Status:** Reconciled
+**Status:** Implemented
 
 **Goal:** The implementer checks its own finished change once before verification and fixes what it finds in the same dispatch; the remediation and phase prompts state the checks run 6's remediation skipped; and both reconciler prompts tell the author to update the parts of the document a change affects.
 
@@ -334,3 +334,23 @@ What this plan can show without spending: each rule is in the prompt the remedia
 
 1. **Give the remediator the plan-review decisions, and record a finding it declines as a typed disposition** so the next panel and the final gate can tell it apart from an unfixed defect (decision 4 of the 2026-10-13 comparison). Not in this plan; it changes the code-review contract in `CLAUDE.md`. This plan gives the remediator no way to decline a finding; the code-review reconciler is the only filter before remediation.
 2. **A paid run to see whether the self-review finds anything.** Not authorized by this plan; it needs its own consent and range.
+
+## Implementation note (2026-10-14)
+
+**Shipped:** Tasks 1-12 as written, uncommitted on `dashboard-restyling` (HEAD `6282a6f`). Every break-it named in the tasks failed its test and was restored byte-identical. Full serial suite after the review fixes: 1542 tests, 1536 pass, 0 fail, 6 skipped, HEAD unchanged; free smoke 13/13; `check:docs` clean; `CLAUDE.md` and `AGENTS.md` hashes match. No paid run was made.
+
+**Deviations from the plan:**
+- Task 1: the plan said only `control-4` reports a `service.ts` finding whose intent key contains `email`. `control-3` (control characters reaching the log) and `control-6` (a NUL byte in the email on the sign-in path) also match that test. The evidence test pins #209 itself (`validateEmail` and a NUL byte) to `control-4` only, and a NUL byte in the email on any path to `control-4` and `control-6`. Hazard 23 and the learnings say both.
+- Task 9: the unchanged-file drop considers only `modify` files inside the signed scope, and a path absent at the base counts as changed, so the patch applier refuses it with its own reason instead of a git failure blocking.
+- Task 9: `validateAgentResult` throws on a `null` patch or file entry; `readSelfReviewReply` catches that and skips, as for any malformed envelope.
+- Task 9: `test/delivery-stage.test.ts` needed no change. Its `agent_run` count is a store-built run with no implementation dispatch.
+- Task 11: `.claude/skills/run-buildworks/SKILL.md` also gained one sentence on the extra dispatch, because its cost paragraph lists what a run dispatches.
+
+**Independent review:** an in-session reviewer subagent, not the billed `/code-review ultra`. Five findings, none high, all accepted:
+1. The stage's `runGit` used Node's 1 MiB buffer, so a diff over 1 MiB blocked the run instead of skipping the self-review at the prompt ceiling. Fixed with code review's 64 MiB buffer; a two-phase test with a diff over 1 MiB now skips by name, and removing the buffer fails it.
+2. `sameBlobAtCommit` disagrees with `git add` when the committed blob holds CRLF ("safer autocrlf"), so an unchanged file in that case blocks the run. Not fixed: it needs a CRLF blob in the target and a model that returns `\r`, and files the phases create are LF. The doc comment now states the case. Deferred.
+3. Two skip paths were untested: a failed dispatch, and the `null` entry catch. Tests added (the over-ceiling test, the `self-review-null-patch` mode, and the `self-review-mutate-fail` mode, which must block); each fails when its branch is broken.
+4. Hazard 23's $4.83619668 total had no committed source. It is now in the run 6 fixture's provenance (`runTotal`) and pinned by the evidence test.
+5. The learnings and this status were not yet updated. Done.
+
+**Follow-ups, not changed:** `docs/features/implementation-phase-retry/plan.md` (`Reconciled`, not built) quotes preview ceilings (`implementation=12`, `16`) that do not count the self-review dispatch; it needs one more on each when it is built. `validateAgentResult` also throws on a `null` patch or file entry in a phase or remediation reply; there the throw is not caught and the run blocks. That predates this plan. The CRLF case in review finding 2 stays open, and no paid run has exercised the self-review (open decision 2).

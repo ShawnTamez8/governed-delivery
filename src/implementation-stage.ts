@@ -8,7 +8,8 @@ import { dispatchOnce } from "./dispatch.ts";
 import { validateAgentResult, type ProposedPatch } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import { worktreePath as governanceWorktreePath } from "./paths.ts";
-import { buildImplementationAuthorPrompt } from "./prompts.ts";
+import { buildImplementationAuthorPrompt, buildImplementationSelfReviewPrompt } from "./prompts.ts";
+import { critiqueAuditEntries, validateImplementationSelfReview } from "./implementation-self-review.ts";
 import { formatImplementationGate } from "./handoff.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
@@ -50,6 +51,24 @@ export type ImplementationStageResult =
  * No test seam exists here, unlike `runPlanStage`'s `deps.selectPanel`: every
  * guard is reachable through the fixture executor or store-constructed state,
  * and Task 7 proves each.
+ *
+ * **The self-review** (`docs/features/implementation-self-review/plan.md`).
+ * After the last phase commits, the implementer reads its own complete change
+ * once, in one more dispatch, and returns a critique and any fixes, which pass
+ * through the same patch guards and commit before verification. Failures split
+ * in two. A reply the stage cannot use (a failed dispatch, a body that does not
+ * parse, a refused result, a status other than proposed, a malformed critique or
+ * patch envelope) is recorded as `implementation.selfreview.skipped` and the
+ * stage passes on the last phase's commit: every phase has already spent, and
+ * code review still reads the whole change independently. A guard failure (a
+ * moved head, a dirty tree, or any patch refusal) blocks the run, because it
+ * shows the boundary failed. This differs from the spec and plan self-critique,
+ * which block on any failure because they fail before most of a run's spend.
+ *
+ * The self-review is the author's own pass, not review (hazard 14): code review
+ * remains the independent check. Its `agent_run` row reads
+ * `configured_standalone` like every dispatch; that value describes process
+ * isolation, not review independence.
  */
 export async function runImplementationStage(
   store: Store,
@@ -110,6 +129,13 @@ export async function runImplementationStage(
   const binding = requireFrozenBinding(profile, executor, "implementation");
   if (!binding.ok) {
     return { ok: false, reason: binding.reason };
+  }
+  // The stage ends with the implementer's self-review, so a run frozen before
+  // the implementer gained that output refuses here, before the stage row or
+  // the worktree exists. A missing implementer is refused by name below.
+  const frozenImplementer = profile.agents.find((a) => a.id === "implementer");
+  if (frozenImplementer && !frozenImplementer.outputs.includes("implementation-self-review")) {
+    return { ok: false, reason: "configured agent implementer does not allow implementation-self-review output" };
   }
 
   const approval = store.getApproval(runId);
@@ -252,11 +278,14 @@ export async function runImplementationStage(
 
   // Git is spawned directly, no shell and no npm shim, the way
   // `resolveStartingCommit` spawns it. A non-zero exit returns git's stderr
-  // as the detail; the caller names the operation it was attempting.
+  // as the detail; the caller names the operation it was attempting. The
+  // buffer is code review's: the self-review reads the whole diff, and at
+  // Node's 1 MiB default a large diff failed here instead of reaching the
+  // prompt ceiling, which skips the self-review by name.
   const runGit = (args: string[], cwd: string): { ok: true; stdout: string } | { ok: false; detail: string } => {
     let result;
     try {
-      result = spawnSync("git", args, { cwd, encoding: "utf8" });
+      result = spawnSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
     } catch (err) {
       return { ok: false, detail: (err as Error).message };
     }
@@ -523,6 +552,116 @@ export async function runImplementationStage(
         `phase ${phase.index} of ${phase.count}: tasks ${phase.firstTask}-${phase.firstTask + phase.tasks.length - 1}; base=${phaseBase}; head=${finalHead}`
       );
     }
+
+    // --- the self-review, once, after the last phase ---
+    const base = finalHead;
+    const selfReviewFailed = (reason: string): ImplementationStageResult =>
+      abort(stage.id, "implementation.selfreview.failed", `self-review: ${reason}`);
+    // The same commands code review uses to describe the change.
+    const changedNames = runGit(["diff", "--name-only", "-z", headAtProposal, base], worktreePath);
+    if (!changedNames.ok) {
+      return selfReviewFailed(`cannot read the changed paths for ${headAtProposal}..${base}: ${changedNames.detail}`);
+    }
+    const changedDiff = runGit(["diff", "--no-color", headAtProposal, base], worktreePath);
+    if (!changedDiff.ok) {
+      return selfReviewFailed(`cannot read the diff for ${headAtProposal}..${base}: ${changedDiff.detail}`);
+    }
+    const reviewDispatch = await dispatchOnce(
+      store,
+      executor,
+      {
+        stageId: stage.id,
+        agent: author.id,
+        role: "author",
+        requestedModel: implementerSettings.model,
+        requestedEffort: implementerSettings.effort,
+        setting: author.id,
+        prompt: buildImplementationSelfReviewPrompt(
+          author,
+          planContent,
+          specContent,
+          scope,
+          base,
+          scope.filter((p) => existsSync(join(worktreePath, p))),
+          changedNames.stdout.split("\0").filter((p) => p !== ""),
+          changedDiff.stdout,
+          profile.verification
+        ),
+        invocation: { cwd: worktreePath },
+      },
+      rootDir
+    );
+    // The boundary is checked before the reply is read, and whether or not the
+    // dispatch succeeded: a failed dispatch that also touched the tree blocks.
+    const headAfterReview = runGit(["rev-parse", "HEAD"], worktreePath);
+    if (!headAfterReview.ok) {
+      return selfReviewFailed(`cannot read the worktree head: ${headAfterReview.detail}`);
+    }
+    if (headAfterReview.stdout.trim() !== base) {
+      return selfReviewFailed(`the worktree head moved during the self-review dispatch: expected ${base}, found ${headAfterReview.stdout.trim()}`);
+    }
+    const cleanAfterReview = checkWorktreeClean(worktreePath);
+    if (!cleanAfterReview.ok) {
+      return selfReviewFailed(
+        cleanAfterReview.detail !== undefined
+          ? `cannot check worktree cleanliness after the self-review dispatch: ${cleanAfterReview.detail}`
+          : `worktree is not clean after the self-review dispatch: ${cleanAfterReview.entries.join(", ")}`
+      );
+    }
+    const reply = readSelfReviewReply(
+      author.id,
+      reviewDispatch.ok ? { ok: true, resultText: reviewDispatch.envelope.resultText } : reviewDispatch
+    );
+    if (!reply.ok) {
+      // The reason goes last because it is free text.
+      audit(stage.id, "implementation.selfreview.skipped", `base=${base}; reason=self-review: ${reply.reason}`);
+    } else {
+      // A file returned unchanged stages nothing, and the applier refuses a patch
+      // whose staged set differs from the proposed set. Only an approved scope
+      // path is dropped; anything else reaches the applier's own refusal.
+      const dropped: string[] = [];
+      const kept: ProposedPatch[] = [];
+      for (const patch of reply.patches) {
+        const files: ProposedPatch["files"] = [];
+        for (const file of patch.files) {
+          if (file.action === "modify" && scope.includes(file.path)) {
+            const same = sameBlobAtCommit(worktreePath, base, file.path, file.content as string);
+            if (!same.ok) return selfReviewFailed(same.reason);
+            if (same.same) {
+              dropped.push(file.path);
+              continue;
+            }
+          }
+          files.push(file);
+        }
+        if (files.length > 0) kept.push({ ...patch, files });
+      }
+      let reviewedHead = base;
+      if (kept.length > 0) {
+        const applied = applyProposedPatches({
+          worktreePath,
+          runId,
+          slug: run.slug,
+          scope,
+          proposalBase: base,
+          patches: kept,
+          commitMessage: `bw run ${runId}: self-review (base ${base.slice(0, 8)})`,
+          audit: (action, summary) =>
+            audit(stage.id, `implementation.selfreview.${action}`, summary.replace(`; run ${runId}`, "")),
+        });
+        if (!applied.ok) return selfReviewFailed(applied.reason);
+        reviewedHead = applied.resultingCommit;
+      }
+      const recorded = critiqueAuditEntries(reply.critique);
+      for (const entry of recorded) audit(stage.id, "implementation.selfreview.critique", entry);
+      audit(
+        stage.id,
+        "implementation.selfreview.pass",
+        `critique=${reply.critique.length}; recorded=${recorded.length}; patches=${kept.length}; dropped=${dropped.length > 0 ? dropped.join(", ") : "none"}; base=${base}; head=${reviewedHead}`
+      );
+      finalHead = reviewedHead;
+    }
+
     store.completeStage(stage.id, worktreePath, "pass");
     // The handoff carries both commits (step 8, task 2): the base the
     // implementer's patches bound to and the final head. Verification and
@@ -543,4 +682,99 @@ export async function runImplementationStage(
     store.setRunStatus(runId, "blocked");
     return { ok: false, reason };
   }
+}
+
+/**
+ * The self-review reply, or the reason the stage cannot use it. Every refusal
+ * here is a skip, never a block: the guard checks have already run.
+ * `validateAgentResult` reads a patch or file entry's fields without checking
+ * that the entry is an object, so a `null` entry throws there; the throw is
+ * caught and becomes a skip like any other malformed envelope.
+ */
+function readSelfReviewReply(
+  agentId: string,
+  dispatch: { ok: true; resultText: string } | { ok: false; reason: string }
+): { ok: true; critique: string[]; patches: ProposedPatch[] } | { ok: false; reason: string } {
+  if (!dispatch.ok) {
+    return { ok: false, reason: `dispatch failed: ${dispatch.reason}` };
+  }
+  const body = extractJsonBody(dispatch.resultText);
+  if (body.kind === "refused") {
+    return { ok: false, reason: `implementer body refused: ${body.reason}` };
+  }
+  let result: ReturnType<typeof validateAgentResult>;
+  try {
+    result = validateAgentResult(agentId, body.value);
+  } catch (err) {
+    return { ok: false, reason: `implementer result refused: ${(err as Error).message}` };
+  }
+  if (!result.ok) {
+    return { ok: false, reason: `implementer result refused: ${result.reason}` };
+  }
+  if (result.value.status !== "proposed") {
+    return { ok: false, reason: `implementer returned status ${result.value.status}, not proposed` };
+  }
+  const changes = result.value.proposedContentChanges;
+  const selfReview =
+    typeof changes === "object" && changes !== null && !Array.isArray(changes)
+      ? (changes as { selfReview?: unknown }).selfReview
+      : undefined;
+  const critique = validateImplementationSelfReview(selfReview);
+  if (!critique.ok) {
+    return { ok: false, reason: critique.reason };
+  }
+  const patches = result.value.proposedPatches ?? [];
+  for (const patch of patches) {
+    if (patch.files.length === 0) {
+      return { ok: false, reason: "a proposed patch has no files" };
+    }
+    for (const file of patch.files) {
+      if (typeof file.content !== "string") {
+        return { ok: false, reason: `proposed file ${file.path} has no string content` };
+      }
+    }
+  }
+  return { ok: true, critique: critique.value.critique, patches };
+}
+
+/**
+ * Whether `content`, staged at `path`, would produce the blob `commit` already
+ * holds there. `--path` applies the path's line-ending and filter conversion,
+ * so content that differs only in line endings from an LF blob under
+ * `core.autocrlf` counts as the same. One case disagrees with `git add`: when
+ * the committed blob itself holds CRLF, `git add` keeps CRLF content as it is
+ * while `hash-object` still converts it, so an unchanged file is not dropped
+ * and the applier refuses its patch. Files the phases create are LF blobs.
+ * A path absent at `commit` is not the same; a git failure is named.
+ */
+function sameBlobAtCommit(
+  worktreePath: string,
+  commit: string,
+  path: string,
+  content: string
+): { ok: true; same: boolean } | { ok: false; reason: string } {
+  const atCommit = spawnSync("git", ["rev-parse", "--verify", "--quiet", `${commit}:${path}`], {
+    cwd: worktreePath,
+    encoding: "utf8",
+  });
+  if (atCommit.error) {
+    return { ok: false, reason: `cannot read ${path} at ${commit}: ${atCommit.error.message}` };
+  }
+  // `--verify --quiet` exits 1 with no output when the path is absent.
+  if (atCommit.status === 1 && (atCommit.stdout ?? "").trim() === "") {
+    return { ok: true, same: false };
+  }
+  if (atCommit.status !== 0) {
+    return { ok: false, reason: `cannot read ${path} at ${commit}: ${(atCommit.stderr ?? "").trim() || `git rev-parse exited with code ${atCommit.status}`}` };
+  }
+  const proposed = spawnSync("git", ["hash-object", `--path=${path}`, "--stdin"], {
+    cwd: worktreePath,
+    encoding: "utf8",
+    input: content,
+  });
+  if (proposed.error || proposed.status !== 0) {
+    const detail = proposed.error?.message ?? ((proposed.stderr ?? "").trim() || `git hash-object exited with code ${proposed.status}`);
+    return { ok: false, reason: `cannot hash the proposed content of ${path}: ${detail}` };
+  }
+  return { ok: true, same: proposed.stdout.trim() === atCommit.stdout.trim() };
 }

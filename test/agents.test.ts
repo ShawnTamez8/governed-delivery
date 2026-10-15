@@ -138,7 +138,7 @@ test("the two review output kinds are disjoint across the registry", () => {
   }
 });
 
-test("the implementer allows patches output, nothing else, and never reviews", () => {
+test("the implementer allows patches output, no document or review output, and never reviews", () => {
   // Section 9: a dispatcher that derived the required output from the result
   // kind rather than the performer would let another author satisfy the
   // implementation stage. The refusal is asserted here before the stage that
@@ -189,9 +189,10 @@ test("each author allows its own self-critique output and never the other's", ()
 test("no reviewer can produce either self-critique result kind", () => {
   // Hazard 14: self-critique is an author dispatch. A reviewer that could
   // return one would be a panel seat producing the artifact's own defence,
-  // which is the independence claim collapsing quietly.
+  // which is the independence claim collapsing quietly. The implementer's
+  // self-review is the same kind of pass (docs/features/implementation-self-review/plan.md).
   for (const agent of AGENTS.filter((a) => a.role === "reviewer")) {
-    for (const forbidden of ["spec-self-critique", "plan-self-critique"]) {
+    for (const forbidden of ["spec-self-critique", "plan-self-critique", "implementation-self-review"]) {
       assert.ok(!agent.outputs.includes(forbidden), `${agent.id} must not allow ${forbidden} output`);
     }
   }
@@ -225,6 +226,16 @@ test("no reviewer can produce either reconciliation result kind", () => {
     for (const forbidden of ["spec-reconciliation", "plan-reconciliation"]) {
       assert.ok(!agent.outputs.includes(forbidden), `${agent.id} must not allow ${forbidden} output`);
     }
+  }
+});
+
+test("only the implementer allows the implementation self-review output", () => {
+  // The self-review is the implementer's own pass after the last phase
+  // (docs/features/implementation-self-review/plan.md); the dispatcher derives the
+  // required output from the performer, so no other agent may carry it.
+  assert.ok(agentById("implementer")!.outputs.includes("implementation-self-review"), "the implementer reviews its own change");
+  for (const agent of AGENTS.filter((a) => a.id !== "implementer")) {
+    assert.ok(!agent.outputs.includes("implementation-self-review"), `${agent.id} must not allow implementation-self-review output`);
   }
 });
 

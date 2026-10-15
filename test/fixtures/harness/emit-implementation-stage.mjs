@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -23,12 +24,16 @@ if (!baseCommitMatch) {
 }
 const baseCommit = baseCommitMatch[1];
 
+// The marker sentence buildImplementationSelfReviewPrompt states, checked before
+// the phase: the self-review prompt carries no phase.
+const isSelfReview = stdin.includes("This is your own self-review of the complete change");
+
 // `This is phase K of N.` — stated by buildImplementationAuthorPrompt.
-const phaseMatch = /This is phase (\d+) of (\d+)\./.exec(stdin);
-if (!phaseMatch) {
+const phaseMatch = isSelfReview ? null : /This is phase (\d+) of (\d+)\./.exec(stdin);
+if (!isSelfReview && !phaseMatch) {
   throw new Error("emit-implementation-stage: no phase found in the prompt");
 }
-const phaseIndex = Number(phaseMatch[1]);
+const phaseIndex = isSelfReview ? 0 : Number(phaseMatch[1]);
 // The phase a failing mode acts on; 0 matches no phase.
 const targetPhase = Number(process.env.EMIT_FAIL_PHASE ?? "0");
 
@@ -62,7 +67,10 @@ function listAfter(heading) {
     .filter((line) => line !== "" && line !== "none.");
 }
 
-const mode = process.env.EMIT_MODE ?? "ok";
+const emitMode = process.env.EMIT_MODE ?? "ok";
+// In the self-review modes every phase answers as ok does, so those modes run
+// against a one-phase plan; the self-review itself answers by emitMode below.
+const mode = emitMode.startsWith("self-review-") ? "ok" : emitMode;
 const paths = scopePaths();
 
 // The content embeds a committed project file read from the process working
@@ -110,7 +118,8 @@ function proposed(files, base = baseCommit) {
 // reduced: init, one partial-message chunk, the assistant message, and the
 // result line last. `test/harness-stream-fixtures.test.ts` checks the shape.
 function emit(agentResult) {
-  const resultText = JSON.stringify(agentResult);
+  // A string is emitted as the reply text itself (the self-review-not-json mode).
+  const resultText = typeof agentResult === "string" ? agentResult : JSON.stringify(agentResult);
   const session_id = "fixture-session";
   for (const line of [
     { type: "system", subtype: "init", session_id, model: "fixture-model" },
@@ -134,8 +143,70 @@ function emit(agentResult) {
   }
 }
 
+// The self-review's reply (docs/features/implementation-self-review/plan.md). Its
+// patches are built from the prompt's base commit and scope and from the
+// checkout, never from a literal, like the phase modes above.
+function selfReview(critique, files) {
+  return {
+    status: "proposed",
+    agent: "implementer",
+    role: "author",
+    executor: "claude-code",
+    summary: "fixture self-review",
+    proposedContentChanges: { selfReview: { critique } },
+    proposedPatches: files === null ? [] : [{ baseCommit, files }],
+  };
+}
+
+function selfReviewResult() {
+  const clean = () => selfReview(["fixture self-review: checked every task and criterion, found nothing to fix"], null);
+  switch (emitMode) {
+    case "self-review-fix":
+      return selfReview(["fixture self-review: appended a line"],
+        [{ path: paths[0], action: "modify", content: `${readFileSync(paths[0], "utf8")}// self-review\n` }]);
+    case "self-review-unchanged":
+      return selfReview(["fixture self-review: returned a file unchanged"],
+        [{ path: paths[0], action: "modify", content: readFileSync(paths[0], "utf8") }]);
+    case "self-review-empty-critique":
+      return selfReview([], null);
+    case "self-review-not-json":
+      return "I reviewed the change and everything looks fine.";
+    case "self-review-bad-patch":
+      return selfReview(["fixture self-review: a patch with no files"], []);
+    case "self-review-blocked":
+      return { status: "blocked", agent: "implementer", role: "author", executor: "claude-code", summary: "fixture self-review refused" };
+    case "self-review-long-critique":
+      return selfReview(["x".repeat(2001), ...Array.from({ length: 50 }, (_, index) => `fixture entry ${index + 2}`)], null);
+    case "self-review-out-of-scope":
+      return selfReview(["fixture self-review: wrote outside the scope"], [file("src/never-approved.ts")]);
+    case "self-review-null-patch":
+      // validateAgentResult reads a patch's fields without checking it is an object.
+      return { ...selfReview(["fixture self-review: a null patch entry"], null), proposedPatches: [null] };
+    case "self-review-mutate":
+      writeFileSync("unreported.txt", "fixture wrote this\n");
+      return clean();
+    case "self-review-mutate-fail":
+      // A failed dispatch that also touched the tree: no envelope, a non-zero exit.
+      writeFileSync("unreported.txt", "fixture wrote this\n");
+      process.exit(1);
+    case "self-review-commit": {
+      appendFileSync(paths[0], "// committed by the fixture\n");
+      for (const args of [["add", "--", paths[0]], ["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture commit"]]) {
+        const git = spawnSync("git", args, { encoding: "utf8" });
+        if (git.status !== 0) throw new Error(`emit-implementation-stage: git ${args.join(" ")} failed: ${git.stderr}`);
+      }
+      return clean();
+    }
+    default:
+      // Every phase mode gets a clean self-review, so existing tests are unchanged by it.
+      return clean();
+  }
+}
+
 let agentResult;
-if (mode === "ok") {
+if (isSelfReview) {
+  agentResult = selfReviewResult();
+} else if (mode === "ok") {
   agentResult = proposed(paths.map((p) => file(p)));
 } else if (mode === "base-mismatch") {
   agentResult = proposed(paths.map((p) => file(p)), "0".repeat(40));

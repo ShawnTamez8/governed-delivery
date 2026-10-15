@@ -971,6 +971,28 @@ test("frozen named authors and staffing are checked without an executor probe", 
   }, { freeze }));
 });
 
+test("an implementer frozen without the self-review output stops implementation by name and leaves code review eligible", async () => {
+  // docs/features/implementation-self-review/plan.md, Task 5: implementation ends
+  // with the implementer's self-review; code review's remediation needs only patches.
+  const freeze = (p: Profile) => {
+    const implementer = p.agents.find((a) => a.id === "implementer")!;
+    implementer.outputs = implementer.outputs.filter((o) => o !== "implementation-self-review");
+  };
+  const reason = "configured agent implementer does not allow implementation-self-review output";
+  await withBoundary(6, ({ store, root, runId }) => {
+    const snapshot = readRunSnapshot(store, root, runId).snapshot;
+    assert.equal(snapshot.workflowAction.group, "implementation");
+    assert.equal(snapshot.workflowAction.eligible, false);
+    assert.ok(snapshot.workflowAction.reasons.some((r) => r.code === "setup_required" && r.reason === reason),
+      JSON.stringify(snapshot.workflowAction.reasons));
+  }, { freeze });
+  await withBoundary(8, ({ store, root, runId }) => {
+    const snapshot = readRunSnapshot(store, root, runId).snapshot;
+    assert.equal(snapshot.workflowAction.group, "code_review");
+    assert.equal(snapshot.workflowAction.eligible, true, JSON.stringify(snapshot.workflowAction.reasons));
+  }, { freeze });
+});
+
 test("current policy affects approval readiness but never revokes an already granted boundary", async () => {
   const freeze = (profile: Profile) => { profile.policy.codeReviewMaxRounds = profile.policy.codeReviewMaxRounds === 1 ? 2 : 1; };
   await withBoundary(3, ({ store, root, runId }) => {

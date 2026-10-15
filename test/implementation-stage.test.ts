@@ -21,11 +21,12 @@ import { parseImplementationGate } from "../src/handoff.ts";
 import { policyHash } from "../src/policy.ts";
 import { deliveryCoverage } from "../src/delivery-coverage.ts";
 import { validateAgentResult } from "../src/agent-result.ts";
-import { parseEnvelope } from "../src/harness.ts";
+import { parseEnvelope, PROMPT_MAX_BYTES } from "../src/harness.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
 import { IMPLEMENTER } from "../src/agents/implementer.ts";
-import { buildImplementationAuthorPrompt } from "../src/prompts.ts";
+import { buildImplementationAuthorPrompt, buildImplementationSelfReviewPrompt } from "../src/prompts.ts";
+import { runVerificationStage } from "../src/verification-stage.ts";
 import { planPhases, validatePlanDoc } from "../src/plan-doc.ts";
 
 /**
@@ -172,6 +173,8 @@ function withApprovedRun(
     plan?: (specHash: string) => string;
     /** The commands frozen into the run's profile; the stage states them to the implementer. */
     verification?: VerificationConfig;
+    /** The committed base.txt, which the emitter embeds in every file it writes. */
+    baseContent?: string;
   } = {}
 ): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "bw-implementation-"));
@@ -179,7 +182,7 @@ function withApprovedRun(
   try {
     const init = git(root, ["init", "-q"]);
     assert.equal(init.status, 0, `git init failed: ${init.stderr}`);
-    writeFileSync(join(root, "base.txt"), BASE_MARKER);
+    writeFileSync(join(root, "base.txt"), opts.baseContent ?? BASE_MARKER);
     if (opts.gitignore !== undefined) {
       writeFileSync(join(root, ".gitignore"), opts.gitignore);
     }
@@ -373,7 +376,8 @@ test("the phase-1 implementer prompt carries the frozen profile's commands, and 
           "SELECT ar.input_hash FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? ORDER BY ar.id",
           [runId]
         );
-        assert.equal(rows.length, 1, "one phase, one dispatch");
+        // One phase, then the self-review after it.
+        assert.equal(rows.length, 2, "one phase dispatch and one self-review dispatch");
         const gate = store.query<{ summary: string }>(
           "SELECT summary FROM audit WHERE run_id = ? AND action = 'implementation.gate.pass' ORDER BY id DESC LIMIT 1",
           [runId]
@@ -841,7 +845,11 @@ test("the implementer dispatch records the frozen effort and its setting", async
     );
     assert.deepEqual(
       rows.map((r) => ({ ...r })),
-      [{ setting: "implementer", requested_effort: "xhigh", requested_model: MODEL }]
+      // The phase and the self-review after it both run under the implementer setting.
+      [
+        { setting: "implementer", requested_effort: "xhigh", requested_model: MODEL },
+        { setting: "implementer", requested_effort: "xhigh", requested_model: MODEL },
+      ]
     );
   });
 });
@@ -1009,15 +1017,15 @@ test("the 57-task plan team-notes run 6 produced is implemented in six phases, o
         assert.equal(result.ok, true, (result as { reason?: string }).reason);
         if (!result.ok) return;
 
-        // Six dispatches, each by the implementer setting, each with its own
-        // prompt: five full phases and the remainder.
-        assert.equal(agentRunCount(store, runId), 6);
+        // Seven dispatches, each by the implementer setting, each with its own
+        // prompt: five full phases, the remainder, and the self-review after them.
+        assert.equal(agentRunCount(store, runId), 7);
         const rows = store.query<{ setting: string; input_hash: string }>(
           "SELECT ar.setting, ar.input_hash FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? ORDER BY ar.id",
           [runId]
         );
         assert.deepEqual([...new Set(rows.map((r) => r.setting))], ["implementer"]);
-        assert.equal(new Set(rows.map((r) => r.input_hash)).size, 6, "each phase sent a different prompt");
+        assert.equal(new Set(rows.map((r) => r.input_hash)).size, 7, "each phase and the self-review sent a different prompt");
 
         const events = store
           .query<{ summary: string }>(
@@ -1127,7 +1135,7 @@ test("a later phase may modify a path an earlier phase added", async () => {
       async ({ store, root, runId, worktreePath }) => {
         const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
         assert.equal(result.ok, true, (result as { reason?: string }).reason);
-        assert.equal(agentRunCount(store, runId), 6);
+        assert.equal(agentRunCount(store, runId), 7, "six phases and the self-review");
         // Phase 6 wrote last, so the file carries its marker, not phase 1's.
         assert.ok(readFileSync(join(worktreePath, "src", "p1.ts"), "utf8").endsWith("// phase 6\n"));
       },
@@ -1161,7 +1169,7 @@ test("each phase is told which scope paths exist in the worktree now, so a later
       async ({ store, root, runId, worktreePath }) => {
         const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
         assert.equal(result.ok, true, (result as { reason?: string }).reason);
-        assert.equal(agentRunCount(store, runId), 3);
+        assert.equal(agentRunCount(store, runId), 4, "three phases and the self-review");
         // Phase 1 added src/p1.ts; phases 2 and 3 modified it and added their own.
         assert.ok(readFileSync(join(worktreePath, "src", "p1.ts"), "utf8").endsWith("// phase 3\n"));
         assert.ok(existsSync(join(worktreePath, "src", "p2.ts")));
@@ -1182,7 +1190,7 @@ test("a plan of exactly the frozen ceiling is implemented, and one task more is 
         freezePolicyValues(store, root, runId, { implementationPhaseTasks: 2, implementationMaxPhases: 3 });
         const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
         assert.equal(result.ok, true, (result as { reason?: string }).reason);
-        assert.equal(agentRunCount(store, runId), 3, "six tasks at two per phase is three dispatches");
+        assert.equal(agentRunCount(store, runId), 4, "six tasks at two per phase is three dispatches, then the self-review");
       },
       { plan: tasksPlan(6), scope: phaseScope(3) }
     );
@@ -1217,7 +1225,7 @@ test("a nested plan is counted and split by its task items, not its lines", asyn
         freezePolicyValues(store, root, runId, { implementationPhaseTasks: 2, implementationMaxPhases: 3 });
         const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
         assert.equal(result.ok, true, (result as { reason?: string }).reason);
-        assert.equal(agentRunCount(store, runId), 3, "six items at two per phase is three dispatches");
+        assert.equal(agentRunCount(store, runId), 4, "six items at two per phase is three dispatches, then the self-review");
         const events = store
           .query<{ summary: string }>(
             "SELECT summary FROM audit WHERE run_id = ? AND action = 'implementation.phase.apply' ORDER BY id",
@@ -1359,7 +1367,7 @@ test("a base file one phase changes and a later phase restores drops out of the 
       async ({ store, root, runId, worktreePath }) => {
         const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
         assert.equal(result.ok, true, (result as { reason?: string }).reason);
-        assert.equal(agentRunCount(store, runId), 3);
+        assert.equal(agentRunCount(store, runId), 4, "three phases and the self-review");
         const { changed } = netRange(store, runId, worktreePath);
         assert.deepEqual(changed, ["src/p3.ts"], "base.txt was changed by phase 1 and restored by phase 2");
         assert.equal(readFileSync(join(worktreePath, "base.txt"), "utf8"), BASE_MARKER, "restored byte for byte");
@@ -1370,4 +1378,266 @@ test("a base file one phase changes and a later phase restores drops out of the 
       { plan: tasksPlan(30), scope: ["base.txt", "src/p2.ts", "src/p3.ts"] }
     );
   }, "phased-restore");
+});
+
+// --- the self-review after the last phase (docs/features/implementation-self-review/plan.md) ---
+
+/** The parsed `implementation.gate.pass` handoff of a passed stage. */
+function gateHandoff(store: Store, runId: number): { base: string; head: string } {
+  const gate = store.query<{ summary: string }>(
+    "SELECT summary FROM audit WHERE run_id = ? AND action = 'implementation.gate.pass' ORDER BY id DESC LIMIT 1",
+    [runId]
+  )[0]!;
+  const parsed = parseImplementationGate(gate.summary);
+  assert.ok(parsed.ok, parsed.ok ? "" : parsed.reason);
+  return parsed.value;
+}
+
+/** Every summary recorded under one audit action, in order. */
+function auditSummaries(store: Store, runId: number, action: string): string[] {
+  return store
+    .query<{ summary: string }>("SELECT summary FROM audit WHERE run_id = ? AND action = ? ORDER BY id", [runId, action])
+    .map((e) => e.summary);
+}
+
+/** The head the last phase committed, read from its own `implementation.phase.apply` event. */
+function lastPhaseHead(store: Store, runId: number): string {
+  const events = auditSummaries(store, runId, "implementation.phase.apply");
+  assert.ok(events.length > 0, "a phase was applied");
+  return /head=([0-9a-f]+)$/.exec(events[events.length - 1]!)![1]!;
+}
+
+test("a clean self-review is one more implementer dispatch, commits nothing, and records its critique", async () => {
+  await withApprovedRun(async ({ store, root, runId, head, worktreePath }) => {
+    const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const settings = store.query<{ setting: string }>(
+      "SELECT ar.setting FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? ORDER BY ar.id",
+      [runId]
+    );
+    assert.deepEqual(settings.map((r) => r.setting), ["implementer", "implementer"], "one phase, then the self-review");
+    const phaseHead = lastPhaseHead(store, runId);
+    const log = git(worktreePath, ["log", "--format=%s", `${head}..HEAD`]);
+    assert.equal(log.stdout.trim().split("\n").length, 2, "the projections and the phase: no self-review commit");
+    assert.equal(gateHandoff(store, runId).head, phaseHead, "the gate head is the last phase's commit");
+    const pass = auditSummaries(store, runId, "implementation.selfreview.pass");
+    assert.equal(pass.length, 1);
+    assert.equal(pass[0], `critique=1; recorded=1; patches=0; dropped=none; base=${phaseHead}; head=${phaseHead}`);
+    assert.equal(auditSummaries(store, runId, "implementation.selfreview.critique").length, 1);
+    assert.equal(auditSummaries(store, runId, "implementation.selfreview.skipped").length, 0);
+    assert.equal(verifyAuditChain(store), null);
+  });
+});
+
+test("a self-review fix commits after the last phase, becomes the gate head, and is what verification reads", async () => {
+  await withMode(async () => {
+    await withApprovedRun(async ({ store, root, runId, head, worktreePath }) => {
+      const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+      assert.equal(result.ok, true, (result as { reason?: string }).reason);
+      const phaseHead = lastPhaseHead(store, runId);
+      const tip = git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim();
+      assert.notEqual(tip, phaseHead, "the self-review committed");
+      assert.equal(git(worktreePath, ["rev-parse", "HEAD~1"]).stdout.trim(), phaseHead, "directly after the last phase");
+      const messages = git(worktreePath, ["log", "--format=%s", `${head}..HEAD`]).stdout.trim().split("\n");
+      assert.equal(messages[0], `bw run ${runId}: self-review (base ${phaseHead.slice(0, 8)})`);
+      assert.ok(readFileSync(join(worktreePath, "src", "a1.ts"), "utf8").endsWith("// self-review\n"));
+      assert.equal(gateHandoff(store, runId).head, tip, "the gate head is the self-review's commit");
+      assert.equal(auditSummaries(store, runId, "implementation.selfreview.patch.apply").length, 1);
+      assert.equal(
+        auditSummaries(store, runId, "implementation.selfreview.pass")[0],
+        `critique=1; recorded=1; patches=1; dropped=none; base=${phaseHead}; head=${tip}`
+      );
+      const verification = await runVerificationStage(store, { runId, rootDir: root });
+      assert.equal(verification.ok, true, (verification as { reason?: string }).reason);
+      const verified = auditSummaries(store, runId, "verification.gate.pass");
+      assert.ok(verified[0]!.startsWith(`verified ${tip} in `), verified[0]);
+    });
+  }, "self-review-fix");
+});
+
+test("a self-review that returns a file unchanged drops it, commits nothing, and names it", async () => {
+  await withMode(async () => {
+    await withApprovedRun(async ({ store, root, runId, head, worktreePath }) => {
+      const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+      assert.equal(result.ok, true, (result as { reason?: string }).reason);
+      const phaseHead = lastPhaseHead(store, runId);
+      assert.equal(git(worktreePath, ["log", "--format=%s", `${head}..HEAD`]).stdout.trim().split("\n").length, 2);
+      assert.equal(gateHandoff(store, runId).head, phaseHead);
+      assert.equal(
+        auditSummaries(store, runId, "implementation.selfreview.pass")[0],
+        `critique=1; recorded=1; patches=0; dropped=${SCOPE[0]}; base=${phaseHead}; head=${phaseHead}`
+      );
+    });
+  }, "self-review-unchanged");
+});
+
+for (const [mode, expected] of [
+  ["self-review-empty-critique", /self-review critique must not be empty/],
+  ["self-review-not-json", /implementer body refused: /],
+  ["self-review-bad-patch", /a proposed patch has no files/],
+  ["self-review-blocked", /implementer returned status blocked, not proposed/],
+  // A null entry makes validateAgentResult throw; the stage catches it as a refusal.
+  ["self-review-null-patch", /implementer result refused: /],
+] as const) {
+  test(`a self-review reply the stage cannot use is skipped, and the stage passes on the last phase (${mode})`, async () => {
+    await withMode(async () => {
+      await withApprovedRun(async ({ store, root, runId, head, worktreePath }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        assert.equal(store.getRun(runId)!.status, "in_progress");
+        const phaseHead = lastPhaseHead(store, runId);
+        const skipped = auditSummaries(store, runId, "implementation.selfreview.skipped");
+        assert.equal(skipped.length, 1);
+        assert.ok(skipped[0]!.startsWith(`base=${phaseHead}; reason=self-review: `), skipped[0]);
+        assert.match(skipped[0]!, expected);
+        assert.equal(auditSummaries(store, runId, "implementation.selfreview.pass").length, 0);
+        assert.equal(auditSummaries(store, runId, "implementation.selfreview.critique").length, 0);
+        assert.equal(git(worktreePath, ["log", "--format=%s", `${head}..HEAD`]).stdout.trim().split("\n").length, 2);
+        assert.equal(gateHandoff(store, runId).head, phaseHead, "the gate head is the last phase's commit");
+      });
+    }, mode);
+  });
+}
+
+test("a long self-review critique is recorded bounded: 50 entries, the long one cut with its length named", async () => {
+  await withMode(async () => {
+    await withApprovedRun(async ({ store, root, runId }) => {
+      const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+      assert.equal(result.ok, true, (result as { reason?: string }).reason);
+      const critique = auditSummaries(store, runId, "implementation.selfreview.critique");
+      assert.equal(critique.length, 50);
+      assert.ok(critique[0]!.endsWith("(cut at 2000 of 2001 characters)"), critique[0]!.slice(-60));
+      assert.match(auditSummaries(store, runId, "implementation.selfreview.pass")[0]!, /^critique=51; recorded=50; /);
+    });
+  }, "self-review-long-critique");
+});
+
+/** A self-review guard refusal: the stage and run block, and the phases' commits stay. */
+async function expectSelfReviewBlock(
+  mode: string,
+  check: (ctx: Ctx, reason: string, phaseHead: string) => void
+): Promise<void> {
+  await withMode(async () => {
+    await withApprovedRun(async (ctx) => {
+      const { store, root, runId, worktreePath } = ctx;
+      const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.ok(result.reason.startsWith("self-review: "), result.reason);
+      assert.deepEqual(auditSummaries(store, runId, "implementation.selfreview.failed"), [result.reason]);
+      const stage = store.getStageChain(runId).find((s) => s.kind === "implementation")!;
+      assert.equal(stage.status, "blocked");
+      assert.equal(stage.gate_result, "block");
+      assert.equal(store.getRun(runId)!.status, "blocked");
+      assert.equal(existsSync(worktreePath), true, "the worktree survives the block");
+      assert.equal(auditSummaries(store, runId, "implementation.gate.pass").length, 0);
+      check(ctx, result.reason, lastPhaseHead(store, runId));
+    });
+  }, mode);
+}
+
+test("a self-review patch outside the signed scope blocks the run by name, and the phase commits stay", () =>
+  expectSelfReviewBlock("self-review-out-of-scope", ({ worktreePath, head }, reason, phaseHead) => {
+    assert.match(reason, /src\/never-approved\.ts/);
+    assert.equal(git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim(), phaseHead, "nothing was committed");
+    assert.equal(git(worktreePath, ["log", "--format=%s", `${head}..HEAD`]).stdout.trim().split("\n").length, 2);
+  }));
+
+test("a self-review dispatch that writes into the tree blocks the run naming the path", () =>
+  expectSelfReviewBlock("self-review-mutate", ({ worktreePath }, reason) => {
+    assert.match(reason, /^self-review: worktree is not clean after the self-review dispatch: .*unreported\.txt/);
+    assert.ok(existsSync(join(worktreePath, "unreported.txt")), "the write is retained as evidence");
+  }));
+
+test("a failed self-review dispatch that also wrote into the tree blocks the run, not skips it", () =>
+  expectSelfReviewBlock("self-review-mutate-fail", ({ store, runId }, reason) => {
+    assert.match(reason, /^self-review: worktree is not clean after the self-review dispatch: .*unreported\.txt/);
+    assert.equal(auditSummaries(store, runId, "implementation.selfreview.skipped").length, 0);
+  }));
+
+test("a change whose diff is over the prompt ceiling skips the self-review as a failed dispatch", async () => {
+  // Two phases each add a file of about 600 KB (the emitter embeds base.txt), so
+  // the net diff passes 1 MiB while each phase reply stays under the result cap.
+  // The self-review prompt carries that diff, so dispatchOnce refuses it; the
+  // run goes on to code review, which refuses the same size by name.
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        const phaseHead = lastPhaseHead(store, runId);
+        const diff = git(join(root, ".governance", "worktrees", String(runId)), ["diff", "--no-color", gateHandoff(store, runId).base, phaseHead]);
+        assert.ok(diff.stdout.length > PROMPT_MAX_BYTES, `the diff is ${diff.stdout.length} bytes`);
+        assert.deepEqual(auditSummaries(store, runId, "implementation.selfreview.skipped"), [
+          `base=${phaseHead}; reason=self-review: dispatch failed: prompt exceeds ${PROMPT_MAX_BYTES} bytes`,
+        ]);
+        assert.equal(agentRunCount(store, runId), 2, "the refused prompt never reached the executor");
+        assert.equal(gateHandoff(store, runId).head, phaseHead);
+      },
+      { plan: tasksPlan(20), scope: phaseScope(2), baseContent: "a".repeat(600_000) }
+    );
+  }, "phased");
+});
+
+test("a self-review dispatch that commits in the checkout blocks the run naming both heads", () =>
+  expectSelfReviewBlock("self-review-commit", ({ worktreePath }, reason, phaseHead) => {
+    const moved = git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim();
+    assert.notEqual(moved, phaseHead);
+    assert.equal(
+      reason,
+      `self-review: the worktree head moved during the self-review dispatch: expected ${phaseHead}, found ${moved}`
+    );
+  }));
+
+test("the self-review prompt the stage sent has the last phase's commit as its base", async () => {
+  // `agent_run.input_hash` is the SHA-256 of the prompt sent. The prompt is
+  // rebuilt from the run's own plan, spec and signed scope, and the diff of the
+  // gate's range read with the commands the stage uses.
+  await withApprovedRun(async ({ store, root, runId, specPath, planPath, worktreePath }) => {
+    const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    const rows = store.query<{ input_hash: string }>(
+      "SELECT ar.input_hash FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? ORDER BY ar.id",
+      [runId]
+    );
+    assert.equal(rows.length, 2);
+    const { base } = gateHandoff(store, runId);
+    const phaseHead = lastPhaseHead(store, runId);
+    const names = git(worktreePath, ["diff", "--name-only", "-z", base, phaseHead]);
+    const diff = git(worktreePath, ["diff", "--no-color", base, phaseHead]);
+    assert.equal(names.status, 0, names.stderr);
+    assert.equal(diff.status, 0, diff.stderr);
+    const prompt = buildImplementationSelfReviewPrompt(
+      IMPLEMENTER,
+      readFileSync(planPath, "utf8"),
+      readFileSync(specPath, "utf8"),
+      SCOPE,
+      phaseHead,
+      SCOPE,
+      names.stdout.split("\0").filter((p) => p !== ""),
+      diff.stdout,
+      VERIFICATION
+    );
+    assert.ok(prompt.includes(`baseCommit must be exactly: ${phaseHead}`));
+    assert.equal(rows[1]!.input_hash, sha256Hex(prompt), "the stage sent the self-review built on the last phase's commit");
+  });
+});
+
+test("a run frozen with an implementer that lacks the self-review output is refused before the stage row", async () => {
+  await withApprovedRun(async ({ store, root, runId, worktreePath }) => {
+    const path = join(root, ".governance", "profiles", String(runId), "profile.json");
+    const profile = JSON.parse(readFileSync(path, "utf8")) as { agents: { id: string; outputs: string[] }[] };
+    profile.agents.find((a) => a.id === "implementer")!.outputs = ["patches"];
+    const serialized = canonicalJson(profile);
+    writeFileSync(path, serialized);
+    store.setProfileRef(runId, sha256Hex(serialized));
+
+    const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.reason, "configured agent implementer does not allow implementation-self-review output");
+    assert.equal(agentRunCount(store, runId), 0, "nothing was spent");
+    assert.equal(existsSync(worktreePath), false, "no worktree was created");
+    assert.ok(!store.getStageChain(runId).some((s) => s.kind === "implementation"), "no stage row was created");
+  });
 });

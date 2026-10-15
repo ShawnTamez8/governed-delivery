@@ -5,6 +5,6 @@ export const IMPLEMENTER: AgentDefinition = {
   role: "author",
   specialty: null,
   executor: "claude-code",
-  outputs: ["patches"],
+  outputs: ["patches", "implementation-self-review"],
   tools: [],
 };

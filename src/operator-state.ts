@@ -538,7 +538,9 @@ function frozenGroupReasons(profile: Profile, group: ExecutionGroup): ActionReas
     const authorId = group === "spec" || group === "plan" ? `${group}-author` : group === "decision" ? "spec-author" : "implementer";
     const requiredOutputs = group === "spec" || group === "plan"
       ? [group, `${group}-self-critique`, `${group}-reconciliation`]
-      : group === "decision" ? ["spec-reconciliation"] : ["patches"];
+      : group === "decision" ? ["spec-reconciliation"]
+        // Implementation ends with the implementer's self-review; code review's remediation needs only patches.
+        : group === "implementation" ? ["patches", "implementation-self-review"] : ["patches"];
     const author = profile.agents.find((a) => a.id === authorId);
     if (!author) fail(`configured agent ${authorId} is not in the frozen profile`);
     else if (author.role !== "author" || author.executor !== profile.executor.id) {

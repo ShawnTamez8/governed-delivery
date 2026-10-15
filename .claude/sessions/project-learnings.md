@@ -5,19 +5,22 @@ history and may name superseded state; Current state wins when they disagree. Th
 the system of record; machine-local memory is only a cache
 (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-10-14: code-review reconciler built and verified, uncommitted; self-review plan reconciled, not built; nothing committed)
+## Current state (2026-10-14: self-review built and reviewed, uncommitted; design split, reconciler and hazard-22 fix committed in `6282a6f`)
 
-**Working state (verified 2026-10-13 with `git status`, `git log`, `git rev-list`; HEAD and the hashes rechecked 2026-10-14):**
-- Branch `dashboard-restyling`, HEAD `fd756a7`, 5 commits ahead of `origin/dashboard-restyling`,
+**Working state (verified 2026-10-14 with `git status`, `git log`, `git rev-list`):**
+- Branch `dashboard-restyling`, HEAD `6282a6f`, 6 commits ahead of `origin/dashboard-restyling`,
   nothing pushed. Local `master` was 38 behind `origin/master` on 2026-10-10 (not rechecked).
-- 65 uncommitted entries (modified and untracked): the hazard-22 cleanup fix, the design split
-  (`src/design-split.ts` and the stage changes), its plans and reviews, the self-review plan and
-  review, the phase-retry, usage-limit and segments plans, four proposals, and fixtures under
-  `test/fixtures/recorded/`. Committing has not been requested.
-- The code-review reconciler (src, tests, fixtures, docs) is also uncommitted.
-- `CLAUDE.md` and `AGENTS.md` are byte-identical (sha256 prefix `6be7b6d0bd50ec54`).
-- Last full serial suite (2026-10-14, after the reconciler): 1506 tests, 1501 pass, 0 fail,
-  5 skipped; HEAD `fd756a7` unchanged before and after.
+- `6282a6f` committed all 88 pending entries at the operator's request: the hazard-22 cleanup,
+  the design split, the code-review reconciler, every plan, review and proposal listed below, and
+  the fixtures under `test/fixtures/recorded/`. Typecheck and `check:docs` were clean beforehand.
+- **Uncommitted:** the implementation self-review (work list item 2): new
+  `src/implementation-self-review.ts`, `test/implementation-self-review.test.ts` and
+  `test/code-review-run-6-evidence.test.ts`, edits to the implementation stage, prompts, agents,
+  operator output and state, readiness, the run 6 fixture, hazard 23, `ARCHITECTURE.md`,
+  `CLAUDE.md`/`AGENTS.md`, the run-buildworks skill and `scripts/doc-check.mjs`.
+- `CLAUDE.md` and `AGENTS.md` are byte-identical.
+- Last full serial suite (2026-10-14, self-review built, after the review fixes): see the
+  2026-10-14 "self-review built" entry.
 - **Running:** the dashboard, background shell `b0nulrtqy`, node PID 48908, started
   2026-10-13 11:20:50, `127.0.0.1:58508`, repositories file `dashboard-repositories.json` in the
   session scratchpad. Stop: `TaskStop b0nulrtqy` or `Stop-Process -Id 48908`. A restart mints a
@@ -45,8 +48,13 @@ the system of record; machine-local memory is only a cache
    calls to agree before rejecting (same model and prompt, so not shown to be independent) (about 1 percent wrong-reject, misses about half
    of #905-type findings); keep rejected findings visible to the operator; a quote proves the
    words exist, not that they support the rejection (hazard 16).
-2. **Self-review plan** `docs/features/implementation-self-review/plan.md` (`Reconciled`
-   2026-10-14, not built). Two reviews, both `reconciled`: `2026-10-13-…-review.md` (12 accepted)
+2. **Self-review plan** `docs/features/implementation-self-review/plan.md` (`Implemented`
+   2026-10-14, uncommitted, no paid run; the plan's implementation note lists deviations and
+   follow-ups). One implementer dispatch after the last phase; the stage ceiling is phases + 1;
+   hazard 23. An in-session reviewer subagent found 5 issues, none high: 3 fixed (64 MiB git
+   buffer, two untested skip paths, the run total now in the run 6 fixture), 1 deferred (a CRLF
+   blob makes the unchanged-file drop disagree with `git add`), 1 was these docs. Before the
+   build: `Reconciled` 2026-10-14. Two reviews, both `reconciled`: `2026-10-13-…-review.md` (12 accepted)
    and `2026-10-14-…-review.md` (10 accepted, 1 rejected). Operator decisions 2026-10-14: drop
    remediation rule 3 (the code-review reconciler is the only filter before remediation); a
    self-review reply failure records `implementation.selfreview.skipped` and continues, a guard
@@ -55,10 +63,13 @@ the system of record; machine-local memory is only a cache
    nothing and the patch applier would refuse them), the "last phase's commit" sentences, the
    #209 correction. Building it needs the operator's go-ahead; multi-sample reviewer lenses
    (item 4) were not folded in.
-3. **#209 correction (folded into the plan):** #209 (NUL byte in the email) already existed at the
-   reviewed commit `bb7f3f6`; the replay's control prompt found it in 1 of 10 calls (`control-4`),
-   plus `b-8` in variant B. The "5 of 10" recorded here earlier was the fixture's `201 NUL byte`
-   count. It was a round-1 recall miss as well as a missed remediation sweep.
+3. **#209 correction (folded into the plan, corrected again 2026-10-14):** #209 (NUL byte in the
+   email) already existed at the reviewed commit `bb7f3f6`. The replay's control prompt found #209
+   itself (`validateEmail`) in 1 of 10 calls (`control-4`), plus `b-8` in variant B; `control-6`
+   found a NUL byte in the email on the sign-in path (`authenticate()`), so 2 of 10 control calls
+   found a NUL-in-email defect. `test/code-review-run-6-evidence.test.ts` pins both counts. The
+   "5 of 10" recorded here earlier was the fixture's `201 NUL byte` count. It was a round-1
+   recall miss as well as a missed remediation sweep.
 4. **Reviewer recall** (`test/fixtures/recorded/code-review-replay-crew-chatter-run-6-security.json`,
    $0.227, 31 calls): the out-of-spec rule failed in 1 of 10 calls; each call reports about 2 of
    8+ known defects, so recall is the main miss; rewording the rule (variant B) cut real in-spec
@@ -72,7 +83,8 @@ the system of record; machine-local memory is only a cache
 7. **Feature 1, crew-chatter run 6:** blocked at code review round 2. Options: re-run with more
    rounds (`CODE_REVIEW_MAX_ROUNDS`, 2 now, up to 5), fix branch `gov/crew-chatter-foundation/6`
    at `ca0bd0e` by hand, or stop. Undecided. A blocked run cannot be an `--after` predecessor.
-8. **Commit** the uncommitted work, only when the operator asks.
+8. **Committed** 2026-10-14 as `6282a6f`; the self-review build after it is not committed.
+   Pushing has not been requested.
 9. **Older backlog, unchanged:** phase-retry plan (`Reconciled`, not built; see below),
    usage-limit summary plan (`docs/features/usage-limit-refusal-summary/plan.md`, `Proposed`,
    option B), toolchain-probe proposal, baseline-verification plan (`Reconciled`, not built),
@@ -111,9 +123,10 @@ the system of record; machine-local memory is only a cache
 streaming harness output (`85fccad`), per-agent model and effort settings (`c539e59`), phased
 implementation and the one-repair extractor (`3c19653`), verification-aware prompts and plan
 task items (`c9ef115`), Haiku 5.5 reviewer defaults (`e2d9bd0`), the eight-failure fixes
-(`fd756a7`). Seeded defaults in `src/policy.ts`: Opus 5.5 `high` authors, Haiku 5.5 `medium`
+(`fd756a7`), and in `6282a6f` the design split, the hazard-22 cleanup and the code-review
+reconciler. Seeded defaults in `src/policy.ts`: Opus 5.5 `high` authors, Haiku 5.5 `medium`
 spec and code reviewers, Sonnet 5.5 `medium` implementer; `--model` freezes only the reconciler.
-**Built, uncommitted:** the design split (`docs/features/design-split-into-features/plan.md`,
+**Details of `6282a6f`:** the design split (`docs/features/design-split-into-features/plan.md`,
 `Implemented`, two reviews reconciled; threshold 30 declared files; `new-run --after`), the
 hazard-22 cleanup in `verifyCommit`, and the code-review reconciler
 (`docs/features/code-review-reconciler/plan.md`, `Implemented` 2026-10-14; setting
@@ -312,3 +325,19 @@ counts (2026-10-10).
 
 ### Next up
 - Building the self-review plan needs the operator's go-ahead. Item 1's paid run, the passed-branch check, item 7 and committing are still the operator's.
+
+## 2026-10-14 — self-review built
+
+### Decisions and assumptions
+- The operator ran `/implement-plan` on the self-review plan, which was the go-ahead. The independent review used an in-session subagent, not the billed `/code-review ultra`. No paid run.
+
+### What failed
+- The plan said only `control-4` reports a `service.ts` email finding. `control-3` and `control-6` match that test too. Rule: before writing a count into a plan, run the exact filter the test will use.
+- The plan listed `test/delivery-stage.test.ts` as a blocker; its run is built in the store with no implementation dispatch, so nothing changed. Rule: before listing a test as affected, trace how its run is built.
+- The new `runGit` calls kept Node's 1 MiB default buffer, so a diff over 1 MiB blocked instead of skipping at the prompt ceiling. Only the review caught it. Rule: a new subprocess reading a diff copies the buffer size of the code that already reads diffs.
+
+### Verification
+- Full serial suite after the review fixes: 1542 tests, 1536 pass, 0 fail, 6 skipped; HEAD `6282a6f` unchanged (no stray commit). Typecheck and `check:docs` clean; smoke 13/13; every break-it failed its test and was restored.
+
+### Next up
+- A paid run that exercises the self-review (plan open decision 2) and committing both need the operator. Item 1's paid run, the passed-branch check and item 7 are unchanged.

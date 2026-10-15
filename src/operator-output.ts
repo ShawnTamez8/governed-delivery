@@ -49,8 +49,9 @@ export function formatRunPreview(rootDir: string, snapshot: RunSnapshot, groups:
     plan: 2 + policy.planReviewRounds * (policy.panelSizeMax + 1),
     // At most one dispatch per phase, and the frozen ceiling caps the phases.
     // The plan may not exist when the preview prints (run 6's did not), so its
-    // task count cannot be the ceiling.
-    implementation: policy.implementationMaxPhases,
+    // task count cannot be the ceiling. Plus one for the self-review after the
+    // last phase, which spends its dispatch even when it is skipped.
+    implementation: policy.implementationMaxPhases + 1,
     verification: 0,
     // Before each remediation, up to the frozen number of reconciler calls.
     code_review: policy.codeReviewPanelSize * policy.codeReviewMaxRounds +
@@ -65,7 +66,7 @@ export function formatRunPreview(rootDir: string, snapshot: RunSnapshot, groups:
     `Frozen verification commands: ${JSON.stringify(snapshot.configuration.verificationCommands)}`,
     `Document review: panel up to ${policy.panelSizeMax}; spec ${policy.specReviewRounds} round(s), plan ${policy.planReviewRounds} round(s). Each document group permits 1 author + 1 self-critique + rounds * (panel + 1 reconciler) dispatches. The spec group adds 1 split-proposal dispatch when the reviewed spec declares more than ${policy.designSplitPathThreshold} files.`,
     `Code review: ${policy.codeReviewPanelSize} reviewers * ${policy.codeReviewMaxRounds} panel(s), plus before each of at most ${policy.codeReviewMaxRounds - 1} remediation implementer dispatch(es) up to ${policy.codeReviewReconcilerCalls} code-review reconciler dispatches; each remediation is followed by frozen verification; blocking severity ${policy.codeReviewBlockingSeverity}.`,
-    `Implementation: one implementer dispatch per ${policy.implementationPhaseTasks} plan tasks, at most ${policy.implementationMaxPhases} phases; the phase count is known once the plan exists.`,
+    `Implementation: one implementer dispatch per ${policy.implementationPhaseTasks} plan tasks, at most ${policy.implementationMaxPhases} phases, then one implementer self-review dispatch; the phase count is known once the plan exists.`,
     `Dispatch ceilings for this range: ${groups.map((group) => `${group}=${ceilings[group]}`).join(", ")}; total ${groups.reduce((sum, group) => sum + ceilings[group], 0)}.`,
     "Consent covers EVERY listed group through approval or terminalization, including bounded internal remediation, not only the next group.",
     "There is no intermediate voluntary stop control or hard monetary cap. Dispatch ceilings are not an invoice or a dollar guarantee.",

@@ -961,7 +961,7 @@ interface CliSpawnObservation {
   credentials: string[];
 }
 
-function journeyFixture(parent: string, externalPublicKey?: string, codeReviewMode = "ok") {
+function journeyFixture(parent: string, externalPublicKey?: string, codeReviewMode = "ok", implementationMode = "ok") {
   const root = repository(parent);
   const design = join(root, "docs", "features", "s", "design.md");
   mkdirSync(dirname(design), { recursive: true });
@@ -1075,7 +1075,7 @@ function journeyFixture(parent: string, externalPublicKey?: string, codeReviewMo
   assert.ok(loaded.ok, loaded.ok ? "" : loaded.reason);
   const profile = loaded.profile;
   profile.executor.command = [process.execPath, resolve("test", "fixtures", "harness", "emit-cli-run.mjs"),
-    "--implementation-mode", "ok", "--code-review-mode", codeReviewMode];
+    "--implementation-mode", implementationMode, "--code-review-mode", codeReviewMode];
   profile.executor.probe = [process.execPath, "--version"];
   profile.executor.sandbox.envPassthrough = ["PATH", "SystemRoot", "TEMP", "TMP", "NODE_OPTIONS"];
   profile.executor.sandbox.idleTimeoutSeconds = 30;
@@ -1445,6 +1445,124 @@ test("code-review reconciler journey withholds one finding from remediation, del
     const rejected = findings.filter((finding) => finding.decision?.disposition === "rejected_with_rationale");
     assert.equal(rejected.length, 1);
     assert.equal(rejected[0]!.intentKey, "beyond-spec-hardening");
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+    if (keys !== undefined) rmSync(keys.directory, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Drive a journey fixture through the spec pause, sign and approve it, and run the
+ * rest of the chain to the end (docs/features/implementation-self-review/plan.md).
+ */
+function approveAndComplete(parent: string, keys: ReturnType<typeof externalSigner>,
+  fixture: ReturnType<typeof journeyFixture>, name: string): RunSnapshot {
+  const { run, invoke, execute } = fixture;
+  const first = invoke(["run", "--run", String(run.id), "--yes", "--json"]);
+  assert.equal(first.status, 3, first.stderr || first.stdout);
+  const request = (operatorEnvelope(first, "run").result as RunCommandResult).snapshot!.operatorActions
+    .find((action) => action.kind === "approval_request")!;
+  const expires = actionValue(request.args, "--expires");
+  const payloadPath = join(parent, `${name} payload.txt`);
+  assert.equal(invoke(["approval-request", "--run", String(run.id), "--expires", expires, "--out", payloadPath]).status, 0);
+  const signed = execute(SIGNER, ["sign", "--key", keys.key], { input: readFileSync(payloadPath) });
+  assert.equal(signed.status, 0, signed.stderr);
+  const signaturePath = join(parent, `${name} signature.txt`);
+  writeFileSync(signaturePath, signed.stdout, "utf8");
+  assert.equal(invoke(["approve", "--run", String(run.id), "--expires", expires, "--signature-file", signaturePath]).status, 0);
+  const continued = invoke(["run", "--run", String(run.id), "--yes", "--json"]);
+  const completed = operatorEnvelope(continued, "run");
+  assert.equal(continued.status, 0, continued.stderr || continued.stdout);
+  assert.equal(completed.outcome, "completed");
+  return (completed.result as RunCommandResult).snapshot!;
+}
+
+test("a self-review fix commits directly after the last phase, and verification, code review and delivery read that commit", () => {
+  const parent = workspace();
+  let keys: ReturnType<typeof externalSigner> | undefined;
+  try {
+    keys = externalSigner();
+    const fixture = journeyFixture(parent, keys.publicKey, "ok", "self-review-fix");
+    const snapshot = approveAndComplete(parent, keys, fixture, "self-review fix");
+    const delivery = snapshot.delivery;
+    const worktree = delivery.worktreePath!;
+    const head = git(worktree, "rev-parse", "HEAD");
+    const lastPhase = git(worktree, "rev-parse", "HEAD~1");
+    const messages = git(worktree, "log", "-2", "--format=%s").split(/\r?\n/);
+    assert.equal(messages[0], `bw run ${fixture.run.id}: self-review (base ${lastPhase.slice(0, 8)})`);
+    assert.match(messages[1]!, new RegExp(`^bw run ${fixture.run.id}: (?:apply patch|phase \\d+/\\d+) \\(base [0-9a-f]{8}\\)$`),
+      "the commit before the self-review is the last phase's");
+    assert.ok(delivery.verification.length > 0);
+    for (const verification of delivery.verification) assert.equal(verification.commit, head);
+    assert.equal(delivery.initialVerifiedCommit, head);
+    assert.equal(delivery.finalReviewedCommit, head);
+    assert.equal(delivery.deliveredCommit, head);
+    const audit = durableCliRun(fixture.root, fixture.run.id).audit;
+    assert.equal(audit.filter((event) => event.action === "implementation.selfreview.patch.apply").length, 1);
+    assert.ok(audit.some((event) => event.action === "implementation.selfreview.pass"
+      && event.summary.endsWith(`; base=${lastPhase}; head=${head}`)));
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+    if (keys !== undefined) rmSync(keys.directory, { recursive: true, force: true });
+  }
+});
+
+test("a self-review reply that is not JSON is skipped, and the run completes on the last phase's commit", () => {
+  const parent = workspace();
+  let keys: ReturnType<typeof externalSigner> | undefined;
+  try {
+    keys = externalSigner();
+    const fixture = journeyFixture(parent, keys.publicKey, "ok", "self-review-not-json");
+    const snapshot = approveAndComplete(parent, keys, fixture, "self-review skipped");
+    const worktree = snapshot.delivery.worktreePath!;
+    const head = git(worktree, "rev-parse", "HEAD");
+    assert.doesNotMatch(git(worktree, "log", "--format=%s", `${snapshot.delivery.patchBase}..${head}`), /self-review/);
+    assert.equal(snapshot.delivery.deliveredCommit, head);
+    const audit = durableCliRun(fixture.root, fixture.run.id).audit;
+    const skipped = audit.filter((event) => event.action === "implementation.selfreview.skipped");
+    assert.equal(skipped.length, 1);
+    assert.ok(skipped[0]!.summary.startsWith(`base=${head}; reason=self-review: implementer body refused: `), skipped[0]!.summary);
+    assert.ok(!audit.some((event) => event.action === "implementation.selfreview.pass"));
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+    if (keys !== undefined) rmSync(keys.directory, { recursive: true, force: true });
+  }
+});
+
+test("an implementer frozen without the self-review output refuses at implementation by name before any implementer dispatch", () => {
+  // docs/features/implementation-self-review/plan.md, Task 5: a run frozen before the
+  // implementer gained the output carries the old registry, and stops by name.
+  const parent = workspace();
+  let keys: ReturnType<typeof externalSigner> | undefined;
+  try {
+    keys = externalSigner();
+    const { root, run, profile, invoke, execute } = journeyFixture(parent, keys.publicKey);
+    const implementer = profile.agents.find((agent) => agent.id === "implementer")!;
+    implementer.outputs = implementer.outputs.filter((output) => output !== "implementation-self-review");
+    freezeDoctorProfile(root, run.id, profile);
+    const first = invoke(["run", "--run", String(run.id), "--yes", "--json"]);
+    assert.equal(first.status, 3, first.stderr || first.stdout);
+    const request = (operatorEnvelope(first, "run").result as RunCommandResult).snapshot!.operatorActions
+      .find((action) => action.kind === "approval_request")!;
+    const expires = actionValue(request.args, "--expires");
+    const payloadPath = join(parent, "self-review payload.txt");
+    assert.equal(invoke(["approval-request", "--run", String(run.id), "--expires", expires, "--out", payloadPath]).status, 0);
+    const signed = execute(SIGNER, ["sign", "--key", keys.key], { input: readFileSync(payloadPath) });
+    assert.equal(signed.status, 0, signed.stderr);
+    const signaturePath = join(parent, "self-review signature.txt");
+    writeFileSync(signaturePath, signed.stdout, "utf8");
+    assert.equal(invoke(["approve", "--run", String(run.id), "--expires", expires, "--signature-file", signaturePath]).status, 0);
+
+    const continued = invoke(["run", "--run", String(run.id), "--yes", "--json"]);
+    const body = operatorEnvelope(continued, "run");
+    assert.equal(continued.status, 1, continued.stderr || continued.stdout);
+    assert.equal(body.outcome, "refused");
+    assert.equal(body.errorCode, "setup_required");
+    assert.ok(body.reason!.includes("configured agent implementer does not allow implementation-self-review output"), body.reason!);
+    assert.deepEqual((body.result as RunCommandResult).execution.groupsCompleted, ["plan"]);
+    const rows = durableCliRun(root, run.id);
+    assert.ok(!rows.stages.some((stage) => stage.kind === "implementation"), "no implementation stage row");
+    assert.equal(rows.agents.filter((agent) => agent.agent === "implementer").length, 0, "no implementer dispatch");
   } finally {
     rmSync(parent, { recursive: true, force: true });
     if (keys !== undefined) rmSync(keys.directory, { recursive: true, force: true });
@@ -3122,6 +3240,11 @@ test("readiness names actual current staffing and capability failures using rece
     assert.equal(report.checks.find((check) => check.name === "author_bindings")!.status, "fail");
     assert.equal(report.checks.find((check) => check.name === "author_bindings")!.evidence,
       "configured agent spec-author does not allow spec-split output");
+    registry.splice(0, registry.length, ...saved.map((agent) => agent.id === "implementer"
+      ? { ...agent, outputs: agent.outputs.filter((output) => output !== "implementation-self-review") } : agent));
+    report = inspectReadiness(root);
+    assert.equal(report.checks.find((check) => check.name === "author_bindings")!.evidence,
+      "configured agent implementer does not allow implementation-self-review output");
   } finally {
     registry.splice(0, registry.length, ...saved);
     CLAUDE_CODE.capabilities = capabilities;

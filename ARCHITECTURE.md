@@ -912,17 +912,36 @@ profile. A plan with more tasks than the ceiling covers refuses before the first
 dispatch is spent. A phase that fails blocks the run with no retry, and the
 commits of earlier phases stay on the branch as evidence. The stage records one
 gate event, whose base is the head before phase one and whose head is the last
-phase's commit, so `verification`, `code_review`, and `delivery_check` read the
-same net range they read before phasing existed. A plan of ten tasks or fewer
-is one phase and behaves as it did.
+phase's commit, or the self-review's commit when the self-review changed
+anything, so `verification`, `code_review`, and `delivery_check` read the same
+net range they read before phasing existed. A plan of ten tasks or fewer is one
+phase and behaves as it did.
 
 Each phase's prompt also states which signed-scope paths exist in the worktree
 at that moment and which do not, using the existence test the patch applier
 refuses on, so the implementer does not guess what earlier phases created.
 
+**The self-review** (operator decisions, 2026-10-13 and 2026-10-14). After the
+last phase commits, one more implementer dispatch reads the whole change, the
+plan and the specification, and returns a non-empty critique and zero or more
+patches against the last phase's commit. The patches pass the same guards as a
+phase and commit before verification. A file whose content is unchanged is
+dropped before applying, because it would stage nothing and the applier refuses
+such a patch; the pass event names each dropped path. Each critique entry is
+recorded as an audit event, at most fifty, each cut at two thousand characters,
+and the retained raw output keeps it whole. A reply the stage cannot use — a
+failed dispatch, a body that does not parse, a refused result, a status other
+than proposed, or a malformed critique or patch — is recorded as skipped, and
+the stage passes on the last phase's commit, because every phase has already
+spent and code review still reads the change. A moved head, a dirty tree, or a
+refused patch blocks the run, because each shows the boundary failed.
+
 What phasing does not establish: each phase sees the plan and the checkout, not
 the reasoning of the previous phase, and no code review runs between phases.
-`code_review` still reads the complete net diff once, after all phases.
+The self-review is the author's own pass, not independent review (hazard 14):
+the same implementer setting runs it, and its `configured_standalone` row
+describes process isolation only. `code_review` still reads the complete net
+diff once, after all phases and the self-review.
 
 **`verification`.** Fails closed when commands are missing or do not pass.
 Bounded remediation rounds are the retry budget; exhausting one blocks. When
@@ -1586,7 +1605,8 @@ price.
   phases, both frozen in the profile with the rest of policy. A plan that needs
   more phases than the ceiling refuses by name before the first implementer
   dispatch, never truncating the plan. A failed phase blocks the run and is not
-  retried.
+  retried. The stage's dispatch ceiling is the phase ceiling plus one, for the
+  self-review after the last phase.
 - **Verification retries.** No limit is in force, because there is no round
   loop: the first verification command that does not pass blocks the run.
   Adding retries later means adding a limit of its own, frozen in the profile
@@ -1627,7 +1647,7 @@ block.
 
 ## 22. Known hazards
 
-`docs/hazards.md` states twenty-two failure modes this kind of system is subject
+`docs/hazards.md` states twenty-three failure modes this kind of system is subject
 to and what each requires. They are requirements, not an appendix: model output
 in shapes the schema refuses, discarded output being undiagnosable, constrained
 fields whose constraint the prompt never states, fixtures and code agreeing
@@ -1642,8 +1662,9 @@ omission, a reconciliation that answers a finding by deleting the obligation,
 a delivery proven complete that nothing ever read, an inactivity budget
 that a non-streaming executor turns into a wall clock, an implementation
 request larger than one implementer dispatch can answer, agents never told
-the verification commands that will judge their work, and a clean-tree guard
-that counts ignored files after a stage that writes them.
+the verification commands that will judge their work, a clean-tree guard
+that counts ignored files after a stage that writes them, and a fix that never
+sees the decisions behind the code it changes.
 
 When a new failure mode is found, add it there rather than here. Two lists drift
 apart, and the one that drifts is the one people stop trusting.
