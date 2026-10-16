@@ -5,28 +5,34 @@ history and may name superseded state; Current state wins when they disagree. Th
 the system of record; machine-local memory is only a cache
 (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-10-15: structured patch output built and reviewed, uncommitted; HEAD `fd235a8`)
+## Current state (2026-10-15: structured patch output committed `94e3b98`; paid run completed)
 
-**Active work:** `docs/features/structured-patch-output/plan.md` is `Implemented`, uncommitted, no
-paid run; its review `docs/features/structured-patch-output/2026-10-15-code-review.md` is
-`reconciled` (0 high, 1 medium fixed, 5 low). Phases, the self-review and code-review remediation
-send `--json-schema` and read `structured_output`; phases drop a file returned unchanged. Every
-other dispatch still parses free text. The reworded prompt sentence (`STRUCTURED_OUTPUT_RULE`) has
-not reached a model. Plan open decisions: 1 remediation drops unchanged files too; 2 a paid run;
-3 other dispatches moving to a schema. All undecided.
+**Active work:** `docs/features/structured-patch-output/plan.md` is `Implemented`, committed in
+`94e3b98`; its review is `reconciled`. The paid run the operator asked for ("commit then run the
+paid run", 2026-10-15) completed: web-calculator, `driver.mjs paid --yes --model
+claude-sonnet-5-5`, 21 dispatches, $1.39416, 15/15 driver steps, run `completed`, audit chain
+valid. All four patch dispatches (2 phases, the self-review, 1 remediation) returned
+`structured_output` and applied; no phase dropped a file. The self-review ran live for the first
+time: 5 critique entries, 0 patches. Code review round 1 found 1 low (`delete-noop-after-result`);
+the code-review reconciler ran live for the first time (1 call, kept 1, rejected 0); remediation
+patched `script.js`; round 2 found 1 low, non-blocking. Delivered 3 of 3 declared artifacts
+(`index.html`, `script.js`, `styles.css`). Verification still ran only `node --version` and
+`npm --version`. Cost by part: spec authors $0.374, spec reconcile $0.112, plan authors $0.428,
+plan reconcile $0.089, two phases $0.174, self-review $0.088, remediation $0.080; the eight Haiku
+5.5 reviewer calls plus the reconciler call totalled about $0.043 as reported by the CLI's
+`total_cost_usd` (Haiku 4.5 spec panels cost $0.31 on 2026-09-29). One sample. Target preserved
+at `C:\Users\Shawn-work\repositories\testing-repos\web-calculator-structured-2026-10-15\target`.
+Plan open decisions 1 (remediation drops unchanged files) and 3 (other dispatches to a schema)
+remain undecided. `.claude/skills/run-buildworks/SKILL.md` still says no run has used the Haiku
+5.5 reviewers.
 
-**Next action:** the operator decides whether to commit the uncommitted work and whether to make a
-paid run. Nothing else is in flight.
+**Next action:** the operator chooses the next item from the open work list. Nothing is in
+flight.
 
 **Working state (verified 2026-10-15 with `git log -1` and `git status -sb`):**
-- Branch `dashboard-restyling`, HEAD `fd235a8`, 7 commits ahead of `origin/dashboard-restyling`,
+- Branch `dashboard-restyling`, HEAD `94e3b98`, 8 commits ahead of `origin/dashboard-restyling`,
   nothing pushed. Local `master` was 38 behind `origin/master` on 2026-10-10 (not rechecked).
-- Uncommitted: the structured-patch-output build (source, tests, emitters, docs, the plan, its
-  review and three fixtures under `test/fixtures/recorded/`), plus three older review records given
-  a `reconciled` status and a reconciliation block on 2026-10-15:
-  `docs/features/cli-operator/2026-09-10-code-review-2.md`,
-  `docs/features/normative-removal-accounting/2026-09-04-code-review.md`,
-  `docs/features/step5b-upstream-findings/2026-09-02-task6-code-review.md`.
+- Uncommitted: this file only.
 - Plan statuses checked 2026-10-15: all 49 `docs/features/*/plan.md` carry a correct Status line.
   `docs/features/dashboard-pwa-redesign/plan.md` is `Reconciled` with Task 7 next (no `sw.js` or
   manifest in `src/`); unbuilt by choice: `baseline-verification`, `implementation-phase-retry`
@@ -42,14 +48,15 @@ paid run. Nothing else is in flight.
 1. **Code-review reconciler** (`docs/features/code-review-reconciler/plan.md`, `Implemented`,
    committed `6282a6f`, review reconciled). Acts before remediation only; 2-of-2 agreement to
    reject; any failed call or check keeps the finding; a rejected `high` reported again still
-   blocks. Not done: a paid run (plan open decision 1), and the passed-branch check in
+   blocks. First live call 2026-10-15 (kept 1 low, rejected 0; no rejection seen live yet). Not
+   done: the passed-branch check in
    `src/operator-state.ts` (a pass before the last round is not checked for rejections; reachable
    only with a forged audit event). Replay evidence: 30 Haiku calls, 1 wrong rejection, 3 missed,
    1 invented quote caught by the check (`test/fixtures/recorded/code-review-reconciler-*.json`).
    A quote proves the words exist, not that they support the rejection (hazard 16).
 2. **Implementation self-review** (`docs/features/implementation-self-review/plan.md`,
-   `Implemented`, committed `fd235a8`, hazard 23). Its first paid run blocked at phase 2 before the
-   self-review ran (history below), so it is unmeasured live. Deferred: a CRLF blob makes the
+   `Implemented`, committed `fd235a8`, hazard 23). First live run 2026-10-15: $0.088, 5 critique
+   entries, no fixes; it has not yet returned a patch live. Deferred: a CRLF blob makes the
    unchanged-file drop disagree with `git add`.
 3. **#209:** the NUL-byte email defect already existed at the reviewed commit `bb7f3f6`; the
    control prompt found it in 1 of 10 calls (`control-4`), and a NUL-in-email defect on the
@@ -59,7 +66,19 @@ paid run. Nothing else is in flight.
    findings by half and is not adopted; a checked `basis` field was valid 10 of 10. Undecided:
    several samples per lens merged (about $0.02 per lens per round), or the `basis` field alone (a
    10-call replay, about $0.07).
-5. **Haiku effort replay** (`high`, `xhigh`, 10 calls each, about $0.40): offered, not chosen.
+5. **Haiku effort replay, run 2026-10-15** (operator-approved, $1.2863 against a $0.40 estimate;
+   `test/fixtures/recorded/code-review-replay-crew-chatter-run-6-security-effort.json`). Distinct
+   in-spec defects per call, of 7: `medium` 2.1 ($0.008, 62 s median), `high` 2.5 ($0.019, 146 s),
+   `xhigh` 3.9 ($0.110, 320 s). Three merged calls: `medium` 4.2, `high` 4.9, `xhigh` 5.8. A new
+   defect (offline edit lost on reopen, AC-019) appeared in 0/10 `medium`, 3/10 `high`, 7/10
+   `xhigh` calls. Sonnet 5.5 `medium` (same file, $0.4667): 1.3 per call, 12 findings, 7 of 10
+   calls reported only the 401 cache leak; worse than Haiku `medium`. Opus 5.5 `medium` (same file,
+   $1.2999): 0.7 per call, 7 findings, all real, 3 calls reported nothing; its summaries show it
+   kept to the security lens and the spec's exclusions, yet that lens's instructions name
+   data-integrity defects, so its B and H misses are real. One lens is not panel recall.
+   Haiku 4.5 `medium` ($0.8209): 1 finding in 10 calls, and it was false (`new URL` accepts
+   `mailto:`), despite about 13,800 thinking tokens per call against Opus's 3,400. Undecided: reviewer default effort, merging samples, a three-lens panel replay. One prompt, one
+   lens, one sample of each arm.
 6. **Spec/plan reconciler stays on Sonnet 5.5** (recommended; $0.54 of run 6's $4.84).
 7. **Crew-chatter run 6 (feature 1):** blocked at code review round 2. Re-run with more rounds,
    fix branch `gov/crew-chatter-foundation/6` at `ca0bd0e` by hand, or stop. Undecided. A blocked
@@ -217,6 +236,9 @@ stand-ins; only BuildWorks handling larger designs counts (2026-10-10).
 - Replay a proposed gate against the failure that motivated it before planning it. An `[Unknown]` about an environment a paid stage depends on, answerable by a free command, is a check to run before spend.
 - Verification commands spawn with a shell on Windows (`src/verify-command.ts`), so `.cmd` shims resolve.
 - When quoting an expected cost, use an artifact of the same size or say it is smaller. A probe that changes how the answer is delivered can change output volume; quote a range, not the old cost.
+- Effort is not a linear cost knob: a Haiku 5.5 reviewer call cost 2.4x `medium` at `high` and 14x at `xhigh` (2026-10-15; estimated $0.40, spent $1.29). Price an effort change from one measured call first.
+- 2026-10-15 replays: five errors in one session (unmeasured cost, wrong field path, three scorer fixes after seeing data, a lens claim made without reading `code-reviewer-security.ts`, a circular "known defects" list). Each was caught after presenting, not before. Rule: a claim reaches the operator only after its source was checked in this session, and a scoring rule is fixed and committed before the data it scores exists. Prose rules alone did not hold; checker-enforced ones did.
+- A replay script reads the reply's real field path from a recorded reply before spending (reviewer findings sit under `proposedContentChanges.findings`); keep each call's raw stream so a wrong path costs a re-parse, not a re-run.
 - Before offering a change to a target after `new-run`, trace what the run froze.
 - A field in the only sample read is not evidence it is in the contract; read a second sample.
 - An instruction telling an operator how to edit generated output is a claim about its bytes; run the generator and apply the instruction first. A walk that verifies a procedure must run exactly the documented commands.
@@ -281,4 +303,4 @@ stand-ins; only BuildWorks handling larger designs counts (2026-10-10).
 - `npm run check:docs` - `doc-check: clean` after the record edits; rerun after this rewrite.
 
 ### Next up
-- The operator decides whether to commit the uncommitted work (structured patch output plus the four review records) and whether to make a paid run.
+- Done the same day: committed as `94e3b98`, and the paid run completed ($1.39416, 21 dispatches; see Current state).

@@ -49,3 +49,8 @@ review record as a whole.
   reduce adapter work, the ambient-config risk of installing it, and two carried
   candidates: a frozen executor environment and an effective-configuration check
   in `doctor`
+- `jev-review.md` — not a harness but a typed-decision model; it cannot write
+  findings, revisions or code, so it fits only the decision points of the three
+  review handoffs (traceability, disposition, criterion check, finding validity,
+  reconciler rejection, severity), each adopted only after an evaluation against
+  labelled cases

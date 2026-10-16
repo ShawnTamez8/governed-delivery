@@ -1,0 +1,1621 @@
+{
+ "provenance": {
+  "what": "Paid replay of crew-chatter run 6's round-1 security code-reviewer prompt at higher effort, operator-approved 2026-10-15 (\"I approve of the live paid run\"; estimate given beforehand was about $0.40). Question: does raising a Haiku 5.5 reviewer's effort above medium raise recall, which the 2026-10-13 replay measured at about 2 of the known defects per call? Second arm, operator-requested the same day (\"Replace the haiku-5.5 models with Sonnet-5.5 and effort medium and run the same test\"): claude-sonnet-5-5 at effort medium, 10 calls. Third arm, operator-approved the same day (\"swap out the reviewer model, and bring in the big gun... Opus-5.5. I approve to make that swap and execute the same paid test run\"): claude-opus-5-5 at effort medium, 10 calls, run one at a time like the Sonnet arm (call 1 $0.4887 uncached, calls 2-10 $0.0767-$0.1022). Fourth arm, operator-authorized the same day (\"I'm authorizing 1 more comparison using Haiku-4.5 (I know the model will be unavailable soon)\"): claude-haiku-4-5-20251001 at effort medium, 10 calls, one at a time (call 1 $0.1140 uncached, calls 2-10 $0.0573-$0.1004).",
+  "source": "test/fixtures/recorded/code-review-replay-crew-chatter-run-6-security.json, whose control arm (10 calls, effort medium) is the baseline",
+  "controlPrompt": "buildCodeReviewPrompt(CODE_REVIEWER_SECURITY, spec, plan, changedPaths, diff, bb7f3f673a3b4d452d07782c54f13881f281fbd5), spec and plan read from crew-chatter's docs/features/crew-chatter-foundation/, diff and changed paths from git diff 01f9a111..bb7f3f67; 121905 characters, SHA-256 423008e2d4c3691a206df1b5cbc4a7dbbe38e156700cfba88305bb136c45671f, equal to agent_run 66's input_hash and to the 2026-10-13 control",
+  "invocation": "invokeHarness(CLAUDE_CODE) with BuildWorks' executor flags unchanged, model claude-haiku-5-5, effort high or xhigh, idle timeout 1800 s, cwd a fresh clone of crew-chatter detached at bb7f3f67; one high and one xhigh call concurrently per round, ten rounds. The CLI does not report effective effort, only the requested level is known. The Sonnet arm ran one call at a time (calls 1 and 2 alone to price it, then 3-10), so calls 2-10 read the prompt from the provider cache that call 1 wrote: call 1 cost $0.2348 (52,694 cache-write tokens), calls 2-10 $0.0215-$0.0376. The Haiku arms ran two at a time, so their per-call cost mixes cached and uncached calls.",
+  "scoring": "Categories by first-matching regex (scorer below). A-F and G come from the 2026-10-13 control; H (offline edit never written to the note cache, lost on reopen) first appeared in this replay, was confirmed in code (useAutosave.ts flush returns before save while offline; schedule deletes the queued draft) and is in spec through AC-019, so in-spec defects are A-F and H (7) and G is out of spec. Two scorer corrections were made after reading results and are disclosed: 'server-side' was removed from G after it matched two in-spec NUL findings mentioning a server-side log; a raw NUL character was added to C and D after two replies emitted an unescaped \u0000 that parsed into a real NUL. Both corrections leave the control arm's counts unchanged (A 7, B 3, C 5, D 3, E 2, F 1, G 1). Every subject was read by eye; 13 findings outside A-H are left as 'other' (title maxLength, errorHandler 4xx mapping, bcrypt 72-byte sign-in truncation, sign-out after a failed save losing the edit, PATCH 401 not clearing the session, editor not re-syncing on refetch, syncQueueGuard removing the leave-page guard, UTF-16 password length) and are not verified. A third correction, made after reading the Sonnet arm: H now excludes any subject naming 401, after it matched two 401 cache-leak findings that mention queued offline drafts (sonnet-medium-8 here and b-2 in the 2026-10-13 fixture); the Haiku high and xhigh counts are unchanged by it. The scorer assigns one category per finding; by eye, sonnet-medium-8's second finding covers C and D, so the Sonnet arm's distinctInSpecPerCall is 1.3 by eye against the scorer's 1.2.",
+  "captured": "2026-10-15",
+  "totalCost": 3.87387623,
+  "dropped": "The raw stream-json output of each call (kept only in the session scratchpad) and the prompt text (rebuildable and pinned by hash). Each record keeps label, effort, cost, output tokens, exit code, duration, tool uses, and the parsed findings unabridged (read from proposedContentChanges.findings). Opus records also keep the reply's summary, because three Opus calls reported no findings and the summary is the only record of what they checked and why they left items out. Haiku 4.5 records also keep the summary and thinking-token count.",
+  "lensCaveat": "Corrected 2026-10-15 after the Haiku 4.5 arm: the first version said B and H were outside the security lens. They are not: the security reviewer's own codeReviewInstructions (src/agents/code-reviewer-security.ts) name data-integrity defects, so B and H are in its lens as written, and Opus missing them is a real miss. What remains true: the panel's resilience/state-integrity lens also covers B and H, so one lens's recall is not panel recall, and panel recall was not measured. The shared prompt (buildCodeReviewPrompt) also says a concern outside the specialty must not be reported, that only actionable defects with a reproducible impact count, and that an empty findings array is a valid result.",
+  "haiku45FalsePositive": "haiku45-medium-4's only finding (mailto: rejected because new URL() throws on non-standard schemes) is false: node -e \"new URL('mailto:someone@example.com').protocol\" returns 'mailto:', browsers follow the same WHATWG URL standard, and EditorToolbar.tsx lines 8-13 allow exactly that protocol."
+ },
+ "summary": {
+  "inSpecDefects": "A 198 cross-account cache, B 199 out-of-order save, C 201 NUL title/body, D email NUL/control, E sign-out draft re-queue, F javascript: href, H offline edit lost on reopen",
+  "medium": {
+   "source": "2026-10-13 control",
+   "calls": 10,
+   "findings": 22,
+   "distinctInSpecPerCall": 2.1,
+   "unionOfThreeMean": 4.16,
+   "callsReporting": {
+    "A": 7,
+    "B": 3,
+    "C": 5,
+    "D": 3,
+    "E": 2,
+    "F": 1,
+    "H": 0,
+    "G": 1
+   },
+   "costTotal": 0.0784,
+   "medianSeconds": 62
+  },
+  "high": {
+   "calls": 10,
+   "findings": 34,
+   "distinctInSpecPerCall": 2.5,
+   "unionOfThreeMean": 4.87,
+   "callsReporting": {
+    "A": 5,
+    "B": 3,
+    "C": 7,
+    "D": 3,
+    "E": 4,
+    "F": 0,
+    "H": 3,
+    "G": 1
+   },
+   "costTotal": 0.1862,
+   "medianSeconds": 146,
+   "meanOutputTokens": 32300
+  },
+  "xhigh": {
+   "calls": 10,
+   "findings": 46,
+   "distinctInSpecPerCall": 3.9,
+   "unionOfThreeMean": 5.8,
+   "callsReporting": {
+    "A": 10,
+    "B": 4,
+    "C": 6,
+    "D": 8,
+    "E": 3,
+    "F": 1,
+    "H": 7,
+    "G": 0
+   },
+   "costTotal": 1.1002,
+   "medianSeconds": 320,
+   "meanOutputTokens": 72565
+  },
+  "sonnetMedium": {
+   "model": "claude-sonnet-5-5",
+   "effort": "medium",
+   "calls": 10,
+   "findings": 12,
+   "distinctInSpecPerCall": 1.3,
+   "distinctInSpecPerCallScorer": 1.2,
+   "unionOfThreeMeanScorer": 2.36,
+   "callsReporting": {
+    "A": 7,
+    "B": 0,
+    "C": 2,
+    "D": 2,
+    "E": 2,
+    "F": 0,
+    "H": 0,
+    "G": 0
+   },
+   "costTotal": 0.4667,
+   "costFirstCallUncached": 0.2348,
+   "costCachedCallMean": 0.0258,
+   "medianSeconds": 18
+  },
+  "opusMedium": {
+   "model": "claude-opus-5-5",
+   "effort": "medium",
+   "calls": 10,
+   "findings": 7,
+   "callsWithNoFinding": 3,
+   "distinctInSpecPerCall": 0.7,
+   "unionOfThreeMean": 1.45,
+   "callsReporting": {
+    "A": 5,
+    "B": 0,
+    "C": 0,
+    "D": 0,
+    "E": 2,
+    "F": 0,
+    "H": 0,
+    "G": 0
+   },
+   "costTotal": 1.2999,
+   "costFirstCallUncached": 0.4887,
+   "costCachedCallMean": 0.0901,
+   "medianSeconds": 46
+  },
+  "haiku45Medium": {
+   "model": "claude-haiku-4-5-20251001",
+   "effort": "medium",
+   "calls": 10,
+   "findings": 1,
+   "realFindings": 0,
+   "callsWithNoFinding": 9,
+   "distinctInSpecPerCall": 0,
+   "callsReporting": {
+    "A": 0,
+    "B": 0,
+    "C": 0,
+    "D": 0,
+    "E": 0,
+    "F": 0,
+    "H": 0,
+    "G": 0
+   },
+   "costTotal": 0.8209,
+   "costFirstCallUncached": 0.114,
+   "costCachedCallMean": 0.0785,
+   "medianSeconds": 123,
+   "meanThinkingTokens": 13767
+  }
+ },
+ "scorer": "  [\"G\", (s) => /revocation|revoke|password reset|password-version/i.test(s)],\n  [\"H\", (s) => /offline/i.test(s) && /cache|reopen/i.test(s) && !/401/.test(s)],\n  [\"F\", (s) => /javascript:/i.test(s)],\n  [\"A\", (s) => /401|session expir/i.test(s) && /cache|cached|notes|selectedNoteId/i.test(s)],\n  [\"E\", (s) => /discardQueuedDrafts|re-?queue/i.test(s)],\n  [\"D\", (s) => /email/i.test(s) && /NUL|\\u0000|0000|U\\+0000|control char|surrogate/i.test(s)],\n  [\"C\", (s) => /NUL|\\u0000|0000|U\\+0000/.test(s)],\n  [\"B\", (s) => /older|newer|out[- ]of[- ]order/i.test(s)],",
+ "calls": [
+  {
+   "label": "high-1",
+   "effort": "high",
+   "cost": 0.030055329999999998,
+   "tokensOut": 38657,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 179865,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "high",
+     "classification": "current_artifact",
+     "location": "frontend/src/lib/useAutosave.ts:98",
+     "intentKey": "offline-edit-not-cached-lost-on-reopen",
+     "subject": "While offline, flush returns without writing the draft to the note cache, so reopening the note shows the pre-edit body, and typing there makes schedule delete the queued offline draft, silently losing the offline edit."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/NoteEditor.tsx:48",
+     "intentKey": "stale-save-response-overwrites-note-cache",
+     "subject": "A save response for an older draft that arrives after a newer one overwrites the ['note', id] cache with the older body, so reopening the note shows stale text and the next save from that editor sends the older content over the newer server version."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:14",
+     "intentKey": "session-expiry-keeps-previous-user-cache",
+     "subject": "The 401 handler only sets the session to null and leaves the previous account's cached notes, selected note, and queued drafts in place, so a different user who signs in on the same browser briefly sees the previous account's note list and open note body."
+    }
+   ]
+  },
+  {
+   "label": "high-2",
+   "effort": "high",
+   "cost": 0.016871149999999998,
+   "tokensOut": 32608,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 146189,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:54",
+     "intentKey": "nul-character-title-returns-500",
+     "subject": "A title containing a NUL character passes the string and length checks, Postgres rejects it, and PATCH /api/notes/:id returns a generic 500 instead of a 400 naming the title field."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:61",
+     "intentKey": "nul-character-body-returns-500",
+     "subject": "A body whose text contains a \\u0000 escape passes isTipTapDoc, Postgres jsonb rejects it, and PATCH /api/notes/:id returns a generic 500 instead of a 400 naming the body field."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/NoteEditor.tsx:95",
+     "intentKey": "title-over-limit-blocks-all-saves",
+     "subject": "The title input has no maxLength of 500, so a longer title makes every PATCH fail with 400 and the body edits sent with it are never persisted, and they are lost on reload."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/lib/errors.ts:88",
+     "intentKey": "client-errors-mapped-to-500",
+     "subject": "errorHandler ignores a 4xx status on non-HttpError errors such as Express malformed-param decode failures (400) and body-parser charset or encoding errors, so a client-caused error returns a 500 and logs as a server fault, contrary to AC-075."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/Dashboard.tsx",
+     "intentKey": "queued-draft-survives-sign-out",
+     "subject": "Dashboard calls discardQueuedDrafts before the signed-out editor unmounts, so an unsent draft queued at unmount survives sign-out and is later sent under the next account's session, keeping a beforeunload prompt active."
+    }
+   ]
+  },
+  {
+   "label": "high-3",
+   "effort": "high",
+   "cost": 0.018227149999999998,
+   "tokensOut": 35320,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 162677,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "backend/src/features/auth/service.ts:78",
+     "intentKey": "password-truncation-sign-in-bypass",
+     "subject": "authenticate() passes the raw submitted password to bcrypt.compare with no length check, and bcrypt silently truncates input at 72 bytes, so for an account whose password is exactly 72 bytes any password sharing that 72-byte prefix (for example the password plus extra characters) signs in, which violates AC-003's requirement that an incorrect password is rejected."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:14",
+     "intentKey": "stale-account-cache-after-session-expiry",
+     "subject": "When a query returns 401 the QueryCache onError only sets ['session'] to null and leaves the ['notes'] and ['note', id] caches and the store's selectedNoteId in place, so after a session expires (for example on reconnect) and a different user signs in on the same browser, the new user's Dashboard briefly renders the previous account's note titles and open note body before the refetch returns."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:54",
+     "intentKey": "nul-byte-input-server-error",
+     "subject": "The title check accepts any string up to 500 characters, so a PATCH whose title or body contains a U+0000 character passes validation and then fails at the PostgreSQL text/jsonb insert with an unhandled error, returning a generic 500 on every save and leaving the note permanently unsavable instead of a 400 naming the field."
+    }
+   ]
+  },
+  {
+   "label": "high-4",
+   "effort": "high",
+   "cost": 0.028326070000000002,
+   "tokensOut": 37796,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 173143,
+   "tools": [
+    "Grep",
+    "Grep",
+    "Read",
+    "Read",
+    "Read"
+   ],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "high",
+     "classification": "current_artifact",
+     "location": "frontend/src/lib/useAutosave.ts:138",
+     "intentKey": "offline-queued-edit-lost-on-retype",
+     "subject": "The save function is never called while offline, so the ['note', id] cache never receives the queued edit; reopening the note shows the stale server body, and the next keystroke in that editor runs queuedDrafts.delete, which discards the queued offline edit permanently."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/NoteEditor.tsx:48",
+     "intentKey": "out-of-order-save-overwrites-cache",
+     "subject": "The save function writes every server response into ['note', id] unconditionally, so a slower earlier save that returns after a newer draft was cached overwrites it with older content, and reopening the note or typing into the stale-mounted editor then saves the older body over the newer one."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:51",
+     "intentKey": "nul-character-input-returns-500",
+     "subject": "A title or body containing U+0000 passes validation, Postgres rejects it (text NUL and jsonb \\u0000), and the request returns a generic HTTP 500 instead of a 400 naming the field, so auto-save shows 'Unable to save' for that note and AC-075 is not met."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/lib/errors.ts",
+     "intentKey": "malformed-path-param-returns-500",
+     "subject": "A malformed percent-encoded note id such as GET /api/notes/%E0%A4%A raises Express's 400 decode error with no body-parser type, which falls through to the generic 500 branch, so the client gets a 500 and the server logs a stack trace instead of a 400 validation response."
+    }
+   ]
+  },
+  {
+   "label": "high-5",
+   "effort": "high",
+   "cost": 0.01757965,
+   "tokensOut": 34025,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 157521,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:56",
+     "intentKey": "nul-character-in-note-text-returns-500",
+     "subject": "A PATCH whose title or body contains a NUL (U+0000) character is passed unvalidated to Postgres, which rejects it in text and jsonb, so the save returns a generic HTTP 500 and the note stays unsaved (the editor shows Unable to save) instead of a 400 naming the field."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/Dashboard.tsx:65",
+     "intentKey": "sign-out-requeues-unsaved-draft",
+     "subject": "Sign-out proceeds even when the pending save failed (flushPendingSave resolves on error), and the editor's unmount then re-queues the previous account's unsent draft after discardQueuedDrafts() has already run, so the leave-page prompt stays active and the stale draft is re-sent under the next session."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/auth/service.ts:24",
+     "intentKey": "email-control-characters-reach-server-log",
+     "subject": "validateEmail excludes only whitespace, so an address containing an ESC (U+001B) control character is accepted at registration and is then written unescaped into the server log by the console.info line in requestPasswordReset, letting the registrant inject terminal escape sequences into operator logs."
+    }
+   ]
+  },
+  {
+   "label": "high-6",
+   "effort": "high",
+   "cost": 0.014383650000000001,
+   "tokensOut": 27633,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 129033,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:54",
+     "intentKey": "nul-character-input-returns-500",
+     "subject": "PATCH /api/notes/:id with a title or body containing a NUL character (\\u0000) is rejected by PostgreSQL and returns HTTP 500 with a server-side error log instead of a 400 naming the field, so AC-075 validation handling fails for ordinary invalid client input."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "backend/src/features/auth/service.ts:23",
+     "intentKey": "email-control-characters-accepted",
+     "subject": "validateEmail accepts a NUL character inside the email, so register and sign-in pass it to PostgreSQL and return HTTP 500 instead of a 400 naming the email field or a 401, which fails AC-075 for that input."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/NoteEditor.tsx:48",
+     "intentKey": "stale-save-response-overwrites-newer-cache",
+     "subject": "The save function writes each server response into the ['note', id] cache even when a newer draft has been sent, so a slower older response that arrives last replaces the newer content, and reopening the note shows the older body and the next keystroke re-saves it over the newer edit."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/Dashboard.tsx:65",
+     "intentKey": "sign-out-requeues-draft-after-discard",
+     "subject": "handleSignOut calls discardQueuedDrafts before NoteEditor unmounts, and the unmount then re-queues a failed unsent draft, so after sign-out the previous user's note body stays in the module-level queue, the beforeunload prompt keeps firing, and the draft is re-sent on the next online event under the next session."
+    }
+   ]
+  },
+  {
+   "label": "high-7",
+   "effort": "high",
+   "cost": 0.01322415,
+   "tokensOut": 25314,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 119468,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "backend/src/lib/auth.ts:62",
+     "intentKey": "session-not-revoked-on-password-reset",
+     "subject": "Session JWTs stay valid for up to 7 days after a password reset or sign-out, so a stolen cookie keeps reading and editing the account's notes after the owner resets the password."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/auth/service.ts:78",
+     "intentKey": "sign-in-accepts-password-beyond-72-bytes",
+     "subject": "Sign-in has no 72-byte limit while registration enforces one, so bcrypt truncation lets any input whose first 72 bytes equal the stored password sign the user in."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/Dashboard.tsx:65",
+     "intentKey": "sign-out-discard-runs-before-unmount-requeue",
+     "subject": "Sign-out calls discardQueuedDrafts before the editor unmounts, so a draft whose save failed is re-queued afterward and is re-sent under the next session on the next online event, while the leave-page prompt stays armed."
+    }
+   ]
+  },
+  {
+   "label": "high-8",
+   "effort": "high",
+   "cost": 0.01607665,
+   "tokensOut": 31019,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 141017,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "backend/src/features/auth/service.ts:24",
+     "intentKey": "nul-byte-email-causes-server-error",
+     "subject": "validateEmail accepts a NUL byte in the address, so register or sign-in with an email containing \\u0000 makes Postgres reject the text parameter and returns a generic 500 instead of a 400 naming the email field (AC-075)."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:57",
+     "intentKey": "nul-byte-note-content-causes-server-error",
+     "subject": "The PATCH title and body checks accept \\u0000 characters that Postgres rejects in text and jsonb, so PATCH /api/notes/:id with such a title or body returns a generic 500 and that content can never be saved."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/auth/AuthScreen.tsx:41",
+     "intentKey": "sign-in-keeps-previous-user-cache",
+     "subject": "After a session expires and a different user signs in on the same browser, the cached ['notes'] and ['note', id] queries and the store's selectedNoteId from the previous account are kept, so the previous user's note titles and body render until the refetch returns."
+    }
+   ]
+  },
+  {
+   "label": "high-9",
+   "effort": "high",
+   "cost": 0.01365915,
+   "tokensOut": 26184,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 122519,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/auth/AuthScreen.tsx:41",
+     "intentKey": "stale-cache-survives-account-switch",
+     "subject": "A 401 clears the session without clearing the query cache or store, so signing in as a different account in the same tab renders the previous account's cached note list and open note body to the new user until refetch completes, and that user's autosave of the old note is sent under the new session."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/Dashboard.tsx:59",
+     "intentKey": "signout-drops-failed-save-edit",
+     "subject": "Sign-out awaits flushPendingSave, which resolves even when the save failed, so signing out after an \"Unable to save\" response discards the unsaved edit, and the orphaned draft stays in the module-level queue for the next account in the same tab."
+    }
+   ]
+  },
+  {
+   "label": "high-10",
+   "effort": "high",
+   "cost": 0.01778865,
+   "tokensOut": 34443,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 156260,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "high",
+     "classification": "current_artifact",
+     "location": "frontend/src/lib/useAutosave.ts:137",
+     "intentKey": "offline-queued-edit-discarded",
+     "subject": "When a note is reopened while offline, the queued edit is never written to the ['note', id] cache (the offline early return in flush skips the save function at useAutosave.ts:97), so the editor shows the stale server body, and the first new keystroke deletes the queued draft via queuedDrafts.delete, so the earlier edit is never sent and is permanently lost."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:13",
+     "intentKey": "user-cache-survives-session-expiry",
+     "subject": "After a 401 the QueryCache handler only nulls ['session'] and leaves the store and the other user-scoped queries in place, so a different user who signs in on the same tab sees the previous user's cached note list and, through the retained selectedNoteId, that user's note body until the refetch completes."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:54",
+     "intentKey": "nul-char-input-returns-500",
+     "subject": "A title or body containing U+0000 (or a lone surrogate) passes the type and length checks, Postgres rejects it on text or jsonb insert, and the client receives a generic HTTP 500 instead of a 400 naming the field, so that note can never be saved and AC-075 is not met for this input."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/lib/errors.ts:79",
+     "intentKey": "body-parser-client-error-as-500",
+     "subject": "Body-parser errors other than entity.parse.failed and entity.too.large, such as charset.unsupported or encoding.unsupported (status 415), fall through to the generic 500 branch and are logged as server errors, so a malformed client request receives an incorrect 500 response."
+    }
+   ]
+  },
+  {
+   "label": "xhigh-1",
+   "effort": "xhigh",
+   "cost": 0.13312348,
+   "tokensOut": 69468,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 323751,
+   "tools": [
+    "Grep",
+    "Read",
+    "Read",
+    "Read",
+    "Read"
+   ],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "high",
+     "classification": "current_artifact",
+     "location": "frontend/src/lib/useAutosave.ts",
+     "intentKey": "offline-queued-draft-discarded-on-reopen",
+     "subject": "An offline edit is queued without ever being written to the ['note', id] cache because flush returns before save runs, so reopening the note shows the old text and the next keystroke in schedule() deletes the queued draft, permanently losing the offline edit."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/NoteEditor.tsx",
+     "intentKey": "stale-cache-overwrites-newer-server-note",
+     "subject": "The TipTap editor is created once from the first note.body, so when a background refetch returns a newer server version the editor keeps the stale cached text and the next autosave PATCHes that stale body over the newer version, for example an edit made in another tab or on another device."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/NoteEditor.tsx",
+     "intentKey": "expired-session-save-not-handled",
+     "subject": "A 401 from the PATCH is treated as an ordinary save error and never clears the session, so after the cookie expires the editor keeps reporting 'Unable to save' and a reload returns to sign-in with the typed edits gone."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx",
+     "intentKey": "previous-account-cache-shown-after-resign-in",
+     "subject": "The 401 handler only sets ['session'] to null without clearing the query cache, the store selection or queued drafts, so when a different account signs in on the same browser the dashboard first renders the previous account's cached note titles and previews until the refetch completes."
+    }
+   ]
+  },
+  {
+   "label": "xhigh-2",
+   "effort": "xhigh",
+   "cost": 0.10242704999999999,
+   "tokensOut": 58269,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 271216,
+   "tools": [
+    "Grep",
+    "Read",
+    "Read",
+    "Read"
+   ],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/auth/AuthScreen.tsx",
+     "intentKey": "stale-query-cache-across-accounts",
+     "subject": "When the session ends without the sign-out handler (a 401 from any query, or sign-out in another tab), the query cache and the store's selectedNoteId survive, so a different user who signs in on the same browser within about five minutes sees the previous account's note list and, through the stale selected note, its cached note body until the refetches replace or reject them."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/NoteEditor.tsx",
+     "intentKey": "stale-save-response-overwrites-note-cache",
+     "subject": "When two saves for one note are in flight and the older response arrives second, the save function writes that older note into the ['note', id] cache, so reopening the note (whose editor initializes from that cache and is not updated by refetches) shows text missing the latest edit, and the next keystroke saves that stale text over the newer server version."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/Dashboard.tsx",
+     "intentKey": "sign-out-drops-unsaved-edit-after-failed-save",
+     "subject": "Sign-out proceeds even when the pre-sign-out flush has failed with a server error, so an unsaved edit that never reached the server is silently dropped once the cookie is cleared and the editor's unmount retry is rejected with 401."
+    }
+   ]
+  },
+  {
+   "label": "xhigh-3",
+   "effort": "xhigh",
+   "cost": 0.04425464999999999,
+   "tokensOut": 87375,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 390618,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "high",
+     "classification": "current_artifact",
+     "location": "frontend/src/lib/useAutosave.ts:98",
+     "intentKey": "offline-edit-not-cached-lost-on-reopen",
+     "subject": "Edits made while offline never reach the ['note', id] cache because flush returns before calling save when navigator.onLine is false, so reopening the note shows pre-edit content and typing there discards the queued draft in schedule, permanently losing the offline edit and breaking AC-019 and the plan's requirement that a note reopened while queued offline shows the edit."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:14",
+     "intentKey": "cross-account-cache-residue-after-401",
+     "subject": "A 401 only sets ['session'] to null and leaves ['notes'], ['note', id] and the store's selectedNoteId in place, so the next account to sign in within the same tab renders the previous user's cached note list and open note body before the refetch corrects them, exposing another account's notes on a shared browser."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/auth/service.ts:24",
+     "intentKey": "email-control-chars-in-reset-log",
+     "subject": "validateEmail accepts ASCII control characters such as ESC and backspace, and requestPasswordReset writes the email verbatim into the server log, so a registered address containing them can inject terminal escape sequences or overwrite and hide neighbouring log lines."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/auth/service.ts:30",
+     "intentKey": "password-min-length-counts-code-units",
+     "subject": "validatePassword measures length in UTF-16 code units, so a password of four emoji (four characters) passes the 'fewer than 8 characters' rejection the plan specifies and is accepted as a weak password."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:54",
+     "intentKey": "nul-or-surrogate-input-causes-500",
+     "subject": "A title or body containing a NUL character or an unpaired surrogate is passed to Postgres, which rejects it and returns HTTP 500 instead of a 400 validation error, so every PATCH of that note fails with 'Unable to save' until the character is removed."
+    }
+   ]
+  },
+  {
+   "label": "xhigh-4",
+   "effort": "xhigh",
+   "cost": 0.1142706,
+   "tokensOut": 61061,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 278701,
+   "tools": [
+    "Grep",
+    "Read",
+    "Read",
+    "Read",
+    "Read"
+   ],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:14",
+     "intentKey": "cross-account-cache-retained-on-expiry",
+     "subject": "A 401 only clears the session key, so the previous account's cached note list and still-selected note survive, and a second account signing in on the same browser within the default 5-minute cache retention briefly sees the first account's note titles and open note body before the refetch replaces them."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/Dashboard.tsx:65",
+     "intentKey": "signed-out-draft-requeued-after-discard",
+     "subject": "Sign-out calls discardQueuedDrafts before the editor unmounts, so a draft whose save failed just before sign-out is re-queued during unmount, which keeps the leave-page prompt active and replays the previous account's PATCH under the next session's cookie."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:54",
+     "intentKey": "nul-char-in-note-input-returns-500",
+     "subject": "A title or body containing U+0000 passes the length and isTipTapDoc checks and then fails the PostgreSQL text or jsonb write, so PATCH /notes/:id returns a generic 500 instead of a 400 naming the field."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/auth/service.ts:24",
+     "intentKey": "nul-char-in-email-returns-500",
+     "subject": "An email containing U+0000 passes validateEmail and then fails the users lookup in register or authenticate, so the request returns a generic 500 instead of a 400 naming the email field or a 401."
+    }
+   ]
+  },
+  {
+   "label": "xhigh-5",
+   "effort": "xhigh",
+   "cost": 0.14478205,
+   "tokensOut": 84467,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 395752,
+   "tools": [
+    "Grep",
+    "Grep",
+    "Read"
+   ],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "high",
+     "classification": "current_artifact",
+     "location": "frontend/src/lib/useAutosave.ts",
+     "intentKey": "offline-edit-missing-from-note-cache",
+     "subject": "While offline, flush returns before calling save, so an unsent edit is never written to the ['note', id] cache; reopening the note while offline shows stale server content, and the next keystroke makes schedule delete the queued draft, permanently losing the offline edit."
+    },
+    {
+     "severity": "high",
+     "classification": "current_artifact",
+     "location": "frontend/src/lib/useAutosave.ts",
+     "intentKey": "beforeunload-guard-dropped-while-edit-pending",
+     "subject": "When a queued offline draft for another note sends successfully, sendQueuedDrafts calls syncQueueGuard, which removes the beforeunload listener even though the open editor still has an unsaved or in-flight edit, so reloading the tab shows no leave-page prompt and the edit can be lost (AC-018)."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/auth/service.ts",
+     "intentKey": "control-characters-accepted-in-email",
+     "subject": "validateEmail only rejects whitespace, so an email containing control characters such as U+001B is accepted at registration and written raw into the server log line by requestPasswordReset, letting a registrant inject terminal escape or backspace sequences into the operator's log."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx",
+     "intentKey": "cached-notes-survive-session-expiry",
+     "subject": "The 401 handler clears only the session query, so after a session expiry another user who signs in on the same browser first renders the previous account's cached note list and any still-selected note body until their own refetch completes."
+    }
+   ]
+  },
+  {
+   "label": "xhigh-6",
+   "effort": "xhigh",
+   "cost": 0.12329965,
+   "tokensOut": 66028,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 298416,
+   "tools": [
+    "Grep",
+    "Glob",
+    "Read"
+   ],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "high",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/Dashboard.tsx:110",
+     "intentKey": "stale-cached-note-overwrites-newer-save",
+     "subject": "Dashboard renders NoteEditor from the cached ['note', id] body while the refetch is still in flight and NoteEditor never re-syncs, so a note saved from another tab or device reopens with stale text and the next autosave writes that stale body back over the newer server version."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:12",
+     "intentKey": "previous-account-cache-kept-after-401",
+     "subject": "The 401 handler only nulls the session, so the previous account's cached note list and the store's selectedNoteId survive, and a different user signing in on the same tab briefly sees the first account's note titles, previews and selected note body before the refetch replaces or fails them."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/auth/service.ts:24",
+     "intentKey": "control-characters-accepted-in-email",
+     "subject": "validateEmail's regex only rejects whitespace, so an address containing ESC or other control characters passes validation and is written verbatim into the server log by requestPasswordReset, letting a registered user inject terminal escape sequences into operator logs."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:61",
+     "intentKey": "unvalidated-link-href-in-note-body",
+     "subject": "The PATCH body check accepts any link mark href, so a note saved with a javascript: link keeps that href in the editor, which the client-side http/https/mailto allowlist in EditorToolbar would reject."
+    }
+   ]
+  },
+  {
+   "label": "xhigh-7",
+   "effort": "xhigh",
+   "cost": 0.12829865,
+   "tokensOut": 70607,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 319666,
+   "tools": [
+    "Grep",
+    "Grep",
+    "Read",
+    "Read",
+    "Read",
+    "Read",
+    "Read"
+   ],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "high",
+     "classification": "current_artifact",
+     "location": "frontend/src/lib/useAutosave.ts:138",
+     "intentKey": "offline-edit-overwritten-after-stale-reopen",
+     "subject": "An edit made while offline is never written to the ['note', id] cache because flush skips save when offline, and schedule() deletes the queued unsent draft at this line, so reopening the note and typing there replaces the offline edit with stale content after reconnecting."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:14",
+     "intentKey": "prior-account-cache-survives-401-logout",
+     "subject": "The 401 path clears only ['session'], so the prior account's cached note list, selected note and queued drafts survive, and a different user signing in on the same browser within the cache retention window sees the earlier account's note titles, previews and open note body."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:54",
+     "intentKey": "nul-characters-reach-database-unvalidated",
+     "subject": "PATCH accepts titles and bodies containing NUL characters, which Postgres rejects, so a title containing a NUL character returns the generic HTTP 500 instead of a 400 naming the field, failing AC-075."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "backend/src/features/auth/service.ts:24",
+     "intentKey": "control-characters-accepted-in-email",
+     "subject": "validateEmail accepts control characters, so an email containing a NUL character makes register and sign-in fail with HTTP 500 from Postgres, and an email containing an escape character is written unchanged into the server log by requestPasswordReset."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/lib/errors.ts:88",
+     "intentKey": "malformed-path-encoding-returns-500",
+     "subject": "A malformed percent-encoded note id such as /api/notes/%E0%A4%A makes Express raise a 400 URIError that errorHandler does not map, so the client gets HTTP 500 and the server logs an unhandled error for attacker-controlled input."
+    }
+   ]
+  },
+  {
+   "label": "xhigh-8",
+   "effort": "xhigh",
+   "cost": 0.034093149999999996,
+   "tokensOut": 67052,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 299905,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:13",
+     "intentKey": "session-expiry-keeps-prior-account-cache",
+     "subject": "A 401 on any query clears only ['session'], so the previous account's cached note list, open note body and selected note survive, and the next user who signs in on that tab sees them until the refetch replaces them."
+    },
+    {
+     "severity": "high",
+     "classification": "current_artifact",
+     "location": "frontend/src/lib/useAutosave.ts:138",
+     "intentKey": "offline-queued-edit-dropped-on-reopen",
+     "subject": "An edit queued while offline is never written to the ['note', id] cache, so reopening that note shows the pre-edit body, and the next keystroke's schedule() deletes the queued draft, so the offline edit is permanently lost after reconnect."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/Dashboard.tsx:59",
+     "intentKey": "sign-out-ignores-failed-flush",
+     "subject": "flushPendingSave resolves even when the save failed, so sign-out proceeds, the unsaved draft is queued with no session and never sent, and the edit is lost on reload."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/auth/service.ts:24",
+     "intentKey": "control-characters-accepted-in-email",
+     "subject": "validateEmail accepts ASCII control characters such as ESC and backspace, and requestPasswordReset writes the email verbatim to the server log, so an unauthenticated forgot-password request can inject terminal escape sequences into the log."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:54",
+     "intentKey": "nul-character-yields-server-error",
+     "subject": "A title or body containing U+0000 passes validation, Postgres rejects it, and PATCH returns a generic 500, so that note cannot be saved while it holds that text."
+    }
+   ]
+  },
+  {
+   "label": "xhigh-9",
+   "effort": "xhigh",
+   "cost": 0.1331784,
+   "tokensOut": 83631,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 375413,
+   "tools": [
+    "Read",
+    "Read",
+    "Read"
+   ],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "high",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/NoteEditor.tsx:48",
+     "intentKey": "stale-save-response-overwrites-note-cache",
+     "subject": "When an older save response arrives after a newer one, this line writes the older body into the ['note', id] cache, so reopening the note shows stale text and the next autosave sends that text back, overwriting the newer edit on the server."
+    },
+    {
+     "severity": "high",
+     "classification": "current_artifact",
+     "location": "frontend/src/lib/useAutosave.ts:138",
+     "intentKey": "offline-edit-discarded-on-note-reopen",
+     "subject": "An edit made while offline never reaches the ['note', id] cache because flush returns before save runs, so reopening the note shows the pre-edit text, and typing there deletes the queued offline draft at this line so the offline edit is never sent."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:14",
+     "intentKey": "session-expiry-keeps-previous-account-cache",
+     "subject": "A 401 only nulls ['session'] and leaves cached notes, the cached selected note and the store state in place, so the next account to sign in on the same browser renders the previous account's note list and note content before its own refetch completes."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/NoteEditor.tsx:95",
+     "intentKey": "title-over-limit-blocks-whole-note-save",
+     "subject": "The title input has no 500-character limit, so a longer title makes every PATCH fail with HTTP 400 for the title field, which rejects the body in the same request, and no body edit is persisted until the title is shortened."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/auth/service.ts:24",
+     "intentKey": "nul-in-email-returns-500-not-400",
+     "subject": "validateEmail accepts a NUL character that Postgres rejects, so POST /api/auth/register with such an email returns HTTP 500 with a server-side stack instead of the HTTP 400 naming email that AC-075 requires."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:54",
+     "intentKey": "nul-or-surrogate-in-note-content-returns-500",
+     "subject": "A title or body containing a NUL character, or an unpaired surrogate in the body, passes validation and Postgres rejects the write, so PATCH /api/notes/:id returns HTTP 500 and the whole save fails instead of a 400 naming the field."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/lib/useAutosave.ts:122",
+     "intentKey": "offline-queue-survives-session-change",
+     "subject": "Queued drafts are not cleared when a session ends by 401, and a failed save that finishes after sign-out is re-queued by this line, so the next account on that browser replays the previous account's drafts with its own cookie (rejected with 404) and keeps a leave-page prompt stuck on."
+    }
+   ]
+  },
+  {
+   "label": "xhigh-10",
+   "effort": "xhigh",
+   "cost": 0.14242264999999998,
+   "tokensOut": 77692,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 352698,
+   "tools": [
+    "Grep",
+    "Grep",
+    "Read"
+   ],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:14",
+     "intentKey": "session-expiry-keeps-prior-account-cache",
+     "subject": "A 401 on any query clears only the ['session'] entry and leaves selectedNoteId and the cached ['notes'] and ['note', id] data in place, so signing in as a different user in the same tab renders the previous account's note list and open note body until those refetches complete."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/lib/useAutosave.ts:98",
+     "intentKey": "offline-edit-lost-on-reopen",
+     "subject": "While offline, flush returns before calling save, so the ['note', id] cache keeps the pre-edit body; reopening that note while still offline mounts the old body, and the first keystroke makes schedule delete the queued draft, so the offline edit is never sent to the server."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "backend/src/features/auth/service.ts:23",
+     "intentKey": "email-nul-byte-returns-500",
+     "subject": "validateEmail accepts NUL and other non-whitespace control characters, so registering an address that contains a NUL byte returns HTTP 500 from PostgreSQL instead of the 400 naming email that AC-075 requires, and a registered address with an ANSI escape is written verbatim to the server log by requestPasswordReset."
+    },
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:54",
+     "intentKey": "note-text-nul-byte-returns-500",
+     "subject": "The PATCH title and body checks accept NUL characters, which PostgreSQL rejects in text and jsonb, so the save fails with HTTP 500 instead of a field-naming 400 (AC-075), and while the NUL remains in the note every save of it fails the same way, so its edits are never persisted."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/Dashboard.tsx",
+     "intentKey": "sign-out-requeues-failed-draft",
+     "subject": "When a save failed before sign-out, the editor unmount runs after discardQueuedDrafts() and re-queues the previous account's draft, so the leave-page prompt stays armed on the sign-in screen and the draft is retried on every online event under the next session."
+    }
+   ]
+  },
+  {
+   "label": "sonnet-medium-1",
+   "model": "claude-sonnet-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-sonnet-5-5",
+   "cost": 0.23479229999999998,
+   "tokensOut": 2369,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 21325,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/lib/useAutosave.ts",
+     "intentKey": "draft-queued-after-signout",
+     "subject": "If a save fails during sign-out, the editor's unmount retry fails again with a 401 and queueIfUnsent then queues the draft after discardQueuedDrafts() has already run, so the signed-out user's note content stays in module memory, keeps the beforeunload prompt armed, and is re-sent on the next online event under whichever session is active."
+    }
+   ]
+  },
+  {
+   "label": "sonnet-medium-2",
+   "model": "claude-sonnet-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-sonnet-5-5",
+   "cost": 0.023685700000000004,
+   "tokensOut": 1809,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 16970,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:12",
+     "intentKey": "stale-user-state-after-session-expiry",
+     "subject": "The QueryCache 401 handler only sets ['session'] to null and does not clear the query cache, reset the store, or call discardQueuedDrafts(), so after a session expires a different user who signs in on the same browser sees the previous user's cached notes and open-note selection, and the previous user's queued drafts are sent under the new session."
+    }
+   ]
+  },
+  {
+   "label": "sonnet-medium-3",
+   "model": "claude-sonnet-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-sonnet-5-5",
+   "cost": 0.023555700000000002,
+   "tokensOut": 1796,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 15797,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:12",
+     "intentKey": "stale-user-data-after-session-expiry",
+     "subject": "The QueryCache onError handler only sets ['session'] to null on a 401 and does not clear the ['notes'] or ['note', id] caches, the store, or the queued drafts, so after a session expires another user who signs in on the same browser tab sees the previous user's note titles and previews, and the old selected note id, until refetches complete."
+    }
+   ]
+  },
+  {
+   "label": "sonnet-medium-4",
+   "model": "claude-sonnet-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-sonnet-5-5",
+   "cost": 0.0249357,
+   "tokensOut": 1934,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 18848,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:14",
+     "intentKey": "stale-user-data-after-401",
+     "subject": "The QueryCache onError handler only sets ['session'] to null on a 401 and keeps the ['notes'] and ['note', id] caches and the store's selectedNoteId, so a second user who signs in on the same tab is shown the previous user's cached note titles, previews and bodies until a refetch replaces them."
+    }
+   ]
+  },
+  {
+   "label": "sonnet-medium-5",
+   "model": "claude-sonnet-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-sonnet-5-5",
+   "cost": 0.037565699999999994,
+   "tokensOut": 3197,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 27947,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:61",
+     "intentKey": "nul-char-input-not-rejected",
+     "subject": "PATCH /notes/:id validates only the type and length of title and the shape of body, so a title or body text containing U+0000 reaches Postgres, which rejects it, and the client gets HTTP 500 instead of the field-naming 400 that AC-075 requires."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/auth/service.ts:30",
+     "intentKey": "nul-char-email-password-not-rejected",
+     "subject": "validateEmail and the sign-in path accept an email containing U+0000, so registering or signing in with one makes the Postgres query fail and the client gets HTTP 500 instead of a 400 naming the email field."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/Dashboard.tsx:62",
+     "intentKey": "signout-queue-discard-ordering",
+     "subject": "handleSignOut calls discardQueuedDrafts() before the NoteEditor unmounts, and flushPendingSave swallows save errors, so a draft that failed to save is queued on unmount after the discard and keeps the previous user's note content in memory, where it is replayed on the next 'online' event under whichever session is active."
+    }
+   ]
+  },
+  {
+   "label": "sonnet-medium-6",
+   "model": "claude-sonnet-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-sonnet-5-5",
+   "cost": 0.021515700000000002,
+   "tokensOut": 1592,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 15564,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:12",
+     "intentKey": "stale-user-data-after-session-expiry",
+     "subject": "The QueryCache onError handler only sets ['session'] to null on a 401 and does not remove cached ['notes'] and ['note', id] queries, discard queued drafts, or reset the store. On a shared browser, a different user who signs in after the first user's session expires is shown the previous user's cached notes and selected note until the refetch completes."
+    }
+   ]
+  },
+  {
+   "label": "sonnet-medium-7",
+   "model": "claude-sonnet-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-sonnet-5-5",
+   "cost": 0.0256257,
+   "tokensOut": 2003,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 17637,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:11",
+     "intentKey": "session-expiry-leaves-prior-user-data",
+     "subject": "The QueryCache 401 handler only sets ['session'] to null. It does not clear the cached ['notes'] and ['note', id] queries, reset the store, or call discardQueuedDrafts, so when a session expires another user who signs in on the same browser is shown the previous user's cached notes and selected note until a refetch, and the previous user's queued drafts stay in memory."
+    }
+   ]
+  },
+  {
+   "label": "sonnet-medium-8",
+   "model": "claude-sonnet-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-sonnet-5-5",
+   "cost": 0.0256757,
+   "tokensOut": 2008,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 18025,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:12",
+     "intentKey": "stale-user-state-after-401",
+     "subject": "The QueryCache onError handler only sets ['session'] to null on a 401, so it keeps the cached ['notes'] and ['note', id] data, the store's selected note and any queued offline drafts; a different user who signs in afterwards in the same browser is shown the previous user's note titles and previews until a refetch, and the old queued drafts are sent under the new session."
+    },
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "backend/src/features/notes/routes.ts:55",
+     "intentKey": "nul-char-unvalidated-input",
+     "subject": "The title and body are not checked for U+0000 characters, which Postgres text and jsonb reject, so an authenticated PATCH with a title or body text containing \\u0000 fails inside the query and returns HTTP 500 with a server error log instead of a 400 naming the field; the same gap exists for the email field in auth/service.ts."
+    }
+   ]
+  },
+  {
+   "label": "sonnet-medium-9",
+   "model": "claude-sonnet-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-sonnet-5-5",
+   "cost": 0.0250357,
+   "tokensOut": 1944,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 18912,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:12",
+     "intentKey": "stale-session-cache-not-cleared",
+     "subject": "The QueryCache 401 handler only sets ['session'] to null and does not remove the cached ['notes'] and ['note', id] queries, reset the store (selectedNoteId, user), or call discardQueuedDrafts, so after a session expires, a different user who signs in on the same tab is shown the previous user's cached note list and open note, and the previous user's queued drafts stay in memory."
+    }
+   ]
+  },
+  {
+   "label": "sonnet-medium-10",
+   "model": "claude-sonnet-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-sonnet-5-5",
+   "cost": 0.0243557,
+   "tokensOut": 1876,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 18230,
+   "tools": [],
+   "parseError": null,
+   "findings": []
+  },
+  {
+   "label": "opus-medium-1",
+   "model": "claude-opus-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-opus-5-5",
+   "cost": 0.48873259999999996,
+   "tokensOut": 3328,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 45730,
+   "tools": [],
+   "parseError": null,
+   "findings": [],
+   "summary": "I found no actionable security defects in the changed code. I traced the main security paths and each matches the plan. Every notes query is filtered by user_id. Session JWTs are HS256 with a pinned algorithm and a check that sub is a string. Cookies are httpOnly, SameSite=Lax and Secure in production. Passwords are hashed with bcrypt and the plaintext is never stored or logged. Reset tokens come from randomBytes and only their SHA-256 hash is stored; they expire after one hour. Unknown emails are compared against a dummy hash, and forgot-password responds without waiting on the lookup. The 500 handler sends only a fixed generic message. SQL is parameterised; the only value placed directly into a query string is a constant. Note ids must be UUIDs and note bodies are type-checked. The toolbar accepts only http, https and mailto links. The reset token is removed from the address bar after it is read. Behaviours the approved plan deliberately chose were not reported: reset tokens are reusable, sign-out does not revoke the token server-side, and the reset link is written to the server log."
+  },
+  {
+   "label": "opus-medium-2",
+   "model": "claude-opus-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-opus-5-5",
+   "cost": 0.0892306,
+   "tokensOut": 3902,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 48567,
+   "tools": [],
+   "parseError": null,
+   "findings": [],
+   "summary": "I audited every changed path for security defects and found none to report. Untrusted input reaching the backend is checked: auth and notes body fields must be strings, note ids must be UUIDs, titles are capped at 500 characters and note bodies are type-checked. Every SQL query uses parameters. Every notes query filters by the user id taken from a JWT that is verified as HS256 and must carry a string sub claim. The session cookie is httpOnly and SameSite=Lax, and it is Secure in production. Passwords are hashed with bcrypt at cost 12 and are never logged or returned. Sign-in compares against a dummy hash when the email is unknown, so both outcomes cost one comparison. Reset tokens are 32 random bytes; only their SHA-256 digest is stored, and they expire after one hour. The forgot-password response is the same whether or not the account exists, and the reset is not awaited. Generic 500 responses contain nothing taken from the error, and body-parser errors are answered without logging the request body. Startup configuration errors name the variable without its value and reject the placeholder JWT secret. On the frontend, links set from the toolbar must use http, https or mailto, the reset token is removed from the address bar on first render, and sign-out clears the query cache and queued drafts. Two behaviours were left out because the approved plan chose them: existing sessions stay valid after a password reset, and reset tokens can be reused."
+  },
+  {
+   "label": "opus-medium-3",
+   "model": "claude-opus-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-opus-5-5",
+   "cost": 0.08723059999999999,
+   "tokensOut": 3802,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 42979,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:14",
+     "intentKey": "stale-cross-user-cache-after-session-expiry",
+     "subject": "The QueryCache 401 handler only sets ['session'] to null; it does not clear the other queries or reset the store as the sign-out path does. After user A's session expires or becomes invalid, user B signing in on the same browser immediately sees A's cached ['notes'] list and A's still-selected note ('note', selectedNoteId) in the editor until refetches return 404, which exposes A's note titles and content to B."
+    }
+   ],
+   "summary": "Security review of the foundation change found one actionable defect. When a session expires or becomes invalid, the frontend's 401 handler switches to the sign-in screen but keeps the previous user's cached notes and selected note id. A different user who then signs in on the same browser is shown the earlier user's note list and open note before refetches fail. The backend checks were traced and are sound: authentication, password hashing and reset-token handling, per-user filtering on every notes query, cookie options, and generic 500 responses. Behaviours the approved plan specifies on purpose were not reported, such as reusable reset tokens and stateless JWT sessions."
+  },
+  {
+   "label": "opus-medium-4",
+   "model": "claude-opus-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-opus-5-5",
+   "cost": 0.0786706,
+   "tokensOut": 3374,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 37309,
+   "tools": [],
+   "parseError": null,
+   "findings": [],
+   "summary": "I traced attacker-controlled input through every changed path and found no actionable security defect in the current code. Paths covered: the auth endpoints (register, sign-in, sign-out, me, forgot-password, reset-password), session JWT signing and verification, cookie parsing and flags, notes CRUD, config and secret validation, migrations, the error handler, the plain-text walker and the frontend api, editor, autosave and reset screens. Every SQL query is parameterized. The only interpolated value, the reset interval, is a constant. Every notes query is filtered by the session user id, and note ids are checked as UUIDs. JWT verification pins HS256 and checks that sub is a string. Passwords are bcrypt-hashed and never logged or returned. Unknown-email sign-in still costs one bcrypt comparison against a dummy hash. Reset tokens are 32 random bytes stored only as SHA-256 digests, with a 1-hour window. The 500 response is a fixed generic message. Toolbar links accept only http, https and mailto. The reset token is removed from the address bar. Two gaps exist but follow the approved spec and plan rather than the code, so they are not reported: existing sessions stay valid after a password reset, and reset tokens are not single-use (AC-007 was withdrawn)."
+  },
+  {
+   "label": "opus-medium-5",
+   "model": "claude-opus-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-opus-5-5",
+   "cost": 0.0865706,
+   "tokensOut": 3769,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 41606,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/Dashboard.tsx:65",
+     "intentKey": "draft-queue-survives-sign-out",
+     "subject": "handleSignOut calls discardQueuedDrafts() before the Dashboard and NoteEditor unmount. If the flushed save failed (for example a 500), the editor's unmount cleanup (queueIfUnsent in useAutosave) re-queues the signed-out user's unsaved draft into the module-level queue. That draft stays in memory, keeps the beforeunload guard active, and is sent as a PATCH under the next session on the tab's next 'online' event."
+    }
+   ],
+   "summary": "Security audit of the auth, session, password reset, notes API, error handling and frontend data layer. Session cookies use httpOnly, SameSite=Lax and HS256-pinned verification. Every notes query is filtered by the session user id. Reset tokens are stored as SHA-256 digests and limited to one hour. 500 responses carry only a fixed message, and editor link input is checked against a protocol allow-list. One low-severity data-retention defect was found: at sign-out, the offline draft queue is cleared before the editor unmounts. If the last save failed, the unmount cleanup puts the signed-out user's unsaved note draft back into the module-level queue. It stays in memory and is sent again later under whichever session the tab has then."
+  },
+  {
+   "label": "opus-medium-6",
+   "model": "claude-opus-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-opus-5-5",
+   "cost": 0.10219059999999999,
+   "tokensOut": 4550,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 50090,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:14",
+     "intentKey": "stale-user-data-after-session-loss",
+     "subject": "When a query gets a 401, the QueryCache onError only sets ['session'] to null; it does not remove the user-scoped ['notes'] and ['note', id] caches, reset the store's selectedNoteId and user, or call discardQueuedDrafts the way handleSignOut does. If a session expires or becomes invalid on a shared browser and another person signs in within the cache gcTime, the Dashboard first renders the previous user's note list and the previously open note's full title and body from cache, and any draft queued by the previous user's unmounted editor stays in memory to be resent."
+    }
+   ],
+   "summary": "Security audit of the foundation change found one actionable defect. When a 401 ends a session without an explicit sign-out (for example, an expired or invalid session cookie), the previous user's data is not cleared. Their cached notes, selected note id and queued drafts stay in the browser, and the next account to sign in on that browser can see them. The rest of the audit found no defects within the security specialty. Passwords are hashed with bcrypt and plaintext is never logged. Unknown-email sign-in costs the same bcrypt comparison as a known one. Reset tokens are random and only their SHA-256 hash is stored. JWT verification is pinned to HS256. Every notes query is filtered by the session user id. 500 responses carry a generic message. The toolbar only accepts http, https and mailto links, and the reset token is removed from the address bar."
+  },
+  {
+   "label": "opus-medium-7",
+   "model": "claude-opus-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-opus-5-5",
+   "cost": 0.09969059999999999,
+   "tokensOut": 4425,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 51603,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/Dashboard.tsx:66",
+     "intentKey": "signout-draft-requeued-after-discard",
+     "subject": "handleSignOut calls discardQueuedDrafts() before the store reset and query removal that unmount NoteEditor, so an edit typed while the sign-out request is in flight is sent by the unmount flush without a session cookie, fails with 401, and is put back in the module-level queue by queueIfUnsent; the signed-out user's note content then stays in memory, keeps the beforeunload prompt active, and is resent on the next 'online' event under whichever account signs in next in that browser."
+    }
+   ],
+   "summary": "Security audit of the full diff. Checked the auth and session flow (HS256 JWT with pinned algorithms, an httpOnly SameSite=Lax cookie, sign-out clearing the cookie), password handling (bcrypt cost 12, dummy-hash comparison for unknown emails, no plaintext or hash logged or returned), the reset flow (32-byte token stored only as a sha256 digest, 1-hour window, response not awaited so timing does not reveal accounts, token removed from the address bar), queries scoped to the user (every notes query filters by user_id, parameterized SQL, UUID check on ids), error handling (generic 500, nothing derived from the error sent to the client), config validation (no secret values echoed, placeholder secret rejected), CORS, link-protocol filtering in the toolbar, and log-injection risk (the email regex excludes whitespace). Found one low-severity defect in the frontend: a race during sign-out can leave the signed-out user's draft queued in memory and resend it later under another session."
+  },
+  {
+   "label": "opus-medium-8",
+   "model": "claude-opus-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-opus-5-5",
+   "cost": 0.0771906,
+   "tokensOut": 3300,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 46720,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/App.tsx:13",
+     "intentKey": "stale-user-data-after-session-expiry",
+     "subject": "The QueryCache 401 handler only sets ['session'] to null; it does not remove the other cached queries, reset the store or call discardQueuedDrafts. If user A's session expires or becomes invalid and user B then signs in on the same tab, A's cached ['notes'] list, A's open ['note', id] content and A's selectedNoteId are rendered in B's dashboard before refetch. A's queued drafts are also replayed with B's cookie."
+    }
+   ],
+   "summary": "Security audit of the auth, session, notes API, error handling, reset flow and frontend data layer. Backend trust boundaries hold: every notes query is scoped by user id, JWTs are verified with HS256 pinned, bcrypt is used with dummy-hash timing equalisation, reset tokens are stored only as hashes, and 500 responses are generic. One actionable defect: when a session ends through an HTTP 401 instead of an explicit sign-out, the frontend keeps the previous user's cached notes, selection and queued drafts, so the next account that signs in on the same tab can see them."
+  },
+  {
+   "label": "opus-medium-9",
+   "model": "claude-opus-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-opus-5-5",
+   "cost": 0.0982906,
+   "tokensOut": 4355,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 46545,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "low",
+     "classification": "current_artifact",
+     "location": "frontend/src/lib/useAutosave.ts:121",
+     "intentKey": "draft-requeued-after-sign-out",
+     "subject": "When a save has failed and the user signs out, Dashboard calls discardQueuedDrafts() before NoteEditor unmounts; the unmount cleanup then retries the save without a session, gets a 401, and queueIfUnsent() puts the signed-out user's note content back in the module-level queue, so it stays in memory in a shared browser, keeps the beforeunload prompt registered, and on the next online event is written into the next signed-in user's query cache and sent as a PATCH under that user's session."
+    }
+   ],
+   "summary": "I traced attacker-controlled input through every changed path and found one low-severity session data-handling defect. The inputs traced were auth bodies, reset tokens, note ids and bodies, cookies, TipTap JSON, link hrefs and error handling. Everything else holds: queries are parameterised and filtered by user id, JWT checks pin HS256 and require a string sub, passwords use bcrypt cost 12 with a dummy-hash timing equaliser, only a SHA-256 digest of the reset token is stored, link protocols are allowlisted, and 500 responses carry only a fixed generic message. The defect is in the autosave queue after sign-out. Sign-out clears the offline draft queue before the editor unmounts. If the user's last save had failed, the editor's unmount cleanup retries it without a session, gets a 401, and re-queues the signed-out user's note draft. That draft can then be replayed later under the next user's session."
+  },
+  {
+   "label": "opus-medium-10",
+   "model": "claude-opus-5-5",
+   "effort": "medium",
+   "effectiveModel": "claude-opus-5-5",
+   "cost": 0.0920906,
+   "tokensOut": 4045,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 49137,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "medium",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/auth/AuthScreen.tsx:41",
+     "intentKey": "stale-cross-account-cache-after-session-loss",
+     "subject": "Reproduce: let account A's session expire, or be cleared from another tab, so a notes request returns 401; App then shows AuthScreen. Defect: neither the 401 path nor a successful sign-in or register in AuthScreen removes the other cached queries, resets the store, or discards queued drafts. Impact: when account B signs in on that browser, the Dashboard first renders A's cached ['notes'] list and the stale selected note's cached ['note', id] body (titles, previews and content), and only replaces them when the refetch finishes."
+    }
+   ],
+   "summary": "I audited the backend auth, session, reset-token, notes-authorization and error-handling paths, and the frontend session, cache and draft-queue handling. The backend is sound: every notes query is scoped by user_id, the JWT is verified with HS256 only, only the SHA-256 digest of each reset token is stored, and 500 responses are generic. I found one actionable defect, in the frontend. When a session ends without the Sign out button (for example it expires or is cleared and a request returns 401), the previous account's cached notes and selected note stay in memory. A different account that then signs in on the same browser briefly sees them."
+  },
+  {
+   "label": "haiku45-medium-1",
+   "model": "claude-haiku-4-5-20251001",
+   "effort": "medium",
+   "effectiveModel": "claude-haiku-4-5-20251001",
+   "cost": 0.1140048,
+   "tokensOut": 6107,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 57802,
+   "tools": [],
+   "parseError": null,
+   "findings": [],
+   "summary": "No actionable security defects identified. The implementation demonstrates sound security practices: parameterized database queries, bcrypt password hashing, JWT token signing with proper configuration, HTTPOnly secure SameSite cookies, input validation at trust boundaries, authorization checks on protected endpoints, generic error responses that do not leak internals, safe credential handling, and proper separation of secrets from code.",
+   "thinking": 5973
+  },
+  {
+   "label": "haiku45-medium-2",
+   "model": "claude-haiku-4-5-20251001",
+   "effort": "medium",
+   "effectiveModel": "claude-haiku-4-5-20251001",
+   "cost": 0.0950381,
+   "tokensOut": 18081,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 159250,
+   "tools": [],
+   "parseError": null,
+   "findings": [],
+   "summary": "Security review complete. The change implements a full authentication, notes, and editor system with careful attention to common vulnerabilities. All input is parameterized at the database layer, error responses do not leak information, passwords are hashed securely with bcrypt, authentication tokens are generated and verified correctly, authorization is enforced on all protected endpoints, and frontend input validation prevents unsafe content. No concrete security defects were identified within the declared artifacts.",
+   "thinking": 17934
+  },
+  {
+   "label": "haiku45-medium-3",
+   "model": "claude-haiku-4-5-20251001",
+   "effort": "medium",
+   "effectiveModel": "claude-haiku-4-5-20251001",
+   "cost": 0.0889881,
+   "tokensOut": 16871,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 152694,
+   "tools": [],
+   "parseError": null,
+   "findings": [],
+   "summary": "Comprehensive security audit of crew-chatter-foundation feature. The implementation demonstrates strong security practices across authentication, authorization, data handling, and error responses. All SQL queries are parameterized, password security uses bcrypt with timing-attack prevention, sessions use signed httpOnly cookies, and error responses contain no sensitive information. No actionable security defects identified within the approval scope.",
+   "thinking": 16717
+  },
+  {
+   "label": "haiku45-medium-4",
+   "model": "claude-haiku-4-5-20251001",
+   "effort": "medium",
+   "effectiveModel": "claude-haiku-4-5-20251001",
+   "cost": 0.0655231,
+   "tokensOut": 12178,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 101233,
+   "tools": [],
+   "parseError": null,
+   "findings": [
+    {
+     "severity": "high",
+     "classification": "current_artifact",
+     "location": "frontend/src/features/notes/EditorToolbar.tsx",
+     "intentKey": "mailto-link-validation-failure",
+     "subject": "The link validator rejects mailto: URLs because new URL() throws an error on non-standard schemes, preventing the feature from supporting mailto links as specified in the approved plan."
+    }
+   ],
+   "summary": "One defect found: the link validator in the toolbar cannot support mailto: URLs because it uses the URL constructor which rejects non-standard URL schemes, directly contradicting the approved plan.",
+   "thinking": 11996
+  },
+  {
+   "label": "haiku45-medium-5",
+   "model": "claude-haiku-4-5-20251001",
+   "effort": "medium",
+   "effectiveModel": "claude-haiku-4-5-20251001",
+   "cost": 0.0821681,
+   "tokensOut": 15507,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 133187,
+   "tools": [],
+   "parseError": null,
+   "findings": [],
+   "summary": "No actionable security defects found within specialty.",
+   "thinking": 15440
+  },
+  {
+   "label": "haiku45-medium-6",
+   "model": "claude-haiku-4-5-20251001",
+   "effort": "medium",
+   "effectiveModel": "claude-haiku-4-5-20251001",
+   "cost": 0.0872081,
+   "tokensOut": 16515,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 145295,
+   "tools": [],
+   "parseError": null,
+   "findings": [],
+   "summary": "Security review of crew-chatter-foundation feature complete. Examined authentication, password reset, note storage, API error handling, and input validation across backend and frontend. All critical security mechanisms (bcrypt password hashing, JWT session tokens, parameterized SQL queries, input validation, output escaping, httpOnly secure cookies, CSRF protection) are properly implemented per the specification and plan. No actionable security defects identified within the declared scope.",
+   "thinking": 16346
+  },
+  {
+   "label": "haiku45-medium-7",
+   "model": "claude-haiku-4-5-20251001",
+   "effort": "medium",
+   "effectiveModel": "claude-haiku-4-5-20251001",
+   "cost": 0.0619431,
+   "tokensOut": 11462,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 108604,
+   "tools": [],
+   "parseError": null,
+   "findings": [],
+   "summary": "Comprehensive security review of the crew-chatter-foundation feature. The implementation properly handles authentication, authorization, input validation, error handling, and sensitive data protection. All SQL queries use parameterized statements, CORS and session cookies are correctly configured, passwords use bcrypt with timing-attack resistance, error responses do not leak stack traces or internal details, and notes endpoints correctly filter by user ID. Password reset tokens are hashed before storage and delivered securely. No SQL injection, XSS, CSRF, information disclosure, or authorization bypass vulnerabilities identified.",
+   "thinking": 11270
+  },
+  {
+   "label": "haiku45-medium-8",
+   "model": "claude-haiku-4-5-20251001",
+   "effort": "medium",
+   "effectiveModel": "claude-haiku-4-5-20251001",
+   "cost": 0.0683131,
+   "tokensOut": 12736,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 113240,
+   "tools": [],
+   "parseError": null,
+   "findings": [],
+   "summary": "Security audit of crew-chatter-foundation feature completed. The implementation follows secure practices for password hashing, session management, input validation, authorization, and error handling. No actionable security defects within the specialty scope were identified.",
+   "thinking": 12612
+  },
+  {
+   "label": "haiku45-medium-9",
+   "model": "claude-haiku-4-5-20251001",
+   "effort": "medium",
+   "effectiveModel": "claude-haiku-4-5-20251001",
+   "cost": 0.057283099999999997,
+   "tokensOut": 10530,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 86567,
+   "tools": [],
+   "parseError": null,
+   "findings": [],
+   "summary": "Security audit complete. No actionable defects identified within the specialty of security. Code implements proper authentication, authorization, input validation, parameterized queries, session handling, and error message sanitization according to the approved specification and plan. Password hashing uses bcrypt with appropriate cost, session tokens are properly signed and validated, CORS is configured, and user authorization is correctly enforced across the API.",
+   "thinking": 10392
+  },
+  {
+   "label": "haiku45-medium-10",
+   "model": "claude-haiku-4-5-20251001",
+   "effort": "medium",
+   "effectiveModel": "claude-haiku-4-5-20251001",
+   "cost": 0.1004331,
+   "tokensOut": 19160,
+   "exitCode": 0,
+   "timedOut": false,
+   "durationMs": 164295,
+   "tools": [],
+   "parseError": null,
+   "findings": [],
+   "summary": "Security review of the crew-chatter-foundation feature implementation. The code correctly implements authenticated notes with proper session handling, password hashing with bcrypt, parameterized SQL queries, input validation, error handling that avoids leaking sensitive details, XSS protection through React's default escaping and TipTap's schema validation, and timing attack mitigations on authentication. All acceptance criteria related to security (AC-005, AC-074, AC-075) are satisfied. No actionable security defects identified within the current artifact.",
+   "thinking": 18991
+  }
+ ]
+}
