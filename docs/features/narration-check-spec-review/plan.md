@@ -205,6 +205,16 @@ Verification:
 - `npm run typecheck` and `npm test` passed, with the one count fix above.
 - The tool shell has no `SYSTEMONE_*` variables, so no test could have reached the real resource. A test that created a run with the check on outside the stand-in would have failed at intake.
 
+**First live run (operator-approved, 2026-10-17).** The run was web-calculator, with `driver.mjs paid --yes --narration-check --model claude-sonnet-5-5`, and Decision-1 deployment `Decision-1` (`DataZoneStandard`). It passed all 15 driver steps, and the run completed with a valid audit chain.
+- Claude dispatches: 22, for $1.51048.
+- Code review: two panels and one remediation.
+- Delivery: 3 of 3 declared artifacts delivered.
+- Narration: 24 requests, one per criterion in the single spec-review round, all valid. Every response named `microsoft-decision-1`. Each took 168–621 ms. Together they used 5,340 tokens, and no cost was reported.
+- Answers: all 24 were `criterion`, so nothing was flagged and no finding was raised. The highest `contains-remark` probability was AC-015's 0.0203.
+- Raw records: all 24 were retained. None carries the key.
+- `driver.mjs`'s cost report now lists Decision-1 requests apart from dispatches instead of summing their null cost as zero.
+- The target was not copied into the repository. It is at `%TEMP%\bw-run-skill\1792257585521\target`.
+
 ## Open decisions
 
 - A dashboard configuration row for the check.

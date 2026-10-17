@@ -82,10 +82,21 @@ narration into the spec stage. Ensure we do not swallow errors". They decided:
 Tests reach Decision-1 only through the loopback stand-in in `test/systemone-stand-in.ts`. Every
 test spawn of `new-run` passes `--no-narration-check`.
 
+Committed as `6cb2e3b`, not pushed. The operator then approved a paid live run with
+`--narration-check` (web-calculator, sonnet-5-5). It completed:
+- 15/15 driver steps;
+- 22 Claude dispatches for $1.51048, two code-review panels and one remediation;
+- 3 of 3 artifacts delivered.
+
+Decision-1 answered 24 of 24 criteria `criterion`, the highest remark probability being 0.0203,
+so nothing was flagged. That fits a clean spec, but it does not exercise a live catch. The
+details are in the plan's "First live run" block. The driver's cost-report fix that lists
+Decision-1 requests apart is uncommitted.
+
 **Next action:** the operator decides:
-- whether to commit the Decision-1 work, which nothing has committed;
-- what to do about grounding;
-- whether a live run with `--narration-check` is wanted. That is a separate spend decision.
+- whether to commit the driver report fix and the run record;
+- what to do about grounding. The recommendation is to leave it unadopted until more recorded
+  positives exist.
 
 Never relabel cases after seeing answers. Nothing is in flight.
 

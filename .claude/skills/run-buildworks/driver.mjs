@@ -367,17 +367,26 @@ function paidChain() {
 /** What the run cost and what state it reached — the queryable-cost milestone. */
 function reportCost(repo) {
   const db = new DatabaseSync(join(repo, ".governance", "state.db"), { readOnly: true });
-  const rows = db.prepare(
-    "SELECT agent, role, effective_model AS model, cost, duration_ms FROM agent_run ORDER BY id"
+  const all = db.prepare(
+    "SELECT agent, role, executor, effective_model AS model, cost, tokens_in, tokens_out, duration_ms FROM agent_run ORDER BY id"
   ).all();
   const stages = db.prepare("SELECT id, kind, status FROM stage ORDER BY id").all();
   const runs = db.prepare("SELECT id, slug, status FROM run ORDER BY id").all();
   db.close();
+  // A Decision-1 narration request is an agent run but not a dispatch, and it
+  // reports no cost: listed apart, never summed as zero.
+  const rows = all.filter((r) => r.executor !== "systemone");
+  const narration = all.filter((r) => r.executor === "systemone");
   const total = rows.reduce((sum, r) => sum + (r.cost ?? 0), 0);
   console.log(`\ndispatches: ${rows.length}   total cost: $${total.toFixed(5)}`);
   for (const r of rows) {
     console.log(`  ${r.agent} (${r.role}, ${r.model ?? "model unreported"}) ` +
                 `$${(r.cost ?? 0).toFixed(5)} ${r.duration_ms}ms`);
+  }
+  if (narration.length > 0) {
+    const tokens = narration.reduce((sum, r) => sum + r.tokens_in + r.tokens_out, 0);
+    console.log(`Decision-1 narration requests: ${narration.length}, ${tokens} tokens, cost not reported ` +
+                `(not in the total above)`);
   }
   console.log(`stages: ${stages.map((s) => `${s.kind}=${s.status}`).join(" ")}`);
   for (const r of runs) console.log(`run ${r.id} (${r.slug}): ${r.status}`);
