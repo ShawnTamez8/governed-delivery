@@ -19,6 +19,8 @@ import { computeScope } from "../src/scope.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { loadProfile } from "../src/profile.ts";
 import { readRunSnapshot } from "../src/operator-state.ts";
+import { NARRATION_EXECUTOR } from "../src/narration-check.ts";
+import { ALWAYS_CRITERION, withStandIn } from "./systemone-stand-in.ts";
 
 const JOURNEY_FIXTURE = resolve("test", "fixtures", "harness", "emit-cli-run.mjs");
 
@@ -96,6 +98,7 @@ function createRun(root: string, input: {
       slug: input.slug ?? "guided-feature",
       changeKind: input.changeKind ?? "feature",
       model: "test-model",
+      narrationCheck: "off",
     }, { requireApprovalSigner: true }).run;
   } finally {
     store.close();
@@ -451,7 +454,8 @@ test("concurrent guided intake creates only one exact-tuple run", async () => {
     writeFileSync(publicPath, keys.publicKey.export({ type: "spki", format: "pem" }));
     process.env.BW_APPROVAL_PUBLIC_KEY = publicPath;
     repository(root);
-    await withNativeClaude(root, async () => {
+    // Guided intake always freezes the narration check on; the stand-in answers it.
+    await withStandIn(ALWAYS_CRITERION, () => withNativeClaude(root, async () => {
       let modelPrompts = 0;
       let releaseModels!: () => void;
       const bothAtModel = new Promise<void>((resolveBarrier) => {
@@ -474,7 +478,7 @@ test("concurrent guided intake creates only one exact-tuple run", async () => {
         runGuidedCommand(root, { stdout: capture().stream, stderr: capture().stream, prompt: concurrentPrompt }),
         runGuidedCommand(root, { stdout: capture().stream, stderr: capture().stream, prompt: concurrentPrompt }),
       ]), [1, 1]);
-    });
+    }));
     const store = openStore(root, { readOnly: true });
     try {
       const runs = store.query<RunRow>("SELECT * FROM run ORDER BY id");
@@ -505,7 +509,7 @@ test("guided intake creates one exact prompted tuple, freezes the signer, and st
     writeFileSync(publicPath, keys.publicKey.export({ type: "spki", format: "pem" }));
     process.env.BW_APPROVAL_PUBLIC_KEY = publicPath;
     repository(root);
-    await withNativeClaude(root, async () => {
+    await withStandIn(ALWAYS_CRITERION, (standIn) => withNativeClaude(root, async () => {
       const seen: string[] = [];
       const out = capture();
       const result = await runGuidedCommand(root, {
@@ -539,6 +543,7 @@ test("guided intake creates one exact prompted tuple, freezes the signer, and st
         assert.deepEqual(store.getStageChain(runs[0]!.id), []);
         const profile = JSON.parse(readFileSync(join(root, ".governance", "profiles", String(runs[0]!.id), "profile.json"), "utf8"));
         assert.ok(profile.approvalSigner);
+        assert.equal(profile.narrationCheck.endpoint, standIn.env.SYSTEMONE_ENDPOINT, "guided intake freezes the check on");
         // Guided mode passes no per-setting overrides: the prompted model reaches only the one setting with no seeded model.
         assert.deepEqual(Object.entries(profile.dispatchSettings as Record<string, { model: string }>)
           .filter(([, setting]) => setting.model === "explicit-model").map(([name]) => name).sort(),
@@ -546,7 +551,7 @@ test("guided intake creates one exact prompted tuple, freezes the signer, and st
       } finally {
         store.close();
       }
-    });
+    }));
   } finally {
     if (beforeKey === undefined) delete process.env.BW_APPROVAL_PUBLIC_KEY;
     else process.env.BW_APPROVAL_PUBLIC_KEY = beforeKey;
@@ -600,7 +605,7 @@ test("complete guided fixture journey reaches delivery with two paid consents an
     const publicPath = join(authority, "approval.pub");
     writeFileSync(publicPath, keys.publicKey.export({ type: "spki", format: "pem" }));
     process.env.BW_APPROVAL_PUBLIC_KEY = publicPath;
-    await withNativeClaude(parent, async () => {
+    await withStandIn(ALWAYS_CRITERION, () => withNativeClaude(parent, async () => {
       const prepared = await runGuidedCommand(target, {
         invocationDirectory: parent,
         stdout: capture().stream,
@@ -734,7 +739,9 @@ test("complete guided fixture journey reaches delivery with two paid consents an
           [run.id],
         );
         assert.ok(agents.length > 0);
-        assert.ok(agents.every((agent) => agent.cost === 0));
+        // The fixture harness reports zero cost; a Decision-1 call reports none, a gap rather than zero.
+        assert.ok(agents.some((agent) => agent.executor === NARRATION_EXECUTOR));
+        assert.ok(agents.every((agent) => agent.cost === (agent.executor === NARRATION_EXECUTOR ? null : 0)));
       } finally {
         store.close();
       }
@@ -752,7 +759,7 @@ test("complete guided fixture journey reaches delivery with two paid consents an
         "--code-review-mode",
         "low",
       ]);
-    });
+    }));
   } finally {
     if (beforeKey === undefined) delete process.env.BW_APPROVAL_PUBLIC_KEY;
     else process.env.BW_APPROVAL_PUBLIC_KEY = beforeKey;

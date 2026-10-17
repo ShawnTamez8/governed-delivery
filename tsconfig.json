@@ -12,6 +12,6 @@
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["src", "test"],
+  "include": ["src", "test", "scripts"],
   "exclude": ["test/dashboard-ui.test.ts"]
 }

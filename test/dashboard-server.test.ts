@@ -324,7 +324,7 @@ test("the approval route refuses every transport shape but an authenticated same
  */
 function decisionFixture(parent: string, name: string): { root: string; runId: number; findings: number[] } {
   const root = repository(parent, name);
-  const created = spawnSync(process.execPath, [CLI, "new-run", "--repo", root, "--project", "p", "--feature", "f-1",
+  const created = spawnSync(process.execPath, [CLI, "new-run", "--no-narration-check", "--repo", root, "--project", "p", "--feature", "f-1",
     "--slug", "s", "--change-kind", "feature", "--model", "test-model"], { cwd: parent, encoding: "utf8" });
   assert.equal(created.status, 0, created.stderr);
   const runId = Number(created.stdout.trim());

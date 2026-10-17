@@ -67,6 +67,9 @@ export function formatRunPreview(rootDir: string, snapshot: RunSnapshot, groups:
     `Document review: panel up to ${policy.panelSizeMax}; spec ${policy.specReviewRounds} round(s), plan ${policy.planReviewRounds} round(s). Each document group permits 1 author + 1 self-critique + rounds * (panel + 1 reconciler) dispatches. The spec group adds 1 split-proposal dispatch when the reviewed spec declares more than ${policy.designSplitPathThreshold} files.`,
     `Code review: ${policy.codeReviewPanelSize} reviewers * ${policy.codeReviewMaxRounds} panel(s), plus before each of at most ${policy.codeReviewMaxRounds - 1} remediation implementer dispatch(es) up to ${policy.codeReviewReconcilerCalls} code-review reconciler dispatches; each remediation is followed by frozen verification; blocking severity ${policy.codeReviewBlockingSeverity}.`,
     `Implementation: one implementer dispatch per ${policy.implementationPhaseTasks} plan tasks, at most ${policy.implementationMaxPhases} phases, then one implementer self-review dispatch; the phase count is known once the plan exists.`,
+    profile.narrationCheck === null
+      ? "Narration check: off (new-run --no-narration-check)."
+      : `Narration check: one Decision-1 request per acceptance criterion per spec-review round to ${profile.narrationCheck.deployment} at ${profile.narrationCheck.endpoint}, flagged at P >= ${profile.narrationCheck.threshold}; not counted in the dispatch ceilings; any failed request blocks the run.`,
     `Dispatch ceilings for this range: ${groups.map((group) => `${group}=${ceilings[group]}`).join(", ")}; total ${groups.reduce((sum, group) => sum + ceilings[group], 0)}.`,
     "Consent covers EVERY listed group through approval or terminalization, including bounded internal remediation, not only the next group.",
     "There is no intermediate voluntary stop control or hard monetary cap. Dispatch ceilings are not an invoice or a dollar guarantee.",

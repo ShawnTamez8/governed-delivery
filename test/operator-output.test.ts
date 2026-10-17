@@ -3,16 +3,18 @@ import assert from "node:assert/strict";
 import { formatRunPreview } from "../src/operator-output.ts";
 import { buildPolicy } from "../src/policy.ts";
 import type { ExecutionGroup, RunSnapshot } from "../src/operator-state.ts";
-import type { Profile } from "../src/profile.ts";
+import type { NarrationCheckConfig, Profile } from "../src/profile.ts";
+import { narrationQuestionHash } from "../src/narration-check.ts";
+import { readFileSync } from "node:fs";
 
 // formatRunPreview reads a handful of fields; the rest of a snapshot and a
 // profile is irrelevant to the text under test, so the fixtures carry only those.
-function preview(policy: ReturnType<typeof buildPolicy>, groups: ExecutionGroup[]): string {
+function preview(policy: ReturnType<typeof buildPolicy>, groups: ExecutionGroup[], narrationCheck: NarrationCheckConfig | null = null): string {
   const snapshot = {
     run: { id: 6, slug: "team-notes" },
     configuration: { dispatchSettings: {}, verificationCommands: [] },
   } as unknown as RunSnapshot;
-  const profile = { systemName: "BuildWorks", policy } as unknown as Profile;
+  const profile = { systemName: "BuildWorks", policy, narrationCheck } as unknown as Profile;
   return formatRunPreview("/target", snapshot, groups, profile);
 }
 
@@ -83,4 +85,16 @@ test("the spec ceiling counts the split dispatch and the sentence states the fro
 test("a range that does not include implementation does not count its ceiling", () => {
   const text = preview(buildPolicy(), ["plan"]);
   assert.ok(text.includes("Dispatch ceilings for this range: plan=5; total 5."), text);
+});
+
+test("the preview states whether spec review asks Decision-1, and where", () => {
+  assert.ok(preview(buildPolicy(), ["spec"]).split("\n").includes("Narration check: off (new-run --no-narration-check)."));
+  // The deployment is the recorded probe's.
+  const probe = JSON.parse(readFileSync("test/fixtures/recorded/systemone-probe-snitch-resource.json", "utf8")).provenance;
+  const config = { endpoint: probe.endpoint, deployment: probe.deployment, deploymentType: probe.deploymentType, threshold: 0.8, timeoutMs: 30000, questionHash: narrationQuestionHash() };
+  const text = preview(buildPolicy(), ["spec"], config);
+  assert.ok(
+    text.split("\n").includes(`Narration check: one Decision-1 request per acceptance criterion per spec-review round to ${probe.deployment} at ${probe.endpoint}, flagged at P >= 0.8; not counted in the dispatch ceilings; any failed request blocks the run.`),
+    text
+  );
 });

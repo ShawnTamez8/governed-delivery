@@ -109,6 +109,15 @@ frozen for the reconciler (every other setting takes its seeded default),
 directory it is written to. The last two are how a run exercises something
 other than the web calculator; see "Driving a custom PRD" below.
 
+The driver creates every run with `new-run --no-narration-check`, so spec
+review asks Decision-1 nothing and the run needs no `SYSTEMONE_*` variables.
+`--narration-check` drops that flag: the run then freezes the deployment the
+operator's `SYSTEMONE_ENDPOINT`, `SYSTEMONE_DEPLOYMENT` and
+`SYSTEMONE_DEPLOYMENT_TYPE` name, and `spec` sends one request per acceptance
+criterion per review round with `SYSTEMONE_API_KEY`
+(`docs/features/narration-check-spec-review/plan.md`). Those requests are not
+in the reported cost and are not counted in the dispatch ceilings.
+
 ## Run: the paid chain (spends real money)
 
 ```bash

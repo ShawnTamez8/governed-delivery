@@ -28,6 +28,8 @@ import {
   type ReviewerReport,
 } from "./reconciliation.ts";
 import { validateSelfCritique } from "./self-critique.ts";
+import { NARRATION_AGENT, narrationQuestionHash, runNarrationRound } from "./narration-check.ts";
+import { readSystemOneKey } from "./systemone.ts";
 import { deriveRoute, proposalIdentity, writeProposalEvidence } from "./proposal.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
@@ -182,6 +184,24 @@ export async function runSpecStage(
       ok: false,
       reason: `run ${runId} already has stage ${existing[0].kind} with status ${existing[0].status}`,
     };
+  }
+  // The narration check, at configuration time like every check above: a
+  // question changed since the run froze it, or a key that cannot be sent,
+  // refuses here, before a stage row exists or anything has spent.
+  let narrationKey: string | null = null;
+  if (profile.narrationCheck !== null) {
+    const current = narrationQuestionHash();
+    if (profile.narrationCheck.questionHash !== current) {
+      return {
+        ok: false,
+        reason: `the narration question changed since run ${runId} started (frozen ${profile.narrationCheck.questionHash}, code ${current}): config is frozen at run start`,
+      };
+    }
+    const key = readSystemOneKey(process.env);
+    if (!key.ok) {
+      return { ok: false, reason: `narration check: ${key.reason}` };
+    }
+    narrationKey = key.value;
   }
   const designPath = join(rootDir, "docs", "features", run.slug, "design.md");
   let design: string;
@@ -519,6 +539,37 @@ export async function runSpecStage(
           roundFindings.set(identity, finding);
           const list = roundReports.get(identity) ?? [];
           list.push({ reviewerId: author.id, ...report });
+          roundReports.set(identity, list);
+        }
+      }
+      // The narration check, on the specification this round's panel reviews
+      // and before the panel spends: each entry flagged at the frozen threshold
+      // is a finding the reconciler answers like a reviewer's. Any failed
+      // request blocks the stage and the run; nothing is skipped or retried.
+      if (profile.narrationCheck !== null) {
+        const narration = await runNarrationRound({
+          store,
+          rootDir,
+          runId,
+          stageId: reviewStage.id,
+          round,
+          spec: specContent,
+          config: profile.narrationCheck,
+          key: narrationKey!,
+        });
+        if (!narration.ok) {
+          return abort(reviewStage.id, "spec.narration.failed", narration.reason);
+        }
+        audit(
+          reviewStage.id,
+          "spec.narration.record",
+          `narration check round ${round}: answered=${narration.answered}; flagged=${narration.flagged.map((f) => `${f.report.location}:${f.finding.id}`).join(",")}`
+        );
+        for (const { finding, report } of narration.flagged) {
+          const identity = findingIdentity(report.location, report.intentKey);
+          roundFindings.set(identity, finding);
+          const list = roundReports.get(identity) ?? [];
+          list.push({ reviewerId: NARRATION_AGENT, ...report });
           roundReports.set(identity, list);
         }
       }

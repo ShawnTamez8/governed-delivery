@@ -102,12 +102,13 @@ function migrationColumns(sql: string): Map<string, string[]> {
   return cols;
 }
 
-test("architecture block defines exactly the twelve tables", () => {
+test("architecture block defines exactly the thirteen tables", () => {
   const names = [...architectureTables().keys()].sort();
   assert.deepEqual(names, [
     "agent_run",
     "approval",
     "audit",
+    "check_answer",
     "decision_answer",
     "decision_question",
     "finding",
@@ -140,9 +141,21 @@ test("every table's columns in the migrations match the architecture block", () 
     "proposal_source",
     "decision_question",
     "decision_answer",
+    "check_answer",
   ]) {
     assert.deepEqual(mig.get(table), arch.get(table), `columns of ${table}`);
   }
+});
+
+// The narration check (2026-10-17): one typed answer per agent run, a closed
+// check vocabulary, and a finding exactly when the answer was flagged.
+test("check_answer has one answer per agent run and ties flagged to its finding", () => {
+  const body = migrationTables(sql).get("check_answer")!;
+  assert.ok(body.includes("UNIQUE (agent_run_id)"));
+  assert.ok(body.includes("CHECK (check_name IN ('narration'))"));
+  assert.ok(body.includes("CHECK (flagged IN (0, 1))"));
+  assert.ok(body.includes("CHECK ((flagged = 1) = (finding_id IS NOT NULL))"));
+  assert.ok(!/\bstage_id\b/.test(body), "the agent run's stage is the one authority");
 });
 
 // Spec operator decisions: a question carries no stage column of its own —

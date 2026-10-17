@@ -54,6 +54,7 @@ test("shared intake writes the existing run, audit, and frozen-profile contract"
         slug: "feature-one",
         changeKind: "feature",
         model: "test-model",
+        narrationCheck: "off",
       });
       assert.equal(created.run.id, 1);
       assert.equal(created.run.project, "project");
@@ -64,7 +65,9 @@ test("shared intake writes the existing run, audit, and frozen-profile contract"
       const profile = JSON.parse(readFileSync(profilePath(root, created.run.id), "utf8"));
       assert.equal(profile.approvalSigner, null, "low-level intake retains its existing unbound behavior");
       assert.deepEqual(store.getAuditEvents(created.run.id).map((event) => event.action),
-        ["run.create", "profile.freeze"]);
+        ["run.create", "profile.freeze", "run.narration"]);
+      assert.equal(profile.narrationCheck, null);
+      assert.equal(store.getAuditEvents(created.run.id)[2]!.summary, "narration check off (new-run --no-narration-check)");
       assert.equal(verifyAuditChain(store), null);
     } finally {
       store.close();
@@ -84,7 +87,7 @@ test("shared intake passes per-setting overrides to the freeze, and omitting the
     repository(root);
     const store = openStore(root);
     try {
-      const base = { project: "project", featureId: "feature-1", slug: "feature-one", changeKind: "feature" as const, model: "test-model" };
+      const base = { project: "project", featureId: "feature-1", slug: "feature-one", changeKind: "feature" as const, model: "test-model", narrationCheck: "off" as const };
       const seeded = createRunIntake(store, root, base);
       const overridden = createRunIntake(store, root, { ...base, featureId: "feature-2", slug: "feature-two",
         settings: { effort: "xhigh", modelFor: { implementer: "override-model" }, effortFor: { "code-reviewer-security": "max" } } });
@@ -117,6 +120,7 @@ test("guided intake requires a usable public key before inserting a run", () => 
         slug: "feature-one",
         changeKind: "feature",
         model: "test-model",
+        narrationCheck: "off",
       }, { requireApprovalSigner: true }), /approval public key not found/);
       assert.deepEqual(store.query("SELECT * FROM run"), []);
       assert.deepEqual(store.query("SELECT * FROM audit"), []);
@@ -151,6 +155,7 @@ test("a shared profile-freeze failure blocks and audits the created run", () => 
         slug: "feature-one",
         changeKind: "feature",
         model: "test-model",
+        narrationCheck: "off",
       }), (error: unknown) => {
         assert.ok(error instanceof RunIntakeFreezeError);
         assert.equal(error.runId, 1);
@@ -169,6 +174,89 @@ test("a shared profile-freeze failure blocks and audits the created run", () => 
     rmSync(root, { recursive: true, force: true });
     rmSync(keyDirectory, { recursive: true, force: true });
   }
+});
+
+// --- the narration check (narration-check-spec-review Task 3) ---------------
+
+/**
+ * The deployment the probe recorded, and the threshold and question hash the
+ * 2026-10-17 evaluation recorded for the narration check: values from outside
+ * the code under test.
+ */
+const PROBE = JSON.parse(readFileSync(resolve("test", "fixtures", "recorded", "systemone-probe-snitch-resource.json"), "utf8")).provenance as {
+  endpoint: string; deployment: string; deploymentType: string;
+};
+const EVALUATION = JSON.parse(readFileSync(resolve("test", "fixtures", "recorded", "systemone-format-checks-evaluation.json"), "utf8")) as {
+  requests: Array<{ check: string; questionHash: string }>;
+  score: Array<{ verdict: { check: string; threshold: number } }>;
+};
+const NARRATION_ENV = {
+  SYSTEMONE_ENDPOINT: PROBE.endpoint,
+  SYSTEMONE_DEPLOYMENT: PROBE.deployment,
+  SYSTEMONE_DEPLOYMENT_TYPE: PROBE.deploymentType,
+  SYSTEMONE_API_KEY: "k-test-not-a-real-key",
+};
+
+function withIntakeRepository(fn: (root: string, store: Store) => void): void {
+  const root = workspace();
+  const beforeKey = process.env.BW_APPROVAL_PUBLIC_KEY;
+  process.env.BW_APPROVAL_PUBLIC_KEY = join(root, "missing-public.pem");
+  try {
+    repository(root);
+    const store = openStore(root);
+    try {
+      fn(root, store);
+    } finally {
+      store.close();
+    }
+  } finally {
+    if (beforeKey === undefined) delete process.env.BW_APPROVAL_PUBLIC_KEY;
+    else process.env.BW_APPROVAL_PUBLIC_KEY = beforeKey;
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const NARRATED = { project: "project", featureId: "feature-1", slug: "feature-one", changeKind: "feature" as const, model: "test-model", narrationCheck: "on" as const };
+
+test("narration check on freezes the environment's deployment, the evaluated threshold and question, and never the key", () => {
+  withIntakeRepository((root, store) => {
+    const created = createRunIntake(store, root, NARRATED, { env: NARRATION_ENV });
+    const profile = JSON.parse(readFileSync(profilePath(root, created.run.id), "utf8"));
+    const narration = EVALUATION.score.find((s) => s.verdict.check === "narration")!.verdict;
+    const questionHashes = new Set(EVALUATION.requests.filter((r) => r.check === "narration").map((r) => r.questionHash));
+    assert.equal(questionHashes.size, 1);
+    assert.deepEqual(profile.narrationCheck, {
+      endpoint: PROBE.endpoint,
+      deployment: PROBE.deployment,
+      deploymentType: PROBE.deploymentType,
+      threshold: narration.threshold,
+      timeoutMs: 120_000,
+      questionHash: [...questionHashes][0],
+    });
+    assert.ok(!readFileSync(profilePath(root, created.run.id), "utf8").includes(NARRATION_ENV.SYSTEMONE_API_KEY), "the key is never frozen");
+    const events = store.getAuditEvents(created.run.id);
+    assert.deepEqual(events.map((e) => e.action), ["run.create", "profile.freeze", "run.narration"]);
+    assert.match(events[2]!.summary, new RegExp(`^narration check on; endpoint=${PROBE.endpoint.replace(/[.]/g, "\\.")}; deployment=${PROBE.deployment}; `));
+    assert.ok(!events[2]!.summary.includes(NARRATION_ENV.SYSTEMONE_API_KEY));
+  });
+});
+
+test("narration check on refuses before any run row when a variable or the key is missing, and says how to go without it", () => {
+  withIntakeRepository((root, store) => {
+    for (const name of Object.keys(NARRATION_ENV)) {
+      const env: Record<string, string | undefined> = { ...NARRATION_ENV, [name]: undefined };
+      assert.throws(
+        () => createRunIntake(store, root, NARRATED, { env }),
+        new RegExp(`^Error: narration check: ${name} is not set; set it, or create the run with new-run --no-narration-check$`)
+      );
+    }
+    assert.throws(
+      () => createRunIntake(store, root, NARRATED, { env: { ...NARRATION_ENV, SYSTEMONE_ENDPOINT: "http://example.com/v1" } }),
+      /^Error: narration check: SYSTEMONE_ENDPOINT must be an absolute https URL; set it, or create/
+    );
+    assert.deepEqual(store.query("SELECT * FROM run"), [], "no refusal leaves a run row");
+    assert.deepEqual(store.query("SELECT * FROM audit"), []);
+  });
 });
 
 // --- new-run --after (design-split-into-features Task 8) --------------------
@@ -313,7 +401,7 @@ plan_for: ${specHash}
   }
 }
 
-const NEXT_FEATURE = { project: "operator", featureId: "demo-2", slug: "demo-part-2", changeKind: "feature" as const, model: "test-model" };
+const NEXT_FEATURE = { project: "operator", featureId: "demo-2", slug: "demo-part-2", changeKind: "feature" as const, model: "test-model", narrationCheck: "off" as const };
 
 function runCount(store: Store): number {
   return store.query<{ n: number }>("SELECT COUNT(*) n FROM run")[0]!.n;
@@ -334,8 +422,8 @@ test("--after over a merged delivered commit freezes the link and records it", a
     const profile = JSON.parse(readFileSync(profilePath(root, created.run.id), "utf8"));
     assert.deepEqual(profile.after, { runId, deliveredCommit: delivered });
     const events = store.getAuditEvents(created.run.id);
-    assert.deepEqual(events.map((e) => e.action), ["run.create", "profile.freeze", "run.after"]);
-    assert.equal(events[2]!.summary, `after run ${runId}; deliveredCommit=${delivered}`);
+    assert.deepEqual(events.map((e) => e.action), ["run.create", "profile.freeze", "run.narration", "run.after"]);
+    assert.equal(events[3]!.summary, `after run ${runId}; deliveredCommit=${delivered}`);
     assert.equal(verifyAuditChain(store), null);
   });
 });

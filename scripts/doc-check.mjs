@@ -344,6 +344,7 @@ const PINNED_TABLES = [
   "agent_run",
   "approval",
   "audit",
+  "check_answer",
   "decision_answer",
   "decision_question",
   "finding",
@@ -393,6 +394,10 @@ const PINNED_TABLE_CONSTRAINTS = [
   ["decision_question", "UNIQUE (finding_id)"],
   ["decision_answer", "CHECK (action IN ('approve', 'deny', 'modify'))"],
   ["decision_answer", "UNIQUE (question_id)"],
+  ["check_answer", "CHECK (check_name IN ('narration'))"],
+  ["check_answer", "CHECK (flagged IN (0, 1))"],
+  ["check_answer", "UNIQUE (agent_run_id)"],
+  ["check_answer", "CHECK ((flagged = 1) = (finding_id IS NOT NULL))"],
 ];
 
 const lineIn = (text, needle) => {

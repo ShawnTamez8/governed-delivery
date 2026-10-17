@@ -86,7 +86,7 @@ function repository(parent: string): string {
 }
 
 const NEW_RUN = [
-  "new-run", "--project", "p", "--feature", "f-1", "--slug", "s",
+  "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s",
   "--change-kind", "feature", "--model", "test-model",
 ];
 
@@ -2143,6 +2143,7 @@ test("Task 5 doctor --run keeps frozen configuration separate from current defau
         blockingSeverity: policy.codeReviewBlockingSeverity, severities: policy.severities },
       deadline: new Date(Date.parse(run.created_at) + policy.runDurationLimitSeconds * 1000).toISOString(),
       approvalSigner: profile.approvalSigner,
+      narrationCheck: profile.narrationCheck,
     });
     assert.deepEqual(report.current.policy, buildPolicy());
     assert.notEqual(report.current.policyHash, report.frozen!.policyHash);
@@ -2273,7 +2274,7 @@ test("Task 5 doctor --run preserves readable state and original invalid-profile 
         const report = body.result as DoctorResult;
         assert.deepEqual(report.frozen, { systemName: null, profileHash: null, policyHash: null,
           startingCommit: null, dispatchSettings: null, verificationCommands: null, documentReview: null,
-          codeReview: null, deadline: null, approvalSigner: null });
+          codeReview: null, deadline: null, approvalSigner: null, narrationCheck: null });
         assert.equal(report.current.startingCommit, profile.startingCommit);
         assert.deepEqual(report.current.verification, profile.verification);
         assert.equal(report.checks.find((check) => check.name === "executor_probe")!.status, "pass");

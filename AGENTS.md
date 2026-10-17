@@ -330,7 +330,12 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
   implicitly. Optional `--after <run-id>` names the feature this one follows: that
   run must belong to the same project, be completed, and have its delivered commit
   an ancestor of this checkout's HEAD (merge, never squash), and the link is
-  frozen into the profile. Each agent's, and both reconcilers', model and effort are frozen at
+  frozen into the profile. Spec review asks Decision-1 whether each acceptance
+  criterion carries the author's remark: `new-run` freezes the deployment that
+  `SYSTEMONE_ENDPOINT`, `SYSTEMONE_DEPLOYMENT` and `SYSTEMONE_DEPLOYMENT_TYPE` name
+  and refuses when they or `SYSTEMONE_API_KEY` are unset, unless
+  `--no-narration-check` freezes the check off; guided mode always freezes it on
+  (`docs/features/narration-check-spec-review/plan.md`). Each agent's, and both reconcilers', model and effort are frozen at
   `new-run`: `--model` is required and covers only `reconciler`,
   the other settings take the seeded defaults in `src/policy.ts`, and optional
   `--effort` (never reaches a reviewer), `--model-for` and `--effort-for` override

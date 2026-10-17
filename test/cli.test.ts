@@ -81,7 +81,7 @@ test("migrate creates .governance/state.db and exits 0", () => {
 test("new-run, stage-add, stage-complete, and verify-audit walk a chain end to end", () => {
   const cwd = tempCwd();
   try {
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    const newRun = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     const runId = newRun.stdout.trim();
 
@@ -94,12 +94,14 @@ test("new-run, stage-add, stage-complete, and verify-audit walk a chain end to e
     assert.equal(done.status, 0, done.stderr);
 
     // The walk must have written one audit event per mutation, so the
-    // verified chain is not the empty chain. Five, not four: new-run also
-    // freezes the profile and audits `profile.freeze`.
+    // verified chain is not the empty chain. Six, not four: new-run also
+    // freezes the profile and audits `profile.freeze`, then audits the frozen
+    // narration-check choice as `run.narration`.
     const store = openStore(cwd);
-    const auditRows = store.query("SELECT * FROM audit");
+    const auditRows = store.query<{ action: string }>("SELECT * FROM audit");
     store.close();
-    assert.equal(auditRows.length, 5);
+    assert.equal(auditRows.length, 6);
+    assert.equal(auditRows.filter((row) => row.action === "run.narration").length, 1);
 
     const verify = runCli(cwd, "verify-audit");
     assert.equal(verify.status, 0);
@@ -136,7 +138,7 @@ test("a second invocation fails fast while the lock is held", () => {
 test("an invalid change-kind names the allowed values and exits 2", () => {
   const cwd = tempCwd();
   try {
-    const r = runCli(cwd, "new-run", "--project", "p", "--feature", "f", "--slug", "s", "--change-kind", "nonsense");
+    const r = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f", "--slug", "s", "--change-kind", "nonsense");
     assert.equal(r.status, 2);
     assert.match(r.stderr, /invalid change_kind nonsense: allowed values are feature, defect_fix/);
   } finally {
@@ -259,7 +261,7 @@ test("dispatch with an unreadable prompt file exits 2 naming the option", () => 
   try {
     // A real stage must exist so the stage check passes and the prompt-file
     // read is what fails.
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    const newRun = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     const stage = runCli(cwd, "stage-add", "--run", newRun.stdout.trim(), "--kind", "spec");
     const r = runCli(
       cwd,
@@ -300,7 +302,7 @@ test("dispatch with a missing --role value exits 2 naming the option", () => {
 test("new-run freezes a profile and records its hash on the run", () => {
   const cwd = tempCwd();
   try {
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    const newRun = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     const runId = Number(newRun.stdout.trim());
 
@@ -348,6 +350,7 @@ function assertNoRunRow(cwd: string, r: { status: number | null; stderr: string 
 
 const NEW_RUN_ARGS = [
   "new-run",
+  "--no-narration-check",
   "--project",
   "p",
   "--feature",
@@ -463,7 +466,7 @@ test("new-run records the git HEAD as the run's starting commit", () => {
     const expected = head.stdout.trim();
     assert.match(expected, /^[0-9a-f]{40}$/);
 
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    const newRun = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     const runId = newRun.stdout.trim();
     const profile = JSON.parse(
@@ -513,7 +516,7 @@ test("request, sign, and approve walk end to end through the CLI", () => {
     const cli = (...argv: string[]) =>
       spawnSync(process.execPath, [CLI, ...argv], { cwd, encoding: "utf8", env });
 
-    const newRun = cli("new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    const newRun = cli("new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     const runId = Number(newRun.stdout.trim());
 
@@ -601,13 +604,13 @@ test("a profile-freeze failure blocks the run and names it on stderr", () => {
     // Create one run so the next id is known, then occupy that run's profile
     // directory with a *file* — `mkdirSync` then throws and the freeze fails
     // for a real filesystem reason rather than a stubbed one.
-    const first = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    const first = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     assert.equal(first.status, 0, first.stderr);
     const nextId = String(Number(first.stdout.trim()) + 1);
     mkdirSync(join(cwd, ".governance", "profiles"), { recursive: true });
     writeFileSync(join(cwd, ".governance", "profiles", nextId), "not a directory\n");
 
-    const blocked = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s2", "--change-kind", "feature", "--model", "test-model");
+    const blocked = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s2", "--change-kind", "feature", "--model", "test-model");
     assert.equal(blocked.status, 1, "a freeze failure is an error, not a usage error");
     assert.equal(blocked.stdout.trim(), "", "no run id is printed, so the id must come from stderr");
     assert.match(
@@ -637,7 +640,7 @@ test("a profile-freeze failure blocks the run and names it on stderr", () => {
 test("new-run without --model exits 2 naming the option", () => {
   const cwd = tempCwd();
   try {
-    const r = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature");
+    const r = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature");
     assert.equal(r.status, 2);
     assert.match(r.stderr, /missing required option --model/);
     // The model is the only point at which the map can be frozen, so a run
@@ -656,7 +659,7 @@ test("new-run without --model exits 2 naming the option", () => {
 test("spec --model disagreeing with the frozen model is refused before any dispatch", () => {
   const cwd = tempCwd();
   try {
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "frozen-model");
+    const newRun = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "frozen-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     const r = runCli(cwd, "spec", "--run", newRun.stdout.trim(), "--model", "some-other-model");
     assert.equal(r.status, 1);
@@ -680,7 +683,7 @@ test("spec --model disagreeing with the frozen model is refused before any dispa
 test("dispatch --model disagreeing with the frozen model is refused before any spawn", () => {
   const cwd = tempCwd();
   try {
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "frozen-model");
+    const newRun = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "frozen-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     const stage = runCli(cwd, "stage-add", "--run", newRun.stdout.trim(), "--kind", "spec");
     assert.equal(stage.status, 0, stage.stderr);
@@ -711,7 +714,7 @@ test("dispatch --model disagreeing with the frozen model is refused before any s
 test("stage-add refuses a blocked run before inserting a stage", () => {
   const cwd = tempCwd();
   try {
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    const newRun = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     const runId = newRun.stdout.trim();
     const store = openStore(cwd);
     store.setRunStatus(Number(runId), "blocked");
@@ -736,7 +739,7 @@ test("stage-add refuses a blocked run before inserting a stage", () => {
 test("dispatch refuses a blocked run before any spawn", () => {
   const cwd = tempCwd();
   try {
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    const newRun = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     const runId = newRun.stdout.trim();
     const stage = runCli(cwd, "stage-add", "--run", runId, "--kind", "spec");
     assert.equal(stage.status, 0, stage.stderr);
@@ -800,7 +803,7 @@ test("plan drives the real stage logic up to the dispatch boundary", () => {
   // check, which only runPlanStage performs.
   const cwd = tempCwd();
   try {
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "demo", "--change-kind", "feature", "--model", "test-model");
+    const newRun = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "demo", "--change-kind", "feature", "--model", "test-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     const runId = Number(newRun.stdout.trim());
 
@@ -895,7 +898,7 @@ test("implement drives the real stage logic up to the dispatch boundary", () => 
   // would spend real money in the automated suite.
   const cwd = tempCwd();
   try {
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "demo", "--change-kind", "feature", "--model", "test-model");
+    const newRun = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "demo", "--change-kind", "feature", "--model", "test-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     const runId = Number(newRun.stdout.trim());
 
@@ -979,7 +982,7 @@ test("a --model flag with no value is a usage error, not an empty model", () => 
   // the frozen value rather than as the typo it is.
   const cwd = tempCwd();
   try {
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    const newRun = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     for (const command of ["spec", "plan"]) {
       const r = runCli(cwd, command, "--run", newRun.stdout.trim(), "--model");
@@ -994,7 +997,7 @@ test("a --model flag with no value is a usage error, not an empty model", () => 
 test("the approval default window comes from policy, not a literal", () => {
   const cwd = tempCwd();
   try {
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    const newRun = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     const store = openStore(cwd);
     try {
@@ -1018,7 +1021,7 @@ test("new-run refuses a model name the spawn cannot carry, before creating the r
   // a shell. The refusal is a usage error: no run row may exist for a typo.
   const cwd = tempCwd();
   try {
-    const r = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "gpt-4 mini");
+    const r = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "gpt-4 mini");
     assert.equal(r.status, 2);
     assert.match(r.stderr, /invalid model name "gpt-4 mini"/);
     const store = openStore(cwd);
@@ -1165,6 +1168,8 @@ test("help new-run lists the three setting flags and what --model and --effort r
     assert.match(r.stdout, /--model is required and covers only the reconciler/);
     assert.match(r.stdout, /--effort never reaches a reviewer or the code-review reconciler/);
     assert.match(r.stdout, /--model-for and --effort-for take <setting>=<value>/);
+    assert.match(r.stdout, /\[--no-narration-check\]/);
+    assert.match(r.stdout, /SYSTEMONE_API_KEY\nmust be set, and the first three are frozen; --no-narration-check creates the run\nwithout the check/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -1176,7 +1181,7 @@ test("stage-add refuses a valueless --input as a usage error", () => {
   // null that chains the stage from nothing.
   const cwd = tempCwd();
   try {
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
+    const newRun = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "s", "--change-kind", "feature", "--model", "test-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     const r = runCli(cwd, "stage-add", "--run", newRun.stdout.trim(), "--kind", "spec", "--input");
     assert.equal(r.status, 2);
@@ -1204,7 +1209,7 @@ test("dispatch refuses a stage kind the frozen executor lacks capability for, be
   const cwd = tempCwd();
   try {
     assert.equal(runCli(cwd, "migrate").status, 0);
-    const newRun = runCli(cwd, "new-run", "--project", "p", "--feature", "f-1", "--slug", "demo", "--change-kind", "feature", "--model", "test-model");
+    const newRun = runCli(cwd, "new-run", "--no-narration-check", "--project", "p", "--feature", "f-1", "--slug", "demo", "--change-kind", "feature", "--model", "test-model");
     assert.equal(newRun.status, 0, newRun.stderr);
     const runId = Number(newRun.stdout.trim());
 

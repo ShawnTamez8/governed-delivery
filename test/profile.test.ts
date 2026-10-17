@@ -20,11 +20,14 @@ import { AGENTS } from "../src/agents.ts";
 import { CLAUDE_CODE } from "../src/executor.ts";
 import {
   CODE_REVIEW_PANEL_SIZE,
+  NARRATION_THRESHOLD,
   PANEL_SIZE_MAX,
   REQUIRED_SPECIALTIES,
+  SYSTEMONE_REQUEST_TIMEOUT_MS,
   buildPolicy,
   policyHash,
 } from "../src/policy.ts";
+import { narrationQuestionHash } from "../src/narration-check.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
 import { canonicalJson, sha256Hex } from "../src/canonical.ts";
 import { freezeUniformProfile } from "./uniform-profile.ts";
@@ -616,6 +619,51 @@ test("a profile predating after is refused, and after is null or exactly a run i
       assert.match(
         String(invalidProfileReason({ ...profile, after: bad })),
         /the frozen profile after must be null or \{ runId, deliveredCommit \}/,
+        JSON.stringify(bad)
+      );
+    }
+  });
+});
+
+test("a profile predating narrationCheck is refused, and narrationCheck is null or exactly the six frozen values", () => {
+  // The deployment is the recorded probe's; the question hash is the code's.
+  const probe = JSON.parse(readFileSync(join("test", "fixtures", "recorded", "systemone-probe-snitch-resource.json"), "utf8")).provenance;
+  const config = {
+    endpoint: probe.endpoint as string,
+    deployment: probe.deployment as string,
+    deploymentType: probe.deploymentType as string,
+    threshold: NARRATION_THRESHOLD,
+    timeoutMs: SYSTEMONE_REQUEST_TIMEOUT_MS,
+    questionHash: narrationQuestionHash(),
+  };
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    assert.equal(profile.narrationCheck, null, "a run frozen with the check off freezes null");
+    const { narrationCheck, ...without } = profile;
+    assert.match(String(invalidProfileReason(without)), /carries no narrationCheck: it predates the field/);
+    const on = freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION, {}, {}, null, config).profile;
+    assert.deepEqual(on.narrationCheck, config);
+    assert.equal(invalidProfileReason(on), null);
+    const { questionHash, ...missingHash } = config;
+    for (const bad of [
+      missingHash,
+      { ...config, apiKey: "k" },
+      { ...config, endpoint: "" },
+      { ...config, deployment: "" },
+      { ...config, deploymentType: 7 },
+      { ...config, threshold: 0 },
+      { ...config, threshold: 1.5 },
+      { ...config, threshold: "0.8" },
+      { ...config, timeoutMs: 0 },
+      { ...config, timeoutMs: 1.5 },
+      { ...config, questionHash: questionHash.slice(1) },
+      { ...config, questionHash: questionHash.toUpperCase() },
+      [config],
+      "on",
+    ]) {
+      assert.match(
+        String(invalidProfileReason({ ...profile, narrationCheck: bad })),
+        /the frozen profile narrationCheck must be null or \{ endpoint, deployment, deploymentType, threshold, timeoutMs, questionHash \}/,
         JSON.stringify(bad)
       );
     }

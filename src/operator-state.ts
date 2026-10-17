@@ -14,7 +14,7 @@ import {
 } from "./paths.ts";
 import { readSplitApproval, readSplitRecord } from "./design-split.ts";
 import { APPROVAL_DEFAULT_LIFETIME_SECONDS, buildPolicy, policyHash } from "./policy.ts";
-import { loadVerifiedProfile, requireFrozenBinding, type Profile } from "./profile.ts";
+import { loadVerifiedProfile, requireFrozenBinding, type NarrationCheckConfig, type Profile } from "./profile.ts";
 import { computeScope } from "./scope.ts";
 import { codeReviewPanel, codeReviewStaffingShortfall, staffingShortfall } from "./select.ts";
 import { readSpecDeclaredArtifacts, validateSpecDoc } from "./spec-doc.ts";
@@ -90,6 +90,8 @@ export interface RunConfiguration {
   codeReview: { panelSize: number; maxRounds: number; blockingSeverity: string; severities: string[] } | null;
   deadline: string | null;
   approvalSigner: string | null;
+  /** The frozen Decision-1 narration check; null when the run was created with it off. Never the key. */
+  narrationCheck: NarrationCheckConfig | null;
 }
 export interface VerificationObservation {
   stageId: number;
@@ -292,6 +294,7 @@ export function runConfiguration(profile: Profile | null, hash: string | null, c
       blockingSeverity: p.codeReviewBlockingSeverity, severities: p.severities } : null,
     deadline: Number.isFinite(deadline) ? new Date(deadline).toISOString() : null,
     approvalSigner: profile?.approvalSigner ?? null,
+    narrationCheck: profile?.narrationCheck ?? null,
   };
 }
 

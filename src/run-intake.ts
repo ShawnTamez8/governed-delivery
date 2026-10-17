@@ -2,7 +2,10 @@ import { spawnSync } from "node:child_process";
 import { loadPublicKey } from "./approval.ts";
 import { appendAudit } from "./audit.ts";
 import { checkIntakeRepository, type IntakeRepositoryResult } from "./readiness.ts";
-import { freezeProfile, type AfterLink, type SettingsInput } from "./profile.ts";
+import { freezeProfile, type AfterLink, type NarrationCheckConfig, type SettingsInput } from "./profile.ts";
+import { narrationQuestionHash } from "./narration-check.ts";
+import { NARRATION_THRESHOLD, SYSTEMONE_REQUEST_TIMEOUT_MS } from "./policy.ts";
+import { readSystemOneConfig, readSystemOneKey } from "./systemone.ts";
 import { readRunSnapshot, RunMissingError } from "./operator-state.ts";
 import type { ChangeKind, RunRow, Store } from "./store.ts";
 
@@ -16,6 +19,12 @@ export interface RunIntakeInput {
   settings?: SettingsInput;
   /** The earlier feature's run (`new-run --after`); guided mode passes none. */
   after?: number;
+  /**
+   * Whether spec review runs the Decision-1 narration check. Required, with no
+   * default: "off" is `new-run --no-narration-check`, and guided mode always
+   * passes "on" (`docs/features/narration-check-spec-review/plan.md`).
+   */
+  narrationCheck: "on" | "off";
 }
 
 export interface RunIntakeResult {
@@ -76,11 +85,33 @@ function checkAfter(store: Store, rootDir: string, runId: number, project: strin
   return { runId, deliveredCommit };
 }
 
+/**
+ * The frozen narration check for "on", read from the environment once, or
+ * null for "off". The key is only checked here, never kept: a run is not created
+ * just to block at its first spec-review round on a key that was never set.
+ * Throws a named refusal that says how to proceed without the check.
+ */
+function readNarrationCheck(choice: "on" | "off", env: Record<string, string | undefined>): NarrationCheckConfig | null {
+  if (choice === "off") return null;
+  const refuse = (reason: string) =>
+    new Error(`narration check: ${reason}; set it, or create the run with new-run --no-narration-check`);
+  const config = readSystemOneConfig(env);
+  if (!config.ok) throw refuse(config.reason);
+  const key = readSystemOneKey(env);
+  if (!key.ok) throw refuse(key.reason);
+  return {
+    ...config.value,
+    threshold: NARRATION_THRESHOLD,
+    timeoutMs: SYSTEMONE_REQUEST_TIMEOUT_MS,
+    questionHash: narrationQuestionHash(),
+  };
+}
+
 export function createRunIntake(
   store: Store,
   rootDir: string,
   input: RunIntakeInput,
-  options: { requireApprovalSigner?: boolean } = {},
+  options: { requireApprovalSigner?: boolean; env?: Record<string, string | undefined> } = {},
 ): RunIntakeResult {
   const intake = checkIntakeRepository(rootDir);
   if (!intake.ok) throw new Error(intake.reason!);
@@ -88,8 +119,9 @@ export function createRunIntake(
     const key = loadPublicKey(rootDir);
     if (!key.ok) throw new Error(key.reason);
   }
-  // Before the run row, so a refused link leaves nothing behind.
+  // Before the run row, so a refused link or narration configuration leaves nothing behind.
   const after = input.after === undefined ? null : checkAfter(store, rootDir, input.after, input.project, intake.startingCommit!);
+  const narrationCheck = readNarrationCheck(input.narrationCheck, options.env ?? process.env);
 
   const run = store.insertRun(
     input.project,
@@ -116,6 +148,7 @@ export function createRunIntake(
       {},
       input.settings,
       after,
+      narrationCheck,
     );
     if (options.requireApprovalSigner && frozen.profile.approvalSigner === null) {
       throw new Error("guided run creation requires a configured external approval public key");
@@ -128,6 +161,18 @@ export function createRunIntake(
       actorType: "cli",
       action: "profile.freeze",
       summary: `froze profile ${frozen.hash} for run ${run.id}`,
+    });
+    // Its own event, so whether a run asks Decision-1 is queryable from the
+    // audit trail and not only from the profile file.
+    appendAudit(store, {
+      runId: run.id,
+      stageId: null,
+      actor: "system",
+      actorType: "cli",
+      action: "run.narration",
+      summary: narrationCheck === null
+        ? "narration check off (new-run --no-narration-check)"
+        : `narration check on; endpoint=${narrationCheck.endpoint}; deployment=${narrationCheck.deployment}; deploymentType=${narrationCheck.deploymentType}; threshold=${narrationCheck.threshold}; questionHash=${narrationCheck.questionHash}`,
     });
     if (after !== null) {
       appendAudit(store, {

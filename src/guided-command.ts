@@ -563,9 +563,12 @@ export async function runGuidedCommand(
         } else if (lockedTerminal.length > 1) {
           throw new GuidedCommandError(`multiple terminal runs match ${displayIdentity(selected.identity)}: ${lockedTerminal.map((run) => run.id).join(", ")}`);
         } else {
+          // Guided mode always runs the narration check, as it always requires
+          // an approval key: the opt-out is new-run's explicit flag, not a prompt.
           const intake = createRunIntake(store, rootDir, {
             ...selected.identity,
             model: selected.model!,
+            narrationCheck: "on",
           }, { requireApprovalSigner: true });
           runId = intake.run.id;
           created = true;

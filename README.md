@@ -184,6 +184,27 @@ same host identity is not contained merely because its path is absent from the
 child environment. Guided mode creates no key, never asks for a private-key
 path, and never invokes `scripts\sign-approval.mjs`.
 
+Spec review asks the operator's Decision-1 deployment whether each acceptance
+criterion carries the author's remark about the document or the work; a
+flagged criterion becomes a finding the reconciler answers. Set the four
+variables in your own terminal before run creation. The values below are
+placeholders for your resource:
+
+```powershell
+$env:SYSTEMONE_ENDPOINT = 'https://<your-resource>/<path>'
+$env:SYSTEMONE_DEPLOYMENT = '<deployment name>'
+$env:SYSTEMONE_DEPLOYMENT_TYPE = '<deployment type>'
+$env:SYSTEMONE_API_KEY = Read-Host -MaskInput 'Decision-1 API key'
+```
+
+Run creation freezes the endpoint, deployment and type into the profile and
+refuses when any of the four is unset. The key is read when spec review runs,
+sent only in the request header, and never frozen, retained or printed. Guided
+mode always creates runs with the check on. The low-level `new-run` accepts
+`--no-narration-check` to create a run without it, and the profile records that
+choice. Any failed Decision-1 request blocks the run; the requests are not
+counted in the dispatch ceilings or the reported cost.
+
 Create a project in an absent or empty directory:
 
 ```powershell
@@ -583,6 +604,9 @@ both `--repo` and `--json`.
 
 Creation requires every identity field and the operator-selected model. It
 prints only the numeric run ID on success, not a new-command JSON envelope.
+It also requires the four `SYSTEMONE_*` variables described under guided setup,
+unless you add `--no-narration-check` to create the run without the narration
+check.
 
 ```powershell
 $RunIdText = & node $BwCli new-run --repo $Target --project $Project --feature $FeatureId --slug $Slug --change-kind feature --model $Model

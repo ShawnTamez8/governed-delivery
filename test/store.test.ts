@@ -1077,3 +1077,64 @@ test("getAuditEvents returns an empty array for a run with no events", () => {
     assert.deepEqual(store.getAuditEvents(9999), []);
   });
 });
+
+// --- check_answer (narration-check-spec-review Task 4) ----------------------
+
+/** A recorded narration answer from the 2026-10-17 evaluation, flagged at 0.980. */
+function recordedRemark(): { choice: string; probabilities: Record<string, number> } {
+  const fixture = JSON.parse(readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "systemone-format-checks-evaluation.json"), "utf8"));
+  const response = fixture.responses.find((r: { label: string }) => r.label === "narration-N-wc-numbering-L049");
+  return response.body.answers.narration;
+}
+
+test("a Decision-1 agent run stores a null effort and cost, and its typed answer names the finding it raised", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const agent = store.insertAgentRun(agentRunInput(stage.id, {
+      agent: "narration-check", role: "reviewer", executor: "systemone", setting: "narration-check",
+      requestedEffort: null, cost: null,
+    }));
+    assert.equal(agent.requested_effort, null);
+    assert.equal(agent.cost, null);
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "criterion-carries-remark", "AC-022");
+    const answer = recordedRemark();
+    const row = store.insertCheckAnswer({
+      agentRunId: agent.id, checkName: "narration", subject: "AC-022", questionHash: "q".repeat(64), stateHash: "s".repeat(64),
+      endpoint: "http://127.0.0.1:1/v1", deploymentType: "DataZoneStandard", choice: answer.choice,
+      probabilities: answer.probabilities, threshold: 0.8, flagged: true, findingId: finding.id,
+    });
+    assert.equal(row.flagged, 1);
+    assert.equal(row.finding_id, finding.id);
+    assert.deepEqual(JSON.parse(row.probabilities), answer.probabilities);
+    assert.deepEqual(store.getCheckAnswers(stage.id).map((r) => r.id), [row.id]);
+    assert.deepEqual(store.getCheckAnswers(stage.id + 1), [], "the agent run's stage is the one authority");
+  });
+});
+
+test("insertCheckAnswer refuses an unknown check and a flag without its finding, and the schema refuses the same", () => {
+  withStore((store) => {
+    const run = store.insertRun("p", "f-1", "s", "feature");
+    const stage = store.insertStage(run.id, "spec_review", null);
+    const agent = store.insertAgentRun(agentRunInput(stage.id, { requestedEffort: null }));
+    const finding = store.upsertCanonicalFinding(stage.id, 1, "criterion-carries-remark", "AC-022");
+    const answer = recordedRemark();
+    const base = {
+      agentRunId: agent.id, checkName: "narration", subject: "AC-022", questionHash: "q", stateHash: "s",
+      endpoint: "e", deploymentType: "t", choice: answer.choice, probabilities: answer.probabilities, threshold: 0.8,
+    };
+    assert.throws(() => store.insertCheckAnswer({ ...base, checkName: "grounding", flagged: false, findingId: null }),
+      /^Error: invalid check grounding: allowed values are narration$/);
+    assert.throws(() => store.insertCheckAnswer({ ...base, flagged: true, findingId: null }),
+      /a flagged narration answer on AC-022 must name the finding it raised/);
+    assert.throws(() => store.insertCheckAnswer({ ...base, flagged: false, findingId: finding.id }),
+      /an unflagged narration answer on AC-022 raises no finding/);
+    assert.throws(() => store.exec(
+      `INSERT INTO check_answer (agent_run_id, check_name, subject, question_hash, state_hash, endpoint, deployment_type,
+         choice, probabilities, threshold, flagged, finding_id, created_at) VALUES (?, 'narration', 'AC-022', 'q', 's', 'e', 't', 'c', '{}', 0.8, 1, NULL, 'now')`,
+      [agent.id]), /CHECK constraint failed/);
+    store.insertCheckAnswer({ ...base, flagged: false, findingId: null });
+    assert.throws(() => store.insertCheckAnswer({ ...base, flagged: false, findingId: null }), /UNIQUE constraint failed/,
+      "one typed answer per agent run");
+  });
+});

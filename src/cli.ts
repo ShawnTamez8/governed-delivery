@@ -196,6 +196,7 @@ async function main(): Promise<void> {
               effortFor: parseSettingList(args.get("effort-for")),
             },
             after: args.has("after") ? Number(args.get("after")) : undefined,
+            narrationCheck: parsed.flags.has("no-narration-check") ? "off" : "on",
           });
           console.log(String(created.run.id));
         } catch (error) {

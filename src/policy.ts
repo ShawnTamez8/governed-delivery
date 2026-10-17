@@ -309,6 +309,26 @@ export const VERIFY_ENV_PASSTHROUGH = [
   "SystemRoot",
 ];
 
+/**
+ * The wall clock on one Microsoft-Decision-1 request (`src/systemone.ts`). The
+ * probe's four requests took 160 to 615 ms
+ * (`test/fixtures/recorded/systemone-probe-snitch-resource.json`), so the
+ * ceiling stops a hung connection rather than pacing a slow one. On breach the
+ * request fails with "timed out after <ms> ms" and is not retried. A run with
+ * the narration check on freezes this value at `new-run` (profile
+ * `narrationCheck.timeoutMs`); the evaluation scripts read it directly.
+ */
+export const SYSTEMONE_REQUEST_TIMEOUT_MS = 120_000;
+
+/**
+ * The probability of `contains-remark` at or above which the narration check
+ * flags an Acceptance criteria entry. 0.8 is the threshold the operator set
+ * before the 2026-10-17 evaluation, under which the check passed every clause
+ * (`docs/features/decision-1-format-checks/plan.md`, "Evaluation record"); at
+ * 0.9 it missed AC-051 (0.835). Frozen per run at `new-run`.
+ */
+export const NARRATION_THRESHOLD = 0.8;
+
 export interface Policy {
   specReviewRounds: number;
   planReviewRounds: number;

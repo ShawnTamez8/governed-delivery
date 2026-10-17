@@ -45,7 +45,10 @@ export interface AgentRunRow {
   role: "author" | "reviewer";
   executor: string;
   requested_model: string;
-  /** Null only on rows written before migration 008. */
+  /**
+   * Null on rows written before migration 008, and on a Decision-1 call
+   * (executor `systemone`), which has no effort level (migration 009).
+   */
   requested_effort: string | null;
   /** The dispatch setting that governed the row; null only before migration 008. */
   setting: string | null;
@@ -151,6 +154,47 @@ export interface DecisionQuestionRow {
   created_at: string;
 }
 
+/**
+ * One typed answer a check's agent run returned (migration 009). It stores no
+ * stage of its own: `agent_run.stage_id` is the authority. `probabilities` is
+ * JSON. `finding_id` is the finding a flagged answer raised, null exactly when
+ * `flagged` is 0.
+ */
+export interface CheckAnswerRow {
+  id: number;
+  agent_run_id: number;
+  check_name: string;
+  subject: string;
+  question_hash: string;
+  state_hash: string;
+  endpoint: string;
+  deployment_type: string;
+  choice: string;
+  probabilities: string;
+  threshold: number;
+  flagged: number;
+  finding_id: number | null;
+  created_at: string;
+}
+
+export interface CheckAnswerInput {
+  agentRunId: number;
+  checkName: string;
+  subject: string;
+  questionHash: string;
+  stateHash: string;
+  endpoint: string;
+  deploymentType: string;
+  choice: string;
+  probabilities: Record<string, number>;
+  threshold: number;
+  flagged: boolean;
+  findingId: number | null;
+}
+
+/** The checks a `check_answer` row may name; the migration CHECK matches. */
+export const CHECK_NAMES: readonly string[] = ["narration"];
+
 /** The operator's one immutable answer to a question. */
 export interface DecisionAnswerRow {
   id: number;
@@ -251,7 +295,8 @@ export interface AgentRunInput {
   role: string;
   executor: string;
   requestedModel: string;
-  requestedEffort: string;
+  /** Null only for a Decision-1 call, which has no effort level. */
+  requestedEffort: string | null;
   setting: string;
   effectiveModel: string | null;
   fallback: string | null;
@@ -687,6 +732,59 @@ export class Store {
     return this.query<FindingReportRow>(
       "SELECT * FROM finding_report WHERE finding_id = ? ORDER BY id",
       [findingId]
+    );
+  }
+
+  /**
+   * One typed answer per agent run (`UNIQUE (agent_run_id)`). The migration
+   * CHECK ties `flagged` to `finding_id`; this refuses the same shapes first
+   * with a message that names them.
+   */
+  insertCheckAnswer(input: CheckAnswerInput): CheckAnswerRow {
+    if (!CHECK_NAMES.includes(input.checkName)) {
+      throw new Error(`invalid check ${input.checkName}: allowed values are ${CHECK_NAMES.join(", ")}`);
+    }
+    if (input.flagged !== (input.findingId !== null)) {
+      throw new Error(
+        input.flagged
+          ? `a flagged ${input.checkName} answer on ${input.subject} must name the finding it raised`
+          : `an unflagged ${input.checkName} answer on ${input.subject} raises no finding`
+      );
+    }
+    const result = this.#withRetry(() =>
+      this.#db
+        .prepare(
+          `INSERT INTO check_answer (agent_run_id, check_name, subject, question_hash, state_hash, endpoint,
+             deployment_type, choice, probabilities, threshold, flagged, finding_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          input.agentRunId,
+          input.checkName,
+          input.subject,
+          input.questionHash,
+          input.stateHash,
+          input.endpoint,
+          input.deploymentType,
+          input.choice,
+          JSON.stringify(input.probabilities),
+          input.threshold,
+          input.flagged ? 1 : 0,
+          input.findingId,
+          new Date().toISOString()
+        )
+    );
+    return this.query<CheckAnswerRow>("SELECT * FROM check_answer WHERE id = ?", [Number(result.lastInsertRowid)])[0]!;
+  }
+
+  /** Every check answer whose agent run belongs to this stage, oldest first. */
+  getCheckAnswers(stageId: number): CheckAnswerRow[] {
+    return this.query<CheckAnswerRow>(
+      `SELECT check_answer.* FROM check_answer
+       JOIN agent_run ON agent_run.id = check_answer.agent_run_id
+       WHERE agent_run.stage_id = ?
+       ORDER BY check_answer.id`,
+      [stageId]
     );
   }
 

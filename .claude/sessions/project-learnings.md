@@ -5,9 +5,25 @@ history and may name superseded state; Current state wins when they disagree. Th
 the system of record; machine-local memory is only a cache
 (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-10-15: structured patch output committed `94e3b98`; paid run completed)
+## Current state (2026-10-17: narration check wired into spec review; uncommitted)
 
-**Active work:** `docs/features/structured-patch-output/plan.md` is `Implemented`, committed in
+**Active work:** `docs/features/decision-1-d6-evaluation/plan.md` is `Implemented`, uncommitted.
+The operator redirected the typed-decision proposal from TypeSafe Jev to Microsoft-Decision-1 on
+their Foundry resource (`docs/proposals/decision-1-review.md`, renamed from `jev-review.md`) and
+chose "Client + D6 evaluation" with an API key. Built: `src/systemone.ts` (config from
+`SYSTEMONE_ENDPOINT`, `SYSTEMONE_DEPLOYMENT`, `SYSTEMONE_DEPLOYMENT_TYPE`, key from
+`SYSTEMONE_API_KEY`, all user-scope variables on this machine; no stage calls it) and
+`scripts/systemone-d6-evaluation.ts`. Probe recorded in
+`test/fixtures/recorded/systemone-probe-snitch-resource.json`: `api-key` header, response
+`{model, answers, usage}`, `model` is `microsoft-decision-1` with no version, unknown deployment
+is 404 `DeploymentNotFound`. D6 (35 requests, $0.0117) **fails** the operator-confirmed rule at
+T = 0.8: no keep-labelled finding withheld at any threshold, but #200 chose `none` (tied with
+`L048` at 0.4659) and #905 chose `L048` (0.895) instead of its baseline `L047`; ten identical #905
+requests agreed on the choice but its probability ranged 0.687-0.922. Result and Haiku comparison
+in `test/fixtures/recorded/systemone-d6-evaluation-crew-chatter-run-6.json`. A completed paid run
+never authorizes another spend.
+
+**Previous work:** `docs/features/structured-patch-output/plan.md` is `Implemented`, committed in
 `94e3b98`; its review is `reconciled`. The paid run the operator asked for ("commit then run the
 paid run", 2026-10-15) completed: web-calculator, `driver.mjs paid --yes --model
 claude-sonnet-5-5`, 21 dispatches, $1.39416, 15/15 driver steps, run `completed`, audit chain
@@ -26,13 +42,60 @@ Plan open decisions 1 (remediation drops unchanged files) and 3 (other dispatche
 remain undecided. `.claude/skills/run-buildworks/SKILL.md` still says no run has used the Haiku
 5.5 reviewers.
 
-**Next action:** the operator chooses the next item from the open work list. Nothing is in
-flight.
+**2026-10-17:** the operator stated that the deployment type must not be checked against
+vendor values. The `DEPLOYMENT_TYPES` allowlist is gone, because there will be many Decision-1
+endpoints and the resource may move. They also stated that data can be sent for some operator
+decisions. At their request, `docs/features/decision-1-format-checks/plan.md` (`Proposed`) and
+`scripts/systemone-format-cases.ts` now hold two labelled case sets derived from fixtures:
+- grounding: 23 cases, 2 recorded and 1 proposed does-not-support;
+- narration: 131 Acceptance criteria entries, 1 recorded and 2 proposed contains-remark.
 
-**Working state (verified 2026-10-15 with `git log -1` and `git status -sb`):**
-- Branch `dashboard-restyling`, HEAD `94e3b98`, 8 commits ahead of `origin/dashboard-restyling`,
-  nothing pushed. Local `master` was 38 behind `origin/master` on 2026-10-10 (not rechecked).
-- Uncommitted: this file only.
+Missing brackets and backticks and prose outside the object are excluded, because the extractor
+already catches them.
+
+The operator then confirmed the labels "as listed" and chose the D6 rule at T = 0.8, and said
+"run the paid step". `scripts/systemone-format-evaluation.ts` sent 172 requests for $0.001632,
+all valid; the result is `test/fixtures/recorded/systemone-format-checks-evaluation.json`.
+- **Narration passes.** It flagged 3 of 3 remarks and 0 of 128 criteria, and its repeats
+  answered at 0.999. It fails at T ≥ 0.9, where AC-051 scored 0.835.
+- **Grounding fails.** It caught 3 of 3 unsupported citations, but it flagged the supported
+  rejections R-200-1 and R-905-1, and its repeats spread 0.038. The 12 supported additions all
+  passed, but splitting the check by kind after seeing the answers is not allowed.
+
+**Narration wired into spec review (2026-10-17, uncommitted):** the operator asked to "wire
+narration into the spec stage. Ensure we do not swallow errors". They decided:
+- a flagged entry is a finding for the reconciler;
+- the check is an explicit per-run switch: `new-run` refuses without the `SYSTEMONE_*`
+  variables unless `--no-narration-check` is given;
+- all projects' entries may be sent.
+
+`docs/features/narration-check-spec-review/plan.md` is `Implemented` and describes the build:
+- `src/narration-check.ts`;
+- the profile's `narrationCheck`;
+- `check_answer` (migration 009);
+- each Decision-1 call recorded as an `agent_run` with executor `systemone` and a null cost;
+- any failed request blocks the run;
+- guided mode always on;
+- the driver passes `--no-narration-check` unless it is given `--narration-check`;
+- ARCHITECTURE sections 11, 12, 15 and 23.
+
+Tests reach Decision-1 only through the loopback stand-in in `test/systemone-stand-in.ts`. Every
+test spawn of `new-run` passes `--no-narration-check`.
+
+**Next action:** the operator decides:
+- whether to commit the Decision-1 work, which nothing has committed;
+- what to do about grounding;
+- whether a live run with `--narration-check` is wanted. That is a separate spend decision.
+
+Never relabel cases after seeing answers. Nothing is in flight.
+
+**Working state (verified 2026-10-16 with `git log -1` and `git status -sb`):**
+- Branch `dashboard-restyling`, HEAD `0e3277e`, level with `origin/dashboard-restyling`. Local
+  `master` was 38 behind `origin/master` on 2026-10-10 (not rechecked).
+- Uncommitted: the Decision-1 work (plan, proposal rename and edits, `src/systemone.ts`,
+  `src/policy.ts`, `tsconfig.json`, the script, three tests, two fixtures) and this file. A
+  plain-text copy of the API key sits in the operator's
+  `C:\Users\tamezs\.buildworks\[Environment]SetEnvironmentVariable.txt`; removing it is theirs.
 - Plan statuses checked 2026-10-15: all 49 `docs/features/*/plan.md` carry a correct Status line.
   `docs/features/dashboard-pwa-redesign/plan.md` is `Reconciled` with Task 7 next (no `sw.js` or
   manifest in `src/`); unbuilt by choice: `baseline-verification`, `implementation-phase-retry`
@@ -135,7 +198,12 @@ use `--json-schema`, phases drop unchanged files, the "Output the JSON object di
 is reworded for those three prompts (2026-10-14/15). Test projects (crew-chatter, team-notes) are
 stand-ins; only BuildWorks handling larger designs counts (2026-10-10).
 
-**External targets** (under `C:\Users\Shawn-work\repositories\testing-repos\`):
+**External targets** (under `C:\Users\Shawn-work\repositories\testing-repos\`, on the other machine;
+none of them is on this machine, checked 2026-10-16):
+- **This machine:** `C:\Repositories\testing-repos\crew-chatter` is a new repository holding only an
+  uncommitted design document in its docs folder, with no commits and no stack. It is not the
+  original target. Nothing committed depends on it: the run 6 spec, plan, findings and reconciler
+  replays are under `test/fixtures/recorded/`. A BuildWorks run there needs the stack set up first.
 - **crew-chatter**: `master` at `8063995` (six split designs under
   `docs/features/crew-chatter-*/design.md`); untracked run 6 `spec.md` and `plan.md` under
   `docs/features/crew-chatter-foundation/` (move them aside before another `new-run`); branches

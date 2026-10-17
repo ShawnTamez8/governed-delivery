@@ -83,11 +83,33 @@ export interface Profile {
    * ancestor of this run's starting commit. Null when the run follows nothing.
    */
   after: AfterLink | null;
+  /**
+   * The Decision-1 narration check the spec-review rounds run, frozen from the
+   * `SYSTEMONE_*` variables at `new-run`
+   * (`docs/features/narration-check-spec-review/plan.md`). Null only when the
+   * operator passed `new-run --no-narration-check`: an explicit, recorded
+   * choice, never what a missing variable turns into — `new-run` refuses then.
+   */
+  narrationCheck: NarrationCheckConfig | null;
   frozenAt: string;
   agents: AgentDefinition[];
   executor: ExecutorDefinition;
   policy: Policy;
   policyHash: string;
+}
+
+/**
+ * What a run's narration check calls and how it judges the answer. The key is
+ * not here: it is a secret, read when the stage runs and never written down.
+ */
+export interface NarrationCheckConfig {
+  endpoint: string;
+  deployment: string;
+  deploymentType: string;
+  threshold: number;
+  timeoutMs: number;
+  /** `narrationQuestionHash()` at freeze; the stage refuses a run whose question has changed since. */
+  questionHash: string;
 }
 
 /** The link `new-run --after` freezes (docs/features/design-split-into-features/plan.md). */
@@ -241,7 +263,10 @@ export function freezeProfile(
   // about the registry the run would actually work with.
   deps: { agents?: readonly AgentDefinition[] } = {},
   settings: SettingsInput = {},
-  after: AfterLink | null = null
+  after: AfterLink | null = null,
+  // `createRunIntake` always passes this explicitly, from `new-run`'s switch;
+  // the default serves only the tests that freeze profiles directly.
+  narrationCheck: NarrationCheckConfig | null = null
 ): { path: string; hash: string; profile: Profile } {
   const agents = deps.agents ?? AGENTS;
   const modelError = validateModelName(model);
@@ -299,6 +324,7 @@ export function freezeProfile(
     approvalSigner: key.ok ? key.signer : null,
     verification,
     after,
+    narrationCheck,
     frozenAt: new Date().toISOString(),
     agents: [...agents].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     executor: CLAUDE_CODE,
@@ -425,6 +451,12 @@ export function invalidProfileReason(profile: unknown): string | null {
   if (p.after !== null && !isAfterLink(p.after)) {
     return `the frozen profile after must be null or { runId, deliveredCommit }, found ${JSON.stringify(p.after)}`;
   }
+  if (!("narrationCheck" in p)) {
+    return "the frozen profile carries no narrationCheck: it predates the field, and a run frozen without it cannot say whether spec review asks Decision-1";
+  }
+  if (p.narrationCheck !== null && !isNarrationCheckConfig(p.narrationCheck)) {
+    return `the frozen profile narrationCheck must be null or { endpoint, deployment, deploymentType, threshold, timeoutMs, questionHash }, found ${JSON.stringify(p.narrationCheck)}`;
+  }
   if (typeof p.frozenAt !== "string" || p.frozenAt === "") {
     return `the frozen profile frozenAt must be a non-empty string, found ${JSON.stringify(p.frozenAt)}`;
   }
@@ -475,6 +507,30 @@ export function invalidProfileReason(profile: unknown): string | null {
 
 function isPositiveInt(v: unknown): boolean {
   return typeof v === "number" && Number.isInteger(v) && v > 0;
+}
+
+/**
+ * Exactly the six `NarrationCheckConfig` keys: non-empty endpoint, deployment
+ * and type, a threshold in (0, 1], a positive integer timeout, and a sha256 hex
+ * question hash. The endpoint's https rule is `readSystemOneConfig`'s, applied
+ * when the value was read at `new-run`.
+ */
+function isNarrationCheckConfig(v: unknown): boolean {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+  const c = v as Record<string, unknown>;
+  const nonEmpty = (x: unknown) => typeof x === "string" && x !== "";
+  return (
+    Object.keys(c).sort().join(",") === "deployment,deploymentType,endpoint,questionHash,threshold,timeoutMs" &&
+    nonEmpty(c.endpoint) &&
+    nonEmpty(c.deployment) &&
+    nonEmpty(c.deploymentType) &&
+    typeof c.threshold === "number" &&
+    c.threshold > 0 &&
+    c.threshold <= 1 &&
+    isPositiveInt(c.timeoutMs) &&
+    typeof c.questionHash === "string" &&
+    /^[0-9a-f]{64}$/.test(c.questionHash)
+  );
 }
 
 /** Exactly `{ runId, deliveredCommit }`: a positive run id and a full sha1 or sha256 commit. */

@@ -681,6 +681,25 @@ every estimate built on top of it.
 **Retain the raw bytes before parsing**, as "State, storage, and evidence"
 requires.
 
+### Decision-1
+
+Decision-1 is a second concrete client, not a second harness (2026-10-17,
+`docs/features/narration-check-spec-review/plan.md`). `src/systemone.ts` sends
+one HTTPS `POST` of `{model, state, questions}` to the operator's deployment and
+reads back a typed answer with a probability per option; there is no process, no
+prompt on stdin and no executor definition, and no interface sits above it and
+the harness, because the two share nothing but the word "call". The endpoint,
+deployment name and deployment type come from the operator's
+`SYSTEMONE_ENDPOINT`, `SYSTEMONE_DEPLOYMENT` and `SYSTEMONE_DEPLOYMENT_TYPE`;
+none is a code constant, because the resource will move and there will be
+others. `new-run` freezes those three, the threshold and the question's hash
+into the profile (hard rule 6); `SYSTEMONE_API_KEY` is read at the stage, sent
+only in the `api-key` header, and never frozen, retained, logged or put in a
+reason. Plain `http` is accepted only for a loopback host, which the tests' stand-in
+uses. A request is not retried: a non-2xx status, a timeout, a network error, or
+a body that is not JSON or does not answer the question asked is a failure the
+caller acts on, and the response is retained before it is read.
+
 ## 12. Gates
 
 A gate is deterministic. A reviewer's verdict is an input to a gate, never the
@@ -711,6 +730,25 @@ question found open later is answered through the decision on the finding that
 raised it. The check is by ID, so a reworded entry that keeps its ID is not
 compared with the question its decision answered. `plan_review` has no such
 section (operator decision, 2026-09-26).
+
+**A criterion carrying the author's remark is a finding** (operator decision,
+2026-10-17, `docs/features/narration-check-spec-review/plan.md`). Before each
+`spec_review` round's panel, and only when the run froze the check on, the stage
+asks Decision-1 (section 11), one request per `## Acceptance criteria` entry of
+the specification that round reviews, whether the entry is only a criterion or
+carries the author's remark about the document or the work. The question, its
+two options and its state are the ones evaluated on 2026-10-17 byte for byte
+(`docs/features/decision-1-format-checks/plan.md`), and the profile freezes
+their hash, so a changed question refuses before a stage row exists. An entry
+answered `contains-remark` at or above the frozen threshold (0.8) is a canonical
+finding of that round at the criterion's ID, intent `criterion-carries-remark`,
+severity `medium`, classification `current_artifact`, with one report from that
+request's agent run; reconciliation answers it like a reviewer's. The check is an
+input, never the gate: a flag does not block by itself. A failed request does: it
+blocks the stage and the run before the panel spends, with the retained response
+named in the reason, and nothing is skipped, retried or defaulted. The requests
+are not dispatches and are not counted in the dispatch ceilings. A run created
+with `new-run --no-narration-check` freezes the check off and sends nothing.
 
 **The author proposes the panel; the system staffs it.** The self-critique
 result carries a requested panel size within frozen bounds and a unique list of
@@ -1418,7 +1456,19 @@ proposal(id, run_id, stage_id, identity, title, problem, why_upstream, route,
 proposal_source(proposal_id, finding_id)
 decision_question(id, finding_id, text, options, recommended, why, created_at)
 decision_answer(id, question_id, action, answer, created_at)
+check_answer(id, agent_run_id, check_name, subject, question_hash, state_hash, endpoint,
+             deployment_type, choice, probabilities, threshold, flagged, finding_id, created_at)
 ```
+
+A Decision-1 call is an `agent_run` too (2026-10-17,
+`docs/features/narration-check-spec-review/plan.md`): what it saw (`input_hash`
+over the request, `raw_output_ref` to the retained response), which model ran
+(`effective_model`, the response's `model`), and its `tokens_in` and
+`tokens_out`. Its `executor` is `systemone`, its `requested_model` the frozen
+deployment, and its `requested_effort` and `cost` are null: Decision-1 has no
+effort level, and the response reports no cost, so the gap is recorded as a gap.
+`check_answer` holds the typed answer that agent run returned, one row per
+question, and names the finding a flagged answer raised.
 
 `run.status` is one of `in_progress`, `blocked`, `completed`; `stage.status` one
 of `pending`, `in_progress`, `passed`, `blocked`, `failed`; `gate_result` one of
@@ -1815,6 +1865,21 @@ consented execution group. For this one action, this decision narrows the
 It does not authorize collecting execution consent, dispatching the fold,
 changing a recorded answer, a question path for `plan_review`, or any other
 dashboard write.
+
+**Narration check — 2026-10-17.** The operator adopted the Decision-1 narration
+check in `spec_review` (sections 11, 12 and 15) after the 2026-10-17 evaluation
+caught all three recorded remark entries and flagged none of 128 criteria at the
+threshold 0.8 (`docs/features/decision-1-format-checks/plan.md`). The operator
+decided three things: a flagged entry is a finding for the reconciler, not a
+block; a run is created with the check on, and `new-run` refuses when the
+`SYSTEMONE_*` variables are not set unless `--no-narration-check` is given, so
+the choice is explicit per run and frozen; and every project's specification
+entries may be sent to the operator's Decision-1 resource. Guided mode always
+creates runs with the check on.
+
+It does not authorize the grounding check that evaluation failed, a Decision-1
+call at any other stage, retrying or skipping a failed request, or counting
+the requests as dispatches.
 
 ## 24. Non-goals
 

@@ -1,0 +1,383 @@
+{
+  "provenance": {
+    "what": "Wire-format probe of Microsoft-Decision-1 on the operator's Foundry resource (docs/features/decision-1-d6-evaluation/plan.md, Task 2). Synthetic content only.",
+    "consent": "Operator, 2026-10-16: at most 8 requests, synthetic content only, under $0.001.",
+    "documentation": "Microsoft Learn, \"Deploy and use Microsoft-Decision-1 in Microsoft Foundry\", https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision (ms.date 2026-10-07, updated_at 2026-10-09, git_commit_id 414c6c21ba6c7fda91deaf6ea3699069db91afe6), read 2026-10-16. It gives the request body {model, state, questions}, a choice question as {type, instructions, criteria}, the api-key header for an API key, and Authorization: Bearer for an Entra ID token.",
+    "endpoint": "https://snitch-resource.services.ai.azure.com/providers/microsoft/v1/systemone",
+    "deployment": "Decision-1",
+    "deploymentType": "DataZoneStandard",
+    "authHeader": "api-key",
+    "captured": "2026-10-16",
+    "earlierAttempt": "A first run the same day used a malformed stored key. 3 requests using it failed inside Node's fetch with \"TypeError: fetch failed\" in 0-20 ms and received no response; the invalid-key request reached the resource and returned 401. That run's records are not kept. It and this run together made 8 attempts, 5 of which reached the resource.",
+    "observed": [
+      "The response's model is \"microsoft-decision-1\", the underlying model, not the deployment name, and carries no version.",
+      "A choice answer has exactly the fields choice, confidence, probabilities and type; probabilities has one entry per criteria option.",
+      "A 100-option choice was accepted.",
+      "An unknown deployment returns 404 with error code DeploymentNotFound, not the 422 the documentation's troubleshooting table lists.",
+      "An invalid key returns 401."
+    ],
+    "inputTokens": 1079,
+    "costEstimate": "1079 input tokens at $0.042 per million: $0.0000453. The error responses report no usage.",
+    "dropped": "The API key (each record says whether the configured key or a literal was sent). Every response header except those whose name contains request-id. Nothing else."
+  },
+  "probeSource": "// Decision-1 wire-format probe (docs/features/decision-1-d6-evaluation/plan.md,\n// Task 2). Operator consent 2026-10-16: at most 8 requests, synthetic content\n// only. Request shape from Microsoft Learn, \"Deploy and use Microsoft-Decision-1\n// in Microsoft Foundry\" (ms.date 2026-10-07): POST <endpoint> with\n// {model, state, questions}; a choice question is {type, instructions, criteria};\n// an API key goes in the \"api-key\" header. The key is never printed or written.\nimport { writeFileSync, existsSync } from \"node:fs\";\n\nconst OUT = process.argv[2];\nif (!OUT) throw new Error(\"usage: node probe.mjs <out.json>\");\nif (existsSync(OUT)) throw new Error(`refusing to overwrite ${OUT}`);\nconst need = [\"SYSTEMONE_ENDPOINT\", \"SYSTEMONE_DEPLOYMENT\", \"SYSTEMONE_DEPLOYMENT_TYPE\", \"SYSTEMONE_API_KEY\"];\nfor (const name of need) if (!process.env[name]?.trim()) throw new Error(`${name} is not set`);\nconst endpoint = process.env.SYSTEMONE_ENDPOINT;\nconst deployment = process.env.SYSTEMONE_DEPLOYMENT;\nconst deploymentType = process.env.SYSTEMONE_DEPLOYMENT_TYPE;\nconst key = process.env.SYSTEMONE_API_KEY;\n\nconst sky = {\n  state: \"The sky is blue on a clear day.\",\n  questions: {\n    colour: {\n      type: \"choice\",\n      instructions: \"Which colour does the statement give the sky?\",\n      criteria: { blue: \"The sky is blue\", green: \"The sky is green\", red: \"The sky is red\" },\n    },\n  },\n};\nconst many = {\n  state: \"Pick option 42.\",\n  questions: {\n    pick: {\n      type: \"choice\",\n      instructions: \"Which option does the state ask for?\",\n      criteria: Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`o${String(i + 1).padStart(3, \"0\")}`, `Option ${i + 1}`])),\n    },\n  },\n};\n\nconst records = [];\nasync function send(label, header, keyValue, model, payload) {\n  const body = { model, ...payload };\n  const headers = { \"Content-Type\": \"application/json\", Accept: \"application/json\" };\n  if (header === \"api-key\") headers[\"api-key\"] = keyValue;\n  else headers.Authorization = `Bearer ${keyValue}`;\n  const at = new Date().toISOString();\n  const started = performance.now();\n  let status = null, text = null, error = null;\n  const kept = {};\n  try {\n    const response = await fetch(endpoint, { method: \"POST\", headers, body: JSON.stringify(body), signal: AbortSignal.timeout(120_000) });\n    status = response.status;\n    for (const [name, value] of response.headers) if (/request-id/i.test(name)) kept[name] = value;\n    text = await response.text();\n  } catch (e) {\n    error = `${e.name}: ${e.message}`;\n  }\n  let parsed = null;\n  try { parsed = text === null ? null : JSON.parse(text); } catch {}\n  const durationMs = Math.round(performance.now() - started);\n  const keyUsed = keyValue === key ? \"configured\" : JSON.stringify(keyValue);\n  records.push({ label, at, durationMs, header, key: keyUsed, request: body, status, requestIdHeaders: kept, body: parsed ?? text, error });\n  console.log(`${label}: header ${header}, status ${status ?? \"none\"}${error ? `, ${error}` : \"\"}, ${durationMs} ms`);\n  return status;\n}\n\nlet header = \"api-key\";\nconst first = await send(\"sky-api-key\", \"api-key\", key, deployment, sky);\nif (first === 401 || first === 403) {\n  const second = await send(\"sky-bearer\", \"bearer\", key, deployment, sky);\n  if (second !== null && second >= 200 && second < 300) header = \"bearer\";\n}\nawait send(\"many-options\", header, key, deployment, many);\nawait send(\"invalid-key\", header, \"invalid\", deployment, sky);\nawait send(\"unknown-deployment\", header, key, \"no-such-deployment\", sky);\n\nwriteFileSync(OUT, JSON.stringify({ endpoint, deployment, deploymentType, authHeader: header, records }, null, 2) + \"\\n\");\nconsole.log(`wrote ${records.length} records to ${OUT}`);\n",
+  "records": [
+    {
+      "label": "sky-api-key",
+      "at": "2026-10-16T23:06:11.140Z",
+      "durationMs": 615,
+      "header": "api-key",
+      "key": "configured",
+      "request": {
+        "model": "Decision-1",
+        "state": "The sky is blue on a clear day.",
+        "questions": {
+          "colour": {
+            "type": "choice",
+            "instructions": "Which colour does the statement give the sky?",
+            "criteria": {
+              "blue": "The sky is blue",
+              "green": "The sky is green",
+              "red": "The sky is red"
+            }
+          }
+        }
+      },
+      "status": 200,
+      "requestIdHeaders": {
+        "apim-request-id": "548ed30a-b241-4fb8-9951-b0c06b3fa143",
+        "x-ms-client-request-id": "548ed30a-b241-4fb8-9951-b0c06b3fa143",
+        "x-request-id": "4d64ba6b-ba31-4d11-9115-49e084647539"
+      },
+      "body": {
+        "model": "microsoft-decision-1",
+        "answers": {
+          "colour": {
+            "choice": "blue",
+            "confidence": 0.9996707900139488,
+            "probabilities": {
+              "blue": 0.9997805266759658,
+              "green": 0.00009609057869085283,
+              "red": 0.00012338274534328853
+            },
+            "type": "choice"
+          }
+        },
+        "usage": {
+          "input_tokens": 56,
+          "output_tokens": 1
+        }
+      },
+      "error": null
+    },
+    {
+      "label": "many-options",
+      "at": "2026-10-16T23:06:11.756Z",
+      "durationMs": 436,
+      "header": "api-key",
+      "key": "configured",
+      "request": {
+        "model": "Decision-1",
+        "state": "Pick option 42.",
+        "questions": {
+          "pick": {
+            "type": "choice",
+            "instructions": "Which option does the state ask for?",
+            "criteria": {
+              "o001": "Option 1",
+              "o002": "Option 2",
+              "o003": "Option 3",
+              "o004": "Option 4",
+              "o005": "Option 5",
+              "o006": "Option 6",
+              "o007": "Option 7",
+              "o008": "Option 8",
+              "o009": "Option 9",
+              "o010": "Option 10",
+              "o011": "Option 11",
+              "o012": "Option 12",
+              "o013": "Option 13",
+              "o014": "Option 14",
+              "o015": "Option 15",
+              "o016": "Option 16",
+              "o017": "Option 17",
+              "o018": "Option 18",
+              "o019": "Option 19",
+              "o020": "Option 20",
+              "o021": "Option 21",
+              "o022": "Option 22",
+              "o023": "Option 23",
+              "o024": "Option 24",
+              "o025": "Option 25",
+              "o026": "Option 26",
+              "o027": "Option 27",
+              "o028": "Option 28",
+              "o029": "Option 29",
+              "o030": "Option 30",
+              "o031": "Option 31",
+              "o032": "Option 32",
+              "o033": "Option 33",
+              "o034": "Option 34",
+              "o035": "Option 35",
+              "o036": "Option 36",
+              "o037": "Option 37",
+              "o038": "Option 38",
+              "o039": "Option 39",
+              "o040": "Option 40",
+              "o041": "Option 41",
+              "o042": "Option 42",
+              "o043": "Option 43",
+              "o044": "Option 44",
+              "o045": "Option 45",
+              "o046": "Option 46",
+              "o047": "Option 47",
+              "o048": "Option 48",
+              "o049": "Option 49",
+              "o050": "Option 50",
+              "o051": "Option 51",
+              "o052": "Option 52",
+              "o053": "Option 53",
+              "o054": "Option 54",
+              "o055": "Option 55",
+              "o056": "Option 56",
+              "o057": "Option 57",
+              "o058": "Option 58",
+              "o059": "Option 59",
+              "o060": "Option 60",
+              "o061": "Option 61",
+              "o062": "Option 62",
+              "o063": "Option 63",
+              "o064": "Option 64",
+              "o065": "Option 65",
+              "o066": "Option 66",
+              "o067": "Option 67",
+              "o068": "Option 68",
+              "o069": "Option 69",
+              "o070": "Option 70",
+              "o071": "Option 71",
+              "o072": "Option 72",
+              "o073": "Option 73",
+              "o074": "Option 74",
+              "o075": "Option 75",
+              "o076": "Option 76",
+              "o077": "Option 77",
+              "o078": "Option 78",
+              "o079": "Option 79",
+              "o080": "Option 80",
+              "o081": "Option 81",
+              "o082": "Option 82",
+              "o083": "Option 83",
+              "o084": "Option 84",
+              "o085": "Option 85",
+              "o086": "Option 86",
+              "o087": "Option 87",
+              "o088": "Option 88",
+              "o089": "Option 89",
+              "o090": "Option 90",
+              "o091": "Option 91",
+              "o092": "Option 92",
+              "o093": "Option 93",
+              "o094": "Option 94",
+              "o095": "Option 95",
+              "o096": "Option 96",
+              "o097": "Option 97",
+              "o098": "Option 98",
+              "o099": "Option 99",
+              "o100": "Option 100"
+            }
+          }
+        }
+      },
+      "status": 200,
+      "requestIdHeaders": {
+        "apim-request-id": "7075122a-2ece-474d-9982-eb9b83921454",
+        "x-ms-client-request-id": "7075122a-2ece-474d-9982-eb9b83921454",
+        "x-request-id": "8f3566ba-590a-48e3-9cd1-27448c1e356a"
+      },
+      "body": {
+        "model": "microsoft-decision-1",
+        "answers": {
+          "pick": {
+            "choice": "o042",
+            "confidence": 0.9985931541918268,
+            "probabilities": {
+              "o001": 0.000004216968741620341,
+              "o002": 0.00000372146185277601,
+              "o003": 0.0000010016178696096069,
+              "o004": 0.0000022571807126596325,
+              "o005": 0.00000372146185277601,
+              "o006": 6.884012232281366e-7,
+              "o007": 0.0000028982774051123178,
+              "o008": 0.0000019919549874958154,
+              "o009": 0.0000017578941065529934,
+              "o010": 9.409329106586692e-7,
+              "o011": 0.000001369049306740079,
+              "o012": 0.0000012081817726837075,
+              "o013": 0.0000010662166721525375,
+              "o014": 0.00000541469504561824,
+              "o015": 0.0000022571807126596325,
+              "o016": 0.00007474755945216695,
+              "o017": 0.0000015513361041047316,
+              "o018": 0.0000028982774051123178,
+              "o019": 0.000004778451606198251,
+              "o020": 0.00000541469504561824,
+              "o021": 0.0000028982774051123178,
+              "o022": 0.0000012081817726837075,
+              "o023": 6.075119472342772e-7,
+              "o024": 0.000001369049306740079,
+              "o025": 0.0000032841785581615586,
+              "o026": 0.00000541469504561824,
+              "o027": 0.000004216968741620341,
+              "o028": 0.00002141553433663807,
+              "o029": 0.00000372146185277601,
+              "o030": 0.000016678434911266287,
+              "o031": 0.000004778451606198251,
+              "o032": 0.0001396468257744356,
+              "o033": 0.00003530824698422415,
+              "o034": 0.000008927322896065393,
+              "o035": 0.000016678434911266287,
+              "o036": 0.000058213457834024,
+              "o037": 0.000012989178169299644,
+              "o038": 0.00001471866714915128,
+              "o039": 0.00001146290950152638,
+              "o040": 0.000051373196227265134,
+              "o041": 0.0000847000813637436,
+              "o042": 0.9986072226499085,
+              "o043": 0.0003795994289046345,
+              "o044": 0.000004216968741620341,
+              "o045": 0.00004000948545067503,
+              "o046": 0.000008927322896065393,
+              "o047": 0.00001146290950152638,
+              "o048": 0.00001011598212970456,
+              "o049": 0.00001011598212970456,
+              "o050": 0.00001146290950152638,
+              "o051": 0.000007878334804150248,
+              "o052": 0.0000019919549874958154,
+              "o053": 0.000004216968741620341,
+              "o054": 0.0000012081817726837075,
+              "o055": 0.0000017578941065529934,
+              "o056": 7.800607811902741e-7,
+              "o057": 0.0000028982774051123178,
+              "o058": 5.707046590471311e-7,
+              "o059": 4.731307802312891e-7,
+              "o060": 6.466931015572872e-7,
+              "o061": 0.0000010016178696096069,
+              "o062": 8.303703791961836e-7,
+              "o063": 0.0000017578941065529934,
+              "o064": 0.0000028982774051123178,
+              "o065": 0.000006952606062187009,
+              "o066": 0.0000017578941065529934,
+              "o067": 3.9223919351915037e-7,
+              "o068": 5.036450938996908e-7,
+              "o069": 1.9723025261928367e-7,
+              "o070": 2.869683242640368e-7,
+              "o071": 0,
+              "o072": 7.800607811902741e-7,
+              "o073": 2.5324865730290424e-7,
+              "o074": 0.0000017578941065529934,
+              "o075": 0.0000019919549874958154,
+              "o076": 4.731307802312891e-7,
+              "o077": 7.327992876386279e-7,
+              "o078": 0.000001369049306740079,
+              "o079": 6.075119472342772e-7,
+              "o080": 4.444652353684048e-7,
+              "o081": 0.0000015513361041047316,
+              "o082": 0.0000017578941065529934,
+              "o083": 0.000001369049306740079,
+              "o084": 0.0000011349817395122161,
+              "o085": 8.839246675038592e-7,
+              "o086": 6.466931015572872e-7,
+              "o087": 3.0547619106401066e-7,
+              "o088": 0.000006135653314770916,
+              "o089": 0.00020318493258048752,
+              "o090": 0.000004778451606198251,
+              "o091": 0.0000019919549874958154,
+              "o092": 0.0000019919549874958154,
+              "o093": 0.0000017578941065529934,
+              "o094": 4.1753644807154554e-7,
+              "o095": 0.000001369049306740079,
+              "o096": 9.409329106586692e-7,
+              "o097": 5.361274117173858e-7,
+              "o098": 8.303703791961836e-7,
+              "o099": 0.000001369049306740079,
+              "o100": 0.000012989178169299644
+            },
+            "type": "choice"
+          }
+        },
+        "usage": {
+          "input_tokens": 1023,
+          "output_tokens": 1
+        }
+      },
+      "error": null
+    },
+    {
+      "label": "invalid-key",
+      "at": "2026-10-16T23:06:12.192Z",
+      "durationMs": 160,
+      "header": "api-key",
+      "key": "\"invalid\"",
+      "request": {
+        "model": "Decision-1",
+        "state": "The sky is blue on a clear day.",
+        "questions": {
+          "colour": {
+            "type": "choice",
+            "instructions": "Which colour does the statement give the sky?",
+            "criteria": {
+              "blue": "The sky is blue",
+              "green": "The sky is green",
+              "red": "The sky is red"
+            }
+          }
+        }
+      },
+      "status": 401,
+      "requestIdHeaders": {
+        "apim-request-id": "d4ce1458-cd58-4d57-a784-0e0c1fea4bfe"
+      },
+      "body": {
+        "error": {
+          "code": "401",
+          "message": "Access denied due to invalid subscription key or wrong API endpoint. Make sure to provide a valid key for an active subscription and use a correct regional API endpoint for your resource."
+        }
+      },
+      "error": null
+    },
+    {
+      "label": "unknown-deployment",
+      "at": "2026-10-16T23:06:12.353Z",
+      "durationMs": 350,
+      "header": "api-key",
+      "key": "configured",
+      "request": {
+        "model": "no-such-deployment",
+        "state": "The sky is blue on a clear day.",
+        "questions": {
+          "colour": {
+            "type": "choice",
+            "instructions": "Which colour does the statement give the sky?",
+            "criteria": {
+              "blue": "The sky is blue",
+              "green": "The sky is green",
+              "red": "The sky is red"
+            }
+          }
+        }
+      },
+      "status": 404,
+      "requestIdHeaders": {
+        "apim-request-id": "4232711e-9bd4-4971-94e3-6e1e5f179919"
+      },
+      "body": {
+        "error": {
+          "code": "DeploymentNotFound",
+          "message": "The API deployment no-such-deployment does not exist. If you created the deployment within the last 5 minutes, please wait a moment and try again.",
+          "details": "The API deployment no-such-deployment does not exist. If you created the deployment within the last 5 minutes, please wait a moment and try again."
+        }
+      },
+      "error": null
+    }
+  ]
+}

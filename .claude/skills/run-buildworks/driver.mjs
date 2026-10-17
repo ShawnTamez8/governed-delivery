@@ -7,7 +7,10 @@
 //
 // Options: --design <path> drives a custom requirements document instead of
 // the committed web-calculator design, --slug <slug> names the feature it is
-// written to (lowercase kebab-case), --model <id>, --dir <path>.
+// written to (lowercase kebab-case), --model <id>, --dir <path>. Runs are created
+// with new-run --no-narration-check unless --narration-check is given, which
+// sends each spec-review criterion to the Decision-1 deployment the SYSTEMONE_*
+// variables name.
 //
 // bw governs the repository it is run *in*, so every invocation here sets cwd
 // to a scratch repository built by prepareTarget() — never this one. The
@@ -173,7 +176,8 @@ function prepareTarget(root) {
 
 function newRunArgs(slug = SLUG) {
   return ["new-run", "--project", "smoke", "--feature", slug, "--slug", slug,
-          "--change-kind", "feature", "--model", value("model", "claude-sonnet-5")];
+          "--change-kind", "feature", "--model", value("model", "claude-sonnet-5"),
+          ...(flag("narration-check") ? [] : ["--no-narration-check"])];
 }
 
 /** The whole surface that refuses, passes, or reports without dispatching. */

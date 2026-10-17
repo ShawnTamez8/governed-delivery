@@ -66,7 +66,7 @@ function repository(parent: string): string {
 
 function newRun(root: string, parent: string, slug: string): number {
   const created = spawnSync(process.execPath, [
-    CLI, "new-run", "--repo", root, "--project", "project", "--feature", "feature",
+    CLI, "new-run", "--no-narration-check", "--repo", root, "--project", "project", "--feature", "feature",
     "--slug", slug, "--change-kind", "feature", "--model", "test-model",
   ], { cwd: parent, encoding: "utf8" });
   assert.equal(created.status, 0, created.stderr);
@@ -2403,7 +2403,7 @@ test("the run view shows each frozen setting's model and effort, and each stage'
   try {
     const root = repository(parent);
     const created = spawnSync(process.execPath, [
-      CLI, "new-run", "--repo", root, "--project", "project", "--feature", "feature", "--slug", "settings",
+      CLI, "new-run", "--no-narration-check", "--repo", root, "--project", "project", "--feature", "feature", "--slug", "settings",
       "--change-kind", "feature", "--model", "test-model",
       "--effort-for", "code-reviewer-security=max,implementer=low,code-review-reconciler=xhigh",
     ], { cwd: parent, encoding: "utf8" });

@@ -84,7 +84,11 @@ export const COMMANDS: Readonly<Record<string, CommandDefinition>> = {
       + "reconciler or code-review-reconciler. Levels: low, medium, high, xhigh, max.\n"
       + "--after names the run of the feature this one follows. It must be completed, and its\n"
       + "delivered commit must be in this checkout's history (merge, never squash); the link\n"
-      + "is frozen into the profile.\n",
+      + "is frozen into the profile.\n"
+      + "Spec review asks Decision-1 whether each acceptance criterion carries an author's remark.\n"
+      + "SYSTEMONE_ENDPOINT, SYSTEMONE_DEPLOYMENT, SYSTEMONE_DEPLOYMENT_TYPE and SYSTEMONE_API_KEY\n"
+      + "must be set, and the first three are frozen; --no-narration-check creates the run\n"
+      + "without the check, and the profile records that choice.\n",
     options: [
       { name: "project", value: "p", required: true },
       { name: "feature", value: "f", required: true, validate: (value) => validateRunIdentity({ featureId: value }) },
@@ -98,6 +102,7 @@ export const COMMANDS: Readonly<Record<string, CommandDefinition>> = {
         name: "after", value: "run-id",
         validate: (value, name) => validateNumber(value, name) ?? (Number(value) === 0 ? `--${name} must be a positive run id, got ${value}` : null),
       },
+      { name: "no-narration-check" },
     ],
   },
   "stage-add": {
