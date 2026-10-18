@@ -190,10 +190,11 @@ declares `package-lock.json`, and an implementer cannot run `npm install`) bites
 implementation when a dependency really is added; hazard 24 covers only the case where none is. Never relabel cases after seeing answers. Nothing is in flight.
 
 **Working state (verified 2026-10-17):**
-- Branch `sandboxed-delivery` (local only), cut from `dashboard-restyling`. On 2026-10-18 after a
-  fetch, `561ce9e` and `7446cd0` were not on `origin/dashboard-restyling` (its tip `05803eb`),
-  despite the earlier note that they were pushed; `dashboard-restyling` is 14 ahead of
-  `origin/master` and 0 behind. Local `master` was 38 behind `origin/master` on 2026-10-10 (not
+- Branch `sandboxed-delivery`, cut from `dashboard-restyling`; both pushed 2026-10-18
+  (`dashboard-restyling` at `7446cd0`, `sandboxed-delivery` at `bf25173` plus this record).
+  `561ce9e` and `7446cd0` had not actually been pushed before that, despite an earlier note.
+  `dashboard-restyling` is 14 ahead of `origin/master` and 0 behind. Snitch's decision worker
+  was unavailable on 2026-10-18, so the operator ran the push. Local `master` was 38 behind `origin/master` on 2026-10-10 (not
   rechecked).
 - An untracked empty file `=` sits at the repository root; deleting it is the operator's call. A plain-text copy of the API key sits
   in the operator's `C:\Users\tamezs\.buildworks\[Environment]SetEnvironmentVariable.txt`;
