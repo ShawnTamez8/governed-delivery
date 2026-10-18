@@ -616,9 +616,64 @@ waits for a second real target.
 **Decision needed.** A section 12 entry; whether the allowlist exists at first or
 every new dependency simply asks.
 
+## Ranking, and the minimum to complete a run
+
+The changes are numbered in the order they were first suggested, not by
+importance. The operator's stated expectation on 2026-10-18 is that all ten are
+wanted. Even so, each is authorized and built separately, and a benchmark result
+decides the next, because two of them may need revision once measured: change 7
+could lower reviewer recall, and change 5 is costly for failures that validators
+already catch.
+
+### The minimum to complete a run
+
+BuildWorks already completes runs on the web-calculator design (2026-10-15 and
+2026-10-17). The gap is the larger crew-chatter design, and most of its recorded
+blocks are already fixed:
+
+| Crew-chatter block | Status |
+|---|---|
+| Run 2: an open decision listed outside its section | Fixed by `561ce9e` |
+| Run 3: declared files that no task changes | Fixed by `7446cd0` |
+| Run 3 (earlier): malformed JSON in phase 2 | Fixed by structured patch output (2026-10-14) |
+| Run 6: round 2 blocked on obligations remediation introduced | Partly addressed by the code-review reconciler (2026-10-13) |
+| Run 4: the spec adds TipTap and needs a lockfile the implementer cannot produce | Open |
+
+Run 3 also showed that this feature can pass implementation and verification
+when it adds no dependency. Only change 2 is therefore strictly required to take
+crew-chatter feature 1 through a run. Change 10 belongs with it, so that adding
+TipTap is the operator's choice and not a fact inside the spec. Neither
+guarantees completion: a new block can still surface later in the chain, most
+likely at code review. But together they close the one failure known in advance.
+
+### Ranked by value for the effort
+
+| Rank | Change | Why it sits here |
+|---|---|---|
+| 1 | 2 Derived artifacts owned by the harness | Removes the one known blocker; about 1 week |
+| 2 | 9 Replay, with the benchmark after it | Every later fix is tested against retained runs at no provider cost, instead of a paid run each |
+| 3 | 10 Dependency policy | Puts dependency choices with the operator; about 1 week |
+| 4 | 8 part 1 Per-phase verification | A failure costs one phase, not the whole implementation |
+| 5 | 6 Routing by frozen policy | The same facts produce the same pause; small |
+| 6 | 1 Sandboxed implementer | The largest long-term gain and the foundation for 4 and 7, but 4–6 weeks and a trust-boundary decision |
+| 7 | 4 Executable acceptance criteria | The largest correctness gain; needs 1 |
+| 8 | 7 Findings carry a repro | Needs 1; its effect on recall must be measured first |
+| 9 | 3 Capability manifest | Worth less once 1 and 2 exist, because the implementer can run the toolchain itself |
+| 10 | 5 Typed documents | The highest cost; the failures it prevents are already caught by validators |
+
+Change 8 parts 2 and 3 sit outside the ranking. Part 3 reverses section 19 and
+needs its own decision, whatever else is adopted.
+
+**Recommended first authorization:** changes 9 (replay), 2 and 10, about three
+weeks, ending in one paid crew-chatter feature-1 run as the live test with a
+budget the operator sets at that point.
+
 ## Sequencing
 
 The changes split into three tracks by how much binding text they reverse.
+Within a track, build in the ranked order above. Change 3 qualifies for track A
+by that rule but ranks ninth, so it waits unless the toolchain-probe proposal is
+pursued on its own merits.
 
 **Track A — inside today's rules.** Changes 2, 6, 10, 8 part 1, 9 (replay), and
 3 (probe half). About 5–7 weeks. They close run 4's failure class, the routing
@@ -706,7 +761,9 @@ benchmark sweep whose result decides whether the next track starts.
 
 ## Decisions for the operator
 
-1. Whether to adopt the three-track sequence, or a subset.
+1. Whether to authorize the recommended first set (changes 9, 2 and 10), and
+   later each change in ranked order. The operator expects all ten to be wanted
+   (2026-10-18); that is direction, not authorization.
 2. Answered 2026-10-18: runs execute on the operator's workstation; Docker
    Desktop with WSL 2 is the first container runtime; Windows Sandbox is the
    fallback, built only if Docker fails the spike.

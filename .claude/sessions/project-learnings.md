@@ -183,8 +183,10 @@ deciding check agent-independent, requires per-agent confinement proven by attem
 Open: whether per-seat use is "ordinary use" under Claude Code's legal terms.
 
 **Next action:** the operator decides:
-- which of the rework proposal's tracks to adopt, and whether to authorize the change 1 spike. No
-  spend is authorized;
+- whether to authorize the proposal's recommended first set: changes 9 (replay), 2 (derived
+  lockfile) and 10 (dependency policy), then a plan under `docs/features/`. The operator expects
+  all ten changes to be wanted; the proposal ranks them (numbers are not importance). Change 2
+  alone is the known minimum for crew-chatter feature 1. No spend is authorized;
 - what to do about grounding. The recommendation is to leave it unadopted until more recorded
   positives exist.
 - No PR to `master`: the operator said not to create one (2026-10-17).
