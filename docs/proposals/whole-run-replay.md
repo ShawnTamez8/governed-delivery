@@ -277,6 +277,9 @@ Risks:
 
 ## Decisions for the operator
 
+**Operator decision, 2026-10-18:** replay waits, and is reassessed after changes 2,
+10 and 1 of the rework are built. Prompt retention (decision 2) waits with it.
+
 1. Whether to build replay as designed, and when relative to the
    derived-artifacts and dependency-policy plan. That plan does not depend on
    replay.

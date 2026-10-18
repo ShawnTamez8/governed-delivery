@@ -746,7 +746,8 @@ needs its own decision, whatever else is adopted.
 weeks, ending in one paid crew-chatter feature-1 run as the live test with a
 budget the operator sets at that point. Revised 2026-10-18: changes 2 and 10
 are planned in `docs/features/derived-artifacts-and-dependency-policy/plan.md`.
-Change 9 waits for a replay design and its own decision.
+Change 9 waits for a replay design and its own decision. Operator decision,
+2026-10-18: change 9 is reassessed after changes 2, 10 and 1 are built.
 
 ## Sequencing
 
