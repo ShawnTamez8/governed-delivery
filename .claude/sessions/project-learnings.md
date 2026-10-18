@@ -156,9 +156,31 @@ so nothing was flagged. That fits a clean spec, but it does not exercise a live 
 details are in the plan's "First live run" block. The driver's cost-report fix that lists
 Decision-1 requests apart and the run record are committed in `05803eb`, pushed.
 
+**Run 4 (2026-10-18, spec range only, operator-approved):** fresh crew-chatter feature-1 run on
+`8f539e5`, same settings as run 3, narration on. Paused at `awaiting_decision` for $1.7754115
+(spec authors $1.7648, 63,712 output tokens over 3 calls; 2 Haiku reviewers $0.0106; 24 Decision-1
+requests, none flagged). The spec now declares the package files unconditionally, but because it
+chose TipTap 3 (four packages) and says to regenerate `package-lock.json` with `npm install`, which
+the read-only implementer cannot run. OD-001 (reset-token delivery) was routed
+`upstream_blocking` this time, where run 3 routed it `upstream_follow_up`. The operator **stopped
+run 4** at the decision pause; it is left unanswered (no stop command exists). Its untracked
+`docs/features/crew-chatter-accounts-notes/spec.md` sits in the target: move it aside before the next
+`new-run` there. Run 3's spec/plan copies are in
+`%LOCALAPPDATA%\Temp\crew-chatter-aside-2026-10-18-run3` and committed at `f50bc95`.
+The operator then asked for a rework proposal: `docs/proposals/sandboxed-delivery-rework.md`
+(ten changes in three tracks, effort, risk, governance; nothing authorized), committed on the new
+branch `sandboxed-delivery`, cut from `dashboard-restyling` at `7446cd0`. The operator has been
+considering change 1, the sandboxed implementer. Operator facts (2026-10-18): every developer has
+Docker Desktop with WSL 2 and Windows Sandbox, Docker first; each holds a personal Claude Code
+Enterprise seat and BuildWorks has no credential of its own; runs happen on the operator's
+workstation; Docker, WSL and Claude Code must be replaceable *between BuildWorks versions*, never
+during a run. So change 1 keeps `claude` on the host and reaches the container only through a
+BuildWorks MCP tool server, and each dependency is confined to one concrete module (no interface).
+Open: whether per-seat use is "ordinary use" under Claude Code's legal terms.
+
 **Next action:** the operator decides:
-- whether to authorize a paid crew-chatter feature-1 re-run (a fresh run on `8f539e5`) as the
-  live test of the declared-artifacts fix. No spend is authorized;
+- which of the rework proposal's tracks to adopt, and whether to authorize the change 1 spike. No
+  spend is authorized;
 - what to do about grounding. The recommendation is to leave it unadopted until more recorded
   positives exist.
 - No PR to `master`: the operator said not to create one (2026-10-17).
@@ -168,8 +190,10 @@ declares `package-lock.json`, and an implementer cannot run `npm install`) bites
 implementation when a dependency really is added; hazard 24 covers only the case where none is. Never relabel cases after seeing answers. Nothing is in flight.
 
 **Working state (verified 2026-10-17):**
-- Branch `dashboard-restyling`, pushed to `origin/dashboard-restyling` with the declared-artifacts
-  commit on top of `561ce9e`. Local `master` was 38 behind `origin/master` on 2026-10-10 (not
+- Branch `sandboxed-delivery` (local only), cut from `dashboard-restyling`. On 2026-10-18 after a
+  fetch, `561ce9e` and `7446cd0` were not on `origin/dashboard-restyling` (its tip `05803eb`),
+  despite the earlier note that they were pushed; `dashboard-restyling` is 14 ahead of
+  `origin/master` and 0 behind. Local `master` was 38 behind `origin/master` on 2026-10-10 (not
   rechecked).
 - An untracked empty file `=` sits at the repository root; deleting it is the operator's call. A plain-text copy of the API key sits
   in the operator's `C:\Users\tamezs\.buildworks\[Environment]SetEnvironmentVariable.txt`;
