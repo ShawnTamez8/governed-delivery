@@ -330,7 +330,15 @@ The optional `## Open decisions` section follows the same rule: each line is one
 `OD-NNN (<severity>): <question>` entry, whose ID has the criterion ID's shape
 with an `OD` prefix and whose severity uses the finding vocabulary. The heading
 is spelled exactly and appears at most once; a second or differently spelled
-one is refused, because its entries would otherwise escape recording. An entry
+one is refused, because its entries would otherwise escape recording. For the
+same reason a line that opens with an open-decision ID, after an optional list
+marker, is refused under any other heading, since a heading with another name
+hides entries just as well (2026-10-17,
+`docs/features/open-decisions-outside-section/plan.md`); an ID mentioned later
+in a line is not an entry. The prompts state that the section is the only place
+an open question is listed, including one another specification already
+records. An open question written as plain prose under another heading still
+passes: nothing here can tell it from a note. An entry
 is a question the design leaves open, not an obligation, so entries are not
 normative nodes (section 12). The prompts that write the section admit two kinds
 of entry. The first is a decision the design needs and does not make — one

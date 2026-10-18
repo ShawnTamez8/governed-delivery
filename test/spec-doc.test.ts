@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { validateSpecDoc, writeSpecDoc } from "../src/spec-doc.ts";
+import { extractJsonBody } from "../src/parse-output.ts";
 
 function validSpec(): string {
   return `feature: my-feature
@@ -435,4 +436,72 @@ test("a second or differently spelled open-decisions heading refuses instead of 
   // A heading that only mentions the phrase later is another section.
   const other = validateSpecDoc(`${validSpec()}\n## Notes on open decisions\n\nprose\n`);
   assert.equal(other.ok, true);
+});
+
+// --- open decisions outside their section (docs/features/open-decisions-outside-section/plan.md)
+// The recorded run is crew-chatter run 2; see the fixture's provenance.
+
+function recordedRun2(): { draft: string; selfCritique: string; reconciliation: string } {
+  const fixture = JSON.parse(
+    readFileSync(join(import.meta.dirname, "fixtures", "recorded", "spec-crew-chatter-run-2-open-questions-outside-section.json"), "utf8")
+  ) as Record<"draft" | "selfCritique" | "reconciliation", { result: string }>;
+  const body = (entry: { result: string }) => {
+    const extracted = extractJsonBody(entry.result);
+    assert.equal(extracted.kind, "ok");
+    return (extracted as { value: { proposedContentChanges: Record<string, unknown> } }).value.proposedContentChanges;
+  };
+  return {
+    draft: body(fixture.draft).spec as string,
+    selfCritique: (body(fixture.selfCritique).selfCritique as { artifact: string }).artifact,
+    reconciliation: body(fixture.reconciliation).spec as string,
+  };
+}
+
+test("the recorded self-critique's open decisions under another heading refuse", () => {
+  assert.equal(
+    refusal(recordedRun2().selfCritique),
+    "an open decision is listed only under ## Open decisions; this line under ## Questions left open upstream starts with an open decision ID: - OD-001: how the password-reset token reaches the user"
+  );
+});
+
+test("the recorded reconciliation, which moved them into the section, still validates", () => {
+  const result = validateSpecDoc(recordedRun2().reconciliation);
+  assert.equal(result.ok, true, result.ok ? "" : result.reason);
+  if (result.ok) assert.deepEqual(result.value.openDecisions.map((d) => d.id), ["OD-001", "OD-012"]);
+});
+
+test("the recorded draft's open questions in prose, with no IDs, still validate", () => {
+  // The known limit: a plain-prose question under another heading is not an
+  // entry line, so nothing here can tell it from a follow-up note.
+  const result = validateSpecDoc(recordedRun2().draft);
+  assert.equal(result.ok, true, result.ok ? "" : result.reason);
+  if (result.ok) assert.deepEqual(result.value.openDecisions, []);
+});
+
+test("an open-decision entry line refuses under any other heading, with or without a list marker", () => {
+  const cases: Array<[string, string, string]> = [
+    ["Context", "- OD-001 (high): q", "under ## Context"],
+    ["Out of scope", "1. OD-002 (low): q", "under ## Out of scope"],
+    ["Scope", "OD-003: q", "under ## Scope"],
+  ];
+  for (const [title, line, where] of cases) {
+    assert.equal(
+      refusal(`${validSpec()}\n## ${title}\n\n${line}\n`),
+      `an open decision is listed only under ## Open decisions; this line ${where} starts with an open decision ID: ${line}`,
+      line
+    );
+  }
+  assert.equal(
+    refusal(validSpec().replace("change_kind: feature\n", "change_kind: feature\nOD-004: q\n")),
+    "an open decision is listed only under ## Open decisions; this line before the first heading starts with an open decision ID: OD-004: q"
+  );
+});
+
+test("an open-decision ID mentioned later in a line is not an entry", () => {
+  const spec = withDecisions("- OD-001 (high): who may download the export archive").replace(
+    "- AC-001: the parser accepts the documented shapes",
+    "- AC-001: the parser accepts the documented shapes (see OD-001)"
+  );
+  const result = validateSpecDoc(`${spec}\n## Context\n\nThe export question is OD-001 above.\n`);
+  assert.equal(result.ok, true, result.ok ? "" : result.reason);
 });

@@ -100,6 +100,9 @@ ${indent}  Guidance with no checkable part, such as visual tone or typographic f
  * specification is requested). Entries are recorded as round-1 findings by
  * `runSpecStage`; the final sentence tells the author so, without naming a
  * stage the draft prompt must not mention (the harness emitter routes on it).
+ * The only-place sentence answers crew-chatter run 2, where a split feature's
+ * self-critique listed the parent specification's open decisions under a heading
+ * of its own (docs/features/open-decisions-outside-section/plan.md).
  */
 function openDecisionsSchema(indent: string): string {
   return `${indent}- an optional ## Open decisions section: one question the design leaves open per list line, in exactly this form: \`- OD-001 (high): <the question the design leaves open>\`.
@@ -107,6 +110,7 @@ ${indent}  Open decision IDs must match \`OD-(00[1-9]|0[1-9][0-9]|[1-9][0-9]{2,}
 ${indent}  List only a decision the design needs and does not make: one without which a behavior the design states cannot be written as a testable acceptance criterion.
 ${indent}  Protection, limits, or policy beyond what the design asks for is not an open decision; leave it out.
 ${indent}  Every non-blank line in this section is one open decision and nothing else.
+${indent}  This section is the only place an open question is listed, including one another specification already records, such as the specification this feature was split from: never list one under another heading or by its ID in another section.
 ${indent}  Record a question here instead of deciding it yourself or leaving it only in prose: each entry is recorded as a finding that must receive a typed decision before approval.`;
 }
 

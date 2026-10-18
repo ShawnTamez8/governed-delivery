@@ -5,9 +5,29 @@ history and may name superseded state; Current state wins when they disagree. Th
 the system of record; machine-local memory is only a cache
 (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-10-17: narration check wired into spec review; uncommitted)
+## Current state (2026-10-17: crew-chatter runs 1-2; open-decisions fix implemented, uncommitted)
 
-**Active work:** `docs/features/decision-1-d6-evaluation/plan.md` is `Implemented`, uncommitted.
+**Active work:** `docs/features/open-decisions-outside-section/plan.md` is `Implemented`,
+uncommitted. The operator asked for "a paid run on a larger design" in
+`C:\Repositories\testing-repos\crew-chatter` (TS backend + React frontend baseline committed there as
+`eb1fa30`; worktree precheck of `npm ci`, typecheck, lint, build passed).
+- **Run 1** (whole PRD, narration on): spec and spec review, $1.7998923 in 6 priced dispatches,
+  71 narration answers all `criterion` (top 0.148). The spec declared 32 files; the operator
+  approved the split into 7 features; proposals 28-34; run 1 ended `blocked` as designed.
+- **Run 2** (feature 1, `crew-chatter-accounts-notes`, design committed as `8f539e5` with run 1's
+  spec): blocked at the `spec_review` gate after $0.9690182, "spec reconciliation added open
+  decision(s) OD-001, OD-012". The self-critique had listed the parent spec's open decisions under
+  `## Questions left open upstream`; the validator checked only open-decisions-like headings; a
+  reviewer flagged it and the reconciler's correct move into `## Open decisions` hit the no-add
+  rule. Asked whether Decision-1 should catch it: no, because detection was not the failure and a
+  regex settles the ID-led form exactly.
+- **The fix:** `validateSpecDoc` refuses an OD-led line under any other heading, and
+  `openDecisionsSchema` says the section is the only place an open question is listed, including
+  an inherited one. Fixture `test/fixtures/recorded/spec-crew-chatter-run-2-open-questions-outside-section.json`;
+  hazard 3 and `ARCHITECTURE.md` section 8 updated. Unmeasured: whether a live author now complies.
+  Residual: open questions in plain prose under another heading still pass (run 2's draft did this).
+
+**Earlier 2026-10-16/17 work:** `docs/features/decision-1-d6-evaluation/plan.md` is `Implemented`, committed in `6cb2e3b`.
 The operator redirected the typed-decision proposal from TypeSafe Jev to Microsoft-Decision-1 on
 their Foundry resource (`docs/proposals/decision-1-review.md`, renamed from `jev-review.md`) and
 chose "Client + D6 evaluation" with an API key. Built: `src/systemone.ts` (config from
@@ -91,22 +111,27 @@ Committed as `6cb2e3b`, not pushed. The operator then approved a paid live run w
 Decision-1 answered 24 of 24 criteria `criterion`, the highest remark probability being 0.0203,
 so nothing was flagged. That fits a clean spec, but it does not exercise a live catch. The
 details are in the plan's "First live run" block. The driver's cost-report fix that lists
-Decision-1 requests apart is uncommitted.
+Decision-1 requests apart and the run record are committed in `05803eb`, pushed.
 
 **Next action:** the operator decides:
-- whether to commit the driver report fix and the run record;
+- whether to commit the open-decisions fix;
+- whether to re-run crew-chatter feature 1 as a new paid range (remove the untracked run-2
+  `docs/features/crew-chatter-accounts-notes/spec.md` in the target first);
 - what to do about grounding. The recommendation is to leave it unadopted until more recorded
   positives exist.
 
-Never relabel cases after seeing answers. Nothing is in flight.
+Follow-ups not taken: split designs carry no parent open decisions; the lockfile risk (feature 1
+declares `package-lock.json`, and an implementer cannot run `npm install`) bites at
+implementation. Never relabel cases after seeing answers. Nothing is in flight.
 
-**Working state (verified 2026-10-16 with `git log -1` and `git status -sb`):**
-- Branch `dashboard-restyling`, HEAD `0e3277e`, level with `origin/dashboard-restyling`. Local
+**Working state (verified 2026-10-17):**
+- Branch `dashboard-restyling`, HEAD `05803eb`, level with `origin/dashboard-restyling`. Local
   `master` was 38 behind `origin/master` on 2026-10-10 (not rechecked).
-- Uncommitted: the Decision-1 work (plan, proposal rename and edits, `src/systemone.ts`,
-  `src/policy.ts`, `tsconfig.json`, the script, three tests, two fixtures) and this file. A
-  plain-text copy of the API key sits in the operator's
-  `C:\Users\tamezs\.buildworks\[Environment]SetEnvironmentVariable.txt`; removing it is theirs.
+- Uncommitted: the open-decisions fix (plan, `src/spec-doc.ts`, `src/prompts.ts`, three tests, the
+  fixture, `ARCHITECTURE.md`, `docs/hazards.md`) and this file. An untracked empty file `=` sits at
+  the repository root; deleting it is the operator's call. A plain-text copy of the API key sits
+  in the operator's `C:\Users\tamezs\.buildworks\[Environment]SetEnvironmentVariable.txt`;
+  removing it is theirs.
 - Plan statuses checked 2026-10-15: all 49 `docs/features/*/plan.md` carry a correct Status line.
   `docs/features/dashboard-pwa-redesign/plan.md` is `Reconciled` with Task 7 next (no `sw.js` or
   manifest in `src/`); unbuilt by choice: `baseline-verification`, `implementation-phase-retry`
@@ -211,10 +236,10 @@ stand-ins; only BuildWorks handling larger designs counts (2026-10-10).
 
 **External targets** (under `C:\Users\Shawn-work\repositories\testing-repos\`, on the other machine;
 none of them is on this machine, checked 2026-10-16):
-- **This machine:** `C:\Repositories\testing-repos\crew-chatter` is a new repository holding only an
-  uncommitted design document in its docs folder, with no commits and no stack. It is not the
-  original target. Nothing committed depends on it: the run 6 spec, plan, findings and reconciler
-  replays are under `test/fixtures/recorded/`. A BuildWorks run there needs the stack set up first.
+- **This machine:** `C:\Repositories\testing-repos\crew-chatter` (not the original target) at
+  `8f539e5` on `main`: npm workspaces `backend` (Express 5) and `frontend` (React 19, Vite 7),
+  `governed.yaml` running `npm ci`, typecheck, lint, build. Runs 1 and 2 above are in its store;
+  proposals 29-34 (features 2-7) are not exported yet. Its run-2 spec is untracked.
 - **crew-chatter**: `master` at `8063995` (six split designs under
   `docs/features/crew-chatter-*/design.md`); untracked run 6 `spec.md` and `plan.md` under
   `docs/features/crew-chatter-foundation/` (move them aside before another `new-run`); branches

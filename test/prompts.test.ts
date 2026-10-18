@@ -212,6 +212,10 @@ const SELF_REVIEW_REPLY_RULES = [
 const STRUCTURED_OUTPUT_RULE =
   "Submit the JSON object once, through the structured output tool, and do not also write it out as text before or after: only the structured output is read.";
 
+/** The open-decisions schema's placement rule, which every prompt stating the schema carries. */
+const OPEN_DECISIONS_ONLY_PLACE_RULE =
+  "This section is the only place an open question is listed, including one another specification already records, such as the specification this feature was split from: never list one under another heading or by its ID in another section.";
+
 /** The three builders whose dispatches send --json-schema, with the reply rule they carry. */
 function structuredPatchPrompts(): Array<{ name: string; prompt: string }> {
   const base = "b".repeat(40);
@@ -499,6 +503,12 @@ const CONSTRAINT_STRINGS = [
   // The structured-output reply rule (docs/features/structured-patch-output/plan.md),
   // also kept above the criterion-quality block.
   STRUCTURED_OUTPUT_RULE,
+  // The open-decisions section is the only place a question is listed
+  // (docs/features/open-decisions-outside-section/plan.md). Measured 2026-10-17,
+  // $0.9690182: crew-chatter run 2's self-critique listed the parent
+  // specification's open decisions under a heading of its own. Also kept above
+  // the criterion-quality block.
+  OPEN_DECISIONS_ONLY_PLACE_RULE,
   // What a criterion may say (docs/features/spec-criterion-testability/plan.md).
   // Measured 2026-09-27, $1.6186: team-notes run 3 copied the design's
   // "meaningful content change" into AC-041, and its tone guidance reached
@@ -546,6 +556,7 @@ test("the generated author prompt states the schema constraints", () => {
     "must receive a typed decision before approval",
     "List only a decision the design needs and does not make",
     "beyond what the design asks for is not an open decision",
+    OPEN_DECISIONS_ONLY_PLACE_RULE,
     ...CRITERION_QUALITY_RULE,
   ]) {
     assert.ok(prompt.includes(constraint), `author prompt missing: ${constraint}`);
@@ -1057,6 +1068,8 @@ test("the generated spec self-critique prompt states the contract and carries bo
     "Where the design needs a decision it does not make, record it under ## Open decisions rather than deciding it yourself",
     "List only a decision the design needs and does not make",
     "beyond what the design asks for is not an open decision",
+    // Run 2's misplaced entries came from this pass, so it is asserted here.
+    OPEN_DECISIONS_ONLY_PLACE_RULE,
     ...CRITERION_QUALITY_RULE,
     // The pass is where the author applies the rule to what it already wrote.
     "Check every acceptance criterion against the pass/fail rule stated with the ## Acceptance criteria schema above and rewrite, split, or move any criterion that fails it.",
@@ -1418,6 +1431,10 @@ test("the generated spec reconciliation prompt carries the decision contract and
     "Output the JSON object",
     "one open decision and nothing else",
     "never add a new entry during this revision",
+    // The schema's placement rule, then the no-add rule straight after it: the
+    // reconciler still adds nothing, wherever a question came from.
+    `${OPEN_DECISIONS_ONLY_PLACE_RULE}\n  Record a question here`,
+    "\n  You may keep, reword, or remove an existing entry, but never add a new entry during this revision;",
     "A finding whose report comes from spec-author is an open decision you disclosed",
     // The blocking criterion lives only on the spec side (plan scope), so it is
     // asserted on this prompt rather than trusted to the whole-file scan.

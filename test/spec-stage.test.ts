@@ -1603,6 +1603,46 @@ test("a self-critique whose document does not validate blocks instead of falling
   });
 });
 
+test("crew-chatter run 2's self-critique, with open decisions under another heading, blocks at its write before any review", async () => {
+  // docs/features/open-decisions-outside-section/plan.md, Task 4. Live, this
+  // artifact passed the write, was reviewed, and blocked only at the
+  // reconciliation's no-add check after $0.9690182. The self-critique branch
+  // returns the recorded artifact itself, byte for byte.
+  const recorded = JSON.parse(
+    readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "spec-crew-chatter-run-2-open-questions-outside-section.json"), "utf8")
+  ) as { selfCritique: { result: string } };
+  const artifact = (JSON.parse(recorded.selfCritique.result) as {
+    proposedContentChanges: { selfCritique: { artifact: string } };
+  }).proposedContentChanges.selfCritique.artifact;
+  await withRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-spec-stage-run-2-critique.mjs");
+    const base = fixtureSource();
+    const source = base.replace(
+      'artifact: authoredSpec().replace("- AC-001: the thing works", "- AC-001: the thing works SELFCRITIQUED"),',
+      `artifact: ${JSON.stringify(artifact)},`
+    );
+    assert.notEqual(source, base, "the artifact substitution must apply");
+    writeFileSync(scratch, source);
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runSpecStage(store, fixtureExecutor(scratch), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    const reason =
+      "spec self-critique document refused: an open decision is listed only under ## Open decisions; this line under ## Questions left open upstream starts with an open decision ID: - OD-001: how the password-reset token reaches the user";
+    assert.equal(result.reason, reason);
+    const invalid = store.query<{ summary: string }>(
+      "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec.selfcritique.invalid'",
+      [runId]
+    );
+    assert.deepEqual(invalid.map((r) => r.summary), [reason]);
+    assert.deepEqual(store.getStageChain(runId).map((s) => [s.kind, s.status]), [["spec", "blocked"]], "no spec_review stage");
+    assert.deepEqual(agentRunCounts(store, runId), { author: 2, reviewer: 0 }, "the draft and the self-critique, and nothing after");
+    assert.equal(store.query("SELECT * FROM agent_run WHERE agent = 'narration-check'").length, 0, "no Decision-1 request");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+    assert.equal(verifyAuditChain(store), null);
+  });
+});
+
 test("the self-critique prompt names the specialties the frozen registry can seat", async () => {
   await withRun(async ({ store, root, runId }) => {
     // Revision A from the Task 1 prototype: an author that is not told what

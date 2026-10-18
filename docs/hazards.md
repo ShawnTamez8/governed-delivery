@@ -282,6 +282,32 @@ distinguishes, not only the common one, and an example of the rare branch
 teaches the rare branch. How often a live reconciler now
 complies has not been measured.
 
+**Measured, 2026-10-17, $0.9690182.** Crew-chatter run 2, the first feature of
+an approved split, blocked at the `spec_review` gate with "spec reconciliation
+added open decision(s) OD-001, OD-012". The parent specification already
+recorded two open questions this feature needed. The draft listed them as plain
+bullets under a heading of its own; the self-critique replaced those with the
+parent's IDs, `- OD-001: …` and `- OD-012: …`, under `## Questions left open
+upstream`. The validator refused only an open-decisions heading spelled wrong,
+so a heading with another name passed with its entries unrecorded. A reviewer
+reported exactly that, the reconciler answered by moving both entries into
+`## Open decisions` in the required form, and the no-add rule read the move as
+two new entries. The prompts stated the section's rule only for a question
+"the design leaves open"; nothing said where a question another specification
+already records goes. Fixed at both boundaries: the validator refuses a line
+that opens with an open-decision ID under any other heading, so this artifact
+now blocks at the self-critique write before any review spend, and the shared
+schema says the section is the only place an open question is listed,
+including one inherited from the specification a feature was split from. The
+three responses are committed at
+`test/fixtures/recorded/spec-crew-chatter-run-2-open-questions-outside-section.json`
+(`docs/features/open-decisions-outside-section/plan.md`). What this instance
+adds: two correct checks can leave a correct finding with no legal answer, when
+an earlier boundary admits a shape the later one cannot repair. What this does
+not show: whether a live author now lists an inherited question in the section
+is unmeasured, and the draft's plain-prose form still passes, since nothing
+here can tell it from a note.
+
 ## 4. Fixtures and code agreeing while both are wrong
 
 A hand-written fixture that declares one thing and does another will pass

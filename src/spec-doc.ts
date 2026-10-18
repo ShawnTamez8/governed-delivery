@@ -213,7 +213,9 @@ export function validateSpecDoc(
   //
   // `section` reads only the first heading spelled exactly, so a second or
   // differently spelled open-decisions heading would carry entries that are
-  // neither recorded as findings nor held to the no-add rule. Refuse both.
+  // neither recorded as findings nor held to the no-add rule. Refuse both. A
+  // heading with another name escapes the same way; the entry-line check
+  // after these two closes that.
   const decisionHeadings = [...text.matchAll(/^## (.*)$/gm)]
     .map((m) => m[1].trim())
     .filter((title) => /^open\s+decisions\b/i.test(title));
@@ -227,6 +229,27 @@ export function validateSpecDoc(
   }
   if (decisionHeadings.length > 1) {
     return { ok: false, reason: "a specification has at most one ## Open decisions section" };
+  }
+  // An open decision listed under any other heading. Measured 2026-10-17,
+  // $0.9690182: crew-chatter run 2's self-critique wrote `- OD-001: …` and
+  // `- OD-012: …` under `## Questions left open upstream`, which the heading
+  // check above never saw. A reviewer flagged it, the reconciler moved both
+  // entries into the section, and the no-add rule refused that as two new
+  // entries (docs/features/open-decisions-outside-section/plan.md). The test
+  // is an entry line, not a mention: an ID later in a line is accepted.
+  let heading: string | null = null;
+  for (const line of text.split("\n")) {
+    const title = /^## (.*)$/.exec(line);
+    if (title) {
+      heading = title[1].trim();
+      continue;
+    }
+    if (heading !== "Open decisions" && /^\s*(?:[-*+]|\d+[.)])?\s*OD-\d/i.test(line)) {
+      return {
+        ok: false,
+        reason: `an open decision is listed only under ## Open decisions; this line ${heading === null ? "before the first heading" : `under ## ${heading}`} starts with an open decision ID: ${line.trim()}`,
+      };
+    }
   }
   const openDecisions: OpenDecision[] = [];
   const decisionsSection = section(text, "Open decisions");
