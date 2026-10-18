@@ -352,6 +352,15 @@ design names a stack, the author records one entry whose question begins
 artifact paths that needs (hazard 21). No code reads that word; the reconcile
 and fold prompts recognize it by its text.
 
+A declared artifact is a file the change must create or modify however it is
+built. A file that changes only under a choice still open, such as whether to
+add a dependency, is declared only once the specification settles that choice.
+The draft, self-critique and reconcile prompts state this, because delivery
+refuses a declared artifact the change leaves untouched (hazard 24,
+`docs/features/declared-artifacts-in-tasks/plan.md`). Nothing parses the
+specification for conditional wording; the plan gate in section 12 is what
+catches a declaration no task will change.
+
 An acceptance criterion is a pass/fail check: a specific input, action, value
 or observable outcome, never a subjective or unquantified term. Where the
 design states a behavior in such terms, the criterion carries only its
@@ -1160,6 +1169,18 @@ are all produced by a later stage, the plan may not promise test coverage for it
 now — the only way to satisfy that promise later is a false attestation. Refuse
 at the gate instead.
 
+**Every declared artifact has a task.** The planning gate refuses a draft,
+self-critique or reconciled plan in which a signed scope path appears in no
+`## Tasks` line, matched exactly and bounded so that `package.json` is not
+found inside `frontend/package.json` (hazard 24, 2026-10-17,
+`docs/features/declared-artifacts-in-tasks/plan.md`). The check is free and runs
+before the plan panel is dispatched. It proves that a task names the path, not
+that the change will modify it, so delivery's exact match remains the check that
+the file changed. The prompts tell the author to name every scope path in a
+task and never to invent a change to a path that needs none; a refused plan
+names the untasked paths so the specification can be corrected, and a fresh
+run is the repair.
+
 **Scope fitness.** When the spec declares an artifact the signed scope does not
 cover, do not fail and do not silently widen. Propose an addition with a delta
 hash and policy snapshot, and let that be part of what is approved.
@@ -1729,7 +1750,7 @@ block.
 
 ## 22. Known hazards
 
-`docs/hazards.md` states twenty-three failure modes this kind of system is subject
+`docs/hazards.md` states twenty-four failure modes this kind of system is subject
 to and what each requires. They are requirements, not an appendix: model output
 in shapes the schema refuses, discarded output being undiagnosable, constrained
 fields whose constraint the prompt never states, fixtures and code agreeing
@@ -1745,8 +1766,9 @@ a delivery proven complete that nothing ever read, an inactivity budget
 that a non-streaming executor turns into a wall clock, an implementation
 request larger than one implementer dispatch can answer, agents never told
 the verification commands that will judge their work, a clean-tree guard
-that counts ignored files after a stage that writes them, and a fix that never
-sees the decisions behind the code it changes.
+that counts ignored files after a stage that writes them, a fix that never
+sees the decisions behind the code it changes, and a declared artifact that
+nothing will change.
 
 When a new failure mode is found, add it there rather than here. Two lists drift
 apart, and the one that drifts is the one people stop trusting.

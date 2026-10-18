@@ -43,9 +43,11 @@ and plan-review stages (`bw plan` builds the plan from the approved
 specification, re-verified against the hash the review gate recorded, and an
 ID-based coverage gate requires every approved acceptance-criterion ID exactly
 once, refuses unknown or repeated IDs, then refuses any covered artifact outside
-the signed scope before a panel is convened); and the implementation stage
+the signed scope, and any signed scope path that no `## Tasks` line names,
+before a panel is convened); and the implementation stage
 (`bw implement` creates the run's worktree on branch `gov/<slug>/<run-id>`,
-commits the projections, dispatches an implementer, and applies each proposed
+commits the projections, dispatches the implementer once per phase of up to ten
+plan tasks and once more to self-review the whole change, and applies each proposed
 patch only when it binds to the recorded base commit and stays inside the
 signed scope — one commit per patch, the worktree retained when the gate
 blocks); and the verification stage (`bw verify` runs the commands frozen at
@@ -654,10 +656,12 @@ does not report the effort it applied, so BuildWorks records the requested level
 only, in `agent_run.requested_effort`. Changing a seeded default in
 `src/policy.ts` affects later `new-run` commands only. These defaults are
 starting points. One live run completed on 2026-09-29, with Haiku 4.5 as the spec
-reviewers and Sonnet 5.5 as the code reviewers; none has run since both panels
-moved to Haiku 5.5 on 2026-10-08. That run is the whole measurement: it shows the
-defaults of that day can complete a small chain, not that any level or model
-reviews or implements better than another.
+reviewers and Sonnet 5.5 as the code reviewers. Two have completed under the
+current defaults, with Haiku 5.5 on both panels: 2026-10-15 and 2026-10-17, each
+on the web calculator with one remediation (see
+[the milestone](#the-milestone-that-decides-everything)). They show the defaults
+can complete a small chain, not that any level or model reviews or implements
+better than another.
 
 `run --run` displays the frozen model and effort settings, remaining groups,
 actual verification argv, review budgets, and dispatch ceilings before asking a TTY for explicit
@@ -1056,3 +1060,14 @@ their specific claims held against the delivered files. This one sample did not
 exercise remediation and cannot show reviewer sensitivity. Its scratch target was
 not preserved; the per-dispatch record is in
 [`docs/features/stage-role-model-overrides/plan.md`](docs/features/stage-role-model-overrides/plan.md).
+
+Two operator-authorized runs on the same design have completed under the current
+defaults, with Haiku 5.5 spec and code reviewers and `claude-sonnet-5-5` frozen for
+the reconciler. On 2026-10-15, 21 dispatches cost $1.39416. On 2026-10-17, with
+the narration check on, 22 dispatches cost $1.51048, plus 24 Decision-1 requests
+that report no cost. Each ran two code-review panels and one remediation, delivered
+3 of 3 declared artifacts, and validated its audit chain. Both records are in
+[`.claude/sessions/project-learnings.md`](.claude/sessions/project-learnings.md),
+and the second is also in
+[`docs/features/narration-check-spec-review/plan.md`](docs/features/narration-check-spec-review/plan.md).
+Their verification commands checked only `node --version` and `npm --version`.

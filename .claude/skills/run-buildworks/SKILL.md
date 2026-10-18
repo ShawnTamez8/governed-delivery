@@ -72,28 +72,29 @@ every step `ok` or `FAIL`, prints `13/13 steps as expected`, and exits
 non-zero if any step drifted. Last line is the scratch repo's path — it is
 left on disk for you to poke at.
 
-Verified output, 2026-09-16:
+Verified output, 2026-10-17:
 
 ```
-ok    migrate                                               exit=0  migrations applied
-ok    new-run                                               exit=0  1
-ok    new-run refuses a dirty tree                          exit=1  the working tree is not clean: a run starts from a committed state (section 7). 1 path(s), first
-ok    new-run refuses a non-repository                      exit=1  target_unavailable: cannot use <tempdir>/plain: fatal: not a git repository…
-ok    new-run refuses an uncommitted governed.yaml          exit=1  governed.yaml is not committed at 3b4a2c9d…: the verification con
-ok    new-run refuses an unknown change kind                exit=2  invalid change_kind nonsense: allowed values are feature, defect_fix
-ok    new-run refuses an unspawnable model name             exit=2  invalid model name "bad model name": must be 1-64 characters of letters, digits, dot, underscore
-ok    approval-request refuses before a passed spec_review  exit=1  run 1 has no passed spec_review stage to approve
-ok    verify refuses without a passed implementation        exit=1  run 1's last stage is none, not a passed implementation
-ok    verify refuses a run that does not exist              exit=1  run 9999 does not exist
-ok    review refuses without a passed verification          exit=1  run 1's last stage is none, not a passed verification
-ok    verify-audit validates the chain                      exit=0  chain valid
-ok    an unknown command prints usage                       exit=2  unknown command bogus
+ok    migrate                                                 exit=0  migrations applied
+ok    new-run                                                 exit=0  1
+ok    new-run refuses a dirty tree                            exit=1  the working tree is not clean: a run starts from a committed state (section 7). 1 path(s), first
+ok    new-run refuses a non-repository                        exit=1  target_unavailable: cannot use <tempdir>\p
+ok    new-run refuses an uncommitted governed.yaml            exit=1  governed.yaml is not committed at b6a20885…: the verification con
+ok    new-run refuses an unknown change kind                  exit=2  invalid change_kind nonsense: allowed values are feature, defect_fix
+ok    new-run refuses an unspawnable model name               exit=2  invalid model name "bad model name": must be 1-64 characters of letters, digits, dot, underscore
+ok    approval-request refuses before a passed spec_decision  exit=1  run 1 has no passed spec_decision stage to approve
+ok    verify refuses without a passed implementation          exit=1  run 1's last stage is none, not a passed implementation
+ok    verify refuses a run that does not exist                exit=1  run 9999 does not exist
+ok    review refuses without a passed verification            exit=1  run 1's last stage is none, not a passed verification
+ok    verify-audit validates the chain                        exit=0  chain valid
+ok    an unknown command prints usage                         exit=2  unknown command bogus
 
 13/13 steps as expected
 ```
 
-The block above is the post-`code_review` shape: the review refusal is the
-step this stage added, and every step before it is unchanged.
+The approval refusal names `spec_decision`, the stage approval follows since
+the 2026-09-27 operator-decisions change. The review refusal is the step
+`code_review` added, and every other step is unchanged.
 
 Other subcommands:
 
@@ -134,16 +135,26 @@ Never infer authorization for a paid run from this document or retain a real
 private key where target verification can read it.
 
 **Every cost and dispatch count recorded in this section, except the 2026-09-29
-run below, was measured with one model, `claude-sonnet-5`, for every dispatch,
-and none of that is valid for a run frozen today.** `new-run` now freezes a
+run below and the two 2026-10 runs named after it, was measured with one model,
+`claude-sonnet-5`, for every dispatch, and none of that is valid for a run frozen
+today.** `new-run` now freezes a
 model and effort per setting, and the driver passes only `--model`, so a paid
 chain takes the seeded defaults in `src/policy.ts`: `claude-opus-5-5` for the
 spec and plan authors, `claude-haiku-5-5` for the spec reviewers and the code
 reviewers (changed on 2026-10-08 from Haiku 4.5 and Sonnet 5.5), and
 `claude-sonnet-5-5` for the implementer, `claude-haiku-5-5` for the code-review
 reconciler, with `--model` covering only the reconciler. One paid run has been measured under the earlier defaults, with
-Haiku 4.5 spec reviewers and Sonnet 5.5 code reviewers, and it is one sample, not
-a range. None has run with the Haiku 5.5 reviewers.
+Haiku 4.5 spec reviewers and Sonnet 5.5 code reviewers (2026-09-29, below). Two
+have run with the Haiku 5.5 reviewers, both `paid --yes --model
+claude-sonnet-5-5` on the web calculator, and both completed with two code-review
+panels and one remediation:
+- 2026-10-15: 21 dispatches for $1.39416. The record is in
+  `.claude/sessions/project-learnings.md`.
+- 2026-10-17, with `--narration-check`: 22 dispatches for $1.51048, plus 24
+  Decision-1 requests that report no cost. The record is in
+  `docs/features/narration-check-spec-review/plan.md`.
+
+Two samples are not a range.
 
 Verified run, 2026-09-29, seeded defaults with `--model claude-sonnet-5-5`
 (passed to the driver as `paid --yes --model claude-sonnet-5-5`), all ten stages
@@ -262,8 +273,9 @@ one-panel review and eight or nine for the default remediated path. Reviewers
 inside one panel start concurrently, so a fast failure does not avoid the cost
 of siblings already launched. Since 2026-10-14 the implementation stage also
 adds one implementer self-review dispatch after its last phase (hazard 23),
-which carries the same full diff; its cost is unmeasured. No current paid
-evidence establishes a revised dollar range. The free `smoke` still costs
+which carries the same full diff; it cost $0.088 in its one measured run
+(2026-10-15). The two 2026-10 runs above are the only current paid evidence, and
+two samples do not establish a revised dollar range. The free `smoke` still costs
 nothing: it reaches no dispatch.
 
 **Cost is not fixed.** That run took 7 dispatches, not 5, because the plan gate
@@ -333,7 +345,7 @@ Two designs are committed beside this file:
 
 | Design | Slug | Size | Status |
 |---|---|---|---|
-| `web-calculator-design.md` | `web-calculator` | 2,813 bytes | Exercised — 2026-09-04 ($1.34097, 11 dispatches), 2026-09-07 ($1.39473, 13 dispatches) and 2026-09-29 ($1.66350, 14 dispatches, the seeded per-agent defaults) |
+| `web-calculator-design.md` | `web-calculator` | 2,813 bytes | Exercised — 2026-09-04 ($1.34097, 11 dispatches), 2026-09-07 ($1.39473, 13 dispatches), 2026-09-29 ($1.66350, 14 dispatches, the per-agent defaults of that day), 2026-10-15 ($1.39416, 21 dispatches) and 2026-10-17 ($1.51048, 22 dispatches, narration on) |
 | `target-tap-design.md` | `target-tap` | 18,912 bytes | **Never run.** No cost history |
 
 `target-tap-design.md` is a browser-game PRD in the operator's own format —
@@ -462,7 +474,7 @@ verification commands.
 |---|---|
 | `keygen failed: refusing to write signing material inside the repository` | `--out` is under the cwd. Run the tool from the repo root, write the keys elsewhere. |
 | `Error: spawnSync claude ENOENT` | The native `claude.exe` is not directly resolvable. Check `where claude` and repair PATH or the installation before spending; do not add a command-shell wrapper. |
-| `run N has no passed spec_review stage to approve` | Expected without a real `bw spec`. The free path ends here. |
+| `run N has no passed spec_decision stage to approve` | Expected without a real `bw spec`. The free path ends here. |
 | `run N's last stage is none, not a passed implementation` | `verify` needs a passed implementation stage, not just a run. |
 | `the working tree is not clean` | The target has uncommitted changes — often a previous blocked run's projections. |
 | `governed.yaml is not committed at <sha>` | The config is read from the starting commit, never the working copy. Commit it. |

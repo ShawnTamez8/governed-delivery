@@ -1,8 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BLOCKING_DISPOSITIONS, coverageFitsScope, coverageMeetsCriteria, planReviewGate } from "../src/plan-gate.ts";
-import type { CoverageEntry, PlanDoc } from "../src/plan-doc.ts";
-import type { AcceptanceCriterion } from "../src/spec-doc.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  BLOCKING_DISPOSITIONS,
+  coverageFitsScope,
+  coverageMeetsCriteria,
+  planReviewGate,
+  tasksNameScope,
+} from "../src/plan-gate.ts";
+import { validatePlanDoc, type CoverageEntry, type PlanDoc } from "../src/plan-doc.ts";
+import { computeScope } from "../src/scope.ts";
+import { validateSpecDoc, type AcceptanceCriterion } from "../src/spec-doc.ts";
 import type { FindingDecisionRow } from "../src/store.ts";
 
 function covers(artifact: string, criterionId = "AC-001"): CoverageEntry {
@@ -146,6 +155,80 @@ test("an empty signed scope makes every artifact promise unkeepable", () => {
   assert.equal(result.ok, false);
   if (result.ok) return;
   assert.deepEqual(result.unkeepable, ["AC-001"]);
+});
+
+// --- every declared artifact named in a task ---------------------------------
+
+const recorded = (name: string): unknown =>
+  JSON.parse(readFileSync(join(process.cwd(), "test", "fixtures", "recorded", name), "utf8"));
+
+/** A recorded spec's signed scope, computed the way approval computes it. */
+function scopeOf(spec: string): string[] {
+  const parsed = validateSpecDoc(spec);
+  assert.ok(parsed.ok, "the recorded spec validates");
+  return computeScope(parsed.value.declaredArtifacts);
+}
+
+function parsedPlan(text: string): PlanDoc {
+  const parsed = validatePlanDoc(text);
+  assert.ok(parsed.ok, "the recorded plan validates");
+  return parsed.value;
+}
+
+function planWithTasks(...tasks: string[]): PlanDoc {
+  return { feature: "Thing", planFor: "a".repeat(64), tasks, taskItems: tasks, coverage: [covers("src/thing.ts")] };
+}
+
+test("crew-chatter run 3's recorded plans name none of the three package files code review found undelivered", () => {
+  const run3 = recorded("plan-crew-chatter-run-3-declared-artifacts-untasked.json") as {
+    provenance: { blockedBy: { summary: string } };
+    spec: string;
+    plan: string;
+    planDraft: string;
+  };
+  // The expected set is the run's own code_review.artifact.missing event, not a
+  // list written here.
+  const listed = /does not deliver declared artifact\(s\): (.+)$/.exec(run3.provenance.blockedBy.summary);
+  assert.ok(listed, "the recorded audit summary lists the undelivered artifacts");
+  const expected = listed[1]!.split(", ");
+  assert.deepEqual(expected, ["backend/package.json", "frontend/package.json", "package-lock.json"]);
+
+  const scope = scopeOf(run3.spec);
+  for (const [name, text] of [["approved plan", run3.plan], ["draft plan", run3.planDraft]] as const) {
+    const result = tasksNameScope(parsedPlan(text), scope);
+    assert.equal(result.ok, false, name);
+    if (result.ok) continue;
+    assert.deepEqual(result.untasked, expected, name);
+    assert.equal(
+      result.reason,
+      `plan names declared artifact(s) in no task: ${expected.join(", ")}; delivery refuses a declared artifact the change leaves untouched, so every approved scope path must appear, copied verbatim, in a ## Tasks line that changes it`,
+      name
+    );
+  }
+});
+
+test("crew-chatter run 6's recorded approved plan names every declared artifact in a task", () => {
+  const run6 = recorded("crew-chatter-run-6-approved-spec-plan.json") as { spec: string; plan: string };
+  assert.deepEqual(tasksNameScope(parsedPlan(run6.plan), scopeOf(run6.spec)), { ok: true });
+});
+
+test("a scope path is named only as a whole path, wherever the sentence puts it", () => {
+  const named = (task: string, path: string): boolean => tasksNameScope(planWithTasks(task), [path]).ok;
+  assert.equal(named("Create `src/a.ts` with the parser.", "src/a.ts"), true, "backticked");
+  assert.equal(named("Wire the parser into src/a.ts.", "src/a.ts"), true, "ending a sentence");
+  assert.equal(named("Ignore SQLite files in .gitignore", ".gitignore"), true, "a dotfile at the end");
+  assert.equal(named("Create src/a.tsx with the view.", "src/a.ts"), false, "a longer extension");
+  assert.equal(named("Add the script to frontend/package.json.", "package.json"), false, "a longer path");
+  assert.equal(named("Rewrite ./src/a.ts", "src/a.ts"), false, "a respelled path");
+});
+
+test("a scope path named outside the task list is untasked, and every untasked path is listed in scope order", () => {
+  const doc = planWithTasks("Build `src/thing.ts`.");
+  const result = tasksNameScope(doc, ["src/other.ts", "src/thing.ts", "test/thing.test.ts"]);
+  assert.equal(result.ok, false);
+  if (result.ok) return;
+  // The coverage line names src/thing.ts too, but coverage is not a task.
+  assert.deepEqual(result.untasked, ["src/other.ts", "test/thing.test.ts"]);
 });
 
 test("planReviewGate passes when there are no decisions at all", () => {

@@ -5,10 +5,10 @@ history and may name superseded state; Current state wins when they disagree. Th
 the system of record; machine-local memory is only a cache
 (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-10-17: crew-chatter runs 1-2; open-decisions fix implemented, uncommitted)
+## Current state (2026-10-17: crew-chatter runs 1-3; open-decisions and declared-artifacts fixes committed and pushed)
 
 **Active work:** `docs/features/open-decisions-outside-section/plan.md` is `Implemented`,
-uncommitted. The operator asked for "a paid run on a larger design" in
+committed in `561ce9e` and pushed with the declared-artifacts commit. The operator asked for "a paid run on a larger design" in
 `C:\Repositories\testing-repos\crew-chatter` (TS backend + React frontend baseline committed there as
 `eb1fa30`; worktree precheck of `npm ci`, typecheck, lint, build passed).
 - **Run 1** (whole PRD, narration on): spec and spec review, $1.7998923 in 6 priced dispatches,
@@ -24,8 +24,51 @@ uncommitted. The operator asked for "a paid run on a larger design" in
 - **The fix:** `validateSpecDoc` refuses an OD-led line under any other heading, and
   `openDecisionsSchema` says the section is the only place an open question is listed, including
   an inherited one. Fixture `test/fixtures/recorded/spec-crew-chatter-run-2-open-questions-outside-section.json`;
-  hazard 3 and `ARCHITECTURE.md` section 8 updated. Unmeasured: whether a live author now complies.
+  hazard 3 and `ARCHITECTURE.md` section 8 updated. Run 3 measured a live author complying.
   Residual: open questions in plain prose under another heading still pass (run 2's draft did this).
+- **Run 3** (feature 1 re-run on `8f539e5`, spec range only, operator-approved): reached
+  `awaiting_approval` for $0.96232597 in 5 priced dispatches (2 Opus author calls, 2 Haiku
+  reviewers, 1 Sonnet reconciler) plus 24 Decision-1 narration requests (all `criterion`, none
+  flagged). The fix held live: the spec's only open questions are `OD-001` (high, reset-token
+  delivery) and `OD-002` (medium, debounce interval), both under `## Open decisions`, and both
+  became `disclosed-open-decision` findings. The reconciler routed both `upstream_follow_up`, as
+  well as 5 reviewer findings, addressed 1 (AC-015 wording), and rejected 2 with grounding, so no
+  operator question was raised and there was no decision pause. That is the prompt's contract,
+  because only `upstream_blocking` pauses, but it means the implementer will choose reset-token
+  delivery itself. The operator approved from the dashboard and authorized plan through delivery.
+  Run 3 then **blocked at `code_review`** before any reviewer was dispatched, with
+  `code_review.artifact.missing` for `backend/package.json`, `frontend/package.json` and
+  `package-lock.json`. Run total $3.43547941; this range cost $2.47 (plan $1.27, plan review $0.012,
+  3 phases plus self-review $1.19). Plan, plan review, implementation and verification all passed
+  (`npm ci`, typecheck, lint and build on `f50bc95`, branch `gov/crew-chatter-accounts-notes/3`).
+  Cause: the spec declared the three package files conditionally ("any dependency added ... must
+  also be recorded in `package-lock.json`"). The plan then chose "No new dependencies"
+  (`node:sqlite`, `node:crypto`), and the implementer correctly left them unchanged. Nothing
+  between the spec and code review compares the plan's files with the signed declared artifacts.
+  The evidence is now committed-tier: `test/fixtures/recorded/plan-crew-chatter-run-3-declared-artifacts-untasked.json`.
+  The worktree and `.governance/raw/3` are still the only copy of the full raw streams; keep them.
+- **The fix (2026-10-17, committed and pushed on `dashboard-restyling`):** `docs/features/declared-artifacts-in-tasks/plan.md` is
+  `Implemented`. `tasksNameScope` refuses a draft, self-critique or reconciled plan whose `## Tasks`
+  names no signed scope path, with the exact bounded match, `plan.artifact.untasked`, before the
+  panel. The plan prompts say to name every scope path and invent no change; the spec prompts say
+  to declare only files that change however the change is built. Hazard 24; `ARCHITECTURE.md`
+  sections 8, 12 and 22; `doc-check` gained `twenty-four`. Full suite 1628 pass / 0 fail / 5 skip,
+  check:docs and smoke clean. A probe (about $0.003) showed dispatches load neither
+  `~/.claude/CLAUDE.md` nor `lessons.md` (`--safe-mode`), so no `--setting-sources` change is needed.
+  Live compliance is unmeasured; a crew-chatter feature-1 re-run is the live test.
+- **Documentation sweep (2026-10-17, same commit, operator asked to "review all documentation"):**
+  the current-tier documents were checked against source and the recorded runs.
+  - `docs/runbooks/cli-operator.md` had never mentioned the narration check, though guided intake
+    and `new-run` refuse without the `SYSTEMONE_*` variables. Guided step 2 now sets them,
+    advanced step 4 names `--no-narration-check`, and step 7 and troubleshooting cover the new
+    plan refusal.
+  - README, `CLAUDE.md`/`AGENTS.md` and `.claude/skills/run-buildworks/SKILL.md` said no run had
+    used the Haiku 5.5 reviewers. They now cite the 2026-10-15 ($1.39416, 21 dispatches) and
+    2026-10-17 ($1.51048, 22) runs.
+  - SKILL.md's smoke block and troubleshooting row named `spec_review` where the refusal says
+    `spec_decision`, and called the self-review cost unmeasured ($0.088 on 2026-10-15).
+  - README's stage summary now names the phases, the self-review and the new plan refusal.
+  Not changed: historical plans and reviews (preserved as written), and proposals (backlog).
 
 **Earlier 2026-10-16/17 work:** `docs/features/decision-1-d6-evaluation/plan.md` is `Implemented`, committed in `6cb2e3b`.
 The operator redirected the typed-decision proposal from TypeSafe Jev to Microsoft-Decision-1 on
@@ -59,8 +102,8 @@ plan reconcile $0.089, two phases $0.174, self-review $0.088, remediation $0.080
 `total_cost_usd` (Haiku 4.5 spec panels cost $0.31 on 2026-09-29). One sample. Target preserved
 at `C:\Users\Shawn-work\repositories\testing-repos\web-calculator-structured-2026-10-15\target`.
 Plan open decisions 1 (remediation drops unchanged files) and 3 (other dispatches to a schema)
-remain undecided. `.claude/skills/run-buildworks/SKILL.md` still says no run has used the Haiku
-5.5 reviewers.
+remain undecided. `.claude/skills/run-buildworks/SKILL.md` now records this run and the
+2026-10-17 narration run as the two Haiku 5.5 reviewer runs.
 
 **2026-10-17:** the operator stated that the deployment type must not be checked against
 vendor values. The `DEPLOYMENT_TYPES` allowlist is gone, because there will be many Decision-1
@@ -82,7 +125,7 @@ all valid; the result is `test/fixtures/recorded/systemone-format-checks-evaluat
   rejections R-200-1 and R-905-1, and its repeats spread 0.038. The 12 supported additions all
   passed, but splitting the check by kind after seeing the answers is not allowed.
 
-**Narration wired into spec review (2026-10-17, uncommitted):** the operator asked to "wire
+**Narration wired into spec review (2026-10-17, committed `6cb2e3b`):** the operator asked to "wire
 narration into the spec stage. Ensure we do not swallow errors". They decided:
 - a flagged entry is a finding for the reconciler;
 - the check is an explicit per-run switch: `new-run` refuses without the `SYSTEMONE_*`
@@ -102,7 +145,7 @@ narration into the spec stage. Ensure we do not swallow errors". They decided:
 Tests reach Decision-1 only through the loopback stand-in in `test/systemone-stand-in.ts`. Every
 test spawn of `new-run` passes `--no-narration-check`.
 
-Committed as `6cb2e3b`, not pushed. The operator then approved a paid live run with
+Committed as `6cb2e3b` and pushed with `05803eb`. The operator then approved a paid live run with
 `--narration-check` (web-calculator, sonnet-5-5). It completed:
 - 15/15 driver steps;
 - 22 Claude dispatches for $1.51048, two code-review panels and one remediation;
@@ -114,22 +157,21 @@ details are in the plan's "First live run" block. The driver's cost-report fix t
 Decision-1 requests apart and the run record are committed in `05803eb`, pushed.
 
 **Next action:** the operator decides:
-- whether to commit the open-decisions fix;
-- whether to re-run crew-chatter feature 1 as a new paid range (remove the untracked run-2
-  `docs/features/crew-chatter-accounts-notes/spec.md` in the target first);
+- whether to authorize a paid crew-chatter feature-1 re-run (a fresh run on `8f539e5`) as the
+  live test of the declared-artifacts fix. No spend is authorized;
 - what to do about grounding. The recommendation is to leave it unadopted until more recorded
   positives exist.
+- No PR to `master`: the operator said not to create one (2026-10-17).
 
 Follow-ups not taken: split designs carry no parent open decisions; the lockfile risk (feature 1
 declares `package-lock.json`, and an implementer cannot run `npm install`) bites at
-implementation. Never relabel cases after seeing answers. Nothing is in flight.
+implementation when a dependency really is added; hazard 24 covers only the case where none is. Never relabel cases after seeing answers. Nothing is in flight.
 
 **Working state (verified 2026-10-17):**
-- Branch `dashboard-restyling`, HEAD `05803eb`, level with `origin/dashboard-restyling`. Local
-  `master` was 38 behind `origin/master` on 2026-10-10 (not rechecked).
-- Uncommitted: the open-decisions fix (plan, `src/spec-doc.ts`, `src/prompts.ts`, three tests, the
-  fixture, `ARCHITECTURE.md`, `docs/hazards.md`) and this file. An untracked empty file `=` sits at
-  the repository root; deleting it is the operator's call. A plain-text copy of the API key sits
+- Branch `dashboard-restyling`, pushed to `origin/dashboard-restyling` with the declared-artifacts
+  commit on top of `561ce9e`. Local `master` was 38 behind `origin/master` on 2026-10-10 (not
+  rechecked).
+- An untracked empty file `=` sits at the repository root; deleting it is the operator's call. A plain-text copy of the API key sits
   in the operator's `C:\Users\tamezs\.buildworks\[Environment]SetEnvironmentVariable.txt`;
   removing it is theirs.
 - Plan statuses checked 2026-10-15: all 49 `docs/features/*/plan.md` carry a correct Status line.
@@ -138,10 +180,10 @@ implementation. Never relabel cases after seeing answers. Nothing is in flight.
   (`Reconciled`), `implementation-segments-and-pause` (`Shelved`), `usage-limit-refusal-summary`
   and `code-review-contract-drift-issue` (`Proposed`).
 - `CLAUDE.md` and `AGENTS.md` are byte-identical.
-- Last full serial suite (2026-10-15, after the review fixes): 1562 tests, 1556 pass, 0 fail,
-  6 skipped; HEAD unchanged before and after. Smoke 13/13.
-- Nothing is running. The dashboard started 2026-10-13 (PID 48908, port 58508) was gone on
-  2026-10-15.
+- Last full serial suite (2026-10-17, declared-artifacts fix): 1633 tests, 1628 pass, 0 fail,
+  5 skipped. Smoke 13/13.
+- A loopback dashboard was launched from the 2026-10-17 session for run 3's approval; it ends
+  with that session. No run is in flight.
 
 **Open work list (operator asked for one list, 2026-10-13):**
 1. **Code-review reconciler** (`docs/features/code-review-reconciler/plan.md`, `Implemented`,
@@ -185,8 +227,7 @@ implementation. Never relabel cases after seeing answers. Nothing is in flight.
 8. **Older backlog, unchanged:** phase-retry plan, usage-limit summary plan (option B),
    toolchain-probe proposal, baseline-verification plan, segments plan (`Shelved`); the dashboard
    split card still offers Modify (the core refuses it); `ARCHITECTURE.md` section 14 and README
-   line 94 still say `git mv`; `spec-review-note-keeper-runs-5-6-disclosed-decisions.json` has a
-   corrupted provenance path.
+   line 94 still say `git mv`.
 
 **Backlog plans, detail kept because nothing else records it:**
 - **Phase retry** (`docs/features/implementation-phase-retry/plan.md`, `Reconciled` 2026-10-09,

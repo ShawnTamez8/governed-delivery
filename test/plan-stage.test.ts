@@ -1081,6 +1081,35 @@ test("coverage outside the approved scope blocks before any reviewer is dispatch
   });
 });
 
+test("a declared artifact no task names blocks before any reviewer is dispatched", async () => {
+  // Crew-chatter run 3 (hazard 24): the plan named three declared package files
+  // in no task, and the run learned it only at code review. The draft is where
+  // the free check refuses it.
+  await withApprovedRun(async ({ store, root, runId }) => {
+    const scratch = join(root, "emit-untasked-artifact.mjs");
+    const source = fixtureSource().replace(
+      "proposedContentChanges: { plan: planDoc() },",
+      "proposedContentChanges: { plan: planDoc({ untasked: true }) },"
+    );
+    assert.ok(source.includes("planDoc({ untasked: true })"), "the author substitution must apply");
+    writeFileSync(scratch, source);
+    freezeExecutorIntoProfile(store, root, runId, fixtureExecutor(scratch));
+    const result = await runPlanStage(store, fixtureExecutor(scratch), { runId, rootDir: root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    // The emitter leaves the scope's last path out; the first is still named.
+    assert.match(result.reason, /^plan names declared artifact\(s\) in no task: test\/a1\.test\.ts; /);
+
+    const counts = agentRunCounts(store, runId);
+    assert.equal(counts.author, 1, "the draft only");
+    assert.equal(counts.reviewer, 0, "the free check must refuse before the panel spends");
+    assert.deepEqual(auditSummaries(store, runId, "plan.artifact.untasked"), [result.reason]);
+    assert.equal(store.getStageChain(runId).find((s) => s.kind === "plan")!.status, "blocked");
+    assert.equal(store.getRun(runId)!.status, "blocked");
+    assert.equal(verifyAuditChain(store), null);
+  });
+});
+
 // --- terminal review paths ---------------------------------------------------
 
 test("a reviewer returning a non-proposed status blocks rather than passing by absence", async () => {

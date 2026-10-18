@@ -144,6 +144,30 @@ The first command that fails blocks the run, and no repair round follows.`;
 }
 
 /**
+ * Which files a specification declares, stated in the draft, self-critique and
+ * reconciliation prompts (hazard 24). Delivery refuses a declared artifact the
+ * change leaves untouched, so a declaration that depends on a choice the
+ * specification leaves open is a promise the plan may make impossible. One source
+ * line, so the constraint scan in `test/prompts.test.ts` matches it.
+ */
+const DECLARE_ONLY_WHAT_CHANGES_RULE = `Declare a file only if the change must create or modify it however it is built: a file that changes only under a choice still open, such as whether to add a dependency, is declared only after you settle that choice in the specification, because delivery refuses a declared artifact the change leaves untouched.`;
+
+/**
+ * Every declared artifact named in a task, stated in the three plan prompts
+ * after the scope list (hazard 24). `tasksNameScope` in `src/plan-gate.ts` is the
+ * check: crew-chatter run 3's plan named three declared package files in no task
+ * and the run learned it only at code review. The second sentence keeps the rule
+ * from turning into an invented change: a path that needs no change is a
+ * specification defect the refusal names, not a task to make up (hazard 20). Each
+ * sentence is one source line so the constraint scan matches it, and neither
+ * carries a word the plan emitter routes on.
+ */
+const PLAN_TASKS_NAME_SCOPE_RULES = [
+  `Name every approved scope path above, copied verbatim, in at least one ## Tasks line that changes it: delivery refuses a declared artifact the change leaves untouched, so the gate refuses a plan that names one in no task.`,
+  `Never invent a change to a path that needs none: leave such a path out of ## Tasks, and the gate's refusal will name it so the specification can be corrected.`,
+].join("\n");
+
+/**
  * What the spec author may do with the verification commands, stated once for
  * the draft and the self-critique so the two cannot drift (hazard 3).
  *
@@ -159,12 +183,18 @@ The first command that fails blocks the run, and no repair round follows.`;
  *
  * The question begins `Verification:` so the reconciliation and fold prompts can
  * recognize it by its text; no code reads the word.
+ *
+ * The declare-only-what-changes sentence answers crew-chatter run 3: its author
+ * declared three package files that would change only if a dependency were added,
+ * the plan added none, and code review refused the undelivered declarations
+ * (hazard 24, docs/features/declared-artifacts-in-tasks/plan.md).
  */
 function specVerificationRule(): string {
   return [
     `Your working directory is the target repository's working tree; read what each command runs there.`,
     `Treat a file as evidence of what a command runs only if it belongs to the repository the design describes; if you cannot tell, what the command requires is not established.`,
     `The commands are not obligations the design states: never restate a command as an acceptance criterion, and never declare an artifact only because a command exists.`,
+    DECLARE_ONLY_WHAT_CHANGES_RULE,
     `A command that only reports a tool version depends on nothing and needs no decision.`,
     `If neither the design nor files you can read establish that the declared artifacts satisfy every other command, even when the design names a stack, record exactly one open decision in the form stated above, with severity high and a question that begins \`Verification:\`, asking what each such command requires and which declared artifact paths that needs.`,
     `That is the one further kind of open decision this section admits.`,
@@ -413,7 +443,8 @@ ${specContent}`;
  * task that runs them. The system runs them itself after the last phase, and a
  * trailing "run the build" task changes no scope file, so its phase has nothing to
  * return and blocks the run (hazard 20). The scope block the fixture scrapes still
- * ends at its first blank line.
+ * ends at its first blank line. The rule that every scope path is named in a task
+ * follows that blank line (hazard 24, crew-chatter run 3).
  */
 export function buildPlanAuthorPrompt(
   agent: AgentDefinition,
@@ -465,6 +496,8 @@ name only these:
 
 ${scope.map((p) => `- ${p}`).join("\n")}
 
+${PLAN_TASKS_NAME_SCOPE_RULES}
+
 ${verificationCommandsBlock(verification)}
 The system runs these commands itself: never write a task that runs, repeats or checks them, because a task that changes no file in the approved scope can leave an implementation phase with nothing to return, and that blocks the run.
 
@@ -488,7 +521,8 @@ ${specContent}`;
  * two schemas.
  *
  * It carries the same verification commands and the same no-command-task rule as
- * the draft, so the revision cannot undo what the draft was told (hazard 21).
+ * the draft, so the revision cannot undo what the draft was told (hazard 21), and
+ * the same rule that every scope path is named in a task (hazard 24).
  */
 export function buildPlanSelfCritiquePrompt(
   agent: AgentDefinition,
@@ -558,6 +592,8 @@ promising an artifact outside the approved scope is refused by the gate, so
 name only these:
 
 ${scope.map((p) => `- ${p}`).join("\n")}
+
+${PLAN_TASKS_NAME_SCOPE_RULES}
 
 When a critique or a finding says a criterion
 needs a second artifact, the coverage line cannot carry it. Keep the
@@ -858,6 +894,8 @@ function exampleDecisionsFor(findings: ReconciliationFindingInput[]): string {
  * is a prompt rule, not a check: the model may still choose `upstream_follow_up`.
  * The reconciler writes the question's text, and the fold prompt can only
  * recognize a `Verification:` question by that text, so this prompt asks for it.
+ * It also states which files may be declared, because a revision can add a
+ * declaration (hazard 24, crew-chatter run 3).
  * Each rule is one source line so the constraint scan matches it (hazard 3).
  */
 export function buildSpecReconcilePrompt(
@@ -913,6 +951,7 @@ ${verificationCommandsBlock(verification)}
 A finding whose subject reads \`OD-<n>: Verification: <question>\` is an open decision you disclosed about the verification commands, and it is the one exception to the upstream_blocking test above: choose upstream_blocking for it, because the commands decide whether the delivered code is accepted at all.
 For that finding, begin the question's text with \`Verification:\` and make each option name the stack or layout the commands would then accept and the declared artifact paths that needs, each path written exactly as it would be declared, as an answer that can be folded into the specification as it stands.
 Never restate a command as an acceptance criterion.
+${DECLARE_ONLY_WHAT_CHANGES_RULE}
 
 The revised specification must satisfy the same document schema as before:
 - frontmatter with feature and change_kind (one of feature, defect_fix)
@@ -1149,7 +1188,9 @@ ${specContent}`;
  * It states the frozen verification commands and forbids adding a task that runs
  * them: a finding could otherwise be answered with a trailing verify-only task
  * after the draft and the self-critique obeyed the rule (hazard 20). The rule
- * forbids an addition; it never tells the reconciler to remove a task.
+ * forbids an addition; it never tells the reconciler to remove a task. The
+ * reconciled plan is checked for a task naming every scope path, as the draft is,
+ * so the prompt states that rule too (hazard 24).
  */
 export function buildPlanReconcilePrompt(
   agent: AgentDefinition,
@@ -1228,6 +1269,8 @@ promising an artifact outside the approved scope is refused by the gate, so
 name only these:
 
 ${scope.map((p) => `- ${p}`).join("\n")}
+
+${PLAN_TASKS_NAME_SCOPE_RULES}
 
 When a critique or a finding says a criterion
 needs a second artifact, the coverage line cannot carry it. Keep the

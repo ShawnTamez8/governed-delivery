@@ -978,3 +978,54 @@ anything, is unmeasured. Hazard 21's prompt rule did not stop crew-chatter run
 recall: #209 was missed by the panel, not by the rule. The self-review costs one
 implementer dispatch per run, roughly a remediation dispatch on a change of this
 size [Inference], and saves money only when it prevents a remediation round.
+
+## 24. A declared artifact nothing will change
+
+Delivery, and code review's artifact check before it, refuse a declared artifact
+the change leaves untouched (entry 5). A specification can still declare a file
+whose change depends on a choice it leaves open: "any dependency added must also
+be recorded in the lockfile" declares the lockfile on the chance that a dependency
+is added. The plan then makes that choice, possibly the other way, and the
+implementer correctly leaves the file alone. Nothing compared the plan with the
+signed scope before code review, so the contradiction cost the whole plan and
+implementation before anything noticed it, and the signed specification cannot
+change inside the run.
+
+**Measured, 2026-10-17, $3.43547941.** Crew-chatter run 3 (feature 1 of an
+approved split, `crew-chatter-accounts-notes`) declared `backend/package.json`,
+`frontend/package.json` and `package-lock.json`. Its Verification notes said "Any
+dependency added to `backend/package.json` or `frontend/package.json` must also be
+recorded in `package-lock.json`." The plan's approach said "No new dependencies",
+using `node:sqlite` and `node:crypto`, and named none of the three in any task. Its
+draft, self-critique and reconciliation all did the same. Three phases changed 16
+of the 19 declared files, verification passed `npm ci`, typecheck, lint and build,
+and code review blocked before any reviewer was dispatched: "does not deliver
+declared artifact(s): backend/package.json, frontend/package.json,
+package-lock.json". The post-approval range cost $2.47315344 of the total. The
+approved spec, the approved plan and the draft plan are committed at
+`test/fixtures/recorded/plan-crew-chatter-run-3-declared-artifacts-untasked.json`
+(`docs/features/declared-artifacts-in-tasks/plan.md`).
+
+**What answers it.**
+- The planning gate now refuses a draft, self-critique or reconciled plan in which
+  some signed scope path appears in no `## Tasks` line (`tasksNameScope` in
+  `src/plan-gate.ts`, audit action `plan.artifact.untasked`). It is deterministic
+  and free, and runs before the panel. On run 3 it refuses the draft, after
+  $0.4911888 of post-approval spend instead of $2.47315344. A scan of every
+  recorded plan whose specification is in the same fixture found every declared
+  path named in a task.
+- The three plan prompts state that rule, and that a path needing no change is
+  left out rather than given an invented change, so the refusal names it.
+- The spec draft, self-critique and reconcile prompts say to declare a file only
+  if the change must create or modify it however it is built, and to settle an
+  open choice such as adding a dependency before declaring the files it would
+  change.
+
+What this does not show. The check proves a path is named in a task, not that the
+task changes it, so delivery's exact match stays the check that it was delivered
+(entry 20's empty-phase case is the same limit). A run the gate refuses still ends
+blocked, and a fresh run is the repair; only the spec rule lets such a run pass.
+That rule is a request, and run 3's author ignored a close relative already in its
+prompt: "never declare an artifact only because a command exists", while it
+declared the lockfile because of `npm ci`. Whether live authors now comply is
+unmeasured.

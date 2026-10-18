@@ -102,6 +102,50 @@ export function coverageFitsScope(
 }
 
 /**
+ * Every signed scope path is named in at least one `## Tasks` line.
+ *
+ * `delivery_check`, and code review's artifact check before it, refuse a
+ * declared artifact the change leaves untouched. Nothing compared the plan with
+ * that rule before code review: crew-chatter run 3 (2026-10-17) declared three
+ * package files whose change depended on a dependency choice the plan then made
+ * the other way. No task named them, the implementer correctly left them alone,
+ * and the run blocked at code review after $2.47315344 of spend that could never
+ * pass (hazard 24, `test/fixtures/recorded/plan-crew-chatter-run-3-declared-artifacts-untasked.json`).
+ *
+ * A path is named when its exact signed spelling appears in a task line with no
+ * path character on either side: not a letter, digit, `_`, `.`, `/` or `-`
+ * before it, and not a letter, digit, `_`, `/`, `-` or a `.` that continues an
+ * extension after it. So a backticked path and a path ending a sentence are
+ * named, while `src/a.tsx` does not name `src/a.ts`, nor `frontend/package.json`
+ * a declared `package.json`. Spelling is compared exactly, as `coverageFitsScope`
+ * compares it, because the prompts tell the author to copy scope paths verbatim.
+ *
+ * **What this does not prove.** A task that names a path may still change
+ * nothing there, so code review's artifact check and delivery's exact match
+ * remain the checks that a declared artifact was delivered (hazards 5 and 20).
+ * This one only refuses, before anything is spent on review or implementation,
+ * a plan that never undertakes to change one.
+ */
+export function tasksNameScope(
+  doc: PlanDoc,
+  scope: string[]
+): { ok: true } | { ok: false; untasked: string[]; reason: string } {
+  const untasked = scope.filter((path) => {
+    const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const named = new RegExp(`(?<![\\w./-])${escaped}(?![\\w/-]|\\.\\w)`);
+    return !doc.tasks.some((task) => named.test(task));
+  });
+  if (untasked.length === 0) return { ok: true };
+  return {
+    ok: false,
+    untasked,
+    reason:
+      `plan names declared artifact(s) in no task: ${untasked.join(", ")}` +
+      "; delivery refuses a declared artifact the change leaves untouched, so every approved scope path must appear, copied verbatim, in a ## Tasks line that changes it",
+  };
+}
+
+/**
  * Every approved acceptance-criterion ID has exactly one coverage line, and
  * every coverage line names an approved ID.
  *

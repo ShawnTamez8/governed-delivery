@@ -9,7 +9,9 @@ import { readFileSync } from "node:fs";
 // `plan_for` hash and the approved scope paths are read back out of the
 // prompt the stage generated. A fixture carrying its own hardcoded hash would
 // agree with whatever the code produced and prove nothing about the binding —
-// which is the failure mode hazard 4 names.
+// which is the failure mode hazard 4 names. The task line that names every
+// scope path is built from the same scrape for the same reason: the plan gate
+// refuses a plan that names a declared artifact in no task (hazard 24).
 const stdin = readFileSync(0, "utf8");
 
 // FIXTURE-REPORT-CWD anywhere in the prompt: report the directory the stage
@@ -46,7 +48,7 @@ function criterionIds() {
   ];
 }
 
-function planDoc({ revised = false, selfCritiqued = false, outOfScope = false, planFor = specHash } = {}) {
+function planDoc({ revised = false, selfCritiqued = false, outOfScope = false, untasked = false, planFor = specHash } = {}) {
   const paths = scopePaths();
   if (paths.length === 0) {
     // A scope scrape that finds nothing is a broken fixture, not an empty
@@ -67,13 +69,17 @@ function planDoc({ revised = false, selfCritiqued = false, outOfScope = false, p
         : `- ${id} -> ${index === 0 ? artifact : second}`
     )
     .join("\n");
+  // `untasked` leaves the last scope path out of every task, and drops the line
+  // when that leaves none to name.
+  const tasked = untasked ? paths.slice(0, -1) : paths;
+  const changeLine = tasked.length === 0 ? "" : `\n- Change ${tasked.map((p) => `\`${p}\``).join(", ")}`;
   return `feature: demo
 plan_for: ${planFor}
 
 ## Tasks
 
 - Build the thing${revised ? " REVISED-plan" : ""}${selfCritiqued ? " SELFCRITIQUED" : ""}
-- Test the thing
+- Test the thing${changeLine}
 
 ## Coverage
 

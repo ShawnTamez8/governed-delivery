@@ -19,7 +19,7 @@ import {
   type ReconciliationFindingInput,
 } from "./prompts.ts";
 import { validatePlanDoc, writePlanDoc, type PlanDoc } from "./plan-doc.ts";
-import { coverageFitsScope, coverageMeetsCriteria, planReviewGate } from "./plan-gate.ts";
+import { coverageFitsScope, coverageMeetsCriteria, planReviewGate, tasksNameScope } from "./plan-gate.ts";
 import { validateSpecDoc } from "./spec-doc.ts";
 import {
   planNormativeNodes,
@@ -332,7 +332,10 @@ export async function runPlanStage(
 
     // The coverage gate runs here, before the panel: it is deterministic and
     // free, so refusing a plan that promises out-of-scope artifacts saves a
-    // full panel's invocations on a plan that could never pass.
+    // full panel's invocations on a plan that could never pass. The task check
+    // after it is free for the same reason: a plan that names a declared
+    // artifact in no task can never be delivered (hazard 24), and crew-chatter
+    // run 3 learned that only at code review.
     const invalidCoverage = coverageIdentityCheck(written.doc, planStage.id);
     if (invalidCoverage) return invalidCoverage;
     const coverage = coverageFitsScope(written.doc, scope);
@@ -342,6 +345,10 @@ export async function runPlanStage(
       // what the plan promised that nobody approved. The gate builds it, so
       // all three refusal sites say the same thing.
       return abort(planStage.id, "plan.coverage.unkeepable", coverage.reason);
+    }
+    const tasked = tasksNameScope(written.doc, scope);
+    if (!tasked.ok) {
+      return abort(planStage.id, "plan.artifact.untasked", tasked.reason);
     }
     // --- self-critique: the author's own pass, before any reviewer sees it ---
     // One dispatch per artifact, under the author's frozen definition and the
@@ -433,6 +440,10 @@ export async function runPlanStage(
     const critiqueCoverage = coverageFitsScope(critiqueParsed.value, scope);
     if (!critiqueCoverage.ok) {
       return abort(planStage.id, "plan.coverage.unkeepable", critiqueCoverage.reason);
+    }
+    const critiqueTasked = tasksNameScope(critiqueParsed.value, scope);
+    if (!critiqueTasked.ok) {
+      return abort(planStage.id, "plan.artifact.untasked", critiqueTasked.reason);
     }
     try {
       written = writePlanDoc(rootDir, run.slug, critique.value.artifact);
@@ -702,6 +713,10 @@ export async function runPlanStage(
       const reconcileCoverage = coverageFitsScope(reconciledDoc, scope);
       if (!reconcileCoverage.ok) {
         return abort(reviewStage.id, "plan.coverage.unkeepable", reconcileCoverage.reason);
+      }
+      const reconcileTasked = tasksNameScope(reconciledDoc, scope);
+      if (!reconcileTasked.ok) {
+        return abort(reviewStage.id, "plan.artifact.untasked", reconcileTasked.reason);
       }
       const reconciliation = validateReconciliation(reconcileContent.decisions, {
         canonicalFindingIds: reconcileFindings.map((f) => f.findingId),

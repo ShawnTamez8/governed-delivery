@@ -105,7 +105,16 @@ const VERIFICATION_BLOCK_SENTENCES = [
 ];
 
 /**
- * The spec author's rule for the commands. The fifth sentence carries the
+ * Which files a specification declares (docs/features/declared-artifacts-in-tasks/plan.md,
+ * hazard 24). Crew-chatter run 3 declared three package files that changed only
+ * if a dependency were added; the plan added none and code review refused the
+ * undelivered declarations. The draft, self-critique and reconcile prompts carry it.
+ */
+const DECLARE_ONLY_WHAT_CHANGES_RULE =
+  "Declare a file only if the change must create or modify it however it is built: a file that changes only under a choice still open, such as whether to add a dependency, is declared only after you settle that choice in the specification, because delivery refuses a declared artifact the change leaves untouched.";
+
+/**
+ * The spec author's rule for the commands. The sixth sentence carries the
  * backticked word the reconcile and fold prompts recognize, which cannot be
  * matched in source without its escapes; it is split around it here and
  * asserted whole against the generated prompt.
@@ -114,6 +123,7 @@ const SPEC_VERIFICATION_SENTENCES = [
   "Your working directory is the target repository's working tree; read what each command runs there.",
   "Treat a file as evidence of what a command runs only if it belongs to the repository the design describes; if you cannot tell, what the command requires is not established.",
   "The commands are not obligations the design states: never restate a command as an acceptance criterion, and never declare an artifact only because a command exists.",
+  DECLARE_ONLY_WHAT_CHANGES_RULE,
   "A command that only reports a tool version depends on nothing and needs no decision.",
   "If neither the design nor files you can read establish that the declared artifacts satisfy every other command, even when the design names a stack, record exactly one open decision in the form stated above, with severity high and a question that begins",
   "asking what each such command requires and which declared artifact paths that needs.",
@@ -215,6 +225,12 @@ const STRUCTURED_OUTPUT_RULE =
 /** The open-decisions schema's placement rule, which every prompt stating the schema carries. */
 const OPEN_DECISIONS_ONLY_PLACE_RULE =
   "This section is the only place an open question is listed, including one another specification already records, such as the specification this feature was split from: never list one under another heading or by its ID in another section.";
+
+/** The three plan prompts' rule that every scope path is named in a task, and its guard against an invented change (hazard 24). */
+const PLAN_TASKS_NAME_SCOPE_RULE =
+  "Name every approved scope path above, copied verbatim, in at least one ## Tasks line that changes it: delivery refuses a declared artifact the change leaves untouched, so the gate refuses a plan that names one in no task.";
+const PLAN_NO_INVENTED_CHANGE_RULE =
+  "Never invent a change to a path that needs none: leave such a path out of ## Tasks, and the gate's refusal will name it so the specification can be corrected.";
 
 /** The three builders whose dispatches send --json-schema, with the reply rule they carry. */
 function structuredPatchPrompts(): Array<{ name: string; prompt: string }> {
@@ -509,6 +525,13 @@ const CONSTRAINT_STRINGS = [
   // specification's open decisions under a heading of its own. Also kept above
   // the criterion-quality block.
   OPEN_DECISIONS_ONLY_PLACE_RULE,
+  // Every declared artifact named in a plan task
+  // (docs/features/declared-artifacts-in-tasks/plan.md). Measured 2026-10-17,
+  // $3.43547941: crew-chatter run 3's plan named three declared package files in
+  // no task and the run blocked at code review. Also kept above the
+  // criterion-quality block.
+  PLAN_TASKS_NAME_SCOPE_RULE,
+  PLAN_NO_INVENTED_CHANGE_RULE,
   // What a criterion may say (docs/features/spec-criterion-testability/plan.md).
   // Measured 2026-09-27, $1.6186: team-notes run 3 copied the design's
   // "meaningful content change" into AC-041, and its tone guidance reached
@@ -699,6 +722,10 @@ test("each plan prompt states the frozen commands and forbids a task that runs t
     // `Approved specification:`: neither may move.
     assert.deepEqual(/name only these:\n\n([\s\S]*?)\n\n/.exec(prompt)![1]!.split("\n"), PLAN_SCOPE.map((p) => `- ${p}`), name);
     assert.equal(prompt.split("Approved specification:").length, 2, `${name}: one specification marker`);
+    // The task rule (hazard 24) is the paragraph straight after the scope list,
+    // ahead of the commands, so the scraped list above still ends where it did.
+    at(`${PLAN_SCOPE.map((p) => `- ${p}`).join("\n")}\n\n${PLAN_TASKS_NAME_SCOPE_RULE}\n${PLAN_NO_INVENTED_CHANGE_RULE}\n\n`);
+    assert.ok(at(PLAN_NO_INVENTED_CHANGE_RULE) < at(VERIFICATION_BLOCK_SENTENCES[0]!), `${name}: the task rule, then the commands`);
     // The emitter routes over the whole prompt: `self-critique` first, then `plan reviewer`.
     assert.ok(!prompt.includes("plan reviewer"), `${name} carries the routing words plan reviewer`);
     if (name !== "plan self-critique") assert.ok(!prompt.includes("self-critique"), `${name} carries the routing word self-critique`);
@@ -1696,6 +1723,9 @@ test("the spec reconciliation prompt states the frozen commands and names a Veri
   assert.ok(at("does not by itself make a finding blocking.") < at(VERIFICATION_BLOCK_SENTENCES[0]!));
   assert.ok(at(RUN_10_COMMAND_LINES[2]!) < at(RECONCILE_VERIFICATION_SENTENCES[0]!));
   assert.ok(at(RECONCILE_VERIFICATION_SENTENCES.at(-1)!) < at("The revised specification must satisfy the same document schema"));
+  // A revision can add a declaration, so the reconciler is told which files may
+  // be declared (hazard 24), after the command rules and before the schema.
+  at(`Never restate a command as an acceptance criterion.\n${DECLARE_ONLY_WHAT_CHANGES_RULE}\n\nThe revised specification must satisfy the same document schema`);
   // The stage emitter routes over the whole prompt and checks these two words
   // before `reconcile`; the new text must not carry either.
   for (const word of ["self-critique", "spec reviewer"]) {

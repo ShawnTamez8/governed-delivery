@@ -358,8 +358,11 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
   target and drives the CLI against it, spending nothing. `paid --yes` drives
   the full chain against the real `claude` binary and reports what it cost:
   the historical $1.25–$2.50 range predates the three-reviewer default and the
-  per-agent settings. The one measurement under the current defaults is $1.66350
-  in 14 dispatches (2026-09-29, no remediation); one sample is not a range.
+  per-agent settings. Under the current defaults (Haiku 5.5 reviewers) two runs
+  completed with one remediation each: $1.39416 in 21 dispatches (2026-10-15) and
+  $1.51048 in 22 (2026-10-17, narration on). The earlier $1.66350 in 14
+  (2026-09-29, no remediation) used Haiku 4.5 and Sonnet 5.5 reviewers. Two
+  samples are not a range.
   Remediation adds up to `CODE_REVIEW_RECONCILER_CALLS` reconciler calls before
   an implementer dispatch and another full three-reviewer panel. The committed default design is the
   20-requirement `web-calculator-design.md` beside the driver.

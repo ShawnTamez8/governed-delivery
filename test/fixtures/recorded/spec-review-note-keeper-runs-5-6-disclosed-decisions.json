@@ -1,7 +1,7 @@
 {
   "provenance": {
     "what": "The spec_review round of note-keeper runs 5 and 6, as the provider returned it: for each run, the spec author's self-critique response (the revised specification the panel reviewed), both panel reviewers' reports, and the spec author's reconciliation response.",
-    "run": "note-keeper runs 5 and 6, spec_review round 1 - operator-authorized live runs of 2026-09-26 against the external target C:UsersShawn-work\repositories\testing-repos\note-keeper, both frozen with claude-sonnet-5 for every stage. Run 5 passed spec_review; run 6 blocked at the spec_review gate on findings 46-48 (upstream_blocking).",
+    "run": "note-keeper runs 5 and 6, spec_review round 1 - operator-authorized live runs of 2026-09-26 against the external target C:\\Users\\Shawn-work\\repositories\\testing-repos\\note-keeper, both frozen with claude-sonnet-5 for every stage. Run 5 passed spec_review; run 6 blocked at the spec_review gate on findings 46-48 (upstream_blocking).",
     "capturedAt": "2026-09-26",
     "capturedFrom": "The retained raw dispatch envelopes named in each entry's retainedAs, under that machine-local target's .governance/raw/. The target is machine-local and deletable; this file is the durable copy.",
     "fidelity": "envelope.result is byte-for-byte the string the provider returned. num_turns, modelUsage and usage are copied unchanged. The rest of each harness envelope was dropped (session id, timings, stop and terminal reasons, permission denials, subagent stats, fast-mode state). The reviewer prompts themselves were not retained by the harness and are not here; the reviewed specification is recoverable from each run's self-critique result.",
