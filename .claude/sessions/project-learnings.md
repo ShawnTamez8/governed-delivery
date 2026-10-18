@@ -180,6 +180,10 @@ The operator also requires the tool server to serve any coding agent, not only C
 Claude Code to stay an adapter: the proposal makes the tool server agent-neutral, keeps every
 deciding check agent-independent, requires per-agent confinement proven by attempted violations
 (review MHA-02), and extracts the adapter interface only when a second agent is added (MHA-03).
+Asked whether Decision-1 after each self-critique adds value: the proposal's "Decision-1's place"
+section says only as narrow, evaluated checks (narration passed; grounding and D6 failed), names
+open questions written as prose in the spec self-critique (run 2's recorded draft) as the one
+candidate, and requires change 9 to replay Decision-1 answers.
 Open: whether per-seat use is "ordinary use" under Claude Code's legal terms.
 
 **Next action:** the operator decides:

@@ -616,6 +616,76 @@ waits for a second real target.
 **Decision needed.** A section 12 entry; whether the allowlist exists at first or
 every new dependency simply asks.
 
+## Decision-1's place in the rework
+
+The operator asked on 2026-10-18 whether running Decision-1 after each
+self-critique would add value. The answer is: at specific self-critiques, as
+narrow checks, each proven on labelled cases first; not as a blanket step after
+every self-critique.
+
+**What the record shows.** Decision-1 has done well on narrow format questions
+and badly on judgment:
+
+- **Narration (adopted).** Offline it caught 3 of 3 recorded remarks and flagged 0
+  of 128 clean criteria at the threshold 0.8
+  (`test/fixtures/recorded/systemone-format-checks-evaluation.json`). Live, it has
+  answered about 140 criteria across crew-chatter runs 1, 3 and 4 and the
+  2026-10-17 web-calculator run and flagged none. That is correct for clean
+  specifications, but no live catch is recorded yet.
+- **Grounding (not adopted).** It caught every unsupported citation but also
+  flagged two supported rejections, and its repeats spread 0.038.
+- **D6 (failed).** Two choices among recorded locations were wrong, and ten
+  identical requests ranged 0.687–0.922
+  (`test/fixtures/recorded/systemone-d6-evaluation-crew-chatter-run-6.json`).
+
+Cost and latency are not the constraint: 172 requests cost $0.001632. The
+constraint is false positives, because a flagged entry becomes a finding the
+reconciler acts on.
+
+**Rules for any new Decision-1 check.**
+
+- Use it only where no deterministic check can settle the question. Dependency
+  changes are settled by comparing manifests (change 10) and declared artifacts
+  by `tasksNameScope`; a classifier adds variance there and nothing else.
+- Use it only for narrow, format-like questions. Questions of judgment, such as
+  whether a specification invented a decision the design never made, are the
+  grounding question that failed.
+- Each check needs a labelled case set drawn from recorded output, labels fixed
+  before any answer is seen, an evaluation that passes at a threshold chosen in
+  advance, and its own section 23 decision. The 2026-10-17 narration decision
+  explicitly does not authorize "a Decision-1 call at any other stage".
+- The implementation self-review judges code, not document format, and gets no
+  Decision-1 check.
+
+**Candidate: open questions written as prose in the spec self-critique.** The
+fix in `561ce9e` refuses an `OD-` line outside `## Open decisions`, but an open
+question written as plain prose under another heading still passes. Crew-chatter
+run 2's draft did exactly that, and the draft is recorded in
+`test/fixtures/recorded/spec-crew-chatter-run-2-open-questions-outside-section.json`.
+"Is this sentence an open question?" is the same kind of question as the
+narration check. This is a separate small candidate, about the size of the
+narration work in `docs/features/narration-check-spec-review/plan.md`. It is not
+an eleventh ranked change, and it is independent of the rework.
+
+**Effect on the ten changes.**
+
+- **Change 6** gains an option: Decision-1 could answer some of the structural
+  questions the policy reads (is this a disclosed open decision, does it change
+  an external interface), with a probability and a frozen threshold. That keeps
+  the proposal's separation, a model classifies and a policy decides. D6's
+  variance is a warning, so this option needs its own evaluation and is not
+  assumed by change 6.
+- **Change 9** must record and replay Decision-1 answers as well as Claude
+  dispatches. They are already recorded as `agent_run` rows with executor
+  `systemone` and their responses are retained, so this is a requirement on the
+  replay executor, not new design.
+- **Change 5** narrows what Decision-1 is for. Typed documents make shape errors
+  unproduceable, but prose-level questions such as narration and open questions
+  in prose remain.
+- **Confinement** already holds. Decision-1 is confined to `src/systemone.ts` and
+  `src/narration-check.ts` and configured by the operator's environment, which
+  is the one-module rule above.
+
 ## Ranking, and the minimum to complete a run
 
 The changes are numbered in the order they were first suggested, not by
