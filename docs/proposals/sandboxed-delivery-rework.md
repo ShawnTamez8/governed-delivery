@@ -581,8 +581,8 @@ decision 1 of the shelved plan.
   run ID, and the implementation, review and remediation prompts embed those
   SHAs. A recorded patch's `baseCommit` must equal the live head. Store-wide
   finding IDs are embedded in the reconcile, fold and remediation prompts. Whole-run replay
-  therefore needs its own design, such as mapping recorded commits and finding
-  IDs to the replay's and matching a normalized prompt, and an operator
+  therefore needs its own design, now written in
+  `docs/proposals/whole-run-replay.md` (about 2.5–3.5 weeks), and an operator
   decision. A changed prompt still cannot be replayed, so replay tests the
   deterministic system around the models, not the models.
 - **Benchmark.** A fixed set of designs is run with repeats per release:

@@ -192,8 +192,12 @@ Open: whether per-seat use is "ordinary use" under Claude Code's legal terms.
   `input_hash` is `sha256(prompt)`, system commit SHAs differ per run (unpinned dates, run ID
   in messages) and are embedded in implementation/review prompts, recorded patches carry a
   `baseCommit` that must equal the live head, and finding IDs are store-wide. Whole-run replay
-  needs its own design (map SHAs and finding IDs, match a normalized prompt) and decision; the
-  proposal is corrected. Change 2 alone is the known minimum for crew-chatter feature 1. No
+  needs its own design and decision; the proposal is corrected. That design is
+  `docs/proposals/whole-run-replay.md` (2026-10-18, about 2.5–3.5 weeks): the real CLI against a
+  scratch target, the provider answered from a reduced corpus keyed by route, agent and ordinal,
+  `baseCommit` rewritten to the live head and finding IDs mapped by (stage kind, round, intent,
+  location), fidelity labels, and one `src/` change (retain prompts in `dispatchOnce`). Open:
+  build it, retain prompts now, and which runs get committed corpora (recommended: run 3). Change 2 alone is the known minimum for crew-chatter feature 1. No
   implementation or spend is authorized;
 - what to do about grounding. The recommendation is to leave it unadopted until more recorded
   positives exist.
