@@ -183,8 +183,9 @@ interface above it until a second implementation exists.
   sign-in do not leak into stages, gates or the tool server. Provider selection
   and credentials reach it only through the named environment passthrough, so
   BuildWorks never hard-codes how Claude Code authenticates.
-- **The tool server** is BuildWorks' own code over MCP. It does not depend on
-  which agent calls it.
+- **The tool server** is BuildWorks' own code over MCP, and it serves any agent,
+  not only Claude Code. "The tool server serves any agent" below states the
+  rules.
 - **Versions are recorded, not chosen.** Each run records the `claude --version`
   it probed and the container image digest it used, as evidence of what ran.
 - **Upgrades are gated by the benchmark.** A BuildWorks release that changes the
@@ -192,11 +193,72 @@ interface above it until a second implementation exists.
   benchmark sweep (change 9) before operators receive it.
 
 Replacing Docker with another container engine, or upgrading any of the three,
-is then a change to one module. Replacing Claude Code with a different agent
-command-line interface is not: its stream parsing, cost telemetry and structured
-output are specific to Claude Code, and that is the second harness hard rules 1
-and 4 defer. The tool server makes that project smaller, because the container
-side does not change.
+is then a change to one module. Adding or replacing an agent is a larger change,
+bounded by the next section.
+
+### The tool server serves any agent; Claude Code stays an adapter
+
+The operator requires (2026-10-18) that any coding agent or harness can use the
+tool server, not only Claude Code, and that Claude Code remains an adapter inside
+BuildWorks. Both are requirements on this rework, not later work, because the
+rework is where Claude-specific assumptions could otherwise enter the execution
+path.
+
+**The tool server is agent-neutral.**
+
+- Its contract is plain MCP: a stdio server whose tools are defined by
+  BuildWorks. It uses no Claude Code feature, tool name or convention, and it
+  does not inspect which client is calling.
+- Its rules are enforced by the server itself: every call is checked against the
+  run's container and limits, recorded before it executes, and refused by name
+  when it falls outside them. No rule depends on the client asking politely.
+- It acts only inside one run's container, under a credential BuildWorks issues
+  for that run, and it never touches run state. It cannot advance a stage,
+  record a gate or write the store. Hard rule 2's single mutation authority is
+  unchanged: the tool server is an execution surface inside a run, not a second
+  way to drive BuildWorks.
+
+**Governance does not depend on which agent ran.** The checks that decide the
+outcome are BuildWorks' own and run after the agent exits, whoever the agent was:
+the diff against the signed scope, protected paths, harness-run verification,
+the gates and the audit chain. An agent BuildWorks has never seen still cannot
+put a file outside scope on the run branch or pass a gate it failed.
+
+**One guarantee does depend on the agent: that it is confined to the tool
+server.** With Claude Code that is done by its flags (built-in Bash, Write and
+Edit disallowed, only BuildWorks' MCP server admitted). Another agent may have
+its own shell, file tools, MCP servers or network access that cannot be switched
+off the same way. The 2026-09-03 review
+(`docs/proposals/2026-09-03-multi-harness-adapter-blast-radius-review.md`,
+finding MHA-02) already set the rule for this: before an agent is registered,
+a discovery run must *attempt* each forbidden action and fail, not merely avoid
+it. An agent that cannot be confined has two honest outcomes:
+
+- BuildWorks runs the agent itself inside a container whose only reachable
+  service is the tool server, so the confinement no longer depends on the agent;
+- or the architecture states the weaker guarantee for that agent, and the run
+  record labels it, as section 6 does for `unverified_self_attestation`.
+
+Copying a confinement declaration onto an agent that does not enforce it is not
+an option.
+
+**Claude Code remains one concrete adapter.** This is what section 11 already
+says, "There is one adapter, concrete, with no interface above it until a second
+harness exists", and the rework keeps it:
+
+- Claude-specific invocation, flags, stream parsing, cost telemetry, structured
+  output and sign-in stay inside `src/harness.ts` and `src/executor.ts`.
+- Stages see only the normalized result the adapter returns.
+- Every change in this proposal is accepted only if it adds no Claude-specific
+  assumption outside the adapter. Each plan that implements a change says how it
+  meets that.
+
+The interface above the adapter is extracted when a second agent is actually
+added, as hard rule 4 requires and as finding MHA-03 of the same review sketches
+(build an invocation from the frozen definition, parse retained bytes into the
+one normalized envelope, a static registry keyed by the frozen executor ID).
+Extracting it earlier would be an abstraction with one implementation. Adding the
+second agent needs the section 11 amendment that review names.
 
 ## The ten changes
 
@@ -583,6 +645,8 @@ benchmark sweep whose result decides whether the next track starts.
 | 1 | Hazard 15 mechanism; section 6 command boundary; section 11 tool inventory | Section 23 decision replacing the mechanism, after the spike |
 | 1 | Section 24 "target-stack adapter frameworks" | None if exactly one concrete image; refuse a second until a second target exists |
 | 1 | Hard rule 4 | None if Docker, Claude Code and the tool server are each one concrete module with no interface above them |
+| 1 | Hard rule 2 | None if the tool server acts only inside a run's container and never touches run state |
+| 1 | Section 11 "one adapter, concrete" | None for this rework; adding a second agent needs the amendment named by the 2026-09-03 review |
 | 3 | Toolchain-probe stance "the operator declares" | None if the manifest is declared, not detected |
 | 4 | Section 5 deferral of `test_authoring` | Section 23 decision lifting it |
 | 5 | Hard rule 3 | Delete the markdown parsers; no dual shape |
@@ -684,4 +748,5 @@ Related: `ARCHITECTURE.md` sections 5, 6, 7, 11, 12, 17, 19, 20 and 24;
 `docs/proposals/build-in-segments-and-continue.md`;
 `docs/proposals/implementer-writes-files-it-also-proposes.md`;
 `docs/proposals/spec-review-severity-nondeterminism.md`;
+`docs/proposals/2026-09-03-multi-harness-adapter-blast-radius-review.md`;
 `docs/features/implementation-phase-retry/plan.md`.

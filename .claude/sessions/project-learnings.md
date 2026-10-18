@@ -176,6 +176,10 @@ Enterprise seat and BuildWorks has no credential of its own; runs happen on the 
 workstation; Docker, WSL and Claude Code must be replaceable *between BuildWorks versions*, never
 during a run. So change 1 keeps `claude` on the host and reaches the container only through a
 BuildWorks MCP tool server, and each dependency is confined to one concrete module (no interface).
+The operator also requires the tool server to serve any coding agent, not only Claude Code, and
+Claude Code to stay an adapter: the proposal makes the tool server agent-neutral, keeps every
+deciding check agent-independent, requires per-agent confinement proven by attempted violations
+(review MHA-02), and extracts the adapter interface only when a second agent is added (MHA-03).
 Open: whether per-seat use is "ordinary use" under Claude Code's legal terms.
 
 **Next action:** the operator decides:
