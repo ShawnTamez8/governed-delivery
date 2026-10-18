@@ -570,13 +570,21 @@ decision 1 of the shelved plan.
 
 **What, in two parts.**
 
-- **Replay.** Every dispatch already records an `input_hash`. A replay executor
-  returns the retained response for a matching hash and refuses a miss by name.
-  A change to a validator, gate, policy or rendering is then run against every
-  retained run at no provider cost, and the report lists which past runs it
-  would have changed and where. A changed prompt changes the hash, so replay
-  tests the deterministic system around the models, not the models. That limit
-  should be stated plainly wherever replay is reported.
+- **Replay.** A replay executor returns the retained response for each
+  dispatch, so a change to a validator, gate, policy or rendering can run
+  against retained runs at no provider cost. **Revised 2026-10-18 after
+  grounding** (`docs/features/derived-artifacts-and-dependency-policy/plan.md`,
+  "Change 9 is not in this plan"): this draft said each dispatch's `input_hash`
+  is the key, and that holds only until a run's first commit. `input_hash` is
+  `sha256(prompt)`, and the prompt is not retained. System commit SHAs differ in
+  every run, because commit dates are not pinned and commit messages carry the
+  run ID, and the implementation, review and remediation prompts embed those
+  SHAs. A recorded patch's `baseCommit` must equal the live head. Store-wide
+  finding IDs are embedded in the reconcile, fold and remediation prompts. Whole-run replay
+  therefore needs its own design, such as mapping recorded commits and finding
+  IDs to the replay's and matching a normalized prompt, and an operator
+  decision. A changed prompt still cannot be replayed, so replay tests the
+  deterministic system around the models, not the models.
 - **Benchmark.** A fixed set of designs is run with repeats per release:
   web-calculator, crew-chatter feature 1, one design that adds a dependency, and
   one design with a disclosed open decision. The report gives pass rate, the
@@ -721,7 +729,7 @@ likely at code review. But together they close the one failure known in advance.
 | Rank | Change | Why it sits here |
 |---|---|---|
 | 1 | 2 Derived artifacts owned by the harness | Removes the one known blocker; about 1 week |
-| 2 | 9 Replay, with the benchmark after it | Every later fix is tested against retained runs at no provider cost, instead of a paid run each |
+| 2 | 9 Replay, with the benchmark after it | Every later fix is tested against retained runs at no provider cost, instead of a paid run each. Revised 2026-10-18: needs its own design first (see change 9), and cannot replay a changed prompt, so it does not validate changes 2 and 10 |
 | 3 | 10 Dependency policy | Puts dependency choices with the operator; about 1 week |
 | 4 | 8 part 1 Per-phase verification | A failure costs one phase, not the whole implementation |
 | 5 | 6 Routing by frozen policy | The same facts produce the same pause; small |
@@ -736,7 +744,9 @@ needs its own decision, whatever else is adopted.
 
 **Recommended first authorization:** changes 9 (replay), 2 and 10, about three
 weeks, ending in one paid crew-chatter feature-1 run as the live test with a
-budget the operator sets at that point.
+budget the operator sets at that point. Revised 2026-10-18: changes 2 and 10
+are planned in `docs/features/derived-artifacts-and-dependency-policy/plan.md`.
+Change 9 waits for a replay design and its own decision.
 
 ## Sequencing
 

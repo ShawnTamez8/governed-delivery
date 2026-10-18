@@ -187,10 +187,14 @@ candidate, and requires change 9 to replay Decision-1 answers.
 Open: whether per-seat use is "ordinary use" under Claude Code's legal terms.
 
 **Next action:** the operator decides:
-- whether to authorize the proposal's recommended first set: changes 9 (replay), 2 (derived
-  lockfile) and 10 (dependency policy), then a plan under `docs/features/`. The operator expects
-  all ten changes to be wanted; the proposal ranks them (numbers are not importance). Change 2
-  alone is the known minimum for crew-chatter feature 1. No spend is authorized;
+- whether to authorize building `docs/features/derived-artifacts-and-dependency-policy/plan.md`
+  (`Proposed`, 2026-10-18; changes 2 and 10, 11 tasks). Change 9 (replay) was dropped from it:
+  `input_hash` is `sha256(prompt)`, system commit SHAs differ per run (unpinned dates, run ID
+  in messages) and are embedded in implementation/review prompts, recorded patches carry a
+  `baseCommit` that must equal the live head, and finding IDs are store-wide. Whole-run replay
+  needs its own design (map SHAs and finding IDs, match a normalized prompt) and decision; the
+  proposal is corrected. Change 2 alone is the known minimum for crew-chatter feature 1. No
+  implementation or spend is authorized;
 - what to do about grounding. The recommendation is to leave it unadopted until more recorded
   positives exist.
 - No PR to `master`: the operator said not to create one (2026-10-17).
