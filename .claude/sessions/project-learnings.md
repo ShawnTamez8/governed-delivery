@@ -69,8 +69,10 @@ committed 2026-10-19 at the operator's word and not pushed (`origin/sandboxed-de
   other: `status --run 5` now reports "the spec has changed since review". The fix plan is
   `docs/features/run-documents-in-governance/plan.md` (`Reconciled` 2026-10-19 against a Copilot
   review: 18 accepted, 2 rejected, 1 deferred; documents go under `.governance/documents/<run>/` via
-  `runDocumentDir` in `src/paths.ts`). Built 2026-10-19 under `/implement-plan`; the operator chose
-  to keep stored refs absolute ("Keep absolute"), overriding the plan's repo-relative refs.
+  `runDocumentDir` in `src/paths.ts`). Built 2026-10-19 under `/implement-plan` and committed at
+  `5e3832b` (operator: "commit"); the operator chose to keep stored refs absolute ("Keep absolute"),
+  overriding the plan's repo-relative refs. Full suite 1695/1690/0/5, smoke 13/13. No live run has
+  used it yet; its first paid run should record the target's `git status --short`.
 
 **Run 5** (2026-10-18, crew-chatter feature 1 from `ec2049c`, operator-authorized): blocked at
 verification `typecheck` on one implementer line unrelated to the mechanisms,
@@ -85,8 +87,6 @@ the target's tree is clean.
 - the next rework change (change 1, the sandboxed implementer, is the one under consideration).
   `sandboxed-delivery` is not merged to `master` until the rework is complete (operator,
   2026-10-19).
-- whether to commit `docs/features/run-documents-in-governance/plan.md`'s build (`Implemented` 2026-10-19, uncommitted;
-  full suite 1695/1690/0/5, smoke 13/13). Its first paid run should record the target's `git status --short`.
 - whether to start crew-chatter feature 3 (`new-run --after 7`; needs its own spend authorization;
   features 3-7 are proposals 30-34, not yet exported; export, keep the text from `## Problem` up to
   `## Why this is upstream`, commit it as the feature's `design.md`). Run 5 is superseded by run 6.
@@ -166,7 +166,8 @@ both ran only `node --version` and `npm --version`. Structured-output plan open 
 
 **Working state (verified 2026-10-19):**
 - `dashboard-restyling` pushed at `7446cd0` (14 ahead of `origin/master` on 2026-10-18).
-  `848469b` and the 2026-10-19 build commit on `sandboxed-delivery` are unpushed. An untracked
+  `848469b` and the 2026-10-19 commits on `sandboxed-delivery` (through `5e3832b`, the
+  run-documents build) are unpushed. An untracked
   `docs/runbooks/workflow-explorer.html` (2026-10-18, referenced nowhere, origin unrecorded) was
   left out of that commit; it is the operator's to keep or drop. Local `master` was 38 behind `origin/master` on
   2026-10-10 (not rechecked). Pushing uses the personal gh account (auto memory); Snitch's
