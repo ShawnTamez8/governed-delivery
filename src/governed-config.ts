@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { normalizePath, touchesProtected } from "./scope.ts";
 
 /**
  * The verification configuration, read from `governed.yaml` as committed at
@@ -6,12 +7,19 @@ import { spawnSync } from "node:child_process";
  * before the first run and is never part of any run's scope).
  *
  * **The accepted shape, in full.** One top-level key, then one or more
- * entries, each two lines in a fixed key order:
+ * entries, each two lines in a fixed key order. An optional `derived:` block
+ * may follow, naming files the system regenerates after every patch commit
+ * (docs/features/derived-artifacts-and-dependency-policy/plan.md), each entry
+ * three lines in a fixed key order:
  *
  * ```yaml
  * verify:
  *   - name: typecheck
  *     command: ["npm", "run", "typecheck"]
+ * derived:
+ *   - name: lockfile
+ *     path: package-lock.json
+ *     command: ["npm", "install", "--package-lock-only", "--ignore-scripts"]
  * ```
  *
  * Blank lines and lines whose first non-space character is `#` are ignored
@@ -31,8 +39,20 @@ export interface VerifyCommand {
   command: string[];
 }
 
+/**
+ * A file the system regenerates by running `command` in the worktree and
+ * commits itself. A specification never declares one, so no model writes it.
+ */
+export interface DerivedArtifact {
+  name: string;
+  path: string;
+  command: string[];
+}
+
 export interface VerificationConfig {
   commands: VerifyCommand[];
+  /** Empty when `governed.yaml` has no `derived:` block. */
+  derived: DerivedArtifact[];
 }
 
 export type ParseResult =
@@ -98,7 +118,7 @@ export function parseGovernedConfig(text: string): ParseResult {
   const commands: VerifyCommand[] = [];
   const seen = new Set<string>();
   let i = 1;
-  while (i < lines.length) {
+  while (i < lines.length && lines[i].text !== "derived:") {
     const entry = lines[i];
     // Rule 2: the entry opens with the name. Key order is fixed — an entry
     // opening with `command:` is refused here rather than accepted, because
@@ -136,47 +156,9 @@ export function parseGovernedConfig(text: string): ParseResult {
         reason: `${GOVERNED_CONFIG_PATH} line ${entry.number}: command ${JSON.stringify(name)} has no command: line`,
       };
     }
-    const commandMatch = /^ {4}command: (\[.*\])$/.exec(commandLine.text);
-    if (!commandMatch) {
-      return {
-        ok: false,
-        reason: `${GOVERNED_CONFIG_PATH} line ${commandLine.number}: expected "    command: [\\"...\\"]" with every token double-quoted, found ${JSON.stringify(commandLine.text)}`,
-      };
-    }
-    // Rule 6: the bracket span is a non-empty array of non-empty strings.
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(commandMatch[1]);
-    } catch (err) {
-      return {
-        ok: false,
-        reason: `${GOVERNED_CONFIG_PATH} line ${commandLine.number}: command ${JSON.stringify(name)} is not a readable token list — every token must be double-quoted: ${(err as Error).message}`,
-      };
-    }
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      return {
-        ok: false,
-        reason: `${GOVERNED_CONFIG_PATH} line ${commandLine.number}: command ${JSON.stringify(name)} must name at least one token`,
-      };
-    }
-    const tokens: string[] = [];
-    for (const token of parsed) {
-      if (typeof token !== "string" || token === "") {
-        return {
-          ok: false,
-          reason: `${GOVERNED_CONFIG_PATH} line ${commandLine.number}: command ${JSON.stringify(name)} has a token that is not a non-empty string`,
-        };
-      }
-      // Rule 7: the token survives the shell unchanged.
-      if (!TOKEN.test(token)) {
-        return {
-          ok: false,
-          reason: `${GOVERNED_CONFIG_PATH} line ${commandLine.number}: command ${JSON.stringify(name)} token ${JSON.stringify(token)} contains a character the shell would reinterpret: allowed are letters, digits, and . _ - : = @ + /`,
-        };
-      }
-      tokens.push(token);
-    }
-    commands.push({ name, command: tokens });
+    const command = parseCommandLine(commandLine, name);
+    if (!command.ok) return command;
+    commands.push({ name, command: command.tokens });
     i += 2;
   }
 
@@ -188,7 +170,155 @@ export function parseGovernedConfig(text: string): ParseResult {
       reason: `${GOVERNED_CONFIG_PATH}: the verify: block names no commands`,
     };
   }
-  return { ok: true, config: { commands } };
+
+  const derived: DerivedArtifact[] = [];
+  if (i < lines.length) {
+    // The verify loop stops only at a line that is exactly "derived:".
+    const blockLine = lines[i];
+    i += 1;
+    const derivedNames = new Set<string>();
+    const derivedPaths = new Set<string>();
+    while (i < lines.length) {
+      const entry = lines[i];
+      // Every content line after the block opens an entry, so trailing
+      // content of any other shape is refused here, by line.
+      const nameMatch = /^ {2}- name: (.*)$/.exec(entry.text);
+      if (!nameMatch) {
+        return {
+          ok: false,
+          reason: `${GOVERNED_CONFIG_PATH} line ${entry.number}: expected a derived entry opening with "  - name: <name>", found ${JSON.stringify(entry.text)}`,
+        };
+      }
+      const name = nameMatch[1].trim();
+      if (!NAME.test(name)) {
+        return {
+          ok: false,
+          reason: `${GOVERNED_CONFIG_PATH} line ${entry.number}: invalid derived artifact name ${JSON.stringify(name)}: must be 1-64 characters of letters, digits, dot, underscore, or hyphen, starting with a letter or digit`,
+        };
+      }
+      if (derivedNames.has(name)) {
+        return {
+          ok: false,
+          reason: `${GOVERNED_CONFIG_PATH} line ${entry.number}: duplicate derived artifact name ${JSON.stringify(name)}`,
+        };
+      }
+      derivedNames.add(name);
+
+      const pathLine = lines[i + 1];
+      if (!pathLine) {
+        return {
+          ok: false,
+          reason: `${GOVERNED_CONFIG_PATH} line ${entry.number}: derived artifact ${JSON.stringify(name)} has no path: line`,
+        };
+      }
+      const pathMatch = /^ {4}path: (.*)$/.exec(pathLine.text);
+      if (!pathMatch) {
+        return {
+          ok: false,
+          reason: `${GOVERNED_CONFIG_PATH} line ${pathLine.number}: expected "    path: <repo-relative file path>", found ${JSON.stringify(pathLine.text)}`,
+        };
+      }
+      const path = pathMatch[1].trim();
+      // The path is compared with declared artifacts and handed to git as a
+      // literal pathspec, so it must name one file inside the repository.
+      if (
+        !/^\S+$/.test(path) ||
+        path.split(/[\\/]/).includes("..") ||
+        /^[\\/]/.test(path) ||
+        /^[A-Za-z]:/.test(path) ||
+        /[\\/]$/.test(path)
+      ) {
+        return {
+          ok: false,
+          reason: `${GOVERNED_CONFIG_PATH} line ${pathLine.number}: derived artifact ${name} path must be a repo-relative file path with no whitespace, "..", leading "/", drive letter or trailing slash: ${path}`,
+        };
+      }
+      if (touchesProtected([path], "")) {
+        return {
+          ok: false,
+          reason: `${GOVERNED_CONFIG_PATH} line ${pathLine.number}: derived artifact ${name} path is protected: ${path}`,
+        };
+      }
+      const normalized = normalizePath(path);
+      if (derivedPaths.has(normalized)) {
+        return {
+          ok: false,
+          reason: `${GOVERNED_CONFIG_PATH} line ${pathLine.number}: duplicate derived artifact path ${JSON.stringify(normalized)}`,
+        };
+      }
+      derivedPaths.add(normalized);
+
+      const commandLine = lines[i + 2];
+      if (!commandLine) {
+        return {
+          ok: false,
+          reason: `${GOVERNED_CONFIG_PATH} line ${entry.number}: derived artifact ${JSON.stringify(name)} has no command: line`,
+        };
+      }
+      const command = parseCommandLine(commandLine, name);
+      if (!command.ok) return command;
+      derived.push({ name, path: normalized, command: command.tokens });
+      i += 3;
+    }
+    if (derived.length === 0) {
+      return {
+        ok: false,
+        reason: `${GOVERNED_CONFIG_PATH} line ${blockLine.number}: the derived: block names no artifacts`,
+      };
+    }
+  }
+  return { ok: true, config: { commands, derived } };
+}
+
+/**
+ * Rules 3, 6 and 7 for one `command:` line, shared by verify and derived
+ * entries so both refuse a bad command in the same words.
+ */
+function parseCommandLine(
+  commandLine: ContentLine,
+  name: string
+): { ok: true; tokens: string[] } | { ok: false; reason: string } {
+  const commandMatch = /^ {4}command: (\[.*\])$/.exec(commandLine.text);
+  if (!commandMatch) {
+    return {
+      ok: false,
+      reason: `${GOVERNED_CONFIG_PATH} line ${commandLine.number}: expected "    command: [\\"...\\"]" with every token double-quoted, found ${JSON.stringify(commandLine.text)}`,
+    };
+  }
+  // Rule 6: the bracket span is a non-empty array of non-empty strings.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(commandMatch[1]);
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `${GOVERNED_CONFIG_PATH} line ${commandLine.number}: command ${JSON.stringify(name)} is not a readable token list — every token must be double-quoted: ${(err as Error).message}`,
+    };
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    return {
+      ok: false,
+      reason: `${GOVERNED_CONFIG_PATH} line ${commandLine.number}: command ${JSON.stringify(name)} must name at least one token`,
+    };
+  }
+  const tokens: string[] = [];
+  for (const token of parsed) {
+    if (typeof token !== "string" || token === "") {
+      return {
+        ok: false,
+        reason: `${GOVERNED_CONFIG_PATH} line ${commandLine.number}: command ${JSON.stringify(name)} has a token that is not a non-empty string`,
+      };
+    }
+    // Rule 7: the token survives the shell unchanged.
+    if (!TOKEN.test(token)) {
+      return {
+        ok: false,
+        reason: `${GOVERNED_CONFIG_PATH} line ${commandLine.number}: command ${JSON.stringify(name)} token ${JSON.stringify(token)} contains a character the shell would reinterpret: allowed are letters, digits, and . _ - : = @ + /`,
+      };
+    }
+    tokens.push(token);
+  }
+  return { ok: true, tokens };
 }
 
 /**

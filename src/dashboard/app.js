@@ -3438,6 +3438,17 @@ function renderConfiguration(projection, application) {
   }
   verification.append(element("p", "A passing frozen command records that the command exited zero. It does not prove product correctness.", "source-note"));
   section.append(verification);
+  const derived = element("div", null, "subsection");
+  derived.append(element("h3", "Frozen derived artifacts"));
+  if (configuration.derivedArtifacts === null || configuration.derivedArtifacts.length === 0) {
+    derived.append(element("p", "No derived artifact is declared for this run.", "empty-state"));
+  } else {
+    derived.append(dataTable("Frozen derived artifact names, paths and regeneration commands",
+      ["Name", "Path", "Command"],
+      configuration.derivedArtifacts.map((entry) => [entry.name, entry.path, entry.command.join(" ")])));
+  }
+  derived.append(element("p", "The system runs each command after every implementation and remediation commit and commits the regenerated file itself; a specification never declares one.", "source-note"));
+  section.append(derived);
   const review = element("div", null, "subsection");
   review.append(element("h3", "Review policy"));
   const documentReview = configuration.documentReview;

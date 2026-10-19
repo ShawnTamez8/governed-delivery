@@ -9,10 +9,15 @@ import { readFileSync } from "node:fs";
 
 // formatRunPreview reads a handful of fields; the rest of a snapshot and a
 // profile is irrelevant to the text under test, so the fixtures carry only those.
-function preview(policy: ReturnType<typeof buildPolicy>, groups: ExecutionGroup[], narrationCheck: NarrationCheckConfig | null = null): string {
+function preview(
+  policy: ReturnType<typeof buildPolicy>,
+  groups: ExecutionGroup[],
+  narrationCheck: NarrationCheckConfig | null = null,
+  derivedArtifacts: RunSnapshot["configuration"]["derivedArtifacts"] = []
+): string {
   const snapshot = {
     run: { id: 6, slug: "team-notes" },
-    configuration: { dispatchSettings: {}, verificationCommands: [] },
+    configuration: { dispatchSettings: {}, verificationCommands: [], derivedArtifacts },
   } as unknown as RunSnapshot;
   const profile = { systemName: "BuildWorks", policy, narrationCheck } as unknown as Profile;
   return formatRunPreview("/target", snapshot, groups, profile);
@@ -85,6 +90,18 @@ test("the spec ceiling counts the split dispatch and the sentence states the fro
 test("a range that does not include implementation does not count its ceiling", () => {
   const text = preview(buildPolicy(), ["plan"]);
   assert.ok(text.includes("Dispatch ceilings for this range: plan=5; total 5."), text);
+});
+
+test("the preview lists the frozen derived artifacts after the verification commands", () => {
+  const lines = preview(buildPolicy(), ["implementation"], null, [
+    { name: "lockfile", path: "package-lock.json", command: ["npm", "install", "--package-lock-only", "--ignore-scripts"] },
+  ]).split("\n");
+  const at = lines.indexOf(
+    'Frozen derived artifacts: [{"name":"lockfile","path":"package-lock.json","command":["npm","install","--package-lock-only","--ignore-scripts"]}]'
+  );
+  assert.ok(at > 0, lines.join("\n"));
+  assert.ok(lines[at - 1]!.startsWith("Frozen verification commands: "), lines.join("\n"));
+  assert.ok(preview(buildPolicy(), ["implementation"]).split("\n").includes("Frozen derived artifacts: []"));
 });
 
 test("the preview states whether spec review asks Decision-1, and where", () => {

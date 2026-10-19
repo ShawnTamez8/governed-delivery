@@ -7,7 +7,10 @@ import { loadVerifiedProfile, requireFrozenBinding, resolveSettings } from "./pr
 import { dispatchOnce } from "./dispatch.ts";
 import { PATCH_RESULT_SCHEMA, validateAgentResult, type ProposedPatch } from "./agent-result.ts";
 import { extractJsonBody } from "./parse-output.ts";
-import { worktreePath as governanceWorktreePath } from "./paths.ts";
+import { derivedEvidenceDir, worktreePath as governanceWorktreePath } from "./paths.ts";
+import { derivedPathExclusion, regenerateDerivedArtifacts } from "./derived-artifacts.ts";
+import { unapprovedDependencyAdditions } from "./dependency-policy.ts";
+import { validateSpecDoc } from "./spec-doc.ts";
 import { buildImplementationAuthorPrompt, buildImplementationSelfReviewPrompt } from "./prompts.ts";
 import {
   critiqueAuditEntries,
@@ -225,6 +228,13 @@ export async function runImplementationStage(
       reason: `the spec does not match the plan the gate approved: planFor ${gatedPlan[2]}, on disk ${specHash}`,
     };
   }
+  // The packages the signed specification lists, which the operator approved
+  // at the decision pause: the only additions any commit of this run may make.
+  const signedSpec = validateSpecDoc(specContent);
+  if (!signedSpec.ok) {
+    return { ok: false, reason: `the approved spec ${specPath} no longer validates: ${signedSpec.reason}` };
+  }
+  const approvedDependencies = signedSpec.value.dependenciesAdded;
 
   // The plan's task items, split into the phases this stage dispatches (hazard
   // 20: one dispatch over a whole plan was refused or failed in team-notes runs
@@ -332,6 +342,27 @@ export async function runImplementationStage(
     const stage = store.insertStage(runId, "implementation", last.id);
     stageId = stage.id;
     audit(stage.id, "implementation.stage.create", `created implementation stage ${stage.id}`);
+
+    // After every patch commit, the files `governed.yaml` declares under
+    // `derived:` are regenerated and committed by the system, never by the
+    // implementer (docs/features/derived-artifacts-and-dependency-policy/plan.md).
+    const regenerate = (label: string, expectedHead: string) =>
+      regenerateDerivedArtifacts({
+        rootDir,
+        worktreePath,
+        runId,
+        derived: profile.verification.derived,
+        expectedHead,
+        label,
+        evidenceDir: derivedEvidenceDir(rootDir, runId, label),
+        policy: {
+          timeoutSeconds: profile.policy.verifyCommandTimeoutSeconds,
+          maxBytes: profile.policy.resultMaxBytes,
+          retentionMaxBytes: profile.policy.verifyRetentionMaxBytes,
+          envPassthrough: profile.policy.verifyEnvPassthrough,
+        },
+        audit: (action, summary) => audit(stage.id, `implementation.${action}`, summary),
+      });
 
     // The worktree is never deleted: section 7 retains it, including when
     // the run ends blocked.
@@ -579,18 +610,31 @@ export async function runImplementationStage(
         "implementation.phase.apply",
         `phase ${phase.index} of ${phase.count}: tasks ${phase.firstTask}-${phase.firstTask + phase.tasks.length - 1}; base=${phaseBase}; head=${finalHead}`
       );
+      const dependencies = unapprovedDependencyAdditions(worktreePath, headAtProposal, finalHead, approvedDependencies);
+      if (!dependencies.ok) {
+        return abort(stage.id, "implementation.dependency.unapproved", `${where}${dependencies.reason}`);
+      }
+      // The next phase re-reads its base from HEAD, so it proposes against the
+      // regenerated commit.
+      const regenerated = await regenerate(`phase-${phase.index}`, finalHead);
+      if (!regenerated.ok) {
+        return abort(stage.id, "implementation.derived.failed", `${where}${regenerated.reason}`);
+      }
+      finalHead = regenerated.head;
     }
 
     // --- the self-review, once, after the last phase ---
     const base = finalHead;
     const selfReviewFailed = (reason: string): ImplementationStageResult =>
       abort(stage.id, "implementation.selfreview.failed", `self-review: ${reason}`);
-    // The same commands code review uses to describe the change.
-    const changedNames = runGit(["diff", "--name-only", "-z", headAtProposal, base], worktreePath);
+    // The same commands code review uses to describe the change, with the
+    // derived files left out: the system wrote them, not the implementer.
+    const excludeDerived = derivedPathExclusion(profile.verification.derived);
+    const changedNames = runGit(["diff", "--name-only", "-z", headAtProposal, base, ...excludeDerived], worktreePath);
     if (!changedNames.ok) {
       return selfReviewFailed(`cannot read the changed paths for ${headAtProposal}..${base}: ${changedNames.detail}`);
     }
-    const changedDiff = runGit(["diff", "--no-color", headAtProposal, base], worktreePath);
+    const changedDiff = runGit(["diff", "--no-color", headAtProposal, base, ...excludeDerived], worktreePath);
     if (!changedDiff.ok) {
       return selfReviewFailed(`cannot read the diff for ${headAtProposal}..${base}: ${changedDiff.detail}`);
     }
@@ -662,7 +706,15 @@ export async function runImplementationStage(
             audit(stage.id, `implementation.selfreview.${action}`, summary.replace(`; run ${runId}`, "")),
         });
         if (!applied.ok) return selfReviewFailed(applied.reason);
-        reviewedHead = applied.resultingCommit;
+        const dependencies = unapprovedDependencyAdditions(worktreePath, headAtProposal, applied.resultingCommit, approvedDependencies);
+        if (!dependencies.ok) {
+          return abort(stage.id, "implementation.dependency.unapproved", `self-review: ${dependencies.reason}`);
+        }
+        const regenerated = await regenerate("self-review", applied.resultingCommit);
+        if (!regenerated.ok) {
+          return abort(stage.id, "implementation.derived.failed", `self-review: ${regenerated.reason}`);
+        }
+        reviewedHead = regenerated.head;
       }
       const recorded = critiqueAuditEntries(reply.critique);
       for (const entry of recorded) audit(stage.id, "implementation.selfreview.critique", entry);

@@ -129,7 +129,7 @@ function approvalFixture(parent: string, name: string): ApprovalFixture {
     store.completeStage(decision.id, specPath, "pass");
     appendAudit(store, { runId: run.id, stageId: decision.id, actor: "system", actorType: "cli", action: "spec_decision.gate.pass",
       summary: `spec_decision gate passed; specHash=${sha256Hex(normalizeText(APPROVAL_SPEC))}; risk=low; answers=0; folded=0` });
-    const verification: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
+    const verification: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }], derived: [] };
     const frozen = freezeProfile(root, run.id, head, "test-model", verification);
     store.setProfileRef(run.id, frozen.hash);
     assert.ok(frozen.profile.approvalSigner, "the fixture must freeze a real fingerprint or this proves nothing");

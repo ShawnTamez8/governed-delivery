@@ -20,7 +20,7 @@ import type { VerificationConfig } from "../src/governed-config.ts";
  * One minimal frozen configuration. The plan author, self-critique and reconcile
  * prompts state it; the wiring test below runs the stage under two of them.
  */
-const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
+const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }], derived: [] };
 const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-plan-stage.mjs");
 const COMMIT = "b".repeat(40);
 const MODEL = "m";
@@ -1963,6 +1963,7 @@ test("the plan author, self-critique and reconcile prompts carry the frozen prof
       { name: "smoke", command: ["node", "--version"] },
       { name: "extra", command: ["node", "--help"] },
     ],
+    derived: [],
   };
   async function dispatched(verification: VerificationConfig): Promise<{ setting: string; input_hash: string }[]> {
     let rows: { setting: string; input_hash: string }[] = [];

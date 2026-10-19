@@ -35,7 +35,7 @@ import { freezeUniformProfile } from "./uniform-profile.ts";
 const COMMIT = "b".repeat(40);
 const MODEL = "test-model";
 /** One minimal frozen configuration, shared by every call site in this file. */
-const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
+const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }], derived: [] };
 
 function withRoot(fn: (root: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), "bw-profile-"));
@@ -667,6 +667,20 @@ test("a profile predating narrationCheck is refused, and narrationCheck is null 
         JSON.stringify(bad)
       );
     }
+  });
+});
+
+test("a profile predating verification.derived is refused, while an empty derived list loads", () => {
+  withRoot((root) => {
+    const frozen = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    assert.deepEqual(frozen.profile.verification.derived, []);
+    const verified = loadVerifiedProfile(root, { id: 1, profile_ref: frozen.hash });
+    assert.equal(verified.ok, true, (verified as { reason?: string }).reason);
+    const { derived, ...commandsOnly } = frozen.profile.verification;
+    assert.equal(
+      invalidProfileReason({ ...frozen.profile, verification: commandsOnly }),
+      "the frozen profile carries no verification.derived: it predates the field, and a run frozen without it cannot say which files the system regenerates"
+    );
   });
 });
 

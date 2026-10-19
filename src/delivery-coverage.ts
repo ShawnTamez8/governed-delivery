@@ -17,6 +17,9 @@ import { normalizePath } from "./scope.ts";
  * phase the apply-time overlap refusal (`patch-application.ts`) prevents a
  * later patch from touching a path an earlier patch of that phase moved; and
  * (3) nothing but the system's patch commits lands between base and head.
+ * The system's derived-artifact regeneration commits (`governed.yaml`
+ * `derived:`) land there too; delivery neither requires nor refuses their
+ * paths, because a derived path is never declared.
  *
  * Invariant 2 is narrower than it was. The implementation stage now runs one
  * phase per slice of the plan's tasks (hazard 20), each proposing against the

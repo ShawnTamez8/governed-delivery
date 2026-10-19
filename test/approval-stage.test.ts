@@ -15,7 +15,7 @@ import { openStore, type Store } from "../src/store.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
 
 /** One minimal frozen configuration; this stage does not read it. */
-const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
+const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }], derived: [] };
 const SLUG = "s";
 
 const SPEC = `feature: Thing
@@ -81,6 +81,7 @@ function withFixture(fn: (f: Fixture) => void, opts: {
     gateSummary?: string | null;
     bindSigner?: boolean;
     baseDirs?: string[];
+    verification?: VerificationConfig;
   } = {}): void {
   const root = mkdtempSync(join(tmpdir(), "bw-approve-"));
   const keyDir = mkdtempSync(join(tmpdir(), "bw-approve-key-"));
@@ -155,7 +156,13 @@ function withFixture(fn: (f: Fixture) => void, opts: {
     if (opts.bindSigner === false) process.env.BW_APPROVAL_PUBLIC_KEY = join(keyDir, "no-such-key.pub");
     else process.env.BW_APPROVAL_PUBLIC_KEY = pubPath;
 
-    const frozen = freezeProfile(root, run.id, opts.commit === undefined ? head : opts.commit, "test-model", VERIFICATION);
+    const frozen = freezeProfile(
+      root,
+      run.id,
+      opts.commit === undefined ? head : opts.commit,
+      "test-model",
+      opts.verification ?? VERIFICATION
+    );
     store.setProfileRef(run.id, frozen.hash);
     // A bound-path fixture that froze null proves nothing about the trust
     // anchor: the ordering or the key setup broke, silently. One assertion
@@ -865,5 +872,35 @@ test("a spec edited to declare the run's own document refuses at the gate, befor
       assertNothingWritten(f);
     },
     { spec: runDocSpec }
+  );
+});
+
+test("a spec edited to declare a derived artifact refuses at the gate, before the signature binds it", () => {
+  // The spec stage refuses the path at write time, but a spec edited
+  // afterwards can declare a file the system regenerates after every patch
+  // commit — the approval gate re-checks the frozen derived list the way it
+  // re-checks the run's own documents.
+  const derivedSpec = SPEC.replace("src/thing.ts", "package-lock.json");
+  withFixture(
+    (f) => {
+      const r = approveRun(f.store, f.root, {
+        runId: f.runId,
+        expiresAt: f.expiresAt,
+        signature: Buffer.alloc(64).toString("base64"),
+      });
+      assert.equal(r.ok, false);
+      assert.equal(
+        (r as { reason: string }).reason,
+        "declared artifact names a file the system regenerates (governed.yaml derived:): package-lock.json; the system writes it after every patch commit, so it is never declared"
+      );
+      assertNothingWritten(f);
+    },
+    {
+      spec: derivedSpec,
+      verification: {
+        commands: VERIFICATION.commands,
+        derived: [{ name: "lockfile", path: "package-lock.json", command: ["npm", "install", "--package-lock-only"] }],
+      },
+    }
   );
 });

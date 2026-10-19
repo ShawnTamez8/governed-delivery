@@ -9,7 +9,7 @@ import {
   type InvocationInput,
 } from "./harness.ts";
 import type { ExecutorDefinition } from "./executor.ts";
-import { writeRawOutput } from "./raw-output.ts";
+import { writePrompt, writeRawOutput } from "./raw-output.ts";
 import { appendAudit } from "./audit.ts";
 import type { Store } from "./store.ts";
 
@@ -36,11 +36,14 @@ function sha256(text: string): string {
 
 /**
  * The dispatch sequence, in its evidence-safe order (the plan review's
- * critical fix): probe, invoke, retain raw output, audit the attempt, then
- * branch. Every failure path retains the raw bytes and writes an
- * `agent.dispatch.failed` audit event; only a parsed success inserts an
- * `agent_run` row. The result union keeps the caller from ever reaching a
- * failure state with no recorded evidence.
+ * critical fix): probe, retain the prompt, invoke, retain raw output, audit
+ * the attempt, then branch. Every failure path retains the raw bytes and
+ * writes an `agent.dispatch.failed` audit event naming the retained prompt;
+ * only a parsed success inserts an `agent_run` row, whose `input_hash` names
+ * the same prompt file. The result union keeps the caller from ever reaching
+ * a failure state with no recorded evidence. A prompt that cannot be retained
+ * is refused before the harness starts
+ * (docs/features/prompt-retention/plan.md).
  */
 export async function dispatchOnce(
   store: Store,
@@ -60,6 +63,13 @@ export async function dispatchOnce(
   } catch (err) {
     return { ok: false, reason: (err as Error).message };
   }
+  const inputHash = sha256(input.prompt);
+  let promptRef: string;
+  try {
+    promptRef = writePrompt(rootDir, stage.run_id, input.prompt, inputHash);
+  } catch (err) {
+    return { ok: false, reason: `cannot retain the prompt before dispatch: ${(err as Error).message}` };
+  }
   const outcome = await invokeHarness(executor, {
     prompt: input.prompt,
     model: input.requestedModel,
@@ -72,10 +82,11 @@ export async function dispatchOnce(
     writeRawOutput(rootDir, stage.run_id, `--- stderr ---\n${outcome.stderr}`);
   }
   // A failed dispatch writes no `agent_run` row, so its audit summary is the
-  // only per-attempt record of what was requested. It names the model and
-  // effort so a failure is diagnosable without loading the frozen profile.
+  // only per-attempt record of what was requested. It names the model, the
+  // effort and the retained prompt so a failure is diagnosable without loading
+  // the frozen profile.
   const failed = (detail: string): DispatchResult => {
-    const summary = `${detail} (requested model ${input.requestedModel}, effort ${input.requestedEffort})`;
+    const summary = `${detail} (requested model ${input.requestedModel}, effort ${input.requestedEffort}; prompt ${promptRef})`;
     appendAudit(store, {
       runId: stage.run_id,
       stageId: stage.id,
@@ -139,7 +150,7 @@ export async function dispatchOnce(
     cacheWrite: envelope.cacheWrite,
     cost: envelope.cost,
     durationMs: outcome.durationMs,
-    inputHash: sha256(input.prompt),
+    inputHash,
     outputHash: sha256(outcome.raw),
     rawOutputRef,
     independence: "configured_standalone",

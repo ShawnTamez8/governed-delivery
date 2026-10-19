@@ -19,6 +19,7 @@ import type { VerificationConfig } from "../src/governed-config.ts";
 import { validateSpecDoc } from "../src/spec-doc.ts";
 import { computeScope } from "../src/scope.ts";
 import { DESIGN_SPLIT_INTENT, DESIGN_SPLIT_LOCATION } from "../src/design-split.ts";
+import { DEPENDENCY_INTENT, DEPENDENCY_LOCATION, DEPENDENCY_OPTIONS, readDependencyRecord } from "../src/dependency-policy.ts";
 import { readRunSnapshot } from "../src/operator-state.ts";
 
 /**
@@ -27,7 +28,7 @@ import { readRunSnapshot } from "../src/operator-state.ts";
  * words the stage emitter routes on, because it routes over the whole prompt
  * (test/prompts.test.ts guards this).
  */
-const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
+const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }], derived: [] };
 const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-spec-stage.mjs");
 
 function fixtureExecutor(scriptPath: string): ExecutorDefinition {
@@ -1704,6 +1705,7 @@ test("the author, self-critique and reconcile prompts carry the frozen profile's
       { name: "smoke", command: ["node", "--version"] },
       { name: "extra", command: ["node", "--help"] },
     ],
+    derived: [],
   };
   async function dispatched(verification: VerificationConfig): Promise<{ setting: string; input_hash: string }[]> {
     let rows: { setting: string; input_hash: string }[] = [];
@@ -2385,6 +2387,11 @@ test("a review with no open question passes three stages and records the spec_de
       store.query("SELECT * FROM audit WHERE run_id = ? AND action = 'spec.questions.open'", [runId]).length,
       0
     );
+    assert.equal(
+      store.query("SELECT * FROM audit WHERE run_id = ? AND action = 'spec.dependencies.record'", [runId]).length,
+      0,
+      "a spec without ## Dependencies added asks no dependency question"
+    );
     assert.equal(verifyAuditChain(store), null);
   });
 });
@@ -2594,5 +2601,69 @@ test("an author whose frozen definition cannot propose a split blocks before the
     assert.equal(store.query("SELECT * FROM agent_run").length, 0, "nothing was spent");
     assert.equal(splitEvents(store, runId, "spec.split.failed").length, 1);
     assert.equal(store.getRun(runId)!.status, "blocked");
+  });
+});
+
+// --- dependency additions (derived-artifacts-and-dependency-policy Task 8) ----
+
+/** The four packages crew-chatter run 4's reviewed spec named only in prose, read from the committed recording. */
+const RECORDED_PACKAGES = (
+  JSON.parse(
+    readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "spec-crew-chatter-run-4-dependency-in-prose.json"), "utf8")
+  ) as { provenance: { packagesAdded: string[] } }
+).provenance.packagesAdded;
+
+test("a reviewed spec listing packages under ## Dependencies added asks the operator one question and pauses", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    assert.equal(RECORDED_PACKAGES.length, 4, "the recording names four packages");
+    designWithMarker(root, "FIXTURE-DEPENDENCIES");
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    if (!result.ok) return;
+    assert.equal(result.stageIds.specDecision, null);
+    const chain = store.getStageChain(runId);
+    assert.deepEqual(chain.map((s) => [s.kind, s.status]), [["spec", "passed"], ["spec_review", "passed"]]);
+    assert.equal(store.getRun(runId)!.status, "in_progress", "the question pauses the run, it does not block it");
+    assert.deepEqual(agentRunCounts(store, runId), { author: 3, reviewer: 2 }, "the question costs no dispatch");
+
+    // The reviewed spec on disk carries the recorded names under the declared manifest.
+    const spec = validateSpecDoc(readFileSync(result.specPath, "utf8"));
+    assert.ok(spec.ok, spec.ok ? "" : spec.reason);
+    assert.deepEqual(
+      spec.value.dependenciesAdded,
+      RECORDED_PACKAGES.map((name) => ({ manifest: "frontend/package.json", name }))
+    );
+
+    const questions = store.getDecisionQuestions(chain[1].id);
+    assert.equal(questions.length, 1, "exactly one question: the dependency list");
+    const [question] = questions;
+    const finding = store.getCanonicalFinding(question!.finding_id)!;
+    assert.equal(finding.stage_id, chain[1].id);
+    assert.equal(finding.intent_key, DEPENDENCY_INTENT);
+    assert.equal(finding.location, DEPENDENCY_LOCATION);
+    const [report] = store.getFindingReports(finding.id);
+    assert.equal(report!.severity, "medium");
+    assert.equal(report!.classification, "upstream");
+    assert.equal(report!.subject, `specification adds ${RECORDED_PACKAGES.length} package(s)`);
+    const decision = store.getFindingDecisions(chain[1].id).find((d) => d.finding_id === finding.id)!;
+    assert.equal(decision.disposition, "upstream_blocking");
+    assert.deepEqual(JSON.parse(question!.options), DEPENDENCY_OPTIONS);
+    for (const name of RECORDED_PACKAGES) {
+      assert.ok(question!.text.includes(`- frontend/package.json: ${name}`), `the question names ${name}`);
+    }
+
+    const recorded = splitEvents(store, runId, "spec.dependencies.record");
+    assert.equal(recorded.length, 1, "one dependency event");
+    assert.equal(recorded[0]!.stage_id, chain[1].id);
+    assert.equal(
+      recorded[0]!.summary,
+      `finding=${finding.id}; packages=${RECORDED_PACKAGES.map((name) => `frontend/package.json:${name}`).join(",")}`
+    );
+    assert.equal(readDependencyRecord(store.getAuditEvents(runId))?.findingId, finding.id);
+    const open = splitEvents(store, runId, "spec.questions.open");
+    assert.equal(open.length, 1);
+    assert.match(open[0]!.summary, new RegExp(`questions=${finding.id}$`));
+    assert.equal(readRunSnapshot(store, root, runId).snapshot.phase, "awaiting_decision");
+    assert.equal(verifyAuditChain(store), null);
   });
 });

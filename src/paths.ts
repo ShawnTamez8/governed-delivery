@@ -49,6 +49,19 @@ export function rawOutputRef(runId: number, name: string): string {
   return join(GOVERNANCE_DIR, "raw", String(runId), name);
 }
 
+/**
+ * The directory holding one run's retained prompts (hazard 2 applied to the
+ * input): each file is named by the prompt's `agent_run.input_hash`.
+ */
+export function promptDir(rootDir: string, runId: number): string {
+  return join(rootDir, GOVERNANCE_DIR, "prompts", String(runId));
+}
+
+/** The same file relative to the repository root, as `rawOutputRef` is. */
+export function promptRef(runId: number, name: string): string {
+  return join(GOVERNANCE_DIR, "prompts", String(runId), name);
+}
+
 /** The directory holding one run's frozen profile (section 12). */
 export function profileDir(rootDir: string, runId: number): string {
   return join(rootDir, GOVERNANCE_DIR, "profiles", String(runId));
@@ -124,6 +137,15 @@ export function codeReviewVerificationDir(
   round: number
 ): string {
   return join(codeReviewEvidenceDir(rootDir, runId), `round-${round}`, "verification");
+}
+
+/**
+ * The command logs of one derived-artifact regeneration (`governed.yaml`
+ * `derived:`), one directory per regeneration point (`phase-1`,
+ * `self-review`, `remediation-1`).
+ */
+export function derivedEvidenceDir(rootDir: string, runId: number, label: string): string {
+  return join(rootDir, GOVERNANCE_DIR, "derived", String(runId), label);
 }
 
 /** The root-relative form stored inside retained command records. */

@@ -400,6 +400,15 @@ if (isSelfReview) {
   };
   const targets = phaseIndex === 1 ? [paths[0]] : [paths[0], phasePath()];
   agentResult = proposed(targets.map((p) => phasedFile(p, actionFor(p))));
+} else if (mode === "add-dependency") {
+  // Adds a package.json declaring one package: @tiptap/react at ^3, the first
+  // package crew-chatter run 4's specification chose
+  // (test/fixtures/recorded/spec-crew-chatter-run-4-dependency-in-prose.json).
+  const manifest = paths.find((p) => p === "package.json" || p.endsWith("/package.json"));
+  if (manifest === undefined) throw new Error("emit-implementation-stage: add-dependency needs a package.json in scope");
+  agentResult = proposed([
+    { path: manifest, action: "add", content: `${JSON.stringify({ dependencies: { "@tiptap/react": "^3" } }, null, 2)}\n` },
+  ]);
 } else if (mode === "phased-unchanged" || mode === "phased-all-unchanged") {
   // The shape web-calculator run 1's phase 2 returned: a file an earlier phase
   // committed, sent back byte for byte as a modify. The copy is read from the

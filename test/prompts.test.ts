@@ -232,13 +232,49 @@ const PLAN_TASKS_NAME_SCOPE_RULE =
 const PLAN_NO_INVENTED_CHANGE_RULE =
   "Never invent a change to a path that needs none: leave such a path out of ## Tasks, and the gate's refusal will name it so the specification can be corrected.";
 
+/**
+ * The derived-artifact lines (docs/features/derived-artifacts-and-dependency-policy/plan.md,
+ * Task 4): stated with the verification commands, and in the remediation prompt,
+ * only when governed.yaml declares a derived artifact.
+ */
+const DERIVED_ARTIFACT_SENTENCES = [
+  "After every implementation and remediation commit, the system regenerates these files itself by running their commands, and commits them:",
+  "Never declare, propose or edit these files: the system refuses a specification that declares one and a patch that changes one.",
+];
+
+/** The lockfile entry the static-web starter declares, parsed by the real parser. */
+const WITH_DERIVED: VerificationConfig = (() => {
+  const parsed = parseGovernedConfig(
+    `${RUN_10_FIXTURE.governedYaml.trimEnd()}\nderived:\n  - name: lockfile\n    path: package-lock.json\n    command: ["npm", "install", "--package-lock-only", "--ignore-scripts"]\n`
+  );
+  if (!parsed.ok) throw new Error(`the derived block does not parse: ${parsed.reason}`);
+  return parsed.config;
+})();
+const DERIVED_ENTRY_LINE = "- package-lock.json: npm install --package-lock-only --ignore-scripts";
+
+/**
+ * The `## Dependencies added` schema (the same plan, Task 7). The first line's
+ * example is backticked in source, so it is split before the backtick here and
+ * asserted whole against the generated prompts.
+ */
+const DEPENDENCIES_SCHEMA_SENTENCES = [
+  "- an optional ## Dependencies added section: one package the change adds to a package.json per list line, in exactly this form:",
+  "List every package the change adds under dependencies, devDependencies, optionalDependencies or peerDependencies of any package.json, and nothing else; the manifest must also be a declared artifact. Leave the section out when the change adds no package.",
+  "The operator approves or denies the whole list before planning, and the system refuses an implementation that adds a package this section does not list.",
+];
+const DEPENDENCIES_SCHEMA_EXAMPLE = "in exactly this form: `- frontend/package.json: @tiptap/react`.";
+const DEPENDENCY_ADDITION_RULE =
+  "Add a package to a package.json only if the specification's ## Dependencies added section lists it for that file: the system refuses a commit that adds any other.";
+const FOLD_KEEPS_DEPENDENCIES_RULE =
+  "Keep the ## Dependencies added section exactly as it is: the operator answered that list, and a revision that changes it blocks the run.";
+
 /** The three builders whose dispatches send --json-schema, with the reply rule they carry. */
-function structuredPatchPrompts(): Array<{ name: string; prompt: string }> {
+function structuredPatchPrompts(verification: VerificationConfig = VERIFICATION): Array<{ name: string; prompt: string }> {
   const base = "b".repeat(40);
   return [
-    { name: "phase", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", ["src/a.ts"], base, ONLY_PHASE, [], VERIFICATION) },
-    { name: "self-review", prompt: selfReviewPrompt() },
-    { name: "remediation", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, "# spec", "# plan", ["src/a.ts"], base, ["src/a.ts"], "DIFF", []) },
+    { name: "phase", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", ["src/a.ts"], base, ONLY_PHASE, [], verification) },
+    { name: "self-review", prompt: selfReviewPrompt(verification) },
+    { name: "remediation", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, "# spec", "# plan", ["src/a.ts"], base, ["src/a.ts"], "DIFF", [], verification) },
   ];
 }
 
@@ -532,6 +568,15 @@ const CONSTRAINT_STRINGS = [
   // criterion-quality block.
   PLAN_TASKS_NAME_SCOPE_RULE,
   PLAN_NO_INVENTED_CHANGE_RULE,
+  // Derived artifacts and the dependency policy
+  // (docs/features/derived-artifacts-and-dependency-policy/plan.md). Crew-chatter
+  // run 4's specification added four packages and promised a regenerated
+  // package-lock.json that a read-only implementer cannot write. Also kept above
+  // the criterion-quality block.
+  ...DERIVED_ARTIFACT_SENTENCES,
+  ...DEPENDENCIES_SCHEMA_SENTENCES,
+  DEPENDENCY_ADDITION_RULE,
+  FOLD_KEEPS_DEPENDENCIES_RULE,
   // What a criterion may say (docs/features/spec-criterion-testability/plan.md).
   // Measured 2026-09-27, $1.6186: team-notes run 3 copied the design's
   // "meaningful content change" into AC-041, and its tone guidance reached
@@ -738,7 +783,7 @@ test("each plan prompt states the frozen commands and forbids a task that runs t
 });
 
 test("each plan prompt follows the config it is given", () => {
-  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }] };
+  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }], derived: [] };
   const recorded = planVerificationPrompts(VERIFICATION);
   const changed = planVerificationPrompts(other);
   for (const [index, { name, prompt }] of changed.entries()) {
@@ -926,8 +971,8 @@ test("the implementation prompt states the frozen commands after the path lists 
   };
   assert.ok(prompt.includes(`\n\n${RUN_10_COMMAND_LINES.join("\n")}\n\n`), "the commands are one block, in order");
   for (const sentence of [...VERIFICATION_BLOCK_SENTENCES, ...IMPLEMENTER_VERIFICATION_SENTENCES]) at(sentence);
-  // The block and the two lines are one paragraph, then the phase's tasks.
-  at(`${VERIFICATION_BLOCK_SENTENCES[2]}\n${IMPLEMENTER_VERIFICATION_SENTENCES.join("\n")}\n\nTasks for this phase (tasks 11 through 11`);
+  // The block, the two lines and the dependency rule are one paragraph, then the phase's tasks.
+  at(`${VERIFICATION_BLOCK_SENTENCES[2]}\n${IMPLEMENTER_VERIFICATION_SENTENCES.join("\n")}\n${DEPENDENCY_ADDITION_RULE}\n\nTasks for this phase (tasks 11 through 11`);
   assert.ok(at("these do not exist yet, so each takes action add:") < at(VERIFICATION_BLOCK_SENTENCES[0]!));
   assert.ok(at(IMPLEMENTER_VERIFICATION_SENTENCES.at(-1)!) < at("Tasks for this phase (tasks"));
   // The emitter reads the scope block and both lists as the text after a heading
@@ -949,7 +994,7 @@ test("the implementation prompt states the frozen commands after the path lists 
 });
 
 test("the implementation prompt follows the config it is given", () => {
-  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }] };
+  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }], derived: [] };
   const build = (verification: VerificationConfig): string =>
     buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", ["src/a.ts"], "b".repeat(40), ONLY_PHASE, [], verification);
   const recorded = build(VERIFICATION);
@@ -994,7 +1039,7 @@ test("the self-review prompt names the last commit as the base and keeps the scr
   assert.ok(prompt.indexOf("these do not exist yet") < prompt.indexOf(VERIFICATION_BLOCK_SENTENCES[0]!));
   assert.ok(prompt.indexOf("Approved plan:") < prompt.indexOf("Approved specification:"));
   assert.ok(prompt.endsWith(`Complete diff of the change through ${"d".repeat(40)}:\n\nDIFF-TEXT`));
-  const other = selfReviewPrompt({ commands: [{ name: "smoke", command: ["node", "--version"] }] });
+  const other = selfReviewPrompt({ commands: [{ name: "smoke", command: ["node", "--version"] }], derived: [] });
   assert.ok(other.includes("\n\n- smoke: node --version\n\n"));
   for (const line of RUN_10_COMMAND_LINES) assert.ok(!other.includes(line), `still carries ${line}`);
 });
@@ -1159,7 +1204,7 @@ test("both spec draft prompts state the frozen commands in order, then the rule 
 });
 
 test("the verification lines follow the config a builder is given, not a fixed one", () => {
-  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }] };
+  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }], derived: [] };
   const builds: Array<[string, (verification: VerificationConfig) => string]> = [
     ["author", (v) => buildSpecAuthorPrompt(SPEC_AUTHOR, "DESIGN-TEXT", v)],
     ["selfCritique", (v) => buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PANEL, v)],
@@ -1740,7 +1785,7 @@ test("the spec reconciliation prompt states the frozen commands and names a Veri
 });
 
 test("the spec reconciliation prompt follows the config it is given", () => {
-  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }] };
+  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }], derived: [] };
   const recorded = buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PAIR, VERIFICATION);
   const changed = buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PAIR, other);
   assert.notEqual(recorded, changed);
@@ -1836,7 +1881,7 @@ test("the fold prompt states the frozen commands and folds only the paths a Veri
 });
 
 test("the fold prompt follows the config it is given", () => {
-  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }] };
+  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }], derived: [] };
   const recorded = buildSpecDecisionFoldPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", FOLD_QUESTIONS, VERIFICATION);
   const changed = buildSpecDecisionFoldPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", FOLD_QUESTIONS, other);
   assert.notEqual(recorded, changed);
@@ -1959,7 +2004,8 @@ test("the remediation prompt carries every report and advertises a valid patch r
           },
         ],
       },
-    ]
+    ],
+    VERIFICATION
   );
   for (const text of [
     "finding 7",
@@ -1992,6 +2038,94 @@ test("the remediation prompt carries every report and advertises a valid patch r
     assert.ok(at >= 0, `remediation prompt missing: ${rule}`);
     assert.ok(at < prompt.indexOf("Approved scope:"), `remediation rule after the scope: ${rule}`);
   }
+});
+
+// --- derived artifacts and the dependency policy ------------------------------
+// (docs/features/derived-artifacts-and-dependency-policy/plan.md, Tasks 4 and 7)
+
+/** Every builder that renders the verification block, then the remediation prompt, which renders none. */
+function derivedAwarePrompts(verification: VerificationConfig): Array<{ name: string; prompt: string }> {
+  const hash = "a".repeat(64);
+  const base = "b".repeat(40);
+  return [
+    { name: "spec author", prompt: buildSpecAuthorPrompt(SPEC_AUTHOR, "DESIGN-TEXT", verification) },
+    { name: "spec self-critique", prompt: buildSpecSelfCritiquePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PANEL, verification) },
+    { name: "spec reconcile", prompt: buildSpecReconcilePrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", PAIR, verification) },
+    { name: "fold", prompt: buildSpecDecisionFoldPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", FOLD_QUESTIONS, verification) },
+    { name: "plan author", prompt: buildPlanAuthorPrompt(PLAN_AUTHOR, "SPEC-TEXT", hash, PLAN_SCOPE, verification) },
+    { name: "plan self-critique", prompt: buildPlanSelfCritiquePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", hash, PLAN_SCOPE, PANEL, verification) },
+    { name: "plan reconcile", prompt: buildPlanReconcilePrompt(PLAN_AUTHOR, "SPEC-TEXT", "PLAN-TEXT", hash, PLAN_SCOPE, PAIR, verification) },
+    ...structuredPatchPrompts(verification),
+  ];
+}
+
+const DERIVED_BLOCK = `${DERIVED_ARTIFACT_SENTENCES[0]}\n${DERIVED_ENTRY_LINE}\n${DERIVED_ARTIFACT_SENTENCES[1]}`;
+
+test("with a derived artifact, every prompt that states the commands lists it after them, and remediation lists it before the scope", () => {
+  for (const { name, prompt } of derivedAwarePrompts(WITH_DERIVED)) {
+    if (name === "remediation") {
+      assert.ok(
+        prompt.includes(`${SAME_DEFECT_SWEEP_RULE}\n${DEPENDENCY_ADDITION_RULE}\n\n${DERIVED_BLOCK}\n\nApproved scope:\n\n`),
+        `${name} prompt does not list the derived file before its scope:\n${prompt}`
+      );
+    } else {
+      assert.ok(
+        prompt.includes(`${VERIFICATION_BLOCK_SENTENCES[2]}\n\n${DERIVED_BLOCK}`),
+        `${name} prompt does not list the derived file after its commands`
+      );
+    }
+    assert.equal(prompt.split(DERIVED_ARTIFACT_SENTENCES[0]!).length, 2, `${name} states the derived files once`);
+  }
+});
+
+test("with no derived artifact, every one of those prompts is the same prompt without the derived lines", () => {
+  const withDerived = derivedAwarePrompts(WITH_DERIVED);
+  for (const [index, { name, prompt }] of derivedAwarePrompts(VERIFICATION).entries()) {
+    for (const sentence of DERIVED_ARTIFACT_SENTENCES) assert.ok(!prompt.includes(sentence), `${name} states ${sentence}`);
+    const removed = name === "remediation" ? `\n${DERIVED_BLOCK}\n` : `\n\n${DERIVED_BLOCK}`;
+    assert.equal(withDerived[index]!.prompt.replace(removed, ""), prompt, `${name}: the derived lines are the only difference`);
+  }
+});
+
+test("the four prompts that write a specification state the dependencies schema after the open-decisions schema", () => {
+  const prompts = derivedAwarePrompts(VERIFICATION).filter(({ name }) => name.startsWith("spec") || name === "fold");
+  assert.equal(prompts.length, 4);
+  for (const { name, prompt } of prompts) {
+    for (const sentence of [...DEPENDENCIES_SCHEMA_SENTENCES, DEPENDENCIES_SCHEMA_EXAMPLE]) {
+      assert.ok(prompt.includes(sentence), `${name} prompt missing: ${sentence}`);
+    }
+    assert.ok(prompt.indexOf("## Open decisions section") < prompt.indexOf(DEPENDENCIES_SCHEMA_SENTENCES[0]!), name);
+    // Only the fold is told the list is fixed: the operator answered it before the fold runs.
+    assert.equal(prompt.includes(FOLD_KEEPS_DEPENDENCIES_RULE), name === "fold", name);
+  }
+});
+
+test("the three patch prompts, and no other, state the dependency addition rule", () => {
+  for (const { name, prompt } of derivedAwarePrompts(VERIFICATION)) {
+    const expected = name === "phase" || name === "self-review" || name === "remediation";
+    assert.equal(prompt.split(DEPENDENCY_ADDITION_RULE).length, expected ? 2 : 1, name);
+  }
+  assert.ok(!buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, "SPEC", "PLAN", ["src/a.ts"], "DIFF", "c".repeat(40)).includes(DEPENDENCY_ADDITION_RULE));
+});
+
+test("the dependencies example a specification prompt advertises validates against the specification parser", () => {
+  const spec = validateSpecDoc(`feature: demo
+change_kind: feature
+
+## Declared artifacts
+
+- frontend/package.json
+
+## Acceptance criteria
+
+- AC-001: criterion text
+
+## Dependencies added
+
+${/in exactly this form: `([^`]+)`\./.exec(DEPENDENCIES_SCHEMA_EXAMPLE)![1]}
+`);
+  assert.ok(spec.ok, spec.ok ? "" : spec.reason);
+  assert.deepEqual(spec.value.dependenciesAdded, [{ manifest: "frontend/package.json", name: "@tiptap/react" }]);
 });
 
 // --- code-review reconciler (code-review-reconciler Task 4) -----------------
@@ -2226,7 +2360,7 @@ function routingPrompts(document: string) {
     { builder: "buildImplementationAuthorPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, document, document, scope, base, ONLY_PHASE, [], VERIFICATION), schema: PATCH_RESULT_SCHEMA },
     { builder: "buildImplementationSelfReviewPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationSelfReviewPrompt(IMPLEMENTER, document, document, scope, base, scope, scope, document, VERIFICATION), schema: SELF_REVIEW_RESULT_SCHEMA },
     { builder: "buildCodeReviewPrompt", prefix: "CODE_REVIEW_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, document, document, scope, document, base) },
-    { builder: "buildCodeReviewRemediationPrompt", prefix: "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, document, document, scope, base, scope, document, []), schema: PATCH_RESULT_SCHEMA },
+    { builder: "buildCodeReviewRemediationPrompt", prefix: "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, document, document, scope, base, scope, document, [], VERIFICATION), schema: PATCH_RESULT_SCHEMA },
     { builder: "buildCodeReviewReconcilerPrompt", prefix: "CODE_REVIEW_RECONCILER_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewReconcilerPrompt([], document, document, document, base) },
     { builder: "buildDesignSplitPrompt", prefix: "DESIGN_SPLIT_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildDesignSplitPrompt(SPEC_AUTHOR, document, document, SPLIT_CONTEXT) },
   ];
@@ -2425,7 +2559,7 @@ test("CLI fixture composes existing emitters for all builder families with recei
         if (reports.value.length) assert.equal(reports.value[0]!.severity, mode === "low" ? "low" : "high");
       }
     }
-    const remediationPrompt = buildCodeReviewRemediationPrompt(IMPLEMENTER, specText as string, planText as string, scope, base, scope, "", []);
+    const remediationPrompt = buildCodeReviewRemediationPrompt(IMPLEMENTER, specText as string, planText as string, scope, base, scope, "", [], VERIFICATION);
     const remediated = runRouter(root, remediationPrompt, IMPLEMENTER.id, ["--code-review-mode", "high-then-clean"], PATCH_RESULT_SCHEMA);
     assert.equal(remediated.proposedPatches![0]!.baseCommit, base);
     const repaired = remediated.proposedPatches![0]!.files[0]!;

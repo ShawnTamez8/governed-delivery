@@ -13,7 +13,12 @@ import { APPROVAL_MAX_LIFETIME_SECONDS, buildPolicy, policyHash } from "./policy
 import { loadVerifiedProfile } from "./profile.ts";
 import { artifactDirectoryRefusals, computeScope, touchesProtected } from "./scope.ts";
 import { computeRisk } from "./select.ts";
-import { runDocumentRefusals, validateSpecDoc } from "./spec-doc.ts";
+import {
+  derivedArtifactRefusalReason,
+  derivedArtifactRefusals,
+  runDocumentRefusals,
+  validateSpecDoc,
+} from "./spec-doc.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
 
 export type BindingResult =
@@ -131,6 +136,15 @@ export function buildBinding(
     return no(
       `declared artifact names a document the run itself writes (design, spec, or plan under docs/features/${run.slug}/): ${runDocuments.join(", ")}`
     );
+  }
+  // The derived-file rule, re-run where the signature binds, as above: an
+  // approval must never bind a file the system regenerates.
+  const derived = derivedArtifactRefusals(
+    loaded.profile.verification.derived.map((d) => d.path),
+    doc.value.declaredArtifacts
+  );
+  if (derived.length > 0) {
+    return no(derivedArtifactRefusalReason(derived));
   }
   const specHash = sha256Hex(normalizeText(content));
   const risk = computeRisk(

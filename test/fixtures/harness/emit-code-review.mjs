@@ -192,11 +192,24 @@ if (remediationMatch) {
     }
   }
   const current = readFileSync(target, "utf8");
-  const file = {
-    path: mode === "remediation-outside-scope" ? "outside.txt" : target,
-    action: "modify",
-    content: `${current.trimEnd()}\ncode-review-remediated\n`,
-  };
+  const manifest = scope.find((p) => p === "package.json" || p.endsWith("/package.json"));
+  const file =
+    mode === "remediation-add-dependency"
+      ? {
+          // @tiptap/react at ^3, the first package crew-chatter run 4's
+          // specification chose (test/fixtures/recorded/spec-crew-chatter-run-4-dependency-in-prose.json).
+          path: manifest,
+          action: "modify",
+          content: `${JSON.stringify({ dependencies: { "@tiptap/react": "^3" } }, null, 2)}\n`,
+        }
+      : {
+          path: mode === "remediation-outside-scope" ? "outside.txt" : target,
+          action: "modify",
+          content: `${current.trimEnd()}\ncode-review-remediated\n`,
+        };
+  if (mode === "remediation-add-dependency" && manifest === undefined) {
+    throw new Error("emit-code-review: remediation-add-dependency needs a package.json in scope");
+  }
   if (mode === "remediation-mutate") writeFileSync("remediator-residue.txt", "fixture wrote this\n");
   if (mode === "remediation-prose") {
     // A reply that never reached the structured channel: text, no structured_output.
@@ -392,7 +405,8 @@ if (mode === "parallel-fail") {
   mode === "remediation-wrong-base" ||
   mode === "remediation-outside-scope" ||
   mode === "remediation-mutate" ||
-  mode === "remediation-prose"
+  mode === "remediation-prose" ||
+  mode === "remediation-add-dependency"
 ) {
   agentResult = onlyFrom(CORRECTNESS, [
     finding({ severity: "high", location: `${first}:1`, intentKey: "needs-remediation" }),
@@ -426,6 +440,10 @@ if (mode === "parallel-fail") {
 } else if (mode === "unchanged-path") {
   // README.md is committed at the base and never changed by the run.
   agentResult = onlyFrom(CORRECTNESS, [finding({ location: "README.md" })]);
+} else if (mode === "derived-path") {
+  // package-lock.json changed in the verified range, but the system
+  // regenerates it, so the stage leaves it out of the changed paths.
+  agentResult = onlyFrom(CORRECTNESS, [finding({ location: "package-lock.json" })]);
 } else if (mode === "bad-line") {
   agentResult = onlyFrom(CORRECTNESS, [finding({ location: `${first}:0` })]);
 } else if (mode === "non-proposed") {

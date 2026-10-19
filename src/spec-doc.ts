@@ -11,7 +11,22 @@ export interface SpecDoc {
   declaredArtifacts: string[];
   acceptanceCriteria: AcceptanceCriterion[];
   openDecisions: OpenDecision[];
+  dependenciesAdded: DependencyAddition[];
 }
+
+/**
+ * One package the change adds to one package.json, listed under the optional
+ * `## Dependencies added` section. The operator approves or denies the list at
+ * `spec_decision`, and the implementation may add nothing else
+ * (docs/features/derived-artifacts-and-dependency-policy/plan.md).
+ */
+export interface DependencyAddition {
+  manifest: string;
+  name: string;
+}
+
+/** npm's package-name rule: lowercase, optionally scoped, at most 214 characters. */
+const NPM_PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
 
 export interface AcceptanceCriterion {
   id: string;
@@ -290,6 +305,65 @@ export function validateSpecDoc(
       openDecisions.push({ id, severity, text: question.trim() });
     }
   }
+  // Optional, closed like the sections above. A misspelled or second heading
+  // would hold additions the operator never sees and the implementation check
+  // never approves, so both are refused.
+  const dependencyHeadings = [...text.matchAll(/^## (.*)$/gm)]
+    .map((m) => m[1].trim())
+    .filter((title) => /^dependencies\b/i.test(title));
+  for (const title of dependencyHeadings) {
+    if (title !== "Dependencies added") {
+      return {
+        ok: false,
+        reason: `the dependencies heading must be exactly '## Dependencies added'; this heading is not: ## ${title}`,
+      };
+    }
+  }
+  if (dependencyHeadings.length > 1) {
+    return { ok: false, reason: "a specification has at most one ## Dependencies added section" };
+  }
+  const dependenciesAdded: DependencyAddition[] = [];
+  const dependenciesSection = section(text, "Dependencies added");
+  if (dependenciesSection !== null) {
+    const declared = new Set(artifacts.map(normalizePath));
+    const seen = new Set<string>();
+    const lines = dependenciesSection
+      .split("\n")
+      .map((line) => line.trim().replace(/^-\s*/, ""))
+      .filter((line) => line !== "");
+    for (const line of lines) {
+      const shape = /^(\S+): (\S+)$/.exec(line);
+      if (!shape) {
+        return {
+          ok: false,
+          reason: `every line under ## Dependencies added must be one addition of the form '- <path to package.json>: <package name>'; this line is not: ${line}`,
+        };
+      }
+      const manifest = normalizePath(shape[1]);
+      const name = shape[2];
+      if (manifest !== "package.json" && !manifest.endsWith("/package.json")) {
+        return {
+          ok: false,
+          reason: `a dependency is added only to a package.json; ${manifest} is not one: ${line}`,
+        };
+      }
+      if (!declared.has(manifest)) {
+        return {
+          ok: false,
+          reason: `a dependency is added only to a declared package.json; ${manifest} is not under ## Declared artifacts: ${line}`,
+        };
+      }
+      if (name.length > 214 || !NPM_PACKAGE_NAME.test(name)) {
+        return { ok: false, reason: `invalid npm package name ${name}: ${line}` };
+      }
+      const key = `${manifest}:${name}`;
+      if (seen.has(key)) {
+        return { ok: false, reason: `duplicate dependency addition ${key}` };
+      }
+      seen.add(key);
+      dependenciesAdded.push({ manifest, name });
+    }
+  }
   return {
     ok: true,
     value: {
@@ -298,6 +372,7 @@ export function validateSpecDoc(
       declaredArtifacts: artifacts,
       acceptanceCriteria: criteria,
       openDecisions,
+      dependenciesAdded,
     },
   };
 }
@@ -317,6 +392,24 @@ export function runDocumentRefusals(slug: string, artifacts: readonly string[]):
     (name) => normalizePath(`docs/features/${slug}/${name}`)
   );
   return artifacts.filter((path) => runDocuments.includes(normalizePath(path)));
+}
+
+/**
+ * A declared artifact naming a file the system regenerates (`governed.yaml`
+ * `derived:`). The system writes and commits that file after every patch
+ * commit, so no model may own it: refused wherever a spec is written and
+ * where the approval re-reads it, as the run's own documents are.
+ */
+export function derivedArtifactRefusals(
+  derivedPaths: readonly string[],
+  artifacts: readonly string[]
+): string[] {
+  const derived = derivedPaths.map(normalizePath);
+  return artifacts.filter((path) => derived.includes(normalizePath(path)));
+}
+
+export function derivedArtifactRefusalReason(paths: readonly string[]): string {
+  return `declared artifact names a file the system regenerates (governed.yaml derived:): ${paths.join(", ")}; the system writes it after every patch commit, so it is never declared`;
 }
 
 function section(content: string, title: string): string | null {
@@ -346,7 +439,8 @@ export function writeSpecDoc(
   rootDir: string,
   slug: string,
   content: string,
-  startingCommit?: string | null
+  startingCommit?: string | null,
+  derivedPaths: readonly string[] = []
 ): { path: string; doc: SpecDoc } {
   const result = validateSpecDoc(content);
   if (!result.ok) {
@@ -373,6 +467,10 @@ export function writeSpecDoc(
     throw new Error(
       `declared artifact names a document the run itself writes (design, spec, or plan under docs/features/${slug}/): ${runDocuments.join(", ")}`
     );
+  }
+  const derived = derivedArtifactRefusals(derivedPaths, result.value.declaredArtifacts);
+  if (derived.length > 0) {
+    throw new Error(derivedArtifactRefusalReason(derived));
   }
   const path = join(rootDir, "docs", "features", slug, "spec.md");
   mkdirSync(dirname(path), { recursive: true });

@@ -71,6 +71,7 @@ The specification document schema is:
   not inside this section.
 ${criterionQualityRule("")}
 ${openDecisionsSchema("")}
+${dependenciesSchema("")}
 
 ${verificationCommandsBlock(verification)}
 
@@ -135,12 +136,54 @@ ${indent}  Record a question here instead of deciding it yourself or leaving it 
  */
 function verificationCommandsBlock(verification: VerificationConfig): string {
   const commands = verification.commands.map((c) => `- ${c.name}: ${c.command.join(" ")}`).join("\n");
+  const derived = derivedArtifactsLines(verification);
   return `After the implementation is committed, and again after each code-review remediation commit, the system runs these verification commands in this order in a checkout of the delivered code:
 
 ${commands}
 
 A command passes only if it exits 0 within its time and output limits and leaves the checkout exactly as committed: git must show no new or changed file, so build output must be ignored by git.
-The first command that fails blocks the run, and no repair round follows.`;
+The first command that fails blocks the run, and no repair round follows.${derived === "" ? "" : `\n\n${derived}`}`;
+}
+
+/**
+ * The files the system regenerates (`governed.yaml` `derived:`), stated with
+ * the verification commands in every prompt that renders them, and on its own
+ * in the remediation prompt, which renders no verification block
+ * (`docs/features/derived-artifacts-and-dependency-policy/plan.md`). Empty when
+ * none are declared, so a configuration without the block changes no prompt.
+ * Each sentence is one source line so the constraint scan matches it.
+ */
+function derivedArtifactsLines(verification: VerificationConfig): string {
+  if (verification.derived.length === 0) return "";
+  return [
+    `After every implementation and remediation commit, the system regenerates these files itself by running their commands, and commits them:`,
+    ...verification.derived.map((d) => `- ${d.path}: ${d.command.join(" ")}`),
+    `Never declare, propose or edit these files: the system refuses a specification that declares one and a patch that changes one.`,
+  ].join("\n");
+}
+
+/**
+ * The one rule for adding a package, stated in the three patch prompts
+ * (`docs/features/derived-artifacts-and-dependency-policy/plan.md`): the system
+ * compares every changed package.json with the signed specification's list.
+ */
+const DEPENDENCY_ADDITION_RULE = `Add a package to a package.json only if the specification's ## Dependencies added section lists it for that file: the system refuses a commit that adds any other.`;
+
+/**
+ * The fold's limit on that list: the operator answered the reviewed list, so
+ * `runSpecDecisionStage` refuses a fold that changes it. One source line.
+ */
+const FOLD_KEEPS_DEPENDENCIES_RULE = `Keep the ## Dependencies added section exactly as it is: the operator answered that list, and a revision that changes it blocks the run.`;
+
+/**
+ * The optional `## Dependencies added` schema, stated beside the open-decisions
+ * schema in the four prompts that write a specification (hazard 3). The list is
+ * the operator's question at `spec_decision` and the implementation's limit.
+ */
+function dependenciesSchema(indent: string): string {
+  return `${indent}- an optional ## Dependencies added section: one package the change adds to a package.json per list line, in exactly this form: \`- frontend/package.json: @tiptap/react\`.
+${indent}  List every package the change adds under dependencies, devDependencies, optionalDependencies or peerDependencies of any package.json, and nothing else; the manifest must also be a declared artifact. Leave the section out when the change adds no package.
+${indent}  The operator approves or denies the whole list before planning, and the system refuses an implementation that adds a package this section does not list.`;
 }
 
 /**
@@ -324,6 +367,7 @@ The self-critique has:
     not inside this section.
 ${criterionQualityRule("  ")}
 ${openDecisionsSchema("  ")}
+${dependenciesSchema("  ")}
   A revised specification that does not validate blocks the run. There is no
   fallback to your draft.
 - panelRequest: the panel you propose for the independent review
@@ -974,6 +1018,7 @@ The revised specification must satisfy the same document schema as before:
   not inside this section
 ${openDecisionsSchema("")}
   You may keep, reword, or remove an existing entry, but never add a new entry during this revision; a question you now find open is answered through the decision on the finding that raised it.
+${dependenciesSchema("")}
 A revised specification that does not validate blocks the run.
 
 Design document:
@@ -1097,6 +1142,8 @@ The revised specification must satisfy the same document schema as before:
   nothing else
 - an optional ## Open decisions section: one entry per list line in exactly
   this form: \`- OD-001 (high): <the question the design leaves open>\`
+${dependenciesSchema("")}
+${FOLD_KEEPS_DEPENDENCIES_RULE}
 A revised specification that does not validate blocks the run.
 
 ${verificationCommandsBlock(verification)}
@@ -1417,6 +1464,7 @@ ${renderPaths(scope.filter((p) => !existing.has(p)))}
 ${verificationCommandsBlock(verification)}
 These commands first run after the last phase, and again after any code-review remediation, so a phase that leaves one of them failing is not by itself a defect.
 Before you choose a file's content, read what each command runs (for an npm command, its entry under scripts in package.json) and write files that command will accept.
+${DEPENDENCY_ADDITION_RULE}
 
 Tasks for this phase (tasks ${phase.firstTask} through ${lastTask} of the approved plan):
 
@@ -1519,6 +1567,7 @@ ${renderPaths(scope.filter((p) => !existing.has(p)))}
 
 ${verificationCommandsBlock(verification)}
 These commands run right after this review, and the first that fails blocks the run.
+${DEPENDENCY_ADDITION_RULE}
 
 Changed paths:
 
@@ -1668,8 +1717,10 @@ export function buildCodeReviewRemediationPrompt(
   baseCommit: string,
   changedPaths: string[],
   diff: string,
-  findings: CodeReviewRemediationFindingInput[]
+  findings: CodeReviewRemediationFindingInput[],
+  verification: VerificationConfig
 ): string {
+  const derived = derivedArtifactsLines(verification);
   const renderedFindings = findings
     .map((finding) => {
       const reports = finding.reports
@@ -1705,7 +1756,8 @@ Never use Python's \`\\UXXXXXXXX\` escape syntax; it is not valid JSON.
 Write every line break inside a JSON string, including each line break of a file's content, as \`\\n\` and every tab as \`\\t\`; never put a raw line break or tab inside a string literal.
 Before you return, re-read every task in the approved plan and every acceptance criterion in the approved specification that governs the code you change: a fix that breaks one of them is not a fix, so find a change that keeps both.
 When you fix a defect, look for the same defect in every other file of the approved scope and fix it there too.
-
+${DEPENDENCY_ADDITION_RULE}
+${derived === "" ? "" : `\n${derived}\n`}
 Approved scope:
 
 ${scope.map((path) => `- ${path}`).join("\n")}

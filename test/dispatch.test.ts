@@ -11,6 +11,7 @@ import type { ExecutorDefinition } from "../src/executor.ts";
 import { parseGovernedConfig, type VerificationConfig } from "../src/governed-config.ts";
 import { buildSpecAuthorPrompt } from "../src/prompts.ts";
 import { SPEC_AUTHOR } from "../src/agents/spec-author.ts";
+import { sha256Hex } from "../src/canonical.ts";
 
 const FIXTURES = join(process.cwd(), "test", "fixtures", "harness");
 
@@ -220,10 +221,91 @@ test("a failed dispatch's audit summary and reason name the requested model and 
       root
     );
     assert.equal(result.ok, false);
-    assert.match(result.reason, /exited with code 3 \(requested model claude-opus-5-5, effort xhigh\)$/);
+    const prompt = join(".governance", "prompts", "1", `${sha256Hex("x")}.txt`);
+    assert.ok(
+      result.reason.endsWith(`exited with code 3 (requested model claude-opus-5-5, effort xhigh; prompt ${prompt})`),
+      result.reason
+    );
     const audited = store.query<{ summary: string }>("SELECT summary FROM audit WHERE action = 'agent.dispatch.failed'");
     assert.equal(audited.length, 1);
     assert.equal(audited[0]!.summary, result.reason);
+  });
+});
+
+/** Every retained prompt file, as root-relative paths. */
+function promptFiles(root: string): string[] {
+  const dir = join(root, ".governance", "prompts");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { recursive: true })
+    .map((f) => join(".governance", "prompts", String(f)))
+    .filter((f) => f.endsWith(".txt"));
+}
+
+test("a successful dispatch retains its exact prompt under the row's input_hash", async () => {
+  await withDispatchContext(async (store, root, stageId) => {
+    const prompt = "retain me\nwith a second line and non-ASCII: é";
+    const result = await dispatchOnce(
+      store,
+      fixtureExecutor("echo-json"),
+      { stageId, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt },
+      root
+    );
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    const row = store.getAgentRun(result.agentRunId)!;
+    const expected = join(".governance", "prompts", "1", `${row.input_hash}.txt`);
+    assert.deepEqual(promptFiles(root), [expected]);
+    assert.equal(readFileSync(join(root, expected), "utf8"), prompt);
+    assert.equal(sha256Hex(readFileSync(join(root, expected), "utf8")), row.input_hash);
+  });
+});
+
+test("a failed dispatch retains its prompt, and its audit summary names the file", async () => {
+  await withDispatchContext(async (store, root, stageId) => {
+    const result = await dispatchOnce(
+      store,
+      fixtureExecutor("exit-nonzero"),
+      { stageId, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt: "failing prompt" },
+      root
+    );
+    assert.equal(result.ok, false);
+    const files = promptFiles(root);
+    assert.equal(files.length, 1);
+    assert.equal(readFileSync(join(root, files[0]!), "utf8"), "failing prompt");
+    const audited = store.query<{ summary: string }>("SELECT summary FROM audit WHERE action = 'agent.dispatch.failed'");
+    assert.ok(audited[0]!.summary.endsWith(`; prompt ${files[0]})`), audited[0]!.summary);
+  });
+});
+
+test("an identical prompt dispatched twice in one run is retained once", async () => {
+  await withDispatchContext(async (store, root, stageId) => {
+    const executor = fixtureExecutor("echo-json");
+    const input = { stageId, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt: "same" };
+    const first = await dispatchOnce(store, executor, input, root);
+    const second = await dispatchOnce(store, executor, input, root);
+    assert.ok(first.ok && second.ok);
+    assert.equal(promptFiles(root).length, 1);
+    assert.equal(store.query("SELECT * FROM agent_run").length, 2);
+  });
+});
+
+test("a refused dispatch that never reaches the harness retains no prompt", async () => {
+  await withDispatchContext(async (store, root, stageId) => {
+    const oversize = await dispatchOnce(
+      store,
+      fixtureExecutor("exit-nonzero"),
+      { stageId, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt: "x".repeat(PROMPT_MAX_BYTES + 1) },
+      root
+    );
+    assert.equal(oversize.ok, false);
+    const missing = await dispatchOnce(
+      store,
+      fixtureExecutor("exit-nonzero"),
+      { stageId: 9999, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt: "x" },
+      root
+    );
+    assert.equal(missing.ok, false);
+    assert.deepEqual(promptFiles(root), []);
   });
 });
 

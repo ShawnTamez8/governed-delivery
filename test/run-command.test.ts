@@ -59,6 +59,7 @@ async function withRun(fn: (fixture: Fixture) => Promise<void>, command = [proce
     appendAudit(store, { runId: run.id, stageId: null, actor: "system", actorType: "cli", action: "run.create", summary: "fixture intake" });
     freezeProfile(root, run.id, git(root, "rev-parse", "HEAD"), "m", {
       commands: [{ name: "node", command: ["node", "--version"] }],
+      derived: [],
     });
     const { profile } = loadProfile(root, run.id);
     profile.executor.command = command;

@@ -84,7 +84,7 @@ function generatedFiles(projectName: string, featureSlug: string): ReadonlyMap<s
   return new Map([
     [".gitignore", `${GOVERNANCE_PREFIX}\nnode_modules/\n`],
     ["README.md", `# ${projectName}\n\nA dependency-light static web project initialized by BuildWorks.\n\n1. Run \`npm ci\`.\n2. Run \`npm test\`.\n3. Author \`docs/features/${featureSlug}/design.md\` and rerun \`buildworks\`.\n`],
-    ["governed.yaml", 'verify:\n  - name: install\n    command: ["npm", "ci"]\n  - name: test\n    command: ["npm", "test"]\n'],
+    ["governed.yaml", 'verify:\n  - name: install\n    command: ["npm", "ci"]\n  - name: test\n    command: ["npm", "test"]\nderived:\n  - name: lockfile\n    path: package-lock.json\n    command: ["npm", "install", "--package-lock-only", "--ignore-scripts"]\n'],
     ["index.html", '<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>BuildWorks starter</title>\n</head>\n<body>\n  <main id="app"></main>\n  <script type="module" src="./src/app.js"></script>\n</body>\n</html>\n'],
     ["package.json", `${JSON.stringify(packageJson, null, 2)}\n`],
     ["package-lock.json", `${JSON.stringify(packageLock, null, 2)}\n`],

@@ -8,6 +8,9 @@ import { test } from "node:test";
 import { approvalPayload } from "../src/approval.ts";
 import { buildBinding } from "../src/approval-stage.ts";
 import { appendAudit, verifyAuditChain } from "../src/audit.ts";
+import {
+  DEPENDENCY_INTENT, DEPENDENCY_LOCATION, DEPENDENCY_OPTIONS, DEPENDENCY_RECOMMENDED, DEPENDENCY_WHY, dependencyQuestionText,
+} from "../src/dependency-policy.ts";
 import { runGuidedCommand } from "../src/guided-command.ts";
 import { approvalHandoffDir, profilePath } from "../src/paths.ts";
 import { createRunIntake } from "../src/run-intake.ts";
@@ -1138,6 +1141,101 @@ test("guided split question offers split, build as one, or exit, and refuses mod
         [["spec", "passed"], ["spec_review", "passed"], ["spec_decision", "passed"]]);
       assert.equal(snapshot.phase, "awaiting_approval");
       assert.match(snapshot.workflowAction.reasons[0]!.reason, /policy has changed since intake/);
+    } finally {
+      store.close();
+    }
+  } finally {
+    if (beforeKey === undefined) delete process.env.BW_APPROVAL_PUBLIC_KEY;
+    else process.env.BW_APPROVAL_PUBLIC_KEY = beforeKey;
+    rmSync(root, { recursive: true, force: true });
+    rmSync(authority, { recursive: true, force: true });
+  }
+});
+
+test("guided dependency question offers approve, deny, or exit, and records deny for choice 2", { timeout: 120_000 }, async () => {
+  const root = workspace();
+  const authority = `${root}-authority`;
+  const beforeKey = process.env.BW_APPROVAL_PUBLIC_KEY;
+  try {
+    mkdirSync(authority);
+    const keys = generateKeyPairSync("ed25519");
+    const publicPath = join(authority, "approval.pub");
+    writeFileSync(publicPath, keys.publicKey.export({ type: "spki", format: "pem" }));
+    process.env.BW_APPROVAL_PUBLIC_KEY = publicPath;
+    repository(root);
+    const run = createRun(root);
+    useFixtureExecutor(root, run.id);
+    // No emitter writes ## Dependencies added, so the reviewed spec and its
+    // question are recorded as the spec stage records them
+    // (src/spec-stage.ts), the way parkForApproval records its stages.
+    const spec = "feature: guided-feature\nchange_kind: feature\n\n## Declared artifacts\n\n- package.json\n- src/result.js\n\n## Acceptance criteria\n\n- AC-001: The result is delivered.\n\n## Dependencies added\n\n- package.json: @tiptap/react\n";
+    const reviewedSpec = validateSpecDoc(spec);
+    assert.ok(reviewedSpec.ok, reviewedSpec.ok ? "" : reviewedSpec.reason);
+    const specPath = join(root, "docs", "features", run.slug, "spec.md");
+    writeFileSync(specPath, spec);
+    const writer = openStore(root);
+    let findingId: number;
+    try {
+      const authored = writer.insertStage(run.id, "spec", null);
+      appendAudit(writer, { runId: run.id, stageId: authored.id, actor: "system", actorType: "cli",
+        action: "spec.stage.create", summary: `created spec stage ${authored.id}` });
+      writer.completeStage(authored.id, specPath, "pass");
+      const reviewed = writer.insertStage(run.id, "spec_review", authored.id);
+      appendAudit(writer, { runId: run.id, stageId: reviewed.id, actor: "system", actorType: "cli",
+        action: "spec_review.stage.create", summary: `created spec_review stage ${reviewed.id}` });
+      const finding = writer.upsertCanonicalFinding(reviewed.id, 1, DEPENDENCY_INTENT, DEPENDENCY_LOCATION);
+      findingId = finding.id;
+      writer.insertDecisionQuestion({ findingId, text: dependencyQuestionText(reviewedSpec.value.dependenciesAdded),
+        options: DEPENDENCY_OPTIONS, recommended: DEPENDENCY_RECOMMENDED, why: DEPENDENCY_WHY });
+      appendAudit(writer, { runId: run.id, stageId: reviewed.id, actor: "system", actorType: "cli",
+        action: "spec.dependencies.record", summary: `finding=${findingId}; packages=package.json:@tiptap/react` });
+      appendAudit(writer, { runId: run.id, stageId: reviewed.id, actor: "system", actorType: "cli",
+        action: "spec.gate.pass",
+        summary: `spec_review gate passed in round 1; specHash=${sha256Hex(normalizeText(spec))}; risk=low` });
+      writer.completeStage(reviewed.id, specPath, "pass");
+    } finally {
+      writer.close();
+    }
+    const answers = () => {
+      const store = openStore(root, { readOnly: true });
+      try {
+        return store.getAuditEvents(run.id).filter((event) => event.action === "decision.answer").map((event) => event.summary);
+      } finally {
+        store.close();
+      }
+    };
+
+    // A refused choice leaves the question answerable: 2 denies.
+    const asked: string[] = [];
+    const out = capture();
+    const denied = await runGuidedCommand(root, {
+      stdout: out.stream,
+      stderr: capture().stream,
+      prompt: async (message) => {
+        asked.push(message);
+        if (/Action for finding \d+ \(1, 2 or 4\)/.test(message)) return asked.length === 1 ? "3" : "2";
+        if (/Execute every group/.test(message)) return "yes";
+        throw new Error(`unexpected dependency prompt: ${message}`);
+      },
+    });
+    assert.match(out.text(), /^ {2}1\. Approve - Let the implementation add exactly these packages$/m);
+    assert.match(out.text(), /^ {2}2\. Deny {4}- End this run blocked; state in the design what to use instead$/m);
+    assert.match(out.text(), /^ {2}4\. Exit {4}- Leave the run paused to decide later$/m);
+    assert.doesNotMatch(out.text(), /3\. Modify/);
+    assert.equal(out.text().split("This question takes 1 (approve), 2 (deny), or 4 (exit).").length, 2);
+    assert.ok(asked.includes(`Action for finding ${findingId} (1, 2 or 4) [default 4]: `));
+    const recorded = answers();
+    assert.equal(recorded.length, 1);
+    assert.match(recorded[0]!, new RegExp(`for finding ${findingId} answered deny;`));
+    // Deny ends the run at spec_decision with nothing dispatched.
+    assert.equal(denied, 1);
+    const store = openStore(root, { readOnly: true });
+    try {
+      const snapshot = readRunSnapshot(store, root, run.id).snapshot;
+      assert.deepEqual(snapshot.stages.map((stage) => [stage.kind, stage.status]),
+        [["spec", "passed"], ["spec_review", "passed"], ["spec_decision", "blocked"]]);
+      assert.equal(snapshot.run.status, "blocked");
+      assert.equal(store.getAuditEvents(run.id).filter((event) => event.action === "spec_decision.dependencies.denied").length, 1);
     } finally {
       store.close();
     }

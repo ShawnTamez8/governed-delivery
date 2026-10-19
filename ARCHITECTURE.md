@@ -195,6 +195,21 @@ root, authored by the operator before the first run. The verification stage
 finds its commands there and must actually run them; a stage that cannot
 verify fails closed. `governed.yaml` is never part of any run's scope.
 
+`governed.yaml` may also declare, after its `verify:` entries, an optional
+`derived:` block (2026-10-18,
+`docs/features/derived-artifacts-and-dependency-policy/plan.md`). Each entry is
+three lines in fixed order: `- name: <name>`, `path: <repo-relative file path>`
+and `command: [...]`, the command in the same quoted-token form as a verify
+command. A derived path is a file the system regenerates by running its command,
+such as `package-lock.json` from `npm install --package-lock-only
+--ignore-scripts`. It may not be protected or repeated, and the block may not be
+empty. The block is frozen with the verification commands as
+`verification.derived`, and a profile frozen before the field existed is
+refused rather than migrated. A derived path is never declared: the spec write
+and the approval gate refuse a specification that declares one, and every
+author prompt states which files the system regenerates. The guided `static-web`
+starter declares its lockfile this way.
+
 The commands the run froze are stated to every prompt whose output they judge:
 the spec draft, self-critique, reconcile and decision-fold prompts, the plan
 draft, self-critique and reconcile prompts, and the implementer's. They are
@@ -218,6 +233,13 @@ runs before it chooses a file's content.
 - `.governance/` — authoritative state and retained raw output, machine-local
   and ignored.
 - The feature branch and worktree — source changes, one run at a time.
+- Derived artifacts — after every implementation phase commit, self-review
+  commit and code-review remediation commit, the system runs each frozen
+  `derived:` command in the worktree. It requires that only derived paths
+  changed, commits them as the system, removes ignored output the command left,
+  and requires a clean tree. A command that fails or touches any other file
+  blocks the run. This is a system write, not an agent patch, so the scope gate
+  does not apply to it.
 
 Nothing else. A patch touching a path outside the run's signed scope is refused
 at apply time.
@@ -360,6 +382,18 @@ refuses a declared artifact the change leaves untouched (hazard 24,
 `docs/features/declared-artifacts-in-tasks/plan.md`). Nothing parses the
 specification for conditional wording; the plan gate in section 12 is what
 catches a declaration no task will change.
+
+The optional `## Dependencies added` section lists every npm package the change
+adds to any `package.json` under `dependencies`, `devDependencies`,
+`optionalDependencies` or `peerDependencies` (2026-10-18). Each line is one
+addition, `- <path to package.json>: <package name>`. The manifest must be a
+declared artifact whose last segment is `package.json`. The name must follow
+npm's naming rule and be at most 214 characters. A manifest and name pair
+appears at most once. The heading is spelled exactly and appears at most once.
+The section is not a normative node. It is the operator's question at
+`spec_decision` (section 12), and after approval it is the only list of
+packages an implementation commit may add. Version ranges are not part of it.
+The draft, self-critique, reconcile and fold prompts state its schema.
 
 An acceptance criterion is a pass/fail check: a specific input, action, value
 or observable outcome, never a subjective or unquantified term. Where the
@@ -937,6 +971,22 @@ refused at the phase ceiling. The validator checks coverage and the direction of
 dependencies. It cannot tell whether a piece needs code a later piece writes;
 the operator is the only check on order.
 
+**The dependency question** (operator decision, 2026-10-18,
+`docs/features/derived-artifacts-and-dependency-policy/plan.md`). Every package
+a run adds is the operator's choice, not a fact the spec author settles. When the
+`spec_review` gate passes and the reviewed specification lists any package under
+`## Dependencies added` (section 8), the spec group records a canonical finding
+with an `upstream_blocking` decision and a question naming every package and
+the manifest it goes into. The finding is attributed to the dispatch that wrote
+the reviewed specification. The run pauses at `awaiting_decision` through the
+same path as any other question. The question takes approve or deny, and
+`answerQuestion` refuses modify for it. It is never folded. On approve the
+reviewed list stands and is signed with the specification at approval. On deny
+the decision group ends the run `blocked`, without folding any other answer, and
+the repair is a design that says what to use instead and a fresh run. A fold of
+the other answers may not change the list: compared as a set of manifest and
+name pairs, a different list refuses the fold.
+
 **`awaiting_approval`.** The only signed authorization gate. One signed
 authorization — an Ed25519 signature by the operator, verified by the gate against a public key
 held in machine-local configuration, never in a repository — binds feature ID,
@@ -999,6 +1049,19 @@ phase's base, by the self-review's rule below, and records the dropped paths in
 an `implementation.phase.dropped` event, because such a file stages nothing and
 the applier refuses the patch (2026-10-14). A phase left with no file blocks the
 run, as the phase prompt says it will.
+
+After each phase commits, and after the self-review commits a fix, two checks
+run in this order (2026-10-18). First, every `package.json` the range from the
+handoff base to the new commit changes is compared with the signed
+specification's `## Dependencies added` list. A package added under any
+dependency field that the list does not name for that manifest blocks the run
+with `implementation.dependency.unapproved`. Removals and version changes are
+not additions. Second, the frozen `derived:` commands regenerate the derived
+files and the system commits them (section 7), and a failure blocks the run
+with `implementation.derived.failed`. The next phase proposes against the
+regenerated commit, and the gate event's head includes it. The self-review is
+shown the change with every derived path left out of its changed paths and
+diff.
 
 **The self-review** (operator decisions, 2026-10-13 and 2026-10-14). After the
 last phase commits, one more implementer dispatch reads the whole change, the
@@ -1072,7 +1135,14 @@ them through the same scope, protected-path, base/head, link, staged-set,
 committed-set, and clean-tree guards as initial implementation, then runs the
 same frozen verification commands against the resulting commit. Only a passing
 verified commit reaches the next complete panel, which receives a newly
-computed full diff from the original patch base. A remediation that produces
+computed full diff from the original patch base. Between the patch commit and
+verification, the remediation runs the unapproved-addition check over the range
+from the patch base (`code_review.dependency.unapproved`), then regenerates the
+derived files. The regenerated commit is the one verified, recorded as the
+remediation's resulting commit and reviewed next. Every panel's changed paths
+and diff leave the derived paths out, so a regenerated lockfile never reaches a
+review prompt. A reviewer that cites a derived path fails the location check,
+and its panel is invalid. A remediation that produces
 no patch or no new verified commit blocks instead of buying an identical
 retry. Remediation, verification, and later panel rounds remain sequential;
 only independent reviewers within the current panel execute concurrently.
@@ -1391,6 +1461,8 @@ report lives there.
 .governance/
   state.db          authoritative: runs, stages, agent runs, findings, audit
   raw/<run>/...     retained raw model output, one file per invocation
+  prompts/<run>/<hash>.txt  the exact prompt each dispatch sent, named by its
+                            agent_run.input_hash; identical prompts share a file
   content/<hash>    content-addressed overflow for oversized prompts and results
   profiles/<run>/   the frozen profile snapshot for a run
   approval-handoff/<run>/  canonical approval payload plus the detached
@@ -1513,6 +1585,16 @@ bytes were discarded leaves only a truncated fragment in an error message.
 Retained bytes are how diagnosis becomes possible instead of guesswork, and they
 are the raw material for the contract tests in the verification section.
 
+**Retain the prompt before the harness starts** (2026-10-18,
+`docs/features/prompt-retention/plan.md`). After the stage, size and probe
+refusals and before the invocation, the dispatch writes the prompt to
+`.governance/prompts/<run>/<input_hash>.txt`. A successful dispatch's prompt is
+found from its row's `input_hash`; a failed dispatch has no row, so its
+`agent.dispatch.failed` summary names the file. A prompt that cannot be written
+refuses the dispatch before anything is spent. Nothing gates on the retained
+prompt; it exists so a failed or surprising answer can be traced to what was
+asked.
+
 **An invocation that produces no envelope records no `agent_run` row.** A
 timeout or a non-zero exit leaves its audit event and retained raw output as
 the record — the spend is visible, the row is honest by absence. Until a
@@ -1568,9 +1650,11 @@ reaching the network, which is `inherit` for the executor too. The system has
 no sandboxing mechanism to apply here. Treat the named passthrough as the only
 containment that exists today, and see `docs/proposals/` for the options.
 
-**Treat retained raw output as sensitive.** It is model text produced from
-repository content and prompts, so it may contain anything either contained. It
-is machine-local and ignored for that reason as much as for tree cleanliness.
+**Treat retained raw output and retained prompts as sensitive.** Raw output is
+model text produced from repository content and prompts, and a retained prompt
+carries the design, specification, plan and code under review verbatim, so
+either may contain anything the repository contained. Both are machine-local
+and ignored for that reason as much as for tree cleanliness.
 
 **The audit chain is tamper-evident, not secret.** It is committed and readable.
 Do not put secrets in summaries, and do not rely on the chain for
@@ -1910,6 +1994,34 @@ creates runs with the check on.
 It does not authorize the grounding check that evaluation failed, a Decision-1
 call at any other stage, retrying or skipping a failed request, or counting
 the requests as dispatches.
+
+**Derived artifacts and dependency policy — 2026-10-18.** The operator
+authorized building changes 2 and 10 of
+`docs/proposals/sandboxed-delivery-rework.md` as
+`docs/features/derived-artifacts-and-dependency-policy/plan.md` states them.
+The reason: crew-chatter run 4's reviewed specification added npm packages and
+promised a regenerated `package-lock.json`, which an implementer that can only
+read files cannot produce, and no operator had approved those packages.
+
+What it authorizes:
+- an optional `derived:` block in `governed.yaml`, frozen with the verification
+  commands, naming files the system regenerates by running a declared command
+  and commits after every implementation and remediation patch commit; a
+  derived path is never declared in a specification;
+- an optional `## Dependencies added` section in the specification, one
+  operator approve-or-deny question in `spec_decision` when it lists anything,
+  and a refusal of any implementation or remediation commit that adds a
+  package the signed specification does not list.
+
+It does not authorize change 1 (the sandboxed implementer), change 9 (replay),
+prompt retention beyond what `docs/features/prompt-retention/plan.md`
+authorizes, any other rework change, or any paid run.
+
+What the build added beyond the plan, recorded in the plan's implementation
+record: the decision-fold prompt also states that the dependency list stays
+exactly as reviewed, because the fold refuses a changed list. The implementation
+and code-review stages refuse before their stage row when the signed
+specification no longer validates, since they now read its dependency list.
 
 ## 24. Non-goals
 

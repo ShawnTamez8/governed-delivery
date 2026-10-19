@@ -19,13 +19,14 @@ import { computeScope } from "../src/scope.ts";
 import { policyHash } from "../src/policy.ts";
 import { DESIGN_SPLIT_INTENT, readSplitRecord, renderPieceDesign, type SplitEvidence } from "../src/design-split.ts";
 import { readRunSnapshot } from "../src/operator-state.ts";
+import { readDependencyRecord } from "../src/dependency-policy.ts";
 
 /**
  * One minimal frozen configuration. The fold prompt states it; the command name
  * and tokens must stay clear of the words the stage emitter routes on, because
  * it routes over the whole prompt (test/prompts.test.ts guards this).
  */
-const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
+const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }], derived: [] };
 const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-spec-stage.mjs");
 const CLI = join(process.cwd(), "src", "cli.ts");
 
@@ -624,7 +625,7 @@ test("a Verification: open decision pauses the run, is answered, and is folded u
 
 test("the fold prompt carries the frozen profile's commands, and another config changes it", async () => {
   const marker = "FIXTURE-ASK-OPERATOR";
-  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }] };
+  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }], derived: [] };
   async function foldWith(verification: VerificationConfig): Promise<{ sent: string; expected: string }> {
     let observed = { sent: "", expected: "" };
     await withRun(
@@ -994,5 +995,142 @@ test("a failed split approval event leaves no stored feature", async () => {
     }
     assert.equal(splitProposals(ctx).length, 0, "the proposals rolled back with the event that names them");
     assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+  });
+});
+
+// --- dependency additions (derived-artifacts-and-dependency-policy Task 8) ----
+
+/**
+ * The four packages crew-chatter run 4's reviewed spec named only in prose,
+ * read from the committed recording; FIXTURE-DEPENDENCIES lists them under
+ * frontend/package.json in that order.
+ */
+const RECORDED_ADDITIONS = (
+  JSON.parse(
+    readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "spec-crew-chatter-run-4-dependency-in-prose.json"), "utf8")
+  ) as { provenance: { packagesAdded: string[] } }
+).provenance.packagesAdded.map((name) => `frontend/package.json:${name}`);
+
+/** Run the spec stage to its pause; `dependency` is the dependency question's finding. */
+async function pausedAtDependencies(ctx: Ctx): Promise<Paused & { dependency: number }> {
+  const result = await paused(ctx);
+  const record = readDependencyRecord(ctx.store.getAuditEvents(ctx.runId));
+  const question = result.questions.find((q) => q.finding_id === record?.findingId);
+  assert.ok(question, "the spec stage asked about the dependency list");
+  return { ...result, dependency: question!.finding_id };
+}
+
+test("an approved dependency list folds nothing and the run continues to approval with the reviewed spec", async () => {
+  await withRun("FIXTURE-DEPENDENCIES", async (ctx) => {
+    const { questions, specPath, dependency } = await pausedAtDependencies(ctx);
+    assert.deepEqual(questions.map((q) => q.finding_id), [dependency], "the dependency list is the only question");
+    const before = readFileSync(specPath, "utf8");
+    answer(ctx, dependency, "approve");
+    const result = await runSpecDecisionStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+    assert.ok(result.ok, result.ok ? "" : result.reason);
+    assert.equal(result.folded, 0);
+    assert.equal(decisionAgentRuns(ctx.store, ctx.runId), 0, "nothing is folded for the dependency question");
+    assert.equal(readFileSync(specPath, "utf8"), before);
+    const chain = ctx.store.getStageChain(ctx.runId);
+    assert.deepEqual(chain.map((s) => [s.kind, s.status]), [["spec", "passed"], ["spec_review", "passed"], ["spec_decision", "passed"]]);
+    const reviewed = /specHash=([0-9a-f]{64}); risk=(\w+)/.exec(lastSummary(ctx.store, ctx.runId, "spec.gate.pass")!)!;
+    assert.match(
+      lastSummary(ctx.store, ctx.runId, "spec_decision.gate.pass")!,
+      new RegExp(`specHash=${reviewed[1]}; risk=${reviewed[2]}; answers=1; folded=0`)
+    );
+    assert.equal(readRunSnapshot(ctx.store, ctx.root, ctx.runId).snapshot.phase, "awaiting_approval");
+    assert.equal(events(ctx.store, ctx.runId, "spec_decision.dependencies.denied").length, 0);
+    assert.equal(verifyAuditChain(ctx.store), null);
+  });
+});
+
+test("a denied dependency list blocks the run and dispatches no fold, even with another answer approved", async () => {
+  await withRun("FIXTURE-DEPENDENCIES FIXTURE-ASK-OPERATOR", async (ctx) => {
+    const { questions, specPath, dependency } = await pausedAtDependencies(ctx);
+    assert.equal(questions.length, 2, "the reviewer's question and the dependency list");
+    const other = questions.find((q) => q.finding_id !== dependency)!;
+    const before = readFileSync(specPath, "utf8");
+    const agentRunsBefore = ctx.store.query("SELECT id FROM agent_run").length;
+    answer(ctx, other.finding_id, "approve");
+    answer(ctx, dependency, "deny");
+    const result = await runSpecDecisionStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    const reason = `the operator denied the packages the specification adds (${RECORDED_ADDITIONS.join(", ")}): this run builds nothing further; state in the design what to use instead and start a fresh run`;
+    assert.equal(result.reason, reason);
+    assert.equal(ctx.store.query("SELECT id FROM agent_run").length, agentRunsBefore, "no new agent_run row: the approved answer is not folded");
+    assert.equal(decisionAgentRuns(ctx.store, ctx.runId), 0);
+    const chain = ctx.store.getStageChain(ctx.runId);
+    assert.deepEqual(chain.map((s) => [s.kind, s.status]), [["spec", "passed"], ["spec_review", "passed"], ["spec_decision", "blocked"]]);
+    assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+    const denied = events(ctx.store, ctx.runId, "spec_decision.dependencies.denied");
+    assert.equal(denied.length, 1);
+    assert.equal(denied[0]!.summary, reason);
+    assert.equal(denied[0]!.stage_id, chain[2].id);
+    assert.equal(readFileSync(specPath, "utf8"), before);
+    assert.equal(lastSummary(ctx.store, ctx.runId, "spec_decision.gate.pass"), undefined);
+    assert.equal(verifyAuditChain(ctx.store), null);
+  });
+});
+
+test("modify is refused on the dependency question and still accepted on another", async () => {
+  await withRun("FIXTURE-DEPENDENCIES FIXTURE-ASK-OPERATOR", async (ctx) => {
+    const { questions, dependency, reviewStageId } = await pausedAtDependencies(ctx);
+    const other = questions.find((q) => q.finding_id !== dependency)!;
+    const refused = answerQuestion(ctx.store, { runId: ctx.runId, findingId: dependency, action: "modify", answer: "use a plain textarea instead" });
+    assert.equal(refused.ok, false);
+    if (refused.ok) return;
+    assert.equal(refused.reason, "the dependency question takes approve (add the packages) or deny (end the run); modify is not accepted");
+    const audited = events(ctx.store, ctx.runId, "decision.refused");
+    assert.equal(audited.length, 1);
+    assert.equal(audited[0]!.summary, refused.reason);
+    assert.equal(ctx.store.getDecisionAnswers(reviewStageId).length, 0, "no answer was recorded");
+    answer(ctx, other.finding_id, "modify", "Exports are retained for ninety days.");
+    assert.deepEqual(ctx.store.getDecisionAnswers(reviewStageId).map((a) => a.action), ["modify"]);
+  });
+});
+
+test("a fold that drops a listed package is refused and writes nothing", async () => {
+  await withRun("FIXTURE-DEPENDENCIES FIXTURE-ASK-OPERATOR FIXTURE-FOLD-LOSE-PACKAGE", async (ctx) => {
+    const { questions, specPath, dependency } = await pausedAtDependencies(ctx);
+    const other = questions.find((q) => q.finding_id !== dependency)!;
+    const before = readFileSync(specPath, "utf8");
+    answer(ctx, other.finding_id, "approve");
+    answer(ctx, dependency, "approve");
+    const result = await runSpecDecisionStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    const reason = "the fold changed ## Dependencies added; the operator answered the reviewed list, so a different list needs a fresh run";
+    assert.equal(result.reason, reason);
+    assert.equal(decisionAgentRuns(ctx.store, ctx.runId), 1, "the fold of the other answer ran");
+    assert.equal(lastSummary(ctx.store, ctx.runId, "spec_decision.fold.invalid"), reason);
+    assert.equal(readFileSync(specPath, "utf8"), before, "a refused fold is never written");
+    assert.equal(ctx.store.getStageChain(ctx.runId).at(-1)!.status, "blocked");
+    assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+    assert.equal(lastSummary(ctx.store, ctx.runId, "spec_decision.gate.pass"), undefined);
+  });
+});
+
+test("a fold that only reorders the listed packages is accepted", async () => {
+  await withRun("FIXTURE-DEPENDENCIES FIXTURE-ASK-OPERATOR FIXTURE-FOLD-REORDER-PACKAGES", async (ctx) => {
+    const { questions, specPath, dependency } = await pausedAtDependencies(ctx);
+    const other = questions.find((q) => q.finding_id !== dependency)!;
+    const reviewed = validateSpecDoc(readFileSync(specPath, "utf8"));
+    assert.ok(reviewed.ok, reviewed.ok ? "" : reviewed.reason);
+    assert.deepEqual(reviewed.value.dependenciesAdded.map((a) => `${a.manifest}:${a.name}`), RECORDED_ADDITIONS);
+    answer(ctx, other.finding_id, "approve");
+    answer(ctx, dependency, "approve");
+    const result = await runSpecDecisionStage(ctx.store, fixtureExecutor(FIXTURE), { runId: ctx.runId, rootDir: ctx.root });
+    assert.ok(result.ok, result.ok ? "" : result.reason);
+    assert.equal(result.folded, 1, "the other answer is folded; the dependency question is not");
+    const folded = validateSpecDoc(readFileSync(specPath, "utf8"));
+    assert.ok(folded.ok, folded.ok ? "" : folded.reason);
+    assert.deepEqual(
+      folded.value.dependenciesAdded.map((a) => `${a.manifest}:${a.name}`),
+      [...RECORDED_ADDITIONS].reverse(),
+      "the fold wrote the same list in another order"
+    );
+    assert.equal(ctx.store.getStageChain(ctx.runId).at(-1)!.status, "passed");
+    assert.equal(events(ctx.store, ctx.runId, "spec_decision.fold.invalid").length, 0);
   });
 });

@@ -93,7 +93,7 @@ async function withNarratedRun(
     git("add", "-A");
     git("-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "-m", "base");
     const run = store.insertRun("p", "f-1", "demo", "feature");
-    const frozen = freezeUniformProfile(root, run.id, git("rev-parse", "HEAD"), "m", { commands: [{ name: "unit", command: ["node", "--version"] }] });
+    const frozen = freezeUniformProfile(root, run.id, git("rev-parse", "HEAD"), "m", { commands: [{ name: "unit", command: ["node", "--version"] }], derived: [] });
     const profile = JSON.parse(readFileSync(frozen.path, "utf8")) as Record<string, unknown>;
     profile.executor = fixtureExecutor();
     profile.narrationCheck = narration({

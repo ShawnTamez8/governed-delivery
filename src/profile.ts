@@ -485,13 +485,16 @@ export function invalidProfileReason(profile: unknown): string | null {
   if (p.executor === null || typeof p.executor !== "object") {
     return "the frozen profile carries no executor";
   }
-  const verification = p.verification as { commands?: unknown } | null | undefined;
+  const verification = p.verification as { commands?: unknown; derived?: unknown } | null | undefined;
   if (
     verification === null ||
     typeof verification !== "object" ||
     !Array.isArray(verification.commands)
   ) {
     return "the frozen profile carries no verification commands";
+  }
+  if (!Array.isArray(verification.derived)) {
+    return "the frozen profile carries no verification.derived: it predates the field, and a run frozen without it cannot say which files the system regenerates";
   }
   const policyReason = invalidPolicyReason(p.policy);
   if (policyReason !== null) return policyReason;

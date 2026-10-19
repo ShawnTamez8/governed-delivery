@@ -19,6 +19,7 @@ import {
   featureSlugsInUse, readSplitRecord, renderPieceDesign, validateDesignSplit, type SplitEvidence, type SplitRecord,
 } from "./design-split.ts";
 import { deriveRoute, proposalIdentity } from "./proposal.ts";
+import { dependencyKey, readDependencyRecord, sameDependencyAdditions } from "./dependency-policy.ts";
 
 /**
  * The `spec_decision` boundary (architecture section 12). A `spec_review`
@@ -113,6 +114,9 @@ export function answerQuestion(
   // dashboard refuse it the same way.
   if (action === "modify" && readSplitRecord(store.getAuditEvents(runId))?.findingId === findingId) {
     return refuse("the design-split question takes approve (split) or deny (build as one); modify is not accepted");
+  }
+  if (action === "modify" && readDependencyRecord(store.getAuditEvents(runId))?.findingId === findingId) {
+    return refuse("the dependency question takes approve (add the packages) or deny (end the run); modify is not accepted");
   }
   let answer: string;
   if (action === "modify") {
@@ -249,8 +253,14 @@ export async function runSpecDecisionStage(
   const splitRecord = readSplitRecord(store.getAuditEvents(runId));
   const splitQuestion = questions.find((q) => q.finding_id === splitRecord?.findingId);
   const splitApproved = splitQuestion !== undefined && answers.get(splitQuestion.id)!.action === "approve";
-  const others = questions.filter((q) => q !== splitQuestion);
-  const folds = splitApproved ? [] : others.filter((q) => answers.get(q.id)!.action !== "deny");
+  // The dependency question (docs/features/derived-artifacts-and-dependency-policy/plan.md),
+  // found the same way. It is never folded: approve leaves the reviewed list
+  // as the signed one, and deny ends the run before any fold is dispatched.
+  const dependencyRecord = readDependencyRecord(store.getAuditEvents(runId));
+  const dependencyQuestion = questions.find((q) => q.finding_id === dependencyRecord?.findingId);
+  const dependencyDenied = dependencyQuestion !== undefined && answers.get(dependencyQuestion.id)!.action === "deny";
+  const others = questions.filter((q) => q !== splitQuestion && q !== dependencyQuestion);
+  const folds = splitApproved || dependencyDenied ? [] : others.filter((q) => answers.get(q.id)!.action !== "deny");
   // Configuration failures precede the stage row and any spend, as in
   // `runSpecStage`: the fold is a reconciliation, so it runs as the spec author
   // under the `reconciler` setting.
@@ -366,6 +376,13 @@ export async function runSpecDecisionStage(
     stageId = stage.id;
     audit(stage.id, "spec_decision.stage.create", `created spec_decision stage ${stage.id}`);
     if (splitApproved) return approveSplit(stage.id, splitQuestion!, splitRecord!);
+    if (dependencyDenied) {
+      return abort(
+        stage.id,
+        "spec_decision.dependencies.denied",
+        `the operator denied the packages the specification adds (${reviewed.value.dependenciesAdded.map(dependencyKey).join(", ")}): this run builds nothing further; state in the design what to use instead and start a fresh run`
+      );
+    }
     const actions = new Map(questions.map((q) => [q.id, answers.get(q.id)!.action]));
     if (folds.length === 0) {
       const missing = openDecisionRefusals(store, questions, actions, reviewed.value, reviewed.value);
@@ -426,6 +443,14 @@ export async function runSpecDecisionStage(
     if (added.length > 0) {
       return abort(stage.id, "spec_decision.fold.invalid", `spec decision fold added open decision(s) ${added.join(", ")}`);
     }
+    // The operator answered the reviewed list, so the fold may not change it.
+    if (!sameDependencyAdditions(reviewed.value.dependenciesAdded, folded.value.dependenciesAdded)) {
+      return abort(
+        stage.id,
+        "spec_decision.fold.invalid",
+        "the fold changed ## Dependencies added; the operator answered the reviewed list, so a different list needs a fresh run"
+      );
+    }
     const denied = questions.filter((q) => answers.get(q.id)!.action === "deny");
     const disturbed = openDecisionRefusals(store, questions, actions, reviewed.value, folded.value);
     if (disturbed.length > 0) {
@@ -474,7 +499,13 @@ export async function runSpecDecisionStage(
     }
     let written: { path: string; doc: SpecDoc };
     try {
-      written = writeSpecDoc(rootDir, run.slug, content.spec, profile.startingCommit);
+      written = writeSpecDoc(
+        rootDir,
+        run.slug,
+        content.spec,
+        profile.startingCommit,
+        profile.verification.derived.map((d) => d.path)
+      );
     } catch (err) {
       return abort(stage.id, "spec_decision.fold.invalid", `spec decision fold document refused: ${(err as Error).message}`);
     }

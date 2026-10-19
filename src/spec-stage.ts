@@ -47,6 +47,15 @@ import {
   validateDesignSplit,
   writeSplitEvidence,
 } from "./design-split.ts";
+import {
+  DEPENDENCY_INTENT,
+  DEPENDENCY_LOCATION,
+  DEPENDENCY_OPTIONS,
+  DEPENDENCY_RECOMMENDED,
+  DEPENDENCY_WHY,
+  dependencyKey,
+  dependencyQuestionText,
+} from "./dependency-policy.ts";
 
 export const DISCLOSED_OPEN_DECISION_INTENT = "disclosed-open-decision";
 
@@ -228,6 +237,9 @@ export async function runSpecStage(
     };
   }
 
+  // Files the system regenerates (governed.yaml derived:) are never declared.
+  const derivedPaths = profile.verification.derived.map((d) => d.path);
+
   let specStageId: number | null = null;
   let reviewStageId: number | null = null;
   let decisionStageId: number | null = null;
@@ -308,10 +320,13 @@ export async function runSpecStage(
     let specContent = authorContent.spec;
     let written: { path: string; doc: SpecDoc };
     try {
-      written = writeSpecDoc(rootDir, run.slug, specContent, profile.startingCommit);
+      written = writeSpecDoc(rootDir, run.slug, specContent, profile.startingCommit, derivedPaths);
     } catch (err) {
       return abort(specStage.id, "spec.content.invalid", (err as Error).message);
     }
+    // The dispatch that wrote the specification on disk: the dependency
+    // question is attributed to it.
+    let specWriterRunId = authorDispatch.agentRunId;
     let specPath = written.path;
     if (written.doc.changeKind !== run.change_kind) {
       return abort(
@@ -395,7 +410,7 @@ export async function runSpecStage(
     // it never falls back to the draft, because a silent fallback would make
     // the phase optional in exactly the runs where it went wrong.
     try {
-      written = writeSpecDoc(rootDir, run.slug, critique.value.artifact, profile.startingCommit);
+      written = writeSpecDoc(rootDir, run.slug, critique.value.artifact, profile.startingCommit, derivedPaths);
     } catch (err) {
       return abort(
         specStage.id,
@@ -405,6 +420,7 @@ export async function runSpecStage(
     }
     specContent = critique.value.artifact;
     specPath = written.path;
+    specWriterRunId = critiqueDispatch.agentRunId;
     if (written.doc.changeKind !== run.change_kind) {
       return abort(
         specStage.id,
@@ -789,12 +805,13 @@ export async function runSpecStage(
         );
       }
       try {
-        written = writeSpecDoc(rootDir, run.slug, reconcileContent.spec, profile.startingCommit);
+        written = writeSpecDoc(rootDir, run.slug, reconcileContent.spec, profile.startingCommit, derivedPaths);
       } catch (err) {
         return abort(reviewStage.id, "spec.reconcile.invalid", (err as Error).message);
       }
       specContent = reconcileContent.spec;
       specPath = written.path;
+      specWriterRunId = reconcileDispatch.agentRunId;
       audit(specStage.id, "spec.content.write", `wrote reconciliation revision ${specPath}`);
       const specHashBefore = sha256Hex(normalizeText(beforeContent));
       const specHashAfter = sha256Hex(normalizeText(specContent));
@@ -1017,6 +1034,44 @@ export async function runSpecStage(
           reviewStage.id,
           "spec.split.record",
           `finding=${finding.id}; pieces=${split.value.pieces.length}; declared=${declaredCount}; threshold=${threshold}; evidence=${evidence.ref}; evidenceHash=${evidence.hash}`
+        );
+        questions = store.getDecisionQuestions(reviewStage.id);
+      }
+      // --- dependency additions (docs/features/derived-artifacts-and-dependency-policy/plan.md) ---
+      // Every package the reviewed specification adds is the operator's
+      // choice, asked at the same pause as the split, approve or deny only.
+      const additions = written.doc.dependenciesAdded;
+      if (additions.length > 0) {
+        const finding = store.upsertCanonicalFinding(reviewStage.id, rounds, DEPENDENCY_INTENT, DEPENDENCY_LOCATION);
+        store.insertFindingReport({
+          findingId: finding.id,
+          agentRunId: specWriterRunId,
+          severity: "medium",
+          classification: "upstream",
+          subject: `specification adds ${additions.length} package(s)`,
+        });
+        store.insertFindingDecision({
+          findingId: finding.id,
+          agentRunId: specWriterRunId,
+          disposition: "upstream_blocking",
+          rationale: `the specification adds ${additions.map(dependencyKey).join(", ")}`,
+          changedLocations: [],
+          grounding: null,
+          normativeChanges: null,
+          artifactHashBefore: specHash,
+          artifactHashAfter: specHash,
+        });
+        store.insertDecisionQuestion({
+          findingId: finding.id,
+          text: dependencyQuestionText(additions),
+          options: DEPENDENCY_OPTIONS,
+          recommended: DEPENDENCY_RECOMMENDED,
+          why: DEPENDENCY_WHY,
+        });
+        audit(
+          reviewStage.id,
+          "spec.dependencies.record",
+          `finding=${finding.id}; packages=${additions.map(dependencyKey).join(",")}`
         );
         questions = store.getDecisionQuestions(reviewStage.id);
       }

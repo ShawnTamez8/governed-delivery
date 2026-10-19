@@ -5,338 +5,224 @@ history and may name superseded state; Current state wins when they disagree. Th
 the system of record; machine-local memory is only a cache
 (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-10-17: crew-chatter runs 1-3; open-decisions and declared-artifacts fixes committed and pushed)
+## Current state (2026-10-19: changes 2 and 10 built, committed, partly proven live; nothing in flight; no spend authorized)
 
-**Active work:** `docs/features/open-decisions-outside-section/plan.md` is `Implemented`,
-committed in `561ce9e` and pushed with the declared-artifacts commit. The operator asked for "a paid run on a larger design" in
-`C:\Repositories\testing-repos\crew-chatter` (TS backend + React frontend baseline committed there as
-`eb1fa30`; worktree precheck of `npm ci`, typecheck, lint, build passed).
-- **Run 1** (whole PRD, narration on): spec and spec review, $1.7998923 in 6 priced dispatches,
-  71 narration answers all `criterion` (top 0.148). The spec declared 32 files; the operator
-  approved the split into 7 features; proposals 28-34; run 1 ended `blocked` as designed.
-- **Run 2** (feature 1, `crew-chatter-accounts-notes`, design committed as `8f539e5` with run 1's
-  spec): blocked at the `spec_review` gate after $0.9690182, "spec reconciliation added open
-  decision(s) OD-001, OD-012". The self-critique had listed the parent spec's open decisions under
-  `## Questions left open upstream`; the validator checked only open-decisions-like headings; a
-  reviewer flagged it and the reconciler's correct move into `## Open decisions` hit the no-add
-  rule. Asked whether Decision-1 should catch it: no, because detection was not the failure and a
-  regex settles the ID-led form exactly.
-- **The fix:** `validateSpecDoc` refuses an OD-led line under any other heading, and
-  `openDecisionsSchema` says the section is the only place an open question is listed, including
-  an inherited one. Fixture `test/fixtures/recorded/spec-crew-chatter-run-2-open-questions-outside-section.json`;
-  hazard 3 and `ARCHITECTURE.md` section 8 updated. Run 3 measured a live author complying.
-  Residual: open questions in plain prose under another heading still pass (run 2's draft did this).
-- **Run 3** (feature 1 re-run on `8f539e5`, spec range only, operator-approved): reached
-  `awaiting_approval` for $0.96232597 in 5 priced dispatches (2 Opus author calls, 2 Haiku
-  reviewers, 1 Sonnet reconciler) plus 24 Decision-1 narration requests (all `criterion`, none
-  flagged). The fix held live: the spec's only open questions are `OD-001` (high, reset-token
-  delivery) and `OD-002` (medium, debounce interval), both under `## Open decisions`, and both
-  became `disclosed-open-decision` findings. The reconciler routed both `upstream_follow_up`, as
-  well as 5 reviewer findings, addressed 1 (AC-015 wording), and rejected 2 with grounding, so no
-  operator question was raised and there was no decision pause. That is the prompt's contract,
-  because only `upstream_blocking` pauses, but it means the implementer will choose reset-token
-  delivery itself. The operator approved from the dashboard and authorized plan through delivery.
-  Run 3 then **blocked at `code_review`** before any reviewer was dispatched, with
-  `code_review.artifact.missing` for `backend/package.json`, `frontend/package.json` and
-  `package-lock.json`. Run total $3.43547941; this range cost $2.47 (plan $1.27, plan review $0.012,
-  3 phases plus self-review $1.19). Plan, plan review, implementation and verification all passed
-  (`npm ci`, typecheck, lint and build on `f50bc95`, branch `gov/crew-chatter-accounts-notes/3`).
-  Cause: the spec declared the three package files conditionally ("any dependency added ... must
-  also be recorded in `package-lock.json`"). The plan then chose "No new dependencies"
-  (`node:sqlite`, `node:crypto`), and the implementer correctly left them unchanged. Nothing
-  between the spec and code review compares the plan's files with the signed declared artifacts.
-  The evidence is now committed-tier: `test/fixtures/recorded/plan-crew-chatter-run-3-declared-artifacts-untasked.json`.
-  The worktree and `.governance/raw/3` are still the only copy of the full raw streams; keep them.
-- **The fix (2026-10-17, committed and pushed on `dashboard-restyling`):** `docs/features/declared-artifacts-in-tasks/plan.md` is
-  `Implemented`. `tasksNameScope` refuses a draft, self-critique or reconciled plan whose `## Tasks`
-  names no signed scope path, with the exact bounded match, `plan.artifact.untasked`, before the
-  panel. The plan prompts say to name every scope path and invent no change; the spec prompts say
-  to declare only files that change however the change is built. Hazard 24; `ARCHITECTURE.md`
-  sections 8, 12 and 22; `doc-check` gained `twenty-four`. Full suite 1628 pass / 0 fail / 5 skip,
-  check:docs and smoke clean. A probe (about $0.003) showed dispatches load neither
-  `~/.claude/CLAUDE.md` nor `lessons.md` (`--safe-mode`), so no `--setting-sources` change is needed.
-  Live compliance is unmeasured; a crew-chatter feature-1 re-run is the live test.
-- **Documentation sweep (2026-10-17, same commit, operator asked to "review all documentation"):**
-  the current-tier documents were checked against source and the recorded runs.
-  - `docs/runbooks/cli-operator.md` had never mentioned the narration check, though guided intake
-    and `new-run` refuse without the `SYSTEMONE_*` variables. Guided step 2 now sets them,
-    advanced step 4 names `--no-narration-check`, and step 7 and troubleshooting cover the new
-    plan refusal.
-  - README, `CLAUDE.md`/`AGENTS.md` and `.claude/skills/run-buildworks/SKILL.md` said no run had
-    used the Haiku 5.5 reviewers. They now cite the 2026-10-15 ($1.39416, 21 dispatches) and
-    2026-10-17 ($1.51048, 22) runs.
-  - SKILL.md's smoke block and troubleshooting row named `spec_review` where the refusal says
-    `spec_decision`, and called the self-review cost unmeasured ($0.088 on 2026-10-15).
-  - README's stage summary now names the phases, the self-review and the new plan refusal.
-  Not changed: historical plans and reviews (preserved as written), and proposals (backlog).
+**Resume point.** Branch `sandboxed-delivery` carries the build of two `Implemented` plans,
+committed 2026-10-19 at the operator's word and not pushed (`origin/sandboxed-delivery` is at
+`be6a88c`):
+- `docs/features/derived-artifacts-and-dependency-policy/plan.md`, rework changes 2 and 10
+  (operator: "Go ahead and build", 2026-10-18). Its review
+  `2026-10-18-derived-artifacts-and-dependency-policy-review.md` is `reconciled` (12 accepted,
+  1 deferred); the critical finding made regeneration commit derived paths before
+  `removeIgnoredOutput`. The plan's implementation record lists every difference and break-test.
+- `docs/features/prompt-retention/plan.md` (operator: "yes, start saving prompts now"): every
+  dispatch writes `.governance/prompts/<run>/<input_hash>.txt` before the harness starts, a failed
+  dispatch's audit summary names the file, and an unwritable prompt refuses the dispatch.
+- Validation (2026-10-18): full serial suite 1692 tests, 1687 pass, 0 fail, 5 skipped; typecheck
+  and check:docs clean; smoke 13/13 (the smoke exercises neither regeneration nor the dependency
+  question).
 
-**Earlier 2026-10-16/17 work:** `docs/features/decision-1-d6-evaluation/plan.md` is `Implemented`, committed in `6cb2e3b`.
-The operator redirected the typed-decision proposal from TypeSafe Jev to Microsoft-Decision-1 on
-their Foundry resource (`docs/proposals/decision-1-review.md`, renamed from `jev-review.md`) and
-chose "Client + D6 evaluation" with an API key. Built: `src/systemone.ts` (config from
-`SYSTEMONE_ENDPOINT`, `SYSTEMONE_DEPLOYMENT`, `SYSTEMONE_DEPLOYMENT_TYPE`, key from
-`SYSTEMONE_API_KEY`, all user-scope variables on this machine; no stage calls it) and
-`scripts/systemone-d6-evaluation.ts`. Probe recorded in
-`test/fixtures/recorded/systemone-probe-snitch-resource.json`: `api-key` header, response
-`{model, answers, usage}`, `model` is `microsoft-decision-1` with no version, unknown deployment
-is 404 `DeploymentNotFound`. D6 (35 requests, $0.0117) **fails** the operator-confirmed rule at
-T = 0.8: no keep-labelled finding withheld at any threshold, but #200 chose `none` (tied with
-`L048` at 0.4659) and #905 chose `L048` (0.895) instead of its baseline `L047`; ten identical #905
-requests agreed on the choice but its probability ranged 0.687-0.922. Result and Haiku comparison
-in `test/fixtures/recorded/systemone-d6-evaluation-crew-chatter-run-6.json`. A completed paid run
-never authorizes another spend.
+**Changes 2 and 10 are built, not finished (operator asked 2026-10-19).**
+- Change 2: `governed.yaml` takes an optional `derived:` block, frozen as `verification.derived`
+  (a profile without it is refused). `src/derived-artifacts.ts` regenerates and commits derived
+  files after every phase, the self-review fix and each remediation; review diffs exclude them; a
+  spec declaring one is refused; the `static-web` starter emits a lockfile entry (operator choice).
+  Live in run 5: regeneration commit `2adaf88` after phase 2, then `npm ci` passed. Never run
+  live: regeneration after a self-review fix or remediation, and the code-review exclusion.
+- Change 10: the spec's optional `## Dependencies added` raises an approve/deny question at
+  `spec_decision`; deny ends the run blocked; a fold may not change the list;
+  `src/dependency-policy.ts` refuses an implementation or remediation commit adding an unlisted
+  package. Live in run 5: four TipTap packages listed, question (finding 84) approved, phase 2
+  passed. Never run live: the refusal (unit and break-tests only). Narrower than the proposal:
+  npm only, additions only (not removals or version changes), no allowlist (every listed package
+  asks).
+- "Finished" needs one crew-chatter run completing through code review and delivery. That run
+  needs its own spend authorization.
 
-**Previous work:** `docs/features/structured-patch-output/plan.md` is `Implemented`, committed in
-`94e3b98`; its review is `reconciled`. The paid run the operator asked for ("commit then run the
-paid run", 2026-10-15) completed: web-calculator, `driver.mjs paid --yes --model
-claude-sonnet-5-5`, 21 dispatches, $1.39416, 15/15 driver steps, run `completed`, audit chain
-valid. All four patch dispatches (2 phases, the self-review, 1 remediation) returned
-`structured_output` and applied; no phase dropped a file. The self-review ran live for the first
-time: 5 critique entries, 0 patches. Code review round 1 found 1 low (`delete-noop-after-result`);
-the code-review reconciler ran live for the first time (1 call, kept 1, rejected 0); remediation
-patched `script.js`; round 2 found 1 low, non-blocking. Delivered 3 of 3 declared artifacts
-(`index.html`, `script.js`, `styles.css`). Verification still ran only `node --version` and
-`npm --version`. Cost by part: spec authors $0.374, spec reconcile $0.112, plan authors $0.428,
-plan reconcile $0.089, two phases $0.174, self-review $0.088, remediation $0.080; the eight Haiku
-5.5 reviewer calls plus the reconciler call totalled about $0.043 as reported by the CLI's
-`total_cost_usd` (Haiku 4.5 spec panels cost $0.31 on 2026-09-29). One sample. Target preserved
-at `C:\Users\Shawn-work\repositories\testing-repos\web-calculator-structured-2026-10-15\target`.
-Plan open decisions 1 (remediation drops unchanged files) and 3 (other dispatches to a schema)
-remain undecided. `.claude/skills/run-buildworks/SKILL.md` now records this run and the
-2026-10-17 narration run as the two Haiku 5.5 reviewer runs.
-
-**2026-10-17:** the operator stated that the deployment type must not be checked against
-vendor values. The `DEPLOYMENT_TYPES` allowlist is gone, because there will be many Decision-1
-endpoints and the resource may move. They also stated that data can be sent for some operator
-decisions. At their request, `docs/features/decision-1-format-checks/plan.md` (`Proposed`) and
-`scripts/systemone-format-cases.ts` now hold two labelled case sets derived from fixtures:
-- grounding: 23 cases, 2 recorded and 1 proposed does-not-support;
-- narration: 131 Acceptance criteria entries, 1 recorded and 2 proposed contains-remark.
-
-Missing brackets and backticks and prose outside the object are excluded, because the extractor
-already catches them.
-
-The operator then confirmed the labels "as listed" and chose the D6 rule at T = 0.8, and said
-"run the paid step". `scripts/systemone-format-evaluation.ts` sent 172 requests for $0.001632,
-all valid; the result is `test/fixtures/recorded/systemone-format-checks-evaluation.json`.
-- **Narration passes.** It flagged 3 of 3 remarks and 0 of 128 criteria, and its repeats
-  answered at 0.999. It fails at T ≥ 0.9, where AC-051 scored 0.835.
-- **Grounding fails.** It caught 3 of 3 unsupported citations, but it flagged the supported
-  rejections R-200-1 and R-905-1, and its repeats spread 0.038. The 12 supported additions all
-  passed, but splitting the check by kind after seeing the answers is not allowed.
-
-**Narration wired into spec review (2026-10-17, committed `6cb2e3b`):** the operator asked to "wire
-narration into the spec stage. Ensure we do not swallow errors". They decided:
-- a flagged entry is a finding for the reconciler;
-- the check is an explicit per-run switch: `new-run` refuses without the `SYSTEMONE_*`
-  variables unless `--no-narration-check` is given;
-- all projects' entries may be sent.
-
-`docs/features/narration-check-spec-review/plan.md` is `Implemented` and describes the build:
-- `src/narration-check.ts`;
-- the profile's `narrationCheck`;
-- `check_answer` (migration 009);
-- each Decision-1 call recorded as an `agent_run` with executor `systemone` and a null cost;
-- any failed request blocks the run;
-- guided mode always on;
-- the driver passes `--no-narration-check` unless it is given `--narration-check`;
-- ARCHITECTURE sections 11, 12, 15 and 23.
-
-Tests reach Decision-1 only through the loopback stand-in in `test/systemone-stand-in.ts`. Every
-test spawn of `new-run` passes `--no-narration-check`.
-
-Committed as `6cb2e3b` and pushed with `05803eb`. The operator then approved a paid live run with
-`--narration-check` (web-calculator, sonnet-5-5). It completed:
-- 15/15 driver steps;
-- 22 Claude dispatches for $1.51048, two code-review panels and one remediation;
-- 3 of 3 artifacts delivered.
-
-Decision-1 answered 24 of 24 criteria `criterion`, the highest remark probability being 0.0203,
-so nothing was flagged. That fits a clean spec, but it does not exercise a live catch. The
-details are in the plan's "First live run" block. The driver's cost-report fix that lists
-Decision-1 requests apart and the run record are committed in `05803eb`, pushed.
-
-**Run 4 (2026-10-18, spec range only, operator-approved):** fresh crew-chatter feature-1 run on
-`8f539e5`, same settings as run 3, narration on. Paused at `awaiting_decision` for $1.7754115
-(spec authors $1.7648, 63,712 output tokens over 3 calls; 2 Haiku reviewers $0.0106; 24 Decision-1
-requests, none flagged). The spec now declares the package files unconditionally, but because it
-chose TipTap 3 (four packages) and says to regenerate `package-lock.json` with `npm install`, which
-the read-only implementer cannot run. OD-001 (reset-token delivery) was routed
-`upstream_blocking` this time, where run 3 routed it `upstream_follow_up`. The operator **stopped
-run 4** at the decision pause; it is left unanswered (no stop command exists). Its untracked
-`docs/features/crew-chatter-accounts-notes/spec.md` sits in the target: move it aside before the next
-`new-run` there. Run 3's spec/plan copies are in
-`%LOCALAPPDATA%\Temp\crew-chatter-aside-2026-10-18-run3` and committed at `f50bc95`.
-The operator then asked for a rework proposal: `docs/proposals/sandboxed-delivery-rework.md`
-(ten changes in three tracks, effort, risk, governance; nothing authorized), committed on the new
-branch `sandboxed-delivery`, cut from `dashboard-restyling` at `7446cd0`. The operator has been
-considering change 1, the sandboxed implementer. Operator facts (2026-10-18): every developer has
-Docker Desktop with WSL 2 and Windows Sandbox, Docker first; each holds a personal Claude Code
-Enterprise seat and BuildWorks has no credential of its own; runs happen on the operator's
-workstation; Docker, WSL and Claude Code must be replaceable *between BuildWorks versions*, never
-during a run. So change 1 keeps `claude` on the host and reaches the container only through a
-BuildWorks MCP tool server, and each dependency is confined to one concrete module (no interface).
-The operator also requires the tool server to serve any coding agent, not only Claude Code, and
-Claude Code to stay an adapter: the proposal makes the tool server agent-neutral, keeps every
-deciding check agent-independent, requires per-agent confinement proven by attempted violations
-(review MHA-02), and extracts the adapter interface only when a second agent is added (MHA-03).
-Asked whether Decision-1 after each self-critique adds value: the proposal's "Decision-1's place"
-section says only as narrow, evaluated checks (narration passed; grounding and D6 failed), names
-open questions written as prose in the spec self-critique (run 2's recorded draft) as the one
-candidate, and requires change 9 to replay Decision-1 answers.
-Open: whether per-seat use is "ordinary use" under Claude Code's legal terms.
+**Run 5** (2026-10-18, crew-chatter feature 1 from `ec2049c`, operator-authorized): blocked at
+verification `typecheck` on one implementer line unrelated to the mechanisms,
+`frontend/src/hooks/useAutoSave.ts(63,44)`, a spread of a ref narrowed to `null` (TS2698). The
+operator also approved OD-001 (server-log reset link). $4.04347149 in 15 Claude dispatches plus 24
+Decision-1 requests. Worktree `C:\Repositories\testing-repos\crew-chatter\.governance\worktrees\5`,
+branch `gov/crew-chatter-accounts-notes/5` at `e62df19`. Its untracked `spec.md` and `plan.md`
+were moved to `%LOCALAPPDATA%\Temp\crew-chatter-aside-2026-10-19-run5` (operator, 2026-10-19);
+the target's tree is clean.
 
 **Next action:** the operator decides:
-- whether to authorize building `docs/features/derived-artifacts-and-dependency-policy/plan.md`
-  (`Proposed`, 2026-10-18; changes 2 and 10, 11 tasks). Change 9 (replay) was dropped from it:
-  `input_hash` is `sha256(prompt)`, system commit SHAs differ per run (unpinned dates, run ID
-  in messages) and are embedded in implementation/review prompts, recorded patches carry a
-  `baseCommit` that must equal the live head, and finding IDs are store-wide. Whole-run replay
-  needs its own design and decision; the proposal is corrected. That design is
-  `docs/proposals/whole-run-replay.md` (2026-10-18, about 2.5–3.5 weeks): the real CLI against a
-  scratch target, the provider answered from a reduced corpus keyed by route, agent and ordinal,
-  `baseCommit` rewritten to the live head and finding IDs mapped by (stage kind, round, intent,
-  location), fidelity labels, and one `src/` change (retain prompts in `dispatchOnce`).
-  **Operator decision 2026-10-18: change 9 waits; reassess after changes 2, 10 and 1 are
-  built.** Prompt retention waits with it, so runs recorded until then stay `unverified` past
-  their first commit. Change 2 alone is the known minimum for crew-chatter feature 1. No
-  implementation or spend is authorized;
-- what to do about grounding. The recommendation is to leave it unadopted until more recorded
-  positives exist.
-- No PR to `master`: the operator said not to create one (2026-10-17).
+- whether to push `sandboxed-delivery` (personal gh account; Snitch approval first).
+- what to do with run 5. A blocked run gets no retry: a fresh run, a hand fix on the run branch,
+  or a stop.
+- grounding: the recommendation is to leave it unadopted until more recorded positives exist.
+- No PR to `master` (operator, 2026-10-17). No spend is authorized.
 
-Follow-ups not taken: split designs carry no parent open decisions; the lockfile risk (feature 1
-declares `package-lock.json`, and an implementer cannot run `npm install`) bites at
-implementation when a dependency really is added; hazard 24 covers only the case where none is. Never relabel cases after seeing answers. Nothing is in flight.
+**Rework proposal** (`docs/proposals/sandboxed-delivery-rework.md`, ten changes in three tracks;
+only changes 2 and 10 are authorized, and only to build). Operator facts (2026-10-18): every
+developer has Docker Desktop with WSL 2 and Windows Sandbox, Docker first; each holds a personal
+Claude Code Enterprise seat and BuildWorks has no credential of its own; runs happen on the
+operator's workstation; Docker, WSL and Claude Code are replaceable between BuildWorks versions,
+never during a run. So change 1 keeps `claude` on the host and reaches the container only through
+an agent-neutral BuildWorks MCP tool server; each dependency is confined to one concrete module;
+every deciding check stays agent-independent; per-agent confinement is proven by attempted
+violations (MHA-02); the adapter interface is extracted only when a second agent is added
+(MHA-03). Decision-1 after self-critique: only as narrow evaluated checks; prose open questions in
+the spec self-critique (run 2's draft) are the one candidate. Change 9 (whole-run replay) waits
+until changes 2, 10 and 1 are built (operator, 2026-10-18); its design is
+`docs/proposals/whole-run-replay.md` (about 2.5–3.5 weeks), and why the proposal's hash replay
+fails is in the derived-artifacts plan's "Change 9" section. Open: whether per-seat use is
+"ordinary use" under Claude Code's legal terms.
 
-**Working state (verified 2026-10-17):**
-- Branch `sandboxed-delivery`, cut from `dashboard-restyling`; both pushed 2026-10-18
-  (`dashboard-restyling` at `7446cd0`, `sandboxed-delivery` at `bf25173` plus this record).
-  `561ce9e` and `7446cd0` had not actually been pushed before that, despite an earlier note.
-  `dashboard-restyling` is 14 ahead of `origin/master` and 0 behind. Snitch's decision worker
-  was unavailable on 2026-10-18, so the operator ran the push. Local `master` was 38 behind `origin/master` on 2026-10-10 (not
-  rechecked).
-- An untracked empty file `=` sits at the repository root; deleting it is the operator's call. A plain-text copy of the API key sits
-  in the operator's `C:\Users\tamezs\.buildworks\[Environment]SetEnvironmentVariable.txt`;
-  removing it is theirs.
-- Plan statuses checked 2026-10-15: all 49 `docs/features/*/plan.md` carry a correct Status line.
-  `docs/features/dashboard-pwa-redesign/plan.md` is `Reconciled` with Task 7 next (no `sw.js` or
-  manifest in `src/`); unbuilt by choice: `baseline-verification`, `implementation-phase-retry`
+**Runbook defect, unfixed:** the approval export breaks under PowerShell 7.6 (`ConvertFrom-Json`
+turns the `--expires` ISO string into a local date). `-DateKind String` fixed it for run 5, but
+it does not exist in Windows PowerShell 5.1, so `docs/runbooks/cli-operator.md` and `README.md`
+still need a fix that works in both.
+
+**Crew-chatter feature 1 on this machine** (`C:\Repositories\testing-repos\crew-chatter`, `main`
+at `ec2049c`; `8f539e5` adds the feature-1 design; `eb1fa30` the TS backend plus React frontend
+baseline, `npm ci`, typecheck, lint, build):
+- Run 1 (whole PRD): $1.80; spec declared 32 files; the operator approved a split into 7 features
+  (proposals 28-34; 29-34 not exported); ended `blocked` as designed.
+- Run 2: $0.97, blocked at `spec_review` because inherited open decisions sat under another
+  heading and the reconciler's move into `## Open decisions` hit the no-add rule. Fixed in
+  `561ce9e` (`docs/features/open-decisions-outside-section/plan.md`): `validateSpecDoc` refuses an
+  OD-led line outside the section; fixture
+  `test/fixtures/recorded/spec-crew-chatter-run-2-open-questions-outside-section.json`. Residual:
+  plain-prose open questions under another heading still pass.
+- Run 3: $3.44, the fix held live; OD-001 routed `upstream_follow_up`, so no pause. Blocked at
+  `code_review` with `code_review.artifact.missing` (spec declared package files conditionally,
+  plan added no dependency). Fixed by `docs/features/declared-artifacts-in-tasks/plan.md`
+  (`plan.artifact.untasked`, hazard 24, committed and pushed on `dashboard-restyling`); fixture
+  `test/fixtures/recorded/plan-crew-chatter-run-3-declared-artifacts-untasked.json`. Worktree 3
+  and the target's `.governance/raw/3` are the only full raw streams: keep them.
+- Run 4: $1.78, chose TipTap 3 and told the read-only implementer to run `npm install`; OD-001
+  routed `upstream_blocking`. Stopped unanswered at the decision pause (no stop command exists);
+  led to the rework proposal and changes 2 and 10. Asides:
+  `%LOCALAPPDATA%\Temp\crew-chatter-aside-2026-10-18-run3` and `-run4`.
+- Run 5: above.
+
+**Decision-1 (`src/systemone.ts`, operator's Foundry resource, API key):** config from user-scope
+`SYSTEMONE_ENDPOINT`, `SYSTEMONE_DEPLOYMENT`, `SYSTEMONE_DEPLOYMENT_TYPE`, `SYSTEMONE_API_KEY`;
+the deployment type is never checked against vendor values (operator, 2026-10-17); data may be sent
+for some operator decisions. Probe: `test/fixtures/recorded/systemone-probe-snitch-resource.json`
+(`api-key` header, `{model, answers, usage}`, unknown deployment is 404 `DeploymentNotFound`).
+- D6 fails the confirmed rule at T = 0.8 (`test/fixtures/recorded/systemone-d6-evaluation-crew-chatter-run-6.json`;
+  ten identical #905 requests agreed on the choice, probability 0.687-0.922).
+- Format checks (`docs/features/decision-1-format-checks/plan.md`, `Proposed`;
+  `test/fixtures/recorded/systemone-format-checks-evaluation.json`, 172 requests, $0.001632):
+  narration passes (3 of 3 remarks, 0 of 128 criteria; fails at T ≥ 0.9); grounding fails (flagged
+  supported rejections R-200-1 and R-905-1). Never relabel cases or split a check by kind after
+  seeing answers.
+- Narration is wired into spec review (`6cb2e3b`, `docs/features/narration-check-spec-review/plan.md`):
+  a flagged entry is a reconciler finding; `new-run` refuses without the variables unless
+  `--no-narration-check`; guided mode always on; each call an `agent_run` with executor
+  `systemone` and null cost; any failed request blocks the run. Tests use
+  `test/systemone-stand-in.ts`, and every test `new-run` passes `--no-narration-check`. No live
+  run has flagged anything yet (runs 3-5 and the 2026-10-17 web-calculator run: all `criterion`).
+
+**Web-calculator paid runs under current defaults** (Haiku 5.5 reviewers, sonnet-5-5 reconciler):
+2026-10-15, $1.39416 in 21 dispatches, all four patch dispatches returned `structured_output`, the
+self-review and code-review reconciler ran live for the first time, one remediation; target
+`C:\Users\Shawn-work\repositories\testing-repos\web-calculator-structured-2026-10-15\target`.
+2026-10-17 with `--narration-check`, $1.51048 in 22 dispatches, one remediation. Verification in
+both ran only `node --version` and `npm --version`. Structured-output plan open decisions 1
+(remediation drops unchanged files) and 3 (other dispatches to a schema) remain undecided.
+
+**Working state (verified 2026-10-19):**
+- `dashboard-restyling` pushed at `7446cd0` (14 ahead of `origin/master` on 2026-10-18).
+  `848469b` and the 2026-10-19 build commit on `sandboxed-delivery` are unpushed. An untracked
+  `docs/runbooks/workflow-explorer.html` (2026-10-18, referenced nowhere, origin unrecorded) was
+  left out of that commit; it is the operator's to keep or drop. Local `master` was 38 behind `origin/master` on
+  2026-10-10 (not rechecked). Pushing uses the personal gh account (auto memory); Snitch's
+  decision worker was unavailable on 2026-10-18, so the operator ran the push.
+- An untracked empty file `=` sits at the repository root (still present 2026-10-19); deleting it
+  is the operator's call. A plain-text API key copy sits in
+  `C:\Users\tamezs\.buildworks\[Environment]SetEnvironmentVariable.txt`; removing it is theirs.
+- `CLAUDE.md` and `AGENTS.md` are byte-identical. All 49 plans carried a correct Status line on
+  2026-10-15. Unbuilt by choice: `baseline-verification`, `implementation-phase-retry`
   (`Reconciled`), `implementation-segments-and-pause` (`Shelved`), `usage-limit-refusal-summary`
-  and `code-review-contract-drift-issue` (`Proposed`).
-- `CLAUDE.md` and `AGENTS.md` are byte-identical.
-- Last full serial suite (2026-10-17, declared-artifacts fix): 1633 tests, 1628 pass, 0 fail,
-  5 skipped. Smoke 13/13.
-- A loopback dashboard was launched from the 2026-10-17 session for run 3's approval; it ends
-  with that session. No run is in flight.
+  and `code-review-contract-drift-issue` (`Proposed`); `dashboard-pwa-redesign` is `Reconciled`
+  with Task 7 next.
+- No run, dashboard or background process is in flight.
 
 **Open work list (operator asked for one list, 2026-10-13):**
-1. **Code-review reconciler** (`docs/features/code-review-reconciler/plan.md`, `Implemented`,
-   committed `6282a6f`, review reconciled). Acts before remediation only; 2-of-2 agreement to
-   reject; any failed call or check keeps the finding; a rejected `high` reported again still
-   blocks. First live call 2026-10-15 (kept 1 low, rejected 0; no rejection seen live yet). Not
-   done: the passed-branch check in
-   `src/operator-state.ts` (a pass before the last round is not checked for rejections; reachable
-   only with a forged audit event). Replay evidence: 30 Haiku calls, 1 wrong rejection, 3 missed,
-   1 invented quote caught by the check (`test/fixtures/recorded/code-review-reconciler-*.json`).
-   A quote proves the words exist, not that they support the rejection (hazard 16).
-2. **Implementation self-review** (`docs/features/implementation-self-review/plan.md`,
-   `Implemented`, committed `fd235a8`, hazard 23). First live run 2026-10-15: $0.088, 5 critique
-   entries, no fixes; it has not yet returned a patch live. Deferred: a CRLF blob makes the
-   unchanged-file drop disagree with `git add`.
-3. **#209:** the NUL-byte email defect already existed at the reviewed commit `bb7f3f6`; the
-   control prompt found it in 1 of 10 calls (`control-4`), and a NUL-in-email defect on the
-   sign-in path in another (`control-6`). `test/code-review-run-6-evidence.test.ts` pins both.
-4. **Reviewer recall** (`test/fixtures/recorded/code-review-replay-crew-chatter-run-6-security.json`,
-   $0.227, 31 calls): each call reports about 2 of 8+ known defects; rewording the rule cut real
-   findings by half and is not adopted; a checked `basis` field was valid 10 of 10. Undecided:
-   several samples per lens merged (about $0.02 per lens per round), or the `basis` field alone (a
-   10-call replay, about $0.07).
-5. **Haiku effort replay, run 2026-10-15** (operator-approved, $1.2863 against a $0.40 estimate;
-   `test/fixtures/recorded/code-review-replay-crew-chatter-run-6-security-effort.json`). Distinct
-   in-spec defects per call, of 7: `medium` 2.1 ($0.008, 62 s median), `high` 2.5 ($0.019, 146 s),
-   `xhigh` 3.9 ($0.110, 320 s). Three merged calls: `medium` 4.2, `high` 4.9, `xhigh` 5.8. A new
-   defect (offline edit lost on reopen, AC-019) appeared in 0/10 `medium`, 3/10 `high`, 7/10
-   `xhigh` calls. Sonnet 5.5 `medium` (same file, $0.4667): 1.3 per call, 12 findings, 7 of 10
-   calls reported only the 401 cache leak; worse than Haiku `medium`. Opus 5.5 `medium` (same file,
-   $1.2999): 0.7 per call, 7 findings, all real, 3 calls reported nothing; its summaries show it
-   kept to the security lens and the spec's exclusions, yet that lens's instructions name
-   data-integrity defects, so its B and H misses are real. One lens is not panel recall.
-   Haiku 4.5 `medium` ($0.8209): 1 finding in 10 calls, and it was false (`new URL` accepts
-   `mailto:`), despite about 13,800 thinking tokens per call against Opus's 3,400. Undecided: reviewer default effort, merging samples, a three-lens panel replay. One prompt, one
+1. **Code-review reconciler** (`Implemented`, `6282a6f`): 2-of-2 agreement to reject; any failed
+   call keeps the finding. First live call 2026-10-15 kept 1, rejected 0. Not done: the
+   passed-branch check in `src/operator-state.ts` (reachable only with a forged audit event).
+   Replay: 30 Haiku calls, 1 wrong rejection, 3 missed, 1 invented quote caught. A quote proves the
+   words exist, not that they support the rejection (hazard 16).
+2. **Implementation self-review** (`Implemented`, `fd235a8`, hazard 23): has not yet returned a
+   patch live. Deferred: a CRLF blob makes the unchanged-file drop disagree with `git add`.
+3. **#209:** the NUL-byte email defect existed at reviewed commit `bb7f3f6`;
+   `test/code-review-run-6-evidence.test.ts` pins both control findings.
+4. **Reviewer recall** (`test/fixtures/recorded/code-review-replay-crew-chatter-run-6-security.json`):
+   each call reports about 2 of 8+ known defects; rewording the rule halved real findings; a
+   checked `basis` field was valid 10 of 10. Undecided: merged samples per lens (about $0.02 per
+   lens per round) or the `basis` field alone (a 10-call replay, about $0.07).
+5. **Effort replay** (2026-10-15, $1.2863 against a $0.40 estimate;
+   `...-security-effort.json`): distinct defects per call of 7 — Haiku `medium` 2.1 ($0.008),
+   `high` 2.5 ($0.019), `xhigh` 3.9 ($0.110); merged three calls 4.2 / 4.9 / 5.8. Sonnet 5.5
+   `medium` 1.3, Opus 5.5 `medium` 0.7 (all real), Haiku 4.5 `medium` 1 false finding in 10.
+   Undecided: reviewer default effort, merging samples, a three-lens panel replay. One prompt, one
    lens, one sample of each arm.
 6. **Spec/plan reconciler stays on Sonnet 5.5** (recommended; $0.54 of run 6's $4.84).
-7. **Crew-chatter run 6 (feature 1):** blocked at code review round 2. Re-run with more rounds,
-   fix branch `gov/crew-chatter-foundation/6` at `ca0bd0e` by hand, or stop. Undecided. A blocked
-   run cannot be an `--after` predecessor.
-8. **Older backlog, unchanged:** phase-retry plan, usage-limit summary plan (option B),
-   toolchain-probe proposal, baseline-verification plan, segments plan (`Shelved`); the dashboard
-   split card still offers Modify (the core refuses it); `ARCHITECTURE.md` section 14 and README
-   line 94 still say `git mv`.
+7. **Crew-chatter run 6 (other machine):** blocked at code review round 2; re-run, hand fix of
+   `gov/crew-chatter-foundation/6` at `ca0bd0e`, or stop. Undecided. A blocked run cannot be an
+   `--after` predecessor.
+8. **Older backlog:** the dashboard split card still offers Modify (the core refuses it);
+   `ARCHITECTURE.md` section 14 and README line 94 still say `git mv`; split designs carry no
+   parent open decisions.
 
 **Backlog plans, detail kept because nothing else records it:**
-- **Phase retry** (`docs/features/implementation-phase-retry/plan.md`, `Reconciled` 2026-10-09,
-  review 12 accepted, 1 deferred, 0 open): frozen `implementationPhaseAttempts` seeded 2, ceiling
-  3; retry only a reply refused with " is not valid JSON: "; the retry prompt is the original plus
-  a notice stating the refusal (section 19 and hazard 7: an identical resend "is not a retry");
-  one double-quote sentence in the first prompt; the retry event names the refused `agent_run`
-  id. Reading rule for the first paid retry: keep 2 if at least one retried phase parses on
-  attempt 2; set 1 and reopen the options if two retried phases are refused again in the same
-  file. Task 3 (extract crew-chatter run 2 phase 2 into a fixture) is not done; its raw reply is
-  one of 16 files under the target's `.governance/raw/2/`. Building makes every earlier frozen
-  profile unusable by name. Structured output now covers the phase replies it was written for;
-  whether the plan is still wanted is the operator's call.
-- **Toolchain-probe proposal** (`docs/proposals/toolchain-probe-and-stack-intent.md`): operator
-  direction 2026-10-11: the check must stop the run before spend and name the failing command,
-  its exit code and the end of its output; the proposal's other decisions stay open.
-- **Usage-limit proposal** (`docs/proposals/usage-limit-refusal-strands-a-run.md`): option B
-  (recognise the 429 shape, record reset time and raw cost) is planned; option C (pause instead
-  of block) is a separate, unauthorized decision.
-- **Baseline-verification plan:** not scheduled; the 2026-10-05 runbook check ("Prove the
-  verification commands run in a fresh worktree before you spend") is the chosen route.
-- **Code-review prompt wall:** code review refuses a prompt over 1 MiB (hazard 18); measured
-  5.4 to 6.4 KB of diff per task item, so one review fills near 130 to 160 items [Inference,
-  n=2]. Splitting the design is the only route past it today.
+- **Phase retry** (`docs/features/implementation-phase-retry/plan.md`, `Reconciled` 2026-10-09):
+  frozen `implementationPhaseAttempts` seeded 2, ceiling 3; retry only a reply refused with
+  " is not valid JSON: "; the retry prompt is the original plus a notice stating the refusal (an
+  identical resend "is not a retry"); the retry event names the refused `agent_run` id. Reading
+  rule for the first paid retry: keep 2 if a retried phase parses on attempt 2; set 1 and reopen if
+  two retried phases are refused again in the same file. Task 3 (extract crew-chatter run 2 phase 2
+  into a fixture) is not done; its raw reply is under that target's `.governance/raw/2/`. Building
+  makes every earlier frozen profile unusable. Structured output now covers the phase replies it
+  was written for; whether it is still wanted is the operator's call.
+- **Toolchain probe** (`docs/proposals/toolchain-probe-and-stack-intent.md`): the check must stop
+  the run before spend and name the failing command, exit code and end of output (2026-10-11);
+  other decisions open.
+- **Usage limit** (`docs/proposals/usage-limit-refusal-strands-a-run.md`): option B (recognise the
+  429 shape, record reset time and raw cost) is planned; option C (pause) is unauthorized. Its
+  plan's `[Verified]` lines about the `failed()` suffix predate prompt retention, which appended
+  `; prompt <path>`; re-verify before building.
+- **Baseline verification:** not scheduled; the runbook check "Prove the verification commands run
+  in a fresh worktree before you spend" is the chosen route.
+- **Code-review prompt wall:** code review refuses a prompt over 1 MiB (hazard 18); about 130 to
+  160 task items fill it [Inference, n=2]. Splitting the design is the only route past it.
 
-**Shipped and committed:** spec operator decisions and disclosed open decisions (2026-09-27),
-streaming harness output (`85fccad`), per-agent model and effort settings (`c539e59`), phased
-implementation and the one-repair extractor (`3c19653`), verification-aware prompts and plan
-task items (`c9ef115`), Haiku 5.5 reviewer defaults (`e2d9bd0`), the eight-failure fixes
-(`fd756a7`), the design split, hazard-22 cleanup and code-review reconciler (`6282a6f`), and the
-implementation self-review (`fd235a8`). Seeded defaults in `src/policy.ts`: Opus 5.5 `high`
-authors, Haiku 5.5 `medium` spec and code reviewers and code-review reconciler, Sonnet 5.5
-`medium` implementer; `--model` freezes only the spec/plan reconciler.
+**Shipped and committed:** spec operator decisions (2026-09-27), streaming harness output
+(`85fccad`), per-agent settings (`c539e59`), phased implementation and the one-repair extractor
+(`3c19653`), verification-aware prompts (`c9ef115`), Haiku 5.5 reviewer defaults (`e2d9bd0`), the
+eight-failure fixes (`fd756a7`), design split and code-review reconciler (`6282a6f`), self-review
+(`fd235a8`), structured patch output (`94e3b98`), Decision-1 narration (`6cb2e3b`, `05803eb`),
+open decisions outside section (`561ce9e`), declared artifacts in tasks (`dashboard-restyling`).
+Seeded defaults in `src/policy.ts`: Opus 5.5 `high` authors, Haiku 5.5 `medium` spec and code
+reviewers and code-review reconciler, Sonnet 5.5 `medium` implementer; `--model` freezes only the
+spec/plan reconciler.
 
-**Decisions locked (operator):** the operator signs approvals; the assistant never reads or
-invokes `~/.buildworks/approval.key`. A completed paid run never authorizes another spend; ask
-before each paid range. Reviewers on Haiku 5.5 (pinned `claude-haiku-5-5`), authors on Opus 5.5,
-implementer on Sonnet 5.5 (2026-10-08/09). BuildWorks proposes a design split inside spec review
-when the spec declares more than 30 files; the operator merges each feature before the next
-starts; segments plan shelved (2026-10-12). Hazard 22: clean ignored output after checks pass
-(2026-10-13). Self-review: find and fix in one dispatch, once after the last phase; an unusable
-reply skips, a guard failure blocks; critique in the audit log; no remediation rule 3
-(2026-10-13/14). Code-review reconciler before remediation only (2026-10-13). Patch dispatches
-use `--json-schema`, phases drop unchanged files, the "Output the JSON object directly" sentence
-is reworded for those three prompts (2026-10-14/15). Test projects (crew-chatter, team-notes) are
-stand-ins; only BuildWorks handling larger designs counts (2026-10-10).
+**Decisions locked (operator):** the operator signs approvals; the assistant never reads or invokes
+`~/.buildworks/approval.key`. A completed paid run never authorizes another spend; ask before each
+paid range. Reviewers Haiku 5.5 (pinned `claude-haiku-5-5`), authors Opus 5.5, implementer Sonnet
+5.5 (2026-10-08/09). Design split inside spec review above 30 declared files; the operator merges
+each feature before the next starts; segments plan shelved (2026-10-12). Hazard 22: clean ignored
+output after checks pass (2026-10-13). Self-review: find and fix in one dispatch after the last
+phase; unusable reply skips, guard failure blocks (2026-10-13/14). Code-review reconciler before
+remediation only (2026-10-13). Patch dispatches use `--json-schema` and phases drop unchanged files
+(2026-10-14/15). Test projects are stand-ins; only BuildWorks handling larger designs counts
+(2026-10-10).
 
-**External targets** (under `C:\Users\Shawn-work\repositories\testing-repos\`, on the other machine;
-none of them is on this machine, checked 2026-10-16):
-- **This machine:** `C:\Repositories\testing-repos\crew-chatter` (not the original target) at
-  `8f539e5` on `main`: npm workspaces `backend` (Express 5) and `frontend` (React 19, Vite 7),
-  `governed.yaml` running `npm ci`, typecheck, lint, build. Runs 1 and 2 above are in its store;
-  proposals 29-34 (features 2-7) are not exported yet. Its run-2 spec is untracked.
-- **crew-chatter**: `master` at `8063995` (six split designs under
-  `docs/features/crew-chatter-*/design.md`); untracked run 6 `spec.md` and `plan.md` under
-  `docs/features/crew-chatter-foundation/` (move them aside before another `new-run`); branches
-  `gov/crew-chatter/2` (`e02e035`), `/3` (`cc839ba`), `gov/crew-chatter-foundation/6`
+**External targets on the other machine** (`C:\Users\Shawn-work\repositories\testing-repos\`, none
+on this machine, checked 2026-10-16):
+- **crew-chatter**: `master` at `8063995` (six split designs); untracked run 6 `spec.md` and
+  `plan.md` under `docs/features/crew-chatter-foundation/` (move aside before another `new-run`);
+  branches `gov/crew-chatter/2` (`e02e035`), `/3` (`cc839ba`), `gov/crew-chatter-foundation/6`
   (`ca0bd0e`). Run 1 still reads nonterminal, so guided mode refuses; use low-level commands.
-  Runs 2-4 asides are under `%LOCALAPPDATA%\Temp\crew-chatter-aside-2026-10-*`.
-- **web-calculator-selfreview-2026-10-14\target**: the 2026-10-14 paid run's durable target.
-- **json-schema-probe\**: the two Task 1 probe clones (2026-10-14).
-- **team-notes** (HEAD `3b73c3d`): runs 1-12, none delivered; the operator calls it "not a real
-  scenario". Evidence in `test/fixtures/recorded/plan-team-notes-run-12.json` and
-  `run-10-dispatch-context.json`.
+- **web-calculator-selfreview-2026-10-14\target**, **json-schema-probe\** (two probe clones).
+- **team-notes** (HEAD `3b73c3d`): runs 1-12, none delivered; "not a real scenario". Evidence in
+  `test/fixtures/recorded/plan-team-notes-run-12.json` and `run-10-dispatch-context.json`.
 
 ## Diagnostics quick-reference
 
@@ -345,7 +231,7 @@ none of them is on this machine, checked 2026-10-16):
 - A prompt criterion narrows model judgement but does not settle it. A decision the gate depends on needs a deterministic rule or a human.
 - A rule a model must follow is followed reliably when it is a format the code checks (the `basis` field: 10 of 10); a prose prohibition is followed by sampling and also suppresses wanted output (variant B halved real findings). Prefer a checked field over a reworded sentence.
 - A reviewer call is one sample: each Haiku security-reviewer call found about 2 of 8+ known defects, a different 2 each time. Recall, not rule-breaking, was run 6's main miss.
-- Dispatches run `--restricted --safe-mode` and see no `CLAUDE.md`, `AGENTS.md` or global config; a target's instruction files cannot reach a run.
+- Dispatches run `--restricted --safe-mode` and see no `CLAUDE.md`, `AGENTS.md`, `~/.claude/CLAUDE.md` or `lessons.md` (probe 2026-10-17); a target's instruction files cannot reach a run.
 - `test/fixtures/harness/emit-spec-stage.mjs` routes by prompt substring in the order `self-critique`, `spec reviewer`, `reconcile`, `spec author`; answers every `finding <digit>` in the prompt; and derives `REVISED_SPEC` from `BASE_SPEC`. New prompt text must avoid those words.
 - Boundary asymmetry caused seven defects, most recently in `validateCodeReviewLocations`; inspect both sides of every comparison.
 - Put field/section constraints in prompts: parser-only rules killed three paid runs. `CONSTRAINT_STRINGS` scans source, so a phrase wrapped across a template-literal line fails.
@@ -384,7 +270,8 @@ none of them is on this machine, checked 2026-10-16):
 - A full `npm test` can leave an empty "moved" commit (author `t`) on the current branch; check `git log -1` after full runs.
 - A dispatch that exits 1 within seconds is usually the claude.ai session limit: a `rate_limit_event` with `status: "rejected"` at the stream's tail. It is not always free (crew-chatter run 2 phase 6: $0.1291 the store did not record), and a hit mid-range strands earlier phases ($9.63 in that run). Fixture `test/fixtures/recorded/crew-chatter-run-2-session-limit-refusal.json`.
 - Spec, plan, fold and split authors run in the target root; reviewers do not (the executor does not enforce `deniedPaths`). A commit to the target after `new-run` never reaches that run (worktree from the frozen starting commit).
-- `npm ci` fails when `package.json` and the lockfile disagree; install every library the design needs in the baseline commit. ESLint reports a disable directive for an unknown rule as an error; check lint in a worktree after `npm ci`.
+- `npm ci` fails when `package.json` and the lockfile disagree; install every library the design needs in the baseline commit, or declare the lockfile under `derived:`. ESLint reports a disable directive for an unknown rule as an error; check lint in a worktree after `npm ci`.
+- `npm install --package-lock-only --ignore-scripts` changed only `package-lock.json` and wrote no ignored output in a crew-chatter probe (2026-10-18).
 - A control prompt rebuilt byte-identical to a recorded dispatch (`input_hash` match) makes a replay comparable to the run; an older prompt can be rebuilt from `git archive <commit> src`.
 
 ### Guided mode and intake
@@ -427,7 +314,7 @@ none of them is on this machine, checked 2026-10-16):
 - Verification commands spawn with a shell on Windows (`src/verify-command.ts`), so `.cmd` shims resolve.
 - When quoting an expected cost, use an artifact of the same size or say it is smaller. A probe that changes how the answer is delivered can change output volume; quote a range, not the old cost.
 - Effort is not a linear cost knob: a Haiku 5.5 reviewer call cost 2.4x `medium` at `high` and 14x at `xhigh` (2026-10-15; estimated $0.40, spent $1.29). Price an effort change from one measured call first.
-- 2026-10-15 replays: five errors in one session (unmeasured cost, wrong field path, three scorer fixes after seeing data, a lens claim made without reading `code-reviewer-security.ts`, a circular "known defects" list). Each was caught after presenting, not before. Rule: a claim reaches the operator only after its source was checked in this session, and a scoring rule is fixed and committed before the data it scores exists. Prose rules alone did not hold; checker-enforced ones did.
+- A claim reaches the operator only after its source was checked in this session, and a scoring rule is fixed and committed before the data it scores exists (2026-10-15 replays: five errors caught only after presenting; prose rules alone did not hold, checker-enforced ones did).
 - A replay script reads the reply's real field path from a recorded reply before spending (reviewer findings sit under `proposedContentChanges.findings`); keep each call's raw stream so a wrong path costs a re-parse, not a re-run.
 - Before offering a change to a target after `new-run`, trace what the run froze.
 - A field in the only sample read is not evidence it is in the contract; read a second sample.
@@ -439,58 +326,41 @@ none of them is on this machine, checked 2026-10-16):
 - "It fails at the previous commit too" does not make a red test acceptable; trace it once.
 - Before asking the operator to choose, say what each option does and costs in plain words.
 - A plan step that re-decides after a record is built must reset every field the first decision wrote. Test a projection against the record the stage writes, not one the test builds.
+- A blast-radius search for a type's literals misses tests that `deepEqual` a whole parsed object (`test/cli.test.ts` compares the frozen profile's `verification`); when a frozen shape gains a field, also search for assertions over the parent key.
 - To find tests that pin a list, search for the constant and the code that builds the list (`DEFAULT_SETTINGS`, `RECONCILER`), not only the string literal.
 - Before writing a count into a plan or this file, run the exact filter the test will use and find the calls that report that exact finding; a summary label can name a different finding.
 - Before listing a test as affected, trace how its run is built (a run built in the store with no dispatch is unaffected).
 - Check a sentence about a mechanism against the plan's hazard notes before writing it ("independent", "against the code").
 - When a change moves a failure from "parsed later" to "refused at the envelope", keep what the old path recorded (row, cost).
-- `dispatchOnce` appends " (requested model m, effort e)" to failure reasons; don't anchor a test's regex at the end of the reason.
+- `dispatchOnce` appends " (requested model m, effort e; prompt .governance/prompts/<run>/<hash>.txt)" to failure reasons (the prompt part since 2026-10-18); don't anchor a test's regex at the end of the reason.
 - A review record with zero findings and no status stays unreconciled until someone records the disposition; a status check across `docs/features/` should read every review file, not only plans.
+- "Implemented" on a plan means built and unit-proven; when asked whether a change is finished, separate built, committed, and proven by a completed live run, and name the paths no live run has exercised.
 
 ## Session records
 
-### Earlier history (2026-08-29 to 2026-09-27)
-- Steps 1-8 shipped; step 9 reached 2026-09-03. Code review with bounded remediation (`6fb5412`, `4d71ad1`), delivery check (`d033595`), guided bootstrap and dashboard (`3415032`, `3235d23`), dashboard approval and reconciler shapes (`d2954d9`), code-review audit prompt and artifact check (`2a31e5c`, `834d209`), spec operator decisions (2026-09-27).
-- Paid web-calculator chains 2026-09-06 to 09-12: 11 to 16 dispatches, $1.00 to $2.45; three completed, the rest blocked at code review on correct high findings or provider bytes. Only version commands ran as verification.
+### Earlier history (2026-08-29 to 2026-10-15)
+- Steps 1-8 shipped; step 9 reached 2026-09-03. Paid web-calculator chains 2026-09-06 to 09-12: 11 to 16 dispatches, $1.00 to $2.45; three completed, the rest blocked at code review on correct high findings or provider bytes.
+- 2026-10-04 to 10-07: team-notes run 7 blocked on add versus modify (fixed by listing scope paths), run 8 on the session limit, run 9 on one raw line break (the one-repair extractor), run 10 ($7.30) on an uninstalled toolchain; crew-chatter (other machine) run 2 ($9.63) committed 5 of 6 phases before the session limit.
+- 2026-10-08 to 10-10: crew-chatter run 3 ($6.46) blocked on an unrepairable reply (phase-retry plan); run 4 ($4.94) passed plan review over the 80-item ceiling (led to the design split). Eight red tests had three causes, fixed in `fd756a7`; they had been committed red because earlier plans called them unrelated.
+- 2026-10-11 to 10-13: segments plan shelved for the split; split built (threshold 30); first live split proposed 6 features (`test/fixtures/recorded/split-crew-chatter-run-5.json`); run 6 (feature 1) was the first crew-chatter run to pass verification, then blocked at code review round 2 ($4.84, 22 dispatches). Three replays showed recall, not rule-breaking, was the main miss.
+- 2026-10-14 to 10-15: code-review reconciler (`6282a6f`) and self-review (`fd235a8`) built; a web-calculator run blocked at phase 2 on trailing prose (`test/fixtures/recorded/web-calculator-selfreview-run-1-phase-2-trailing-prose.json`), which led to structured patch output (`94e3b98`). The 2026-10-15 status sweep reconciled three older review records.
 - Lessons kept: trace the gate before proposing a remedy; compare the retained dispatch each agent received, never a later working tree; when a model-judgement fix fails twice on the same class, offer a deterministic or human-gated route.
 
-### 2026-10-04 to 2026-10-07 — phases, team-notes runs 7-12, crew-chatter runs 1-2
-- Team-notes run 7 blocked on add versus modify (fixed by listing scope paths); run 8 on the session limit; run 9 on one raw line break (the one-repair extractor); run 10 ($7.30) on an uninstalled toolchain at verification; run 12 passed plan review over the 80-item ceiling.
-- Crew-chatter run 1 asked a layout-guess question (launched from the checkout); run 2 ($9.63) committed 5 of 6 phases before the session limit; its lint failed on a missing plugin, fixed in the baseline (`5f6c1b2`).
+### 2026-10-16 to 2026-10-18 — Decision-1, crew-chatter runs 1-5, rework proposal, changes 2 and 10
+- Decision-1 client and D6 evaluation (`6cb2e3b`), format checks, narration wired into spec review; crew-chatter runs 1-5 on this machine; two fixes (`561ce9e`, declared-artifacts-in-tasks); the sandboxed-delivery rework proposal and whole-run replay design; changes 2 and 10 and prompt retention built. Outcomes are in Current state.
+- 2026-10-17 documentation sweep: the runbook gained the narration-check setup and the plan refusal; README, `CLAUDE.md`/`AGENTS.md` and the run-buildworks skill now cite the Haiku 5.5 reviewer runs. Historical plans, reviews and proposals were not changed.
 
-### 2026-10-08 to 2026-10-10 — run 3 malformed reply, phase-retry plan, reviewer defaults, eight test failures
-- Crew-chatter run 3 ($6.46) blocked at phase 2 on an unrepairable reply; the phase-retry plan followed and was reconciled 2026-10-09.
-- Run 4 ($4.94) passed plan review with 86 items against the frozen 80 and was unbuildable; this led to the design split.
-- The eight red tests had three causes (npm's exported `allow-scripts`, the SQLite notice, a comment tripping the private-key scan), fixed in `fd756a7`. I had committed with them red because earlier plans called them unrelated.
-
-### 2026-10-11 to 2026-10-12 — segments plan, splitter proposal, design split built
-- The segments plan was written and then shelved in favour of the split. Code review's 1 MiB prompt was found to be the next wall after implementation's ceiling.
-- The design split was built (threshold 30) and reviewed twice. The walk caught a wrong trim instruction; a finding-6 fix was reverted after its break-it did not fail.
-
-### 2026-10-13 — first live split; feature 1 built and verified; hazard 22; three replays
-- Run 5 ($2.26): the split dispatch proposed 6 features, validated first time; designs committed in the target as `8063995`. Fixture `test/fixtures/recorded/split-crew-chatter-run-5.json`.
-- Run 6 (feature 1, 29 files): spec, plan (37 items), 4 phases, then `npm ci`, typecheck, lint and build passed, the first crew-chatter run to pass verification. Code review refused on ignored `node_modules/` (hazard 22, fixed). Round 1: 13 findings; remediation `ca0bd0e`; round 2: 7 findings, 4 high; gate blocked. $4.84 over 22 dispatches.
-- Asked why models miss rules, three consented replays ($0.227 + $0.0568 + $0.0718) showed recall, not rule-breaking, was the main miss; the operator then chose the self-review and the code-review reconciler. Errors made: attributing #209 to remediation without checking the reviewed commit, citing a count from memory (27 vs 19), and a recommendation that would have halved real findings.
-
-### 2026-10-14 — reconciler built, self-review reconciled and built, first paid run
-- Code-review reconciler built ("build it now"), in-session review found 4 low text errors, committed in `6282a6f`. Self-review plan's two reviews reconciled, then built via `/implement-plan` (review: 5 issues, none high), committed as `fd235a8`.
-- First paid run with the self-review (`driver.mjs paid --yes --model claude-sonnet-5-5`, web-calculator, target `C:\Users\Shawn-work\repositories\testing-repos\web-calculator-selfreview-2026-10-14\target`): 12 dispatches, $1.12023, blocked at phase 2 of 2 before the self-review. The reply was a valid object followed by one sentence of prose, and returned `index.html` unchanged; either fault alone blocks. Fixture `test/fixtures/recorded/web-calculator-selfreview-run-1-phase-2-trailing-prose.json`.
-- The operator asked whether BuildWorks over-complicates structured output; the answer was that the CLI's `--json-schema` had gone unadopted since 2026-09-07. A two-call probe ($0.1061466) answered through `StructuredOutput`, but its reads were denied (temp-directory checkout). The structured-patch-output plan followed; its gating probes ($1.2809081) both passed, including crew-chatter run 3's 82 KB phase 2 prompt, whose ten files all applied.
-
-### 2026-10-15 — structured patch output built
-- The operator said "go ahead and yes reword that sentence first": `STRUCTURED_OUTPUT_RULE` replaced the "Output the JSON object directly…" sentence in the three patch prompts, then Tasks 2-8 were built. In-session review: 0 high, 1 medium (a refused structured reply lost its cost; fixed), 5 low.
-- Full serial suite 1562/1556 pass, 0 fail, 6 skipped, HEAD `fd235a8` before and after; typecheck and `check:docs` clean; smoke 13/13; every break-it failed and was restored by hash.
-
-## 2026-10-15 — compaction and status sweep
+## 2026-10-19 — status check and compaction
 
 ### Decisions and assumptions
-- The operator asked for the learnings update, doc-check, the plan marked `Implemented`, its review reconciled, and every plan's status checked. All 49 plans were correct; three older review records lacked a final status and were reconciled with a dated block that leaves their findings as written.
-
-### What worked
-- Reading each review record's status line, not only plans, found the three gaps: `cli-operator/2026-09-10-code-review-2.md` (`open`, zero findings), and two records with no status whose findings source inspection showed fixed.
+- No new operator decisions. The operator asked for status and whether changes 2 or 10 were finished: both are built and uncommitted, partly proven live by run 5, and not finished until committed and proven by a completed run.
+- Compaction trimmed this file from 535 lines by compressing resolved run narrative into Current state and the history section; no open decision or durable fact was dropped.
 
 ### Verification
-- `npm run check:docs` - `doc-check: clean` after the record edits; rerun after this rewrite.
+- `git status -sb` - `sandboxed-delivery` one ahead of `origin/sandboxed-delivery`; the build is still uncommitted.
+- `git -C C:/Repositories/testing-repos/crew-chatter status --short` - run 5's `spec.md` and `plan.md` untracked under `docs/features/crew-chatter-accounts-notes/`.
+
+- The operator then said to move or delete run 5's spec and plan and commit the changes: both were moved aside (not deleted), and the build was committed without `=` and `docs/runbooks/workflow-explorer.html`.
 
 ### Next up
-- Done the same day: committed as `94e3b98`, and the paid run completed ($1.39416, 21 dispatches; see Current state).
+- The operator decides what to do with run 5's typecheck block and whether to push.

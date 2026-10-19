@@ -326,6 +326,7 @@ test("new-run freezes a profile and records its hash on the run", () => {
     // not re-read later (hard rule 6).
     assert.deepEqual(profile.verification, {
       commands: [{ name: "unit", command: ["node", "--version"] }],
+      derived: [],
     });
     assert.equal(profile.policyHash, policyHash(buildPolicy()));
   } finally {

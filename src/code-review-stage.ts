@@ -21,6 +21,9 @@ import {
   type ReconcilerDecision,
 } from "./code-review-reconcile.ts";
 import { verifyCommit } from "./commit-verification.ts";
+import { derivedPathExclusion, regenerateDerivedArtifacts } from "./derived-artifacts.ts";
+import { unapprovedDependencyAdditions } from "./dependency-policy.ts";
+import { validateSpecDoc } from "./spec-doc.ts";
 import { dispatchOnce } from "./dispatch.ts";
 import { type ExecutorDefinition } from "./executor.ts";
 import { extractJsonBody } from "./parse-output.ts";
@@ -30,6 +33,7 @@ import {
   codeReviewEvidenceDir,
   codeReviewEvidenceRef,
   codeReviewVerificationDir,
+  derivedEvidenceDir,
 } from "./paths.ts";
 import { CODE_REVIEW_RECONCILER } from "./policy.ts";
 import { loadVerifiedProfile, requireFrozenBinding, resolveSettings } from "./profile.ts";
@@ -256,6 +260,13 @@ export async function runCodeReviewStage(
   }
   // The grounding location of every reconciler rejection.
   const specLocation = approvalStage.output_ref;
+  // The packages the signed specification lists: the only additions a
+  // remediation may make.
+  const signedSpec = validateSpecDoc(specContent);
+  if (!signedSpec.ok) {
+    return { ok: false, reason: `the approved spec ${specLocation} no longer validates: ${signedSpec.reason}` };
+  }
+  const approvedDependencies = signedSpec.value.dependenciesAdded;
 
   if (!existsSync(worktreePath)) {
     return { ok: false, reason: `the worktree for run ${runId} is missing at ${worktreePath}` };
@@ -314,8 +325,11 @@ export async function runCodeReviewStage(
     };
   }
 
+  // Reviewers read the change without the files the system regenerates, and
+  // so may place findings only on paths the implementer wrote.
+  const excludeDerived = derivedPathExclusion(profile.verification.derived);
   const initialNames = runGit(
-    ["diff", "--name-only", "-z", patchBase, initialVerifiedCommit],
+    ["diff", "--name-only", "-z", patchBase, initialVerifiedCommit, ...excludeDerived],
     worktreePath
   );
   if (!initialNames.ok) {
@@ -408,7 +422,7 @@ export async function runCodeReviewStage(
     };
 
     for (let roundNumber = 1; roundNumber <= profile.policy.codeReviewMaxRounds; roundNumber += 1) {
-      const names = runGit(["diff", "--name-only", "-z", patchBase, currentCommit], worktreePath);
+      const names = runGit(["diff", "--name-only", "-z", patchBase, currentCommit, ...excludeDerived], worktreePath);
       if (!names.ok) {
         return abort(stage.id, "code_review.round.failed", `round ${roundNumber}: cannot read changed paths for ${patchBase}..${currentCommit}: ${names.detail}`);
       }
@@ -416,7 +430,7 @@ export async function runCodeReviewStage(
       if (changedPaths.length === 0) {
         return abort(stage.id, "code_review.round.failed", `round ${roundNumber}: ${patchBase}..${currentCommit} changed no files`);
       }
-      const diffResult = runGit(["diff", "--no-color", patchBase, currentCommit], worktreePath);
+      const diffResult = runGit(["diff", "--no-color", patchBase, currentCommit, ...excludeDerived], worktreePath);
       if (!diffResult.ok) {
         return abort(stage.id, "code_review.round.failed", `round ${roundNumber}: cannot read diff for ${patchBase}..${currentCommit}: ${diffResult.detail}`);
       }
@@ -816,7 +830,8 @@ export async function runCodeReviewStage(
             currentCommit,
             changedPaths,
             diff,
-            remediationFindings.map(toRemediationInput)
+            remediationFindings.map(toRemediationInput),
+            profile.verification
           ),
           // The answer comes back as structured output, never free text
           // (docs/features/structured-patch-output/plan.md). Reviewers and the
@@ -882,28 +897,55 @@ export async function runCodeReviewStage(
       process.stderr.write(
         `round ${roundNumber}/${profile.policy.codeReviewMaxRounds} remediation committed ${applied.resultingCommit.slice(0, 8)} from ${currentCommit.slice(0, 8)}\n`
       );
+      const dependencies = unapprovedDependencyAdditions(worktreePath, patchBase, applied.resultingCommit, approvedDependencies);
+      if (!dependencies.ok) {
+        return abort(stage.id, "code_review.dependency.unapproved", `round ${roundNumber}, base ${currentCommit}: ${dependencies.reason}`);
+      }
+      // The system regenerates the derived files after the patch commit, and
+      // the regenerated head is what is verified, recorded as the
+      // remediation's resulting commit, and reviewed next.
+      const regenerated = await regenerateDerivedArtifacts({
+        rootDir,
+        worktreePath,
+        runId,
+        derived: profile.verification.derived,
+        expectedHead: applied.resultingCommit,
+        label: `remediation-${roundNumber}`,
+        evidenceDir: derivedEvidenceDir(rootDir, runId, `remediation-${roundNumber}`),
+        policy: {
+          timeoutSeconds: profile.policy.verifyCommandTimeoutSeconds,
+          maxBytes: profile.policy.resultMaxBytes,
+          retentionMaxBytes: profile.policy.verifyRetentionMaxBytes,
+          envPassthrough: profile.policy.verifyEnvPassthrough,
+        },
+        audit: (action, summary) => audit(stage.id, `code_review.remediation.${action}`, `round=${roundNumber}; ${summary}`),
+      });
+      if (!regenerated.ok) {
+        return abort(stage.id, "code_review.remediation.failed", `round ${roundNumber}, base ${currentCommit}: ${regenerated.reason}`);
+      }
+      const remediatedCommit = regenerated.head;
 
       const verification = await verifyCommit({
         rootDir,
         worktreePath,
-        expectedCommit: applied.resultingCommit,
+        expectedCommit: remediatedCommit,
         commands: profile.verification.commands,
         timeoutSeconds: profile.policy.verifyCommandTimeoutSeconds,
         maxBytes: profile.policy.resultMaxBytes,
         retentionMaxBytes: profile.policy.verifyRetentionMaxBytes,
         envPassthrough: profile.policy.verifyEnvPassthrough,
         evidenceDir: codeReviewVerificationDir(rootDir, runId, roundNumber),
-        audit: (action, summary) => audit(stage.id, `code_review.verification.${action}`, `round=${roundNumber}; commit=${applied.resultingCommit}; ${summary}`),
+        audit: (action, summary) => audit(stage.id, `code_review.verification.${action}`, `round=${roundNumber}; commit=${remediatedCommit}; ${summary}`),
         progress: (command, because, durationMs) => {
           process.stderr.write(
-            `round ${roundNumber}/${profile.policy.codeReviewMaxRounds} verification ${because === null ? "pass" : "BLOCK"} ${command.name} at ${applied.resultingCommit.slice(0, 8)} in ${durationMs}ms\n`
+            `round ${roundNumber}/${profile.policy.codeReviewMaxRounds} verification ${because === null ? "pass" : "BLOCK"} ${command.name} at ${remediatedCommit.slice(0, 8)} in ${durationMs}ms\n`
           );
         },
       });
       roundRecord.remediation = {
         author: author.id,
         baseCommit: currentCommit,
-        resultingCommit: applied.resultingCommit,
+        resultingCommit: remediatedCommit,
         changedPaths: applied.changedPaths,
         verification: verification.record,
       };
@@ -912,11 +954,11 @@ export async function runCodeReviewStage(
         const reason = `code_review remediation verification blocked after round ${roundNumber}: ${verification.reason}`;
         store.completeStage(stage.id, resultRef, "block");
         store.setRunStatus(runId, "blocked");
-        audit(stage.id, "code_review.verification.block", `round=${roundNumber}; commit=${applied.resultingCommit}; ${verification.reason}`);
+        audit(stage.id, "code_review.verification.block", `round=${roundNumber}; commit=${remediatedCommit}; ${verification.reason}`);
         return { ok: false, reason };
       }
-      audit(stage.id, "code_review.remediation.pass", `round=${roundNumber}; base=${currentCommit}; commit=${applied.resultingCommit}; changedPaths=${applied.changedPaths.join(",")}; verification=pass`);
-      currentCommit = applied.resultingCommit;
+      audit(stage.id, "code_review.remediation.pass", `round=${roundNumber}; base=${currentCommit}; commit=${remediatedCommit}; changedPaths=${applied.changedPaths.join(",")}; verification=pass`);
+      currentCommit = remediatedCommit;
     }
     throw new Error("the frozen code-review round budget ended without a terminal decision");
   } catch (err) {

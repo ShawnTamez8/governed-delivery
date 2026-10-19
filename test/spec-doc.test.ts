@@ -497,6 +497,86 @@ test("an open-decision entry line refuses under any other heading, with or witho
   );
 });
 
+// --- derived artifacts and ## Dependencies added
+// (docs/features/derived-artifacts-and-dependency-policy/plan.md, Tasks 4 and 7).
+// Crew-chatter run 4's reviewed specification, recorded with its provenance.
+
+const RUN_4 = JSON.parse(
+  readFileSync(join(import.meta.dirname, "fixtures", "recorded", "spec-crew-chatter-run-4-dependency-in-prose.json"), "utf8")
+) as { spec: string; provenance: { packagesAdded: string[] } };
+
+test("writeSpecDoc refuses run 4's specification when its lockfile is a derived artifact, and writes it otherwise", () => {
+  const root = mkdtempSync(join(tmpdir(), "bw-specdoc-derived-"));
+  try {
+    assert.throws(
+      () => writeSpecDoc(root, "crew-chatter-accounts-notes", RUN_4.spec, null, ["package-lock.json"]),
+      (err: unknown) =>
+        (err as Error).message ===
+        "declared artifact names a file the system regenerates (governed.yaml derived:): package-lock.json; the system writes it after every patch commit, so it is never declared"
+    );
+    assert.equal(existsSync(join(root, "docs", "features", "crew-chatter-accounts-notes", "spec.md")), false);
+    const { doc } = writeSpecDoc(root, "crew-chatter-accounts-notes", RUN_4.spec);
+    assert.ok(doc.declaredArtifacts.includes("package-lock.json"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/** Run 4's spec with a `## Dependencies added` section of the given lines, appended last. */
+function run4WithDependencies(...lines: string[]): string {
+  return `${RUN_4.spec.trimEnd()}\n\n## Dependencies added\n\n${lines.join("\n")}\n`;
+}
+
+test("run 4's specification names its packages only in prose, so it validates with no dependency additions", () => {
+  assert.equal(RUN_4.provenance.packagesAdded.length, 4);
+  for (const name of RUN_4.provenance.packagesAdded) assert.ok(RUN_4.spec.includes(name), name);
+  const result = validateSpecDoc(RUN_4.spec);
+  assert.ok(result.ok, result.ok ? "" : result.reason);
+  assert.deepEqual(result.value.dependenciesAdded, []);
+});
+
+test("a ## Dependencies added section lists each recorded package against its declared manifest", () => {
+  const result = validateSpecDoc(
+    run4WithDependencies(...RUN_4.provenance.packagesAdded.map((name) => `- frontend/package.json: ${name}`))
+  );
+  assert.ok(result.ok, result.ok ? "" : result.reason);
+  assert.deepEqual(
+    result.value.dependenciesAdded,
+    RUN_4.provenance.packagesAdded.map((name) => ({ manifest: "frontend/package.json", name }))
+  );
+});
+
+test("each malformed dependency addition refuses by the rule it broke", () => {
+  assert.equal(
+    refusal(run4WithDependencies("- tools/package.json: @tiptap/react")),
+    "a dependency is added only to a declared package.json; tools/package.json is not under ## Declared artifacts: tools/package.json: @tiptap/react"
+  );
+  assert.equal(
+    refusal(run4WithDependencies("- frontend/src/App.tsx: @tiptap/react")),
+    "a dependency is added only to a package.json; frontend/src/App.tsx is not one: frontend/src/App.tsx: @tiptap/react"
+  );
+  assert.equal(
+    refusal(run4WithDependencies("- @tiptap/react")),
+    "every line under ## Dependencies added must be one addition of the form '- <path to package.json>: <package name>'; this line is not: @tiptap/react"
+  );
+  assert.equal(
+    refusal(run4WithDependencies("- frontend/package.json: TipTap")),
+    "invalid npm package name TipTap: frontend/package.json: TipTap"
+  );
+  assert.equal(
+    refusal(run4WithDependencies("- frontend/package.json: @tiptap/pm", "- frontend/package.json: @tiptap/pm")),
+    "duplicate dependency addition frontend/package.json:@tiptap/pm"
+  );
+  assert.equal(
+    refusal(`${RUN_4.spec.trimEnd()}\n\n## Dependencies Added\n\n- frontend/package.json: @tiptap/pm\n`),
+    "the dependencies heading must be exactly '## Dependencies added'; this heading is not: ## Dependencies Added"
+  );
+  assert.equal(
+    refusal(`${run4WithDependencies("- frontend/package.json: @tiptap/pm")}\n## Dependencies added\n\n- frontend/package.json: @tiptap/react\n`),
+    "a specification has at most one ## Dependencies added section"
+  );
+});
+
 test("an open-decision ID mentioned later in a line is not an entry", () => {
   const spec = withDecisions("- OD-001 (high): who may download the export archive").replace(
     "- AC-001: the parser accepts the documented shapes",

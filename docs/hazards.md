@@ -170,6 +170,11 @@ inside an error message.
 Write raw model output to disk before validation and reference it from the run
 record. It is also the only honest source of fixtures — see hazard 4.
 
+The input is retained too: since 2026-10-18 each dispatch writes its exact
+prompt to `.governance/prompts/<run>/<input_hash>.txt` before the harness
+starts, and refuses to dispatch if it cannot
+(`docs/features/prompt-retention/plan.md`).
+
 ## 3. A constrained field must have its constraint stated in the prompt
 
 A field validated against a pattern the prompt never mentions will be returned
@@ -1020,6 +1025,16 @@ approved spec, the approved plan and the draft plan are committed at
   if the change must create or modify it however it is built, and to settle an
   open choice such as adding a dependency before declaring the files it would
   change.
+- A lockfile is no longer declared at all when `governed.yaml` lists it under
+  `derived:` (2026-10-18, `docs/features/derived-artifacts-and-dependency-policy/plan.md`).
+  The system regenerates and commits it after every patch commit, the spec write
+  and the approval gate refuse a specification that declares it, and every
+  author prompt says so. A package the change adds is listed under
+  `## Dependencies added` and approved or denied by the operator at
+  `spec_decision`, and an implementation commit that adds an unlisted package is
+  refused. That removes run 3's lockfile declaration and the "any dependency
+  added" hedge that caused it, for a target that declares the block. A target
+  without it is answered only by the rules above.
 
 What this does not show. The check proves a path is named in a task, not that the
 task changes it, so delivery's exact match stays the check that it was delivered

@@ -26,6 +26,7 @@ test("low-level consumers resolve stored evidence against the selected repositor
           const start = "a".repeat(40);
           const frozen = freezeProfile(root, run.id, start, "fixture-model", {
             commands: [{ name: "node", command: ["node", "--version"] }],
+            derived: [],
           });
           store.setProfileRef(run.id, frozen.hash);
           const ref = (path: string) => absolute ? path : relative(root, path);

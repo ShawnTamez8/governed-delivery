@@ -102,7 +102,7 @@ export function checkCommitState(
  * nothing an agent wrote. A path holding this verification's own evidence is
  * kept. Returns the removed entries, or why removal failed.
  */
-function removeIgnoredOutput(
+export function removeIgnoredOutput(
   worktreePath: string,
   evidenceDir: string
 ): { ok: true; removed: string[] } | { ok: false; detail: string } {

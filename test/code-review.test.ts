@@ -158,7 +158,7 @@ function withRecordedReview(fn: (record: CodeReviewRecord, profile: Profile) => 
     const commands = record.rounds[0]!.remediation!.verification.commands.map((command) => ({
       name: command.name, command: command.argv,
     }));
-    const frozen = freezeProfile(root, record.runId, record.patchBase, "test-model", { commands });
+    const frozen = freezeProfile(root, record.runId, record.patchBase, "test-model", { commands, derived: [] });
     const policy = { ...frozen.profile.policy, codeReviewPanelSize: record.panelSize,
       codeReviewMaxRounds: record.maxRounds, codeReviewBlockingSeverity: record.blockingSeverity,
       severities: record.severities };

@@ -13,6 +13,7 @@ import {
   codeReviewEvidenceRef, deliveryEvidenceRef, rawOutputDir, worktreePath,
 } from "./paths.ts";
 import { readSplitApproval, readSplitRecord } from "./design-split.ts";
+import { readDependencyRecord } from "./dependency-policy.ts";
 import { APPROVAL_DEFAULT_LIFETIME_SECONDS, buildPolicy, policyHash } from "./policy.ts";
 import { loadVerifiedProfile, requireFrozenBinding, type NarrationCheckConfig, type Profile } from "./profile.ts";
 import { computeScope } from "./scope.ts";
@@ -83,6 +84,8 @@ export interface RunConfiguration {
   startingCommit: string | null;
   dispatchSettings: Record<string, { model: string; effort: string }> | null;
   verificationCommands: { name: string; argv: string[] }[] | null;
+  /** The frozen `verification.derived`: files the system regenerates after each patch commit. */
+  derivedArtifacts: { name: string; path: string; command: string[] }[] | null;
   documentReview: {
     panelSizeMin: number; panelSizeMax: number; specReviewRounds: number;
     planReviewRounds: number; requiredSpecialties: string[];
@@ -288,6 +291,7 @@ export function runConfiguration(profile: Profile | null, hash: string | null, c
     systemName: profile?.systemName ?? null, profileHash: hash, policyHash: profile?.policyHash ?? null,
     startingCommit: profile?.startingCommit ?? null, dispatchSettings: profile?.dispatchSettings ?? null,
     verificationCommands: profile?.verification.commands.map((c) => ({ name: c.name, argv: c.command })) ?? null,
+    derivedArtifacts: profile?.verification.derived ?? null,
     documentReview: p ? { panelSizeMin: p.panelSizeMin, panelSizeMax: p.panelSizeMax,
       specReviewRounds: p.specReviewRounds, planReviewRounds: p.planReviewRounds, requiredSpecialties: p.requiredSpecialties } : null,
     codeReview: p ? { panelSize: p.codeReviewPanelSize, maxRounds: p.codeReviewMaxRounds,
@@ -936,6 +940,8 @@ function interpretBoundary(
     const answered = new Set(rows.answers.map((a) => a.question_id));
     // The design split takes approve or deny only; `answerQuestion` refuses modify.
     const split = readSplitRecord(audit)?.findingId;
+    // So does the dependency question.
+    const dependencies = readDependencyRecord(audit)?.findingId;
     for (const q of rows.questions.filter((q) => !answered.has(q.id))) {
       snapshot.operatorActions.push({
         kind: "decision_answer", command: "decide",
@@ -943,7 +949,9 @@ function interpretBoundary(
         eligible: true,
         reason: q.finding_id === split
           ? "Choose exactly one of --approve (split) or --deny (build as one); this question takes no --answer-file."
-          : "Choose exactly one of --approve, --deny, or --answer-file <path>.",
+          : q.finding_id === dependencies
+            ? "Choose exactly one of --approve (add the packages) or --deny (end the run); this question takes no --answer-file."
+            : "Choose exactly one of --approve, --deny, or --answer-file <path>.",
         proposalId: null, route: null, title: q.text, evidenceRef: specReview?.output_ref ?? null,
       });
     }

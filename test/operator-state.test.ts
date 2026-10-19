@@ -10,6 +10,7 @@ import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { parsePassedCodeReviewRecord, validateCodeReviewReports, type CodeReviewRecord } from "../src/code-review.ts";
 import { runCodeReviewStage } from "../src/code-review-stage.ts";
 import { runDeliveryStage } from "../src/delivery-stage.ts";
+import { DEPENDENCY_INTENT, DEPENDENCY_LOCATION, DEPENDENCY_OPTIONS, dependencyQuestionText } from "../src/dependency-policy.ts";
 import { formatImplementationGate, parseImplementationGate, parseVerificationHandoff } from "../src/handoff.ts";
 import { acquireLock } from "../src/lock.ts";
 import { extractJsonBody } from "../src/parse-output.ts";
@@ -222,7 +223,7 @@ test("recorded remediation-chain presentation preserves partial telemetry, immut
     });
     const verificationCommands = chain.review.rounds.flatMap((r) => r.remediation?.verification.commands ?? []);
     const frozen = freezeProfile(root, run.id, null, captures[0]!.parsed.effectiveModel!,
-      { commands: verificationCommands.map((c) => ({ name: c.name, command: c.argv })) });
+      { commands: verificationCommands.map((c) => ({ name: c.name, command: c.argv })), derived: [] });
     const profile = frozen.profile;
     profile.policy.codeReviewPanelSize = chain.review.panelSize;
     profile.policy.codeReviewMaxRounds = chain.review.maxRounds;
@@ -432,7 +433,10 @@ test("large selected finding/report/decision arrays are complete in text and JSO
 test("profile and approval projections preserve original bindings while missing evidence stays inspectable", () => {
   withStore((store, root) => {
     const run = store.insertRun("profile", "profile", "profile", "feature");
-    const configuration = { commands: [{ name: "node", command: ["node", "--version"] }] };
+    const configuration = {
+      commands: [{ name: "node", command: ["node", "--version"] }],
+      derived: [{ name: "lockfile", path: "package-lock.json", command: ["npm", "install", "--package-lock-only", "--ignore-scripts"] }],
+    };
     const frozen = freezeProfile(root, run.id, null, envelope.effectiveModel!, configuration);
     store.setProfileRef(run.id, frozen.hash);
     const stage = store.insertStage(run.id, "spec", null);
@@ -444,6 +448,7 @@ test("profile and approval projections preserve original bindings while missing 
     assert.deepEqual(snapshot.configuration.dispatchSettings, frozen.profile.dispatchSettings);
     assert.deepEqual(snapshot.configuration.verificationCommands,
       configuration.commands.map((c) => ({ name: c.name, argv: c.command })));
+    assert.deepEqual(snapshot.configuration.derivedArtifacts, configuration.derived);
     assert.equal(snapshot.configuration.profileHash, frozen.hash);
     assert.equal(snapshot.configuration.policyHash, frozen.profile.policyHash);
     assert.equal(snapshot.configuration.deadline,
@@ -460,6 +465,7 @@ test("profile and approval projections preserve original bindings while missing 
     assert.equal(missing.configuration.profileHash, null);
     assert.equal(missing.configuration.dispatchSettings, null);
     assert.equal(missing.configuration.verificationCommands, null);
+    assert.equal(missing.configuration.derivedArtifacts, null);
     assert.equal(missing.approval.id, approved.id);
     assert.equal(missing.stages[0]!.id, stage.id);
     assert.ok(missing.limitations.some((s) => /no frozen profile/.test(s)));
@@ -559,7 +565,7 @@ async function withBoundary(prefix: number, fn: (ctx: BoundaryContext) => void |
     const startingCommit = commitAll(root);
     const run = store.insertRun("operator", "demo", "demo", "feature");
     const frozen = freezeProfile(root, run.id, startingCommit, "fixture-model",
-      { commands: [{ name: "node", command: ["node", "--version"] }] });
+      { commands: [{ name: "node", command: ["node", "--version"] }], derived: [] });
     const { profile } = loadProfile(root, run.id);
     profile.approvalSigner = null;
     profile.executor = { ...profile.executor,
@@ -712,6 +718,31 @@ test("two stages pause for open questions, fold once answered, and are inconsist
     assert.equal(answered.workflowAction.group, "decision");
     assert.equal(answered.workflowAction.eligible, true, JSON.stringify(answered.workflowAction.reasons));
     assert.ok(!answered.operatorActions.some((a) => a.kind === "decision_answer"));
+  });
+});
+
+test("status offers the dependency question approve or deny only, and every other question all three", async () => {
+  // docs/features/derived-artifacts-and-dependency-policy/plan.md, Task 8: the
+  // question is the one the `spec.dependencies.record` event names, as the
+  // spec stage records it.
+  await withBoundary(2, ({ store, root, runId }) => {
+    const review = store.getStageChain(runId)[1]!;
+    const additions = [{ manifest: "package.json", name: "@tiptap/react" }];
+    const dependency = store.upsertCanonicalFinding(review.id, 1, DEPENDENCY_INTENT, DEPENDENCY_LOCATION);
+    store.insertDecisionQuestion({ findingId: dependency.id, text: dependencyQuestionText(additions),
+      options: DEPENDENCY_OPTIONS, recommended: 0, why: "the approach depends on it" });
+    appendAudit(store, { runId, stageId: review.id, actor: "system", actorType: "cli",
+      action: "spec.dependencies.record", summary: `finding=${dependency.id}; packages=package.json:@tiptap/react` });
+    const other = store.upsertCanonicalFinding(review.id, 1, "retention", "upstream:design:retention");
+    store.insertDecisionQuestion({ findingId: other.id, text: "Decide retention?",
+      options: [{ label: "A", answer: "thirty days" }, { label: "B", answer: "forever" }], recommended: 0, why: "short-lived" });
+    const snapshot = readRunSnapshot(store, root, runId).snapshot;
+    assert.equal(snapshot.phase, "awaiting_decision");
+    const actions = snapshot.operatorActions.filter((a) => a.kind === "decision_answer");
+    const reasonFor = (finding: number) => actions.find((a) => a.args.at(-1) === String(finding))!.reason!;
+    assert.equal(reasonFor(dependency.id),
+      "Choose exactly one of --approve (add the packages) or --deny (end the run); this question takes no --answer-file.");
+    assert.equal(reasonFor(other.id), "Choose exactly one of --approve, --deny, or --answer-file <path>.");
   });
 });
 

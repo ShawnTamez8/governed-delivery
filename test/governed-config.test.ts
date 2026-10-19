@@ -155,6 +155,131 @@ test("an empty file is refused", () => {
   assert.match(refusal("\n\n# only comments\n"), /is empty/);
 });
 
+// --- the derived: block (docs/features/derived-artifacts-and-dependency-policy/plan.md) ---
+
+/** crew-chatter's governed.yaml at run 4's starting commit, recorded. */
+const CREW_CHATTER_YAML = (
+  JSON.parse(
+    readFileSync(
+      join(process.cwd(), "test/fixtures/recorded/spec-crew-chatter-run-4-dependency-in-prose.json"),
+      "utf8"
+    )
+  ) as { governedYaml: string }
+).governedYaml;
+
+const LOCKFILE_BLOCK =
+  `derived:\n  - name: lockfile\n    path: package-lock.json\n` +
+  `    command: ["npm", "install", "--package-lock-only", "--ignore-scripts"]\n`;
+
+/** A one-command verify block, then `derived` text, so line numbers are fixed. */
+function withDerived(derived: string): string {
+  return `verify:\n  - name: a\n    command: ["npm", "test"]\n${derived}`;
+}
+
+test("a recorded governed.yaml without a derived: block parses to its commands and no derived artifacts", () => {
+  const result = parseGovernedConfig(CREW_CHATTER_YAML);
+  assert.ok(result.ok, result.ok ? "" : result.reason);
+  assert.deepEqual(
+    result.config.commands.map((c) => c.name),
+    ["dependencies", "typecheck", "lint", "build"]
+  );
+  assert.deepEqual(result.config.derived, []);
+});
+
+test("a derived: block after the verify entries parses to one derived artifact", () => {
+  const result = parseGovernedConfig(CREW_CHATTER_YAML + LOCKFILE_BLOCK);
+  assert.ok(result.ok, result.ok ? "" : result.reason);
+  assert.equal(result.config.commands.length, 4);
+  assert.deepEqual(result.config.derived, [
+    {
+      name: "lockfile",
+      path: "package-lock.json",
+      command: ["npm", "install", "--package-lock-only", "--ignore-scripts"],
+    },
+  ]);
+});
+
+test("derived: a block naming no artifacts is refused", () => {
+  assert.equal(
+    refusal(withDerived("derived:\n")),
+    `governed.yaml line 4: the derived: block names no artifacts`
+  );
+});
+
+test("derived: a path line of the wrong shape is refused", () => {
+  assert.equal(
+    refusal(withDerived(`derived:\n  - name: lockfile\n    file: package-lock.json\n    command: ["npm", "install"]\n`)),
+    `governed.yaml line 6: expected "    path: <repo-relative file path>", found "    file: package-lock.json"`
+  );
+});
+
+test("derived: a path that traverses out of the repository is refused", () => {
+  assert.equal(
+    refusal(withDerived(`derived:\n  - name: lockfile\n    path: ../package-lock.json\n    command: ["npm", "install"]\n`)),
+    `governed.yaml line 6: derived artifact lockfile path must be a repo-relative file path with no whitespace, "..", leading "/", drive letter or trailing slash: ../package-lock.json`
+  );
+});
+
+test("derived: a rooted path, a drive letter and a trailing slash are refused", () => {
+  for (const path of ["/package-lock.json", "C:/package-lock.json", "frontend/"]) {
+    assert.equal(
+      refusal(withDerived(`derived:\n  - name: lockfile\n    path: ${path}\n    command: ["npm", "install"]\n`)),
+      `governed.yaml line 6: derived artifact lockfile path must be a repo-relative file path with no whitespace, "..", leading "/", drive letter or trailing slash: ${path}`
+    );
+  }
+});
+
+test("derived: a protected path is refused", () => {
+  assert.equal(
+    refusal(withDerived(`derived:\n  - name: config\n    path: governed.yaml\n    command: ["npm", "install"]\n`)),
+    `governed.yaml line 6: derived artifact config path is protected: governed.yaml`
+  );
+});
+
+test("derived: a duplicate name is refused", () => {
+  assert.equal(
+    refusal(
+      withDerived(
+        `derived:\n  - name: lockfile\n    path: package-lock.json\n    command: ["npm", "install"]\n` +
+          `  - name: lockfile\n    path: other-lock.json\n    command: ["npm", "install"]\n`
+      )
+    ),
+    `governed.yaml line 8: duplicate derived artifact name "lockfile"`
+  );
+});
+
+test("derived: a duplicate path is refused", () => {
+  assert.equal(
+    refusal(
+      withDerived(
+        `derived:\n  - name: lockfile\n    path: package-lock.json\n    command: ["npm", "install"]\n` +
+          `  - name: again\n    path: ./package-lock.json\n    command: ["npm", "install"]\n`
+      )
+    ),
+    `governed.yaml line 9: duplicate derived artifact path "package-lock.json"`
+  );
+});
+
+test("derived: a command of the wrong shape is refused in the verify entries' words", () => {
+  assert.equal(
+    refusal(withDerived(`derived:\n  - name: lockfile\n    path: package-lock.json\n    command: npm install\n`)),
+    `governed.yaml line 7: expected "    command: [\\"...\\"]" with every token double-quoted, found "    command: npm install"`
+  );
+});
+
+test("derived: content after the derived entries is refused", () => {
+  assert.equal(
+    refusal(withDerived(LOCKFILE_BLOCK + "extra: 1\n")),
+    `governed.yaml line 8: expected a derived entry opening with "  - name: <name>", found "extra: 1"`
+  );
+});
+
+test("derived: a derived: block before verify: is refused by the first-line rule", () => {
+  const reason = refusal(LOCKFILE_BLOCK + `verify:\n  - name: a\n    command: ["npm", "test"]\n`);
+  assert.match(reason, /line 1/);
+  assert.match(reason, /must be exactly "verify:"/);
+});
+
 test("loadGovernedConfigAtCommit reads the file as committed", () => {
   withRepo((root, commit) => {
     const result = loadGovernedConfigAtCommit(root, commit);

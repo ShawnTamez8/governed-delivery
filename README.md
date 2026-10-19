@@ -335,6 +335,23 @@ verify:
     command: ["node", "--version"]
 ```
 
+An optional `derived:` block after the `verify:` entries names files BuildWorks
+regenerates itself, such as a lockfile. Each entry has a name, a repo-relative
+file path, and a command in the same form:
+
+```yaml
+derived:
+  - name: lockfile
+    path: package-lock.json
+    command: ["npm", "install", "--package-lock-only", "--ignore-scripts"]
+```
+
+After every implementation and remediation commit, BuildWorks runs each derived
+command in the run's worktree and commits the changed derived files. A command
+that fails, or changes any file that is not derived, blocks the run. A spec that
+declares a derived path is refused, and review never sees a derived file's
+diff. The `static-web` starter declares its lockfile this way.
+
 Choose real project verification commands before creating a run. Their names
 must be unique and filename-safe; command tokens cannot contain spaces,
 quotes, or shell metacharacters. A target directory can contain spaces even
@@ -793,6 +810,24 @@ $RunIdText = & node $BwCli new-run --repo $Target --project $Project --feature $
 project, is completed, its delivery record verifies, and its delivered commit
 is in this checkout's history. A squash merge does not count. The link is frozen into the new run's
 profile. Guided mode does not offer `--after`.
+
+### When the spec adds packages
+
+A spec lists every npm package the change adds under `## Dependencies added`,
+one `- <path to package.json>: <package name>` per line, and that `package.json`
+must be a declared artifact. When the reviewed spec lists any package, the run
+pauses at `awaiting_decision` with one more question naming each package and
+its manifest.
+
+- `--approve` lets the implementation add exactly those packages. After
+  approval, a phase, self-review or remediation commit that adds any other
+  package blocks the run with `implementation.dependency.unapproved` or
+  `code_review.dependency.unapproved`. Version changes and removals are not
+  checked.
+- `--deny` ends the run `blocked` without folding any other answer. State in
+  the design what to use instead, and start a fresh run.
+- `--answer-file` is refused for this question. Guided mode offers `1` Approve,
+  `2` Deny and `4` Exit.
 
 ### Review and sign outside the CLI
 

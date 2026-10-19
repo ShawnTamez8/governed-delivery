@@ -129,6 +129,11 @@ test("an absent target becomes the exact committed static-web starter and waits 
       const config = parseGovernedConfig(readFileSync(join(target, "governed.yaml"), "utf8"));
       assert.ok(config.ok, config.ok ? "" : config.reason);
       assert.deepEqual(config.config.commands.map((command) => command.command), [["npm", "ci"], ["npm", "test"]]);
+      assert.deepEqual(config.config.derived, [{
+        name: "lockfile",
+        path: "package-lock.json",
+        command: ["npm", "install", "--package-lock-only", "--ignore-scripts"],
+      }]);
       const shell = process.platform === "win32";
       const install = spawnSync("npm", ["ci"], { cwd: target, encoding: "utf8", shell, env: verificationEnv() });
       assert.equal(install.status, 0, install.stderr);

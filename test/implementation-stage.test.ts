@@ -34,7 +34,7 @@ import { planPhases, validatePlanDoc } from "../src/plan-doc.ts";
  * command name and tokens must stay clear of the words the stage emitters route
  * on (test/prompts.test.ts guards this).
  */
-const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }] };
+const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }], derived: [] };
 const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-implementation-stage.mjs");
 const MODEL = "m";
 const SLUG = "demo";
@@ -365,7 +365,7 @@ test("the phase-1 implementer prompt carries the frozen profile's commands, and 
   // the handoff base the gate recorded, the first phase of the plan's tasks, and
   // no existing scope path (none of SCOPE exists at the base). If the hashes
   // differed for any reason but the commands, that is a finding, not a tolerance.
-  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }] };
+  const other: VerificationConfig = { commands: [{ name: "smoke", command: ["node", "--version"] }], derived: [] };
   async function phaseOne(verification: VerificationConfig): Promise<{ sent: string; expected: string }> {
     let observed = { sent: "", expected: "" };
     await withApprovedRun(
@@ -639,12 +639,10 @@ test("a phase reply that never reached the structured channel is a failed dispat
       assert.equal(auditActionCount(store, runId, "implementation.content.invalid"), 0);
       // With no row, the audit event is where the reported cost survives; the
       // emitter's result line reports total_cost_usd 0. dispatchOnce appends the
-      // requested model and effort after the refusal.
-      assert.ok(
-        auditSummaries(store, runId, "implementation.author.failed")[0]!.endsWith(
-          "; the line reports total_cost_usd 0 (requested model m, effort medium)"
-        ),
-        auditSummaries(store, runId, "implementation.author.failed")[0]
+      // requested model, the effort and the retained prompt after the refusal.
+      assert.match(
+        auditSummaries(store, runId, "implementation.author.failed")[0]!,
+        /; the line reports total_cost_usd 0 \(requested model m, effort medium; prompt \S+\.txt\)$/
       );
     }
   ));
@@ -1699,6 +1697,193 @@ test("the self-review prompt the stage sent has the last phase's commit as its b
     assert.ok(prompt.includes(`baseCommit must be exactly: ${phaseHead}`));
     assert.equal(rows[1]!.input_hash, sha256Hex(prompt), "the stage sent the self-review built on the last phase's commit");
   });
+});
+
+// --- derived artifacts (docs/features/derived-artifacts-and-dependency-policy/plan.md) ---
+
+/** A lockfile the system regenerates, written by a fixture command with fixed content. */
+const DERIVED_VERIFICATION: VerificationConfig = {
+  commands: VERIFICATION.commands,
+  derived: [
+    {
+      name: "lockfile",
+      path: "package-lock.json",
+      command: ["node", join(process.cwd(), "test", "fixtures", "verify", "write-derived.mjs"), "package-lock.json", "v2"],
+    },
+  ],
+};
+
+test("each phase is followed by a regeneration: the file is committed once, the gate head is the tip, and the self-review never sees it", async () => {
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId, head, worktreePath }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        if (!result.ok) return;
+
+        // Phase 1 creates the file; phase 2's command writes the same bytes.
+        const applies = auditSummaries(store, runId, "implementation.phase.apply");
+        assert.equal(applies.length, 2);
+        const phase1Head = /head=([0-9a-f]+)$/.exec(applies[0]!)![1]!;
+        const commits = auditSummaries(store, runId, "implementation.derived.commit");
+        assert.equal(commits.length, 1);
+        const regenerated = /head=([0-9a-f]+);/.exec(commits[0]!)![1]!;
+        assert.ok(commits[0]!.startsWith(`label=phase-1; base=${phase1Head}; head=${regenerated}; paths=package-lock.json; `), commits[0]);
+        assert.equal(git(worktreePath, ["rev-parse", `${regenerated}~1`]).stdout.trim(), phase1Head);
+        assert.equal(git(worktreePath, ["diff", "--name-only", phase1Head, regenerated]).stdout.trim(), "package-lock.json");
+        // Phase 2 proposed against the regenerated commit.
+        assert.match(applies[1]!, new RegExp(`; base=${regenerated}; `));
+        const unchanged = auditSummaries(store, runId, "implementation.derived.unchanged");
+        assert.equal(unchanged.length, 1);
+        assert.ok(unchanged[0]!.startsWith(`label=phase-2; head=${lastPhaseHead(store, runId)}; `), unchanged[0]);
+
+        const messages = git(worktreePath, ["log", "--format=%s", `${head}..HEAD`]).stdout.trim().split("\n");
+        assert.equal(messages.length, 4, "projections, phase 1, its regeneration, phase 2");
+        assert.equal(messages[1], `bw run ${runId}: regenerate derived artifacts (phase-1, base ${phase1Head.slice(0, 8)})`);
+        assert.equal(gateHandoff(store, runId).head, git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim());
+        assert.equal(readFileSync(join(worktreePath, "package-lock.json"), "utf8"), "v2\n");
+
+        // The self-review's changed paths and diff leave the derived file out.
+        const selfReview = store.query<{ input_hash: string }>(
+          "SELECT ar.input_hash FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? ORDER BY ar.id DESC LIMIT 1",
+          [runId]
+        )[0]!;
+        const prompt = readFileSync(join(root, ".governance", "prompts", String(runId), `${selfReview.input_hash}.txt`), "utf8");
+        const listed = prompt.slice(prompt.indexOf("Changed paths:\n\n") + "Changed paths:\n\n".length, prompt.indexOf("\n\nApproved plan:"));
+        assert.equal(listed, "- src/p1.ts\n- src/p2.ts");
+        assert.ok(!prompt.includes("diff --git a/package-lock.json"), "the diff omits the derived file");
+        assert.equal(verifyAuditChain(store), null);
+      },
+      { plan: tasksPlan(20), scope: phaseScope(2), verification: DERIVED_VERIFICATION }
+    );
+  }, "phased");
+});
+
+test("a self-review fix is followed by a regeneration, and the gate head is the regenerated commit", async () => {
+  const mirror: VerificationConfig = {
+    commands: VERIFICATION.commands,
+    derived: [
+      {
+        name: "lockfile",
+        path: "package-lock.json",
+        command: ["node", join(process.cwd(), "test", "fixtures", "verify", "write-derived.mjs"), "package-lock.json", "@src/a1.ts"],
+      },
+    ],
+  };
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId, worktreePath }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        const commits = auditSummaries(store, runId, "implementation.derived.commit");
+        assert.deepEqual(commits.map((c) => /^label=([^;]+);/.exec(c)![1]), ["phase-1", "self-review"]);
+        const tip = git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim();
+        assert.ok(commits[1]!.includes(`; head=${tip}; `), commits[1]);
+        // projections, phase 1, its regeneration, the self-review fix, its regeneration
+        const selfReviewCommit = git(worktreePath, ["rev-parse", "HEAD~1"]).stdout.trim();
+        const selfReviewBase = git(worktreePath, ["rev-parse", "HEAD~2"]).stdout.trim();
+        assert.ok(commits[0]!.includes(`; head=${selfReviewBase}; `), "the self-review proposed on the regenerated commit");
+        assert.equal(
+          auditSummaries(store, runId, "implementation.selfreview.pass")[0],
+          `critique=1; recorded=1; patches=1; dropped=none; base=${selfReviewBase}; head=${tip}`
+        );
+        assert.ok(commits[1]!.startsWith(`label=self-review; base=${selfReviewCommit}; `), commits[1]);
+        assert.equal(gateHandoff(store, runId).head, tip);
+        assert.equal(
+          readFileSync(join(worktreePath, "package-lock.json"), "utf8"),
+          readFileSync(join(worktreePath, "src", "a1.ts"), "utf8")
+        );
+      },
+      { verification: mirror }
+    );
+  }, "self-review-fix");
+});
+
+test("a regeneration that fails blocks the run at that phase, before the next phase is dispatched", async () => {
+  const failing: VerificationConfig = {
+    commands: VERIFICATION.commands,
+    derived: [
+      {
+        name: "lockfile",
+        path: "package-lock.json",
+        command: ["node", join(process.cwd(), "test", "fixtures", "verify", "exit-two.mjs")],
+      },
+    ],
+  };
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+        assert.equal(
+          result.reason,
+          "phase 1 of 2: derived artifact lockfile could not be regenerated: the command exited with code 2"
+        );
+        assert.deepEqual(auditSummaries(store, runId, "implementation.derived.failed"), [result.reason]);
+        assert.equal(auditSummaries(store, runId, "implementation.derived.fail").length, 1);
+        assert.equal(agentRunCount(store, runId), 1, "phase 2 was never dispatched");
+        assert.equal(store.getRun(runId)!.status, "blocked");
+      },
+      { plan: tasksPlan(20), scope: phaseScope(2), verification: failing }
+    );
+  }, "phased");
+});
+
+/** SPEC declaring a package.json, with or without the package the add-dependency mode adds. */
+function dependencySpec(listed: boolean): string {
+  return `feature: demo
+change_kind: feature
+
+## Declared artifacts
+
+- package.json
+
+## Acceptance criteria
+
+- AC-001: the thing works
+- AC-002: it is observable
+- AC-003: it stays working
+${listed ? "\n## Dependencies added\n\n- package.json: @tiptap/react\n" : ""}`;
+}
+
+test("a phase adding a package the signed specification does not list blocks the run, and nothing is regenerated after it", async () => {
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+        assert.equal(
+          result.reason,
+          "the change adds package(s) the approved specification does not list under ## Dependencies added: package.json:@tiptap/react"
+        );
+        assert.deepEqual(auditSummaries(store, runId, "implementation.dependency.unapproved"), [result.reason]);
+        assert.equal(auditActionCount(store, runId, "implementation.phase.apply"), 1, "the check runs on the committed phase");
+        assert.equal(
+          store.query<{ n: number }>("SELECT COUNT(*) AS n FROM audit WHERE run_id = ? AND action LIKE 'implementation.derived.%'", [runId])[0]!.n,
+          0,
+          "no regeneration ran after the refusal"
+        );
+        assert.equal(agentRunCount(store, runId), 1, "the self-review was never dispatched");
+        assert.equal(store.getRun(runId)!.status, "blocked");
+      },
+      { spec: dependencySpec(false), scope: ["package.json"], verification: DERIVED_VERIFICATION }
+    );
+  }, "add-dependency");
+});
+
+test("a phase adding the package the signed specification lists passes", async () => {
+  await withMode(async () => {
+    await withApprovedRun(
+      async ({ store, root, runId }) => {
+        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+        assert.equal(result.ok, true, (result as { reason?: string }).reason);
+        assert.equal(auditActionCount(store, runId, "implementation.dependency.unapproved"), 0);
+      },
+      { spec: dependencySpec(true), scope: ["package.json"] }
+    );
+  }, "add-dependency");
 });
 
 test("a run frozen with an implementer that lacks the self-review output is refused before the stage row", async () => {

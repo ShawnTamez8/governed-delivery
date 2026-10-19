@@ -46,7 +46,24 @@ function withSplitCriteria(spec) {
   return stdin.includes("FIXTURE-SPLIT-CRITERIA") ? spec.replace(/(- AC-001: .*\n)/, `$1${SPLIT_CRITERIA}`) : spec;
 }
 
-const REVISED_SPEC = withSplitCriteria(BASE_SPEC.replace("the thing works", "the thing works REVISED-spec"));
+// FIXTURE-DEPENDENCIES in the design: the spec declares frontend/package.json
+// and lists under ## Dependencies added the four packages crew-chatter run 4's
+// reviewed specification named only in prose. The names are read from the
+// committed recording, never written here (hazard 4), and only under the
+// marker, so a scratch copy of this file elsewhere never resolves the path.
+// Every spec this fixture writes carries them, so the reconciled revision
+// keeps them too.
+function withDependencies(spec) {
+  if (!stdin.includes("FIXTURE-DEPENDENCIES")) return spec;
+  const recorded = JSON.parse(
+    readFileSync(new URL("../recorded/spec-crew-chatter-run-4-dependency-in-prose.json", import.meta.url), "utf8")
+  );
+  const lines = recorded.provenance.packagesAdded.map((name) => `- frontend/package.json: ${name}`);
+  const declared = spec.replace("\n\n## Acceptance criteria", "\n- frontend/package.json\n\n## Acceptance criteria");
+  return `${declared}\n## Dependencies added\n\n${lines.join("\n")}\n`;
+}
+
+const REVISED_SPEC = withDependencies(withSplitCriteria(BASE_SPEC.replace("the thing works", "the thing works REVISED-spec")));
 
 // Used by a scratch copy in test/spec-stage.test.ts (the env-var route cannot
 // work: envPassthrough keeps it out of the spawned child).
@@ -112,6 +129,10 @@ function emit(agentResult) {
 // everywhere the fixture emits one, or the self-critique would hand the
 // review stage a different document than the draft did.
 function authoredSpec() {
+  return withDependencies(specBeforeDependencies());
+}
+
+function specBeforeDependencies() {
   // FIXTURE-DISCLOSE-OD in the design: the author discloses one open decision,
   // which the stage records as a round-1 finding.
   // The plain return stays a literal line: a stage test substitutes it.
@@ -316,6 +337,15 @@ function fold() {
   if (stdin.includes("FIXTURE-FOLD-DROP-OD")) revised = revised.replace(/- OD-001 .*\n/, "");
   if (stdin.includes("FIXTURE-FOLD-RESEVERITY-OD")) revised = revised.replace("- OD-001 (high):", "- OD-001 (low):");
   if (stdin.includes("FIXTURE-FOLD-REWORD-OD")) revised = revised.replace("who may download the export archive", "who may download the archive");
+  // The ## Dependencies added list the operator answered: one mode drops its
+  // first entry, the other reverses it.
+  if (stdin.includes("FIXTURE-FOLD-LOSE-PACKAGE")) revised = revised.replace(/(## Dependencies added\n\n)- .*\n/, "$1");
+  if (stdin.includes("FIXTURE-FOLD-REORDER-PACKAGES")) {
+    revised = revised.replace(
+      /(## Dependencies added\n\n)((?:- .*\n?)+)/,
+      (_, heading, list) => `${heading}${list.trimEnd().split("\n").reverse().join("\n")}\n`
+    );
+  }
   const decisions = folded.map((f, index) => {
     let excerpt = f.answer;
     if (stdin.includes("FIXTURE-FOLD-UNGROUNDED")) excerpt = "words the operator never wrote";

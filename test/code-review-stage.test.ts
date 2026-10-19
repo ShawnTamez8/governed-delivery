@@ -19,6 +19,7 @@ import {
 } from "../src/code-review-stage.ts";
 import {
   codeReviewGate,
+  parsePassedCodeReviewRecord,
   validateCodeReviewReports as validateCodeReviewLocations,
   type CodeReviewRecord,
 } from "../src/code-review.ts";
@@ -40,6 +41,7 @@ const VERIFICATION: VerificationConfig = {
   commands: [
     { name: "ok", command: ["node", join(process.cwd(), "test", "fixtures", "verify", "exit-zero.mjs")] },
   ],
+  derived: [],
 };
 const FIXTURE = join(process.cwd(), "test", "fixtures", "harness", "emit-code-review.mjs");
 const MODEL = "m";
@@ -191,6 +193,10 @@ interface Opts {
   noVerificationGateEvent?: boolean;
   /** Omit the plan gate event, for the same reason. */
   noPlanGateEvent?: boolean;
+  /** The verification configuration frozen into the run's profile. */
+  verification?: VerificationConfig;
+  /** The declared artifacts, and so the signed scope; [ARTIFACT] when absent. */
+  scope?: string[];
 }
 
 /**
@@ -222,11 +228,11 @@ async function withVerifiedRun(fn: (ctx: Ctx) => Promise<void>, opts: Opts = {})
     const head = git(root, ["rev-parse", "HEAD"]).stdout.trim();
 
     const run = store.insertRun("p", "f-1", SLUG, "feature");
-    const frozen = freezeUniformProfile(root, run.id, head, MODEL, VERIFICATION);
+    const frozen = freezeUniformProfile(root, run.id, head, MODEL, opts.verification ?? VERIFICATION);
     store.setProfileRef(run.id, frozen.hash);
     freezeExecutorIntoProfile(store, root, run.id, opts.executor ?? fixtureExecutor(FIXTURE));
 
-    const scope = [ARTIFACT];
+    const scope = opts.scope ?? [ARTIFACT];
     const specPath = join(root, "docs", "features", SLUG, "spec.md");
     mkdirSync(dirname(specPath), { recursive: true });
     const spec = `feature: demo
@@ -891,7 +897,7 @@ test("a remediation reply that never reached the structured channel is a failed 
       if (result.ok) return;
       assert.match(
         result.reason,
-        /^round 1, commit [0-9a-f]{40,64}, implementer: dispatched agent implementer \(author\) on stage \d+: envelope parse failed: harness envelope for executor claude-code has a result line without a structured_output object although the dispatch requested --json-schema: line \d+; the line reports total_cost_usd 0 \(requested model m, effort medium\)$/
+        /^round 1, commit [0-9a-f]{40,64}, implementer: dispatched agent implementer \(author\) on stage \d+: envelope parse failed: harness envelope for executor claude-code has a result line without a structured_output object although the dispatch requested --json-schema: line \d+; the line reports total_cost_usd 0 \(requested model m, effort medium; prompt \S+\.txt\)$/
       );
       assert.deepEqual(eventsOf(ctx, "code_review.remediation.failed").map((e) => e.summary), [result.reason]);
       // Panel and one code-review reconciler call; the refused remediation writes no row.
@@ -930,6 +936,120 @@ test("failed remediation verification retains its round record and stops", async
       assert.equal(stage.output_ref, codeReviewEvidenceRef(ctx.runId, "result.json"));
     }, "high-then-clean");
   });
+});
+
+// --- derived artifacts (docs/features/derived-artifacts-and-dependency-policy/plan.md) ---
+
+/**
+ * A lockfile the system regenerates as a copy of the declared artifact, so a
+ * remediation that changes the artifact changes the lockfile too. The verified
+ * range already holds both, as an implementation stage's regeneration leaves it.
+ */
+const DERIVED_MIRROR: VerificationConfig = {
+  commands: VERIFICATION.commands,
+  derived: [
+    {
+      name: "lockfile",
+      path: "package-lock.json",
+      command: ["node", join(process.cwd(), "test", "fixtures", "verify", "write-derived.mjs"), "package-lock.json", `@${ARTIFACT}`],
+    },
+  ],
+};
+
+test("a remediation is followed by a regeneration whose head is the resulting commit, verified and reviewed next", async () => {
+  await withVerifiedRun(
+    async (ctx) => {
+      await withMode(async () => {
+        const result = await review(ctx);
+        assert.equal(result.ok, true, result.ok ? "" : result.reason);
+        if (!result.ok) return;
+        const record = readRecord(ctx.root, ctx.runId);
+        assert.equal(record.rounds.length, 2);
+        const remediation = record.rounds[0]!.remediation!;
+        const tip = git(ctx.worktreePath, ["rev-parse", "HEAD"]).stdout.trim();
+        const patchCommit = git(ctx.worktreePath, ["rev-parse", "HEAD~1"]).stdout.trim();
+        assert.equal(remediation.baseCommit, ctx.verifiedCommit);
+        assert.equal(remediation.resultingCommit, tip, "the regenerated head, not the patch commit");
+        assert.equal(remediation.verification.expectedCommit, tip);
+        assert.deepEqual(remediation.changedPaths, [ARTIFACT], "the implementer's paths");
+        assert.equal(git(ctx.worktreePath, ["rev-parse", "HEAD~2"]).stdout.trim(), ctx.verifiedCommit);
+        assert.equal(
+          git(ctx.worktreePath, ["log", "-1", "--format=%s"]).stdout.trim(),
+          `bw run ${ctx.runId}: regenerate derived artifacts (remediation-1, base ${patchCommit.slice(0, 8)})`
+        );
+        assert.equal(
+          readFileSync(join(ctx.worktreePath, "package-lock.json"), "utf8"),
+          readFileSync(join(ctx.worktreePath, ARTIFACT), "utf8")
+        );
+        const commits = eventsOf(ctx, "code_review.remediation.derived.commit");
+        assert.equal(commits.length, 1);
+        assert.ok(
+          commits[0]!.summary.startsWith(`round=1; label=remediation-1; base=${patchCommit}; head=${tip}; paths=package-lock.json; `),
+          commits[0]!.summary
+        );
+        assert.match(eventsOf(ctx, "code_review.remediation.pass")[0]!.summary, new RegExp(`; commit=${tip}; changedPaths=${ARTIFACT}; `));
+        // Both panels were shown only the implementer's file, though the range holds the lockfile.
+        assert.equal(record.rounds[1]!.reviewedCommit, tip);
+        assert.deepEqual(record.rounds[0]!.changedPaths, [ARTIFACT]);
+        assert.deepEqual(record.rounds[1]!.changedPaths, [ARTIFACT]);
+        assert.equal(record.finalVerifiedCommit, tip);
+        const { profile } = loadProfile(ctx.root, ctx.runId);
+        const parsed = parsePassedCodeReviewRecord(record, ctx.runId, stageOf(ctx)!.id, profile);
+        assert.equal(parsed.ok, true, parsed.ok ? "" : parsed.reason);
+        assert.equal(verifyAuditChain(ctx.store), null);
+      }, "high-then-clean");
+    },
+    { verification: DERIVED_MIRROR, commitFiles: [ARTIFACT, "package-lock.json"] }
+  );
+});
+
+test("a reviewer citing a derived path is refused, the panel fails, and the stage blocks without a review record", async () => {
+  await withVerifiedRun(
+    async (ctx) => {
+      await withMode(async () => {
+        const result = await review(ctx);
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+        assert.match(result.reason, /^code-review panel failed after round 1\/2 at [0-9a-f]+: code-reviewer-correctness:output_invalid \(result refused: .*package-lock\.json.*is not one of the changed paths/);
+        assert.equal(eventsOf(ctx, "code_review.reviewer.failed").length, 1);
+        assert.equal(stageOf(ctx)!.status, "blocked");
+        assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+        assert.equal(remediationRuns(ctx).length, 0);
+        assert.ok(!existsSync(join(ctx.root, ".governance", "code-review", String(ctx.runId), "result.json")));
+      }, "derived-path");
+    },
+    { verification: DERIVED_MIRROR, commitFiles: [ARTIFACT, "package-lock.json"] }
+  );
+});
+
+test("a remediation adding a package the signed specification does not list blocks before regeneration and verification", async () => {
+  await withVerifiedRun(
+    async (ctx) => {
+      await withMode(async () => {
+        const result = await review(ctx);
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+        assert.match(
+          result.reason,
+          /^round 1, base [0-9a-f]+: the change adds package\(s\) the approved specification does not list under ## Dependencies added: package\.json:@tiptap\/react$/
+        );
+        assert.deepEqual(eventsOf(ctx, "code_review.dependency.unapproved").map((e) => e.summary), [result.reason]);
+        assert.equal(
+          ctx.store.getAuditEvents(ctx.runId).filter((e) => e.action.startsWith("code_review.remediation.derived.")).length,
+          0,
+          "no regeneration ran"
+        );
+        assert.equal(
+          ctx.store.getAuditEvents(ctx.runId).filter((e) => e.action.startsWith("code_review.verification.")).length,
+          0,
+          "no verification ran"
+        );
+        assert.equal(stageOf(ctx)!.status, "blocked");
+        assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+      }, "remediation-add-dependency");
+    },
+    { verification: DERIVED_MIRROR, scope: [ARTIFACT, "package.json"] }
+  );
 });
 
 // --- the code-review reconciler (docs/features/code-review-reconciler) --------

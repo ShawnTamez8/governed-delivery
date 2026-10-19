@@ -26,6 +26,7 @@ import type { VerificationConfig } from "../src/governed-config.ts";
 /** A passing command whose fixture writes nothing, so the worktree stays clean. */
 const VERIFICATION: VerificationConfig = {
   commands: [{ name: "ok", command: ["node", join(process.cwd(), "test", "fixtures", "verify", "exit-zero.mjs")] }],
+  derived: [],
 };
 const MODEL = "m";
 const SLUG = "demo";

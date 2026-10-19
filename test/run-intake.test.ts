@@ -303,7 +303,7 @@ async function withDeliveredRun(fn: (ctx: Delivered) => void | Promise<void>): P
     const startingCommit = commitAll(root);
     const run = store.insertRun("operator", "demo", "demo", "feature");
     const frozen = freezeProfile(root, run.id, startingCommit, "fixture-model",
-      { commands: [{ name: "node", command: ["node", "--version"] }] });
+      { commands: [{ name: "node", command: ["node", "--version"] }], derived: [] });
     const { profile } = loadProfile(root, run.id);
     profile.approvalSigner = null;
     profile.executor = { ...profile.executor,

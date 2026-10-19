@@ -64,6 +64,7 @@ export function formatRunPreview(rootDir: string, snapshot: RunSnapshot, groups:
     `Frozen settings: ${JSON.stringify(snapshot.configuration.dispatchSettings)}`,
     `Remaining groups: ${groups.join(" -> ")}`,
     `Frozen verification commands: ${JSON.stringify(snapshot.configuration.verificationCommands)}`,
+    `Frozen derived artifacts: ${JSON.stringify(snapshot.configuration.derivedArtifacts)}`,
     `Document review: panel up to ${policy.panelSizeMax}; spec ${policy.specReviewRounds} round(s), plan ${policy.planReviewRounds} round(s). Each document group permits 1 author + 1 self-critique + rounds * (panel + 1 reconciler) dispatches. The spec group adds 1 split-proposal dispatch when the reviewed spec declares more than ${policy.designSplitPathThreshold} files.`,
     `Code review: ${policy.codeReviewPanelSize} reviewers * ${policy.codeReviewMaxRounds} panel(s), plus before each of at most ${policy.codeReviewMaxRounds - 1} remediation implementer dispatch(es) up to ${policy.codeReviewReconcilerCalls} code-review reconciler dispatches; each remediation is followed by frozen verification; blocking severity ${policy.codeReviewBlockingSeverity}.`,
     `Implementation: one implementer dispatch per ${policy.implementationPhaseTasks} plan tasks, at most ${policy.implementationMaxPhases} phases, then one implementer self-review dispatch; the phase count is known once the plan exists.`,

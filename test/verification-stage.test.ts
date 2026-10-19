@@ -96,6 +96,7 @@ function withImplementedRun(fn: (ctx: Ctx) => Promise<void>, opts: Opts = {}): P
     const run = store.insertRun("p", "f-1", SLUG, "feature");
     const frozen = freezeProfile(root, run.id, head, MODEL, {
       commands: opts.commands ?? [OK],
+      derived: [],
     });
     store.setProfileRef(run.id, frozen.hash);
 

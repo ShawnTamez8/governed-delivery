@@ -2136,6 +2136,7 @@ test("Task 5 doctor --run keeps frozen configuration separate from current defau
       systemName: profile.systemName, profileHash: sha256Hex(canonicalJson(profile)),
       policyHash: profile.policyHash, startingCommit: profile.startingCommit, dispatchSettings: profile.dispatchSettings,
       verificationCommands: profile.verification.commands.map((command) => ({ name: command.name, argv: command.command })),
+      derivedArtifacts: profile.verification.derived,
       documentReview: { panelSizeMin: policy.panelSizeMin, panelSizeMax: policy.panelSizeMax,
         specReviewRounds: policy.specReviewRounds, planReviewRounds: policy.planReviewRounds,
         requiredSpecialties: policy.requiredSpecialties },
@@ -2149,7 +2150,7 @@ test("Task 5 doctor --run keeps frozen configuration separate from current defau
     assert.notEqual(report.current.policyHash, report.frozen!.policyHash);
     assert.notEqual(report.current.startingCommit, report.frozen!.startingCommit);
     assert.notEqual(report.current.approvalSigner, report.frozen!.approvalSigner);
-    assert.deepEqual(report.current.verification, { commands: [{ name: "current-only", command: ["npm", "--version"] }] });
+    assert.deepEqual(report.current.verification, { commands: [{ name: "current-only", command: ["npm", "--version"] }], derived: [] });
     for (const name of ["run_state", "frozen_profile", "frozen_settings", "frozen_verification",
       "frozen_deadline", "frozen_approval_signer", "frozen_executor_probe"]) {
       assert.equal(report.checks.find((check) => check.name === name)!.status, "pass", name);
@@ -2273,7 +2274,7 @@ test("Task 5 doctor --run preserves readable state and original invalid-profile 
         assert.ok(body.reason!.includes(reason));
         const report = body.result as DoctorResult;
         assert.deepEqual(report.frozen, { systemName: null, profileHash: null, policyHash: null,
-          startingCommit: null, dispatchSettings: null, verificationCommands: null, documentReview: null,
+          startingCommit: null, dispatchSettings: null, verificationCommands: null, derivedArtifacts: null, documentReview: null,
           codeReview: null, deadline: null, approvalSigner: null, narrationCheck: null });
         assert.equal(report.current.startingCommit, profile.startingCommit);
         assert.deepEqual(report.current.verification, profile.verification);
