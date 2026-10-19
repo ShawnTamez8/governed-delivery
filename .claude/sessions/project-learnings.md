@@ -5,7 +5,7 @@ history and may name superseded state; Current state wins when they disagree. Th
 the system of record; machine-local memory is only a cache
 (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-10-19: changes 2 and 10 built, committed, partly proven live; nothing in flight; no spend authorized)
+## Current state (2026-10-19: changes 2 and 10 done; crew-chatter run 6 completed; nothing in flight; no spend authorized)
 
 **Resume point.** Branch `sandboxed-delivery` carries the build of two `Implemented` plans,
 committed 2026-10-19 at the operator's word and not pushed (`origin/sandboxed-delivery` is at
@@ -22,22 +22,35 @@ committed 2026-10-19 at the operator's word and not pushed (`origin/sandboxed-de
   and check:docs clean; smoke 13/13 (the smoke exercises neither regeneration nor the dependency
   question).
 
-**Changes 2 and 10 are built, not finished (operator asked 2026-10-19).**
+**Changes 2 and 10 are done.**
 - Change 2: `governed.yaml` takes an optional `derived:` block, frozen as `verification.derived`
   (a profile without it is refused). `src/derived-artifacts.ts` regenerates and commits derived
   files after every phase, the self-review fix and each remediation; review diffs exclude them; a
   spec declaring one is refused; the `static-web` starter emits a lockfile entry (operator choice).
-  Live in run 5: regeneration commit `2adaf88` after phase 2, then `npm ci` passed. Never run
-  live: regeneration after a self-review fix or remediation, and the code-review exclusion.
 - Change 10: the spec's optional `## Dependencies added` raises an approve/deny question at
   `spec_decision`; deny ends the run blocked; a fold may not change the list;
   `src/dependency-policy.ts` refuses an implementation or remediation commit adding an unlisted
-  package. Live in run 5: four TipTap packages listed, question (finding 84) approved, phase 2
-  passed. Never run live: the refusal (unit and break-tests only). Narrower than the proposal:
-  npm only, additions only (not removals or version changes), no allowlist (every listed package
-  asks).
-- "Finished" needs one crew-chatter run completing through code review and delivery. That run
-  needs its own spend authorization.
+  package. Narrower than the proposal: npm only, additions only (not removals or version
+  changes), and no allowlist (every listed package asks).
+- Run 5 met the plan's Task 11 criterion. An earlier note said "finished" needed a run
+  completing through delivery; that bar was the assistant's, not the plan's.
+- **Run 6 (2026-10-19, operator: "live-prove untested paths") completed**, $4.91524352 in 26
+  Claude dispatches plus 24 Decision-1 requests. Delivery passed 18/18 over `ea9da8d..3c706fb`
+  (branch `gov/crew-chatter-accounts-notes/6`, worktree
+  `C:\Repositories\testing-repos\crew-chatter\.governance\worktrees\6`). Five packages approved
+  (finding 104) and OD-001 server-log code (91). The lockfile was regenerated after phases 1 and 2;
+  phase 1 changed only `engines` in `backend/package.json`. Remediation regeneration ran live
+  (unchanged). The review excluded the lockfile (19 changed paths, reviewers saw 18). The
+  code-review reconciler made its first live rejection (finding 113, 2 of 2 calls). Detail is in
+  the plan's "Second live run" section. The only interventions were the operator's two answers
+  and the dashboard signature.
+- Still never run live, because no model produced the triggering behaviour: regeneration after a
+  self-review fix (0 patches), a remediation regeneration that commits, and the unapproved-addition
+  refusal. All are covered by tests and break-tests. Remaining options outside the plan: an
+  allowlist, checking removals and version changes, and the review's deferred finding.
+- Run 6's `spec.md` and `plan.md` are untracked in the target again (they are also committed on
+  the run branch). Move them aside before the next `new-run` there. Merging the run branch into
+  crew-chatter `main` before feature 2 is the operator's step.
 
 **Run 5** (2026-10-18, crew-chatter feature 1 from `ec2049c`, operator-authorized): blocked at
 verification `typecheck` on one implementer line unrelated to the mechanisms,
@@ -49,9 +62,10 @@ were moved to `%LOCALAPPDATA%\Temp\crew-chatter-aside-2026-10-19-run5` (operator
 the target's tree is clean.
 
 **Next action:** the operator decides:
-- whether to push `sandboxed-delivery` (personal gh account; Snitch approval first).
-- what to do with run 5. A blocked run gets no retry: a fresh run, a hand fix on the run branch,
-  or a stop.
+- the next rework change (change 1, the sandboxed implementer, is the one under consideration).
+  `sandboxed-delivery` is not merged to `master` until the rework is complete (operator,
+  2026-10-19).
+- whether to merge run 6's branch into crew-chatter `main` (run 5 is superseded by run 6).
 - grounding: the recommendation is to leave it unadopted until more recorded positives exist.
 - No PR to `master` (operator, 2026-10-17). No spend is authorized.
 
@@ -141,11 +155,13 @@ both ran only `node --version` and `npm --version`. Structured-output plan open 
   (`Reconciled`), `implementation-segments-and-pause` (`Shelved`), `usage-limit-refusal-summary`
   and `code-review-contract-drift-issue` (`Proposed`); `dashboard-pwa-redesign` is `Reconciled`
   with Task 7 next.
-- No run, dashboard or background process is in flight.
+- No run is in flight. A loopback dashboard for crew-chatter was launched 2026-10-19 from this
+  checkout (repositories file in the session scratchpad); it ends with that session.
 
 **Open work list (operator asked for one list, 2026-10-13):**
 1. **Code-review reconciler** (`Implemented`, `6282a6f`): 2-of-2 agreement to reject; any failed
-   call keeps the finding. First live call 2026-10-15 kept 1, rejected 0. Not done: the
+   call keeps the finding. First live call 2026-10-15 kept 1, rejected 0; first live rejection in
+   crew-chatter run 6 (2026-10-19, finding 113, login timing, quoting the spec's sign-in error). Not done: the
    passed-branch check in `src/operator-state.ts` (reachable only with a forged audit event).
    Replay: 30 Haiku calls, 1 wrong rejection, 3 missed, 1 invented quote caught. A quote proves the
    words exist, not that they support the rejection (hazard 16).

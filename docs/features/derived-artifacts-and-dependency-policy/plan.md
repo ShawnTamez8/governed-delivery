@@ -357,3 +357,26 @@ Cost: $4.04347149 recorded, in 15 Claude dispatches and 24 Decision-1 requests:
 - three phases and the self-review $0.9668.
 
 The worktree is `.governance/worktrees/5` on branch `gov/crew-chatter-accounts-notes/5` at `e62df19`.
+
+## Second live run (2026-10-19, crew-chatter run 6)
+
+Run 5 met Task 11's criterion, but it stopped before code review, so the remediation path and the review exclusion had never run live. The operator asked to "live-prove untested paths" with a fresh feature-1 run from `ec2049c`, with the same settings as run 5. The operator answered both decision questions and signed the approval on the dashboard. No other step was taken by hand.
+
+The run **completed**. Delivery passed 18 of 18 declared artifacts over `ea9da8d..3c706fb`, on branch `gov/crew-chatter-accounts-notes/6`, in the worktree `.governance/worktrees/6`. It cost $4.91524352 recorded, in 26 Claude dispatches and 24 Decision-1 requests:
+- spec $1.8086;
+- spec review $0.0092;
+- the decision fold $0.1505;
+- plan $1.2214;
+- plan review $0.0118;
+- five phases and the self-review $1.2258;
+- code review $0.4880: two three-reviewer panels, two reconciler calls and one Sonnet remediation at $0.3677.
+
+What each mechanism did:
+- Dependency question: the spec listed five packages (`@tiptap/react`, `@tiptap/pm`, `@tiptap/starter-kit`, `@tiptap/extension-task-list`, `@tiptap/extension-task-item`) and declared no lockfile. The operator approved question 104 and OD-001's server-log code (91). The fold kept the list unchanged.
+- Dependency check: it passed every phase and the remediation. Phase 2 added exactly the five packages at `^3.0.0`. Phase 1 added only an `engines` field to `backend/package.json`, which is not an addition.
+- Regeneration after phases: `implementation.derived.commit` after phase 1 (`12d3bb2`) and phase 2 (`d3590ec`), both `package-lock.json` only, and `derived.unchanged` after phases 3 to 5. Phase 1's commit shows that regenerating after every patch catches a non-dependency manifest edit that changes the lockfile.
+- Regeneration after remediation: it ran live for the first time. `code_review.remediation.derived.unchanged` (label `remediation-1`), then verification and round 2 on `3c706fb`, and the record parsed as passed. The remediation touched no manifest, so the remediation commit branch has still not run live.
+- Review exclusion: the range changes 19 paths including `package-lock.json`, and both rounds reported `changedPaths=18`. The lockfile never reached a reviewer. Delivery neither required nor refused it.
+- Not exercised live: regeneration after a self-review fix, because the self-review returned 3 critique entries and 0 patches, and the unapproved-addition refusal, because no dispatch added an unlisted package. Both depend on model behaviour the run cannot force, and both remain covered by the Task 6 and Task 9 tests and break-tests.
+
+Code review round 1 recorded 8 findings: 1 high (`flush-resolves-true-during-followup-save`), 2 medium and 5 low. The code-review reconciler rejected one live for the first time: finding 113, login timing, 2 of 2 calls, quoting the spec's sign-in error text. Remediation patched the other 7, and round 2 recorded 6 findings (1 medium, 5 low) and passed at threshold `high`. The review's deferred finding (name the regeneration commit in the code-review record) is still untested: remediation regeneration made no commit, so there was nothing to name.
