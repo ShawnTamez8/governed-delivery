@@ -48,9 +48,10 @@ committed 2026-10-19 at the operator's word and not pushed (`origin/sandboxed-de
   self-review fix (0 patches), a remediation regeneration that commits, and the unapproved-addition
   refusal. All are covered by tests and break-tests. Remaining options outside the plan: an
   allowlist, checking removals and version changes, and the review's deferred finding.
-- Run 6's `spec.md` and `plan.md` are untracked in the target again (they are also committed on
-  the run branch). Move them aside before the next `new-run` there. Merging the run branch into
-  crew-chatter `main` before feature 2 is the operator's step.
+- Merged (operator, 2026-10-19): crew-chatter `main` fast-forwarded `ec2049c..3c706fb` to run 6's
+  branch, so run 6 can be the `--after` predecessor for feature 2. The untracked copies of its
+  `spec.md` and `plan.md`, byte-identical to the branch, went to
+  `%LOCALAPPDATA%\Temp\crew-chatter-aside-2026-10-19-run6`. The target's tree is clean.
 
 **Run 5** (2026-10-18, crew-chatter feature 1 from `ec2049c`, operator-authorized): blocked at
 verification `typecheck` on one implementer line unrelated to the mechanisms,
@@ -65,7 +66,8 @@ the target's tree is clean.
 - the next rework change (change 1, the sandboxed implementer, is the one under consideration).
   `sandboxed-delivery` is not merged to `master` until the rework is complete (operator,
   2026-10-19).
-- whether to merge run 6's branch into crew-chatter `main` (run 5 is superseded by run 6).
+- whether to start crew-chatter feature 2 (`new-run --after 6`; needs its own spend authorization;
+  features 2-7 are proposals 29-34, not yet exported). Run 5 is superseded by run 6.
 - grounding: the recommendation is to leave it unadopted until more recorded positives exist.
 - No PR to `master` (operator, 2026-10-17). No spend is authorized.
 
@@ -91,7 +93,7 @@ it does not exist in Windows PowerShell 5.1, so `docs/runbooks/cli-operator.md` 
 still need a fix that works in both.
 
 **Crew-chatter feature 1 on this machine** (`C:\Repositories\testing-repos\crew-chatter`, `main`
-at `ec2049c`; `8f539e5` adds the feature-1 design; `eb1fa30` the TS backend plus React frontend
+at `3c706fb` after merging run 6; `ec2049c` adds the lockfile `derived:` block; `8f539e5` adds the feature-1 design; `eb1fa30` the TS backend plus React frontend
 baseline, `npm ci`, typecheck, lint, build):
 - Run 1 (whole PRD): $1.80; spec declared 32 files; the operator approved a split into 7 features
   (proposals 28-34; 29-34 not exported); ended `blocked` as designed.
