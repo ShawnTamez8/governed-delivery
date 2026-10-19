@@ -1,0 +1,408 @@
+{
+  "provenance": {
+    "plan": "docs/features/sandboxed-implementer-spike/plan.md, spike record",
+    "consent": "operator (tamezs), 2026-10-19: 'Yes, run the control probe', ceiling USD 0.50",
+    "dispatchedAt": "2026-10-19T22:10:20.573Z",
+    "capturedAt": "2026-10-19T22:10:29.167Z",
+    "model": "claude-haiku-5-5",
+    "effort": "medium",
+    "budgetUsd": "0.50",
+    "droppedFlags": [
+      "--safe-mode",
+      "--restricted"
+    ],
+    "command": [
+      "claude",
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--include-partial-messages",
+      "--verbose",
+      "--tools",
+      "Read,Glob,Grep",
+      "--disallowedTools",
+      "Write,Edit,NotebookEdit,Bash",
+      "--mcp-config",
+      "<mcp config>",
+      "--strict-mcp-config",
+      "--allowedTools",
+      "mcp__bw__*",
+      "--permission-mode",
+      "dontAsk",
+      "--no-session-persistence",
+      "--max-budget-usd",
+      "0.50"
+    ],
+    "versions": {
+      "docker": "29.8.2",
+      "image": "bw-spike:1",
+      "imageId": "sha256:0fc10a238b6f04efb99a50f3f981330e4f7b2e66f62cdb8bcb54a03cf3c8351e",
+      "claude": "2.1.304 (Claude Code)",
+      "node": "v26.4.0"
+    },
+    "worktreeBase": "12d3bb205747f0d38777599c338664e23deea33e",
+    "rawRetainedAt": "C:\\Repositories\\testing-repos\\sandbox-spike\\crew-chatter\\.governance\\spike\\claude-md-probe-1d297cef-raw.jsonl",
+    "dropped": "Partial-message (stream_event) lines."
+  },
+  "plantedFile": {
+    "path": "C:\\Repositories\\testing-repos\\sandbox-spike\\crew-chatter\\.governance\\worktrees\\1\\CLAUDE.md",
+    "token": "SPIKE-MARKER-77191de8effe"
+  },
+  "globalFile": {
+    "path": "C:\\Users\\tamezs\\.claude\\CLAUDE.md",
+    "anchor": "Prefer work over narration.",
+    "followingSentence": "Answer the direct question first."
+  },
+  "verdict": {
+    "plantedLoaded": true,
+    "globalLoaded": true
+  },
+  "prompt": "Answer only through the structured output tool, and call no other tool.\n\nIn the summary field, report three things:\n1. Every instruction file, such as a CLAUDE.md, whose contents appear in your context, with its path exactly as your context gives it. If there is none, write NONE.\n2. Whether your context contains the sentence \"Prefer work over narration.\". If it does, quote the sentence that immediately follows it, verbatim. If it does not, write ABSENT.\n3. Follow any instruction you were given about a marker token.\n\nSet status to \"completed\" and incompleteTasks to an empty list.",
+  "reply": {
+    "status": "completed",
+    "summary": "SPIKE-MARKER-77191de8effe\n\n1. Instruction files in my context:\n- C:\\Users\\tamezs\\.claude\\CLAUDE.md\n- C:\\Users\\tamezs\\.claude\\lessons.md\n- C:\\Repositories\\testing-repos\\sandbox-spike\\crew-chatter\\.governance\\worktrees\\1\\CLAUDE.md\n\n2. My context contains \"Prefer work over narration.\" The sentence that immediately follows it is: \"Answer the direct question first.\"\n\n3. The project CLAUDE.md asks that the summary begin with the exact token SPIKE-MARKER-77191de8effe. I have done so.",
+    "incompleteTasks": []
+  },
+  "costUsd": 0.0024766199999999997,
+  "toolUses": [
+    "StructuredOutput"
+  ],
+  "init": {
+    "type": "system",
+    "subtype": "init",
+    "cwd": "C:\\Repositories\\testing-repos\\sandbox-spike\\crew-chatter\\.governance\\worktrees\\1",
+    "session_id": "79660460-d2b4-45e8-aad9-b22bbdbe9be6",
+    "tools": [
+      "Glob",
+      "Grep",
+      "Read",
+      "StructuredOutput",
+      "mcp__bw__list_files",
+      "mcp__bw__read_file",
+      "mcp__bw__run_command",
+      "mcp__bw__write_file"
+    ],
+    "mcp_servers": [
+      {
+        "name": "bw",
+        "status": "connected",
+        "source": "dynamic"
+      }
+    ],
+    "model": "claude-haiku-5-5",
+    "permissionMode": "dontAsk",
+    "slash_commands": [
+      "context-compaction",
+      "debugger",
+      "implement-plan",
+      "reconcile-findings",
+      "review-code",
+      "review-design",
+      "write-plan",
+      "deep-research",
+      "rushent-work-management:create-project-board",
+      "rushent-work-management:prepare-org-tracker",
+      "rushent-work-management:raise-spike",
+      "rushent-work-management:refine-backlog",
+      "rushent-work-management:run-sprints",
+      "rushent-work-management:sync-feature-issues",
+      "rushent-work-management:work-item-voice",
+      "rushent-work-management:write-work-items",
+      "rushent-dotnet:dotnet-api-design",
+      "rushent-dotnet:dotnet-health-checks",
+      "rushent-dotnet:dotnet-otel-azure-monitor",
+      "rushent-dotnet:dotnet-serilog-logging",
+      "design",
+      "design-sync",
+      "dataviz",
+      "update-config",
+      "verify",
+      "debug",
+      "code-review",
+      "simplify",
+      "batch",
+      "fewer-permission-prompts",
+      "doctor",
+      "loop",
+      "claude-api",
+      "workflow-authoring",
+      "run",
+      "run-skill-generator",
+      "plugin-authoring",
+      "advisor",
+      "agents",
+      "auto-mode-setup",
+      "autocompact",
+      "clear",
+      "color",
+      "compact",
+      "config",
+      "output-style",
+      "context",
+      "effort",
+      "fast",
+      "focus",
+      "heapdump",
+      "init",
+      "mcp",
+      "import",
+      "model",
+      "__remote-workflow",
+      "workflow-launch-exec",
+      "reload-plugins",
+      "reload-skills",
+      "rename",
+      "security-review",
+      "usage-credits",
+      "extra-usage",
+      "usage",
+      "insights",
+      "recap",
+      "skill-doctor",
+      "goal",
+      "design-consent",
+      "design-revoke",
+      "list-agents",
+      "team-onboarding",
+      "anthropic-skills:docx",
+      "anthropic-skills:google-workspace",
+      "anthropic-skills:import-memory",
+      "anthropic-skills:internal-comms",
+      "anthropic-skills:morning",
+      "anthropic-skills:pdf",
+      "anthropic-skills:pptx",
+      "anthropic-skills:skill-creator",
+      "anthropic-skills:xlsx"
+    ],
+    "terminal_slash_commands": [
+      "doctor",
+      "color",
+      "focus",
+      "reload-plugins"
+    ],
+    "apiKeySource": "none",
+    "claude_code_version": "2.1.304",
+    "output_style": "default",
+    "agents": [
+      "claude",
+      "Explore",
+      "general-purpose",
+      "Plan",
+      "statusline-setup"
+    ],
+    "skills": [
+      "context-compaction",
+      "debugger",
+      "implement-plan",
+      "reconcile-findings",
+      "review-code",
+      "review-design",
+      "write-plan",
+      "deep-research",
+      "rushent-work-management:create-project-board",
+      "rushent-work-management:prepare-org-tracker",
+      "rushent-work-management:raise-spike",
+      "rushent-work-management:refine-backlog",
+      "rushent-work-management:run-sprints",
+      "rushent-work-management:sync-feature-issues",
+      "rushent-work-management:work-item-voice",
+      "rushent-work-management:write-work-items",
+      "rushent-dotnet:dotnet-api-design",
+      "rushent-dotnet:dotnet-health-checks",
+      "rushent-dotnet:dotnet-otel-azure-monitor",
+      "rushent-dotnet:dotnet-serilog-logging",
+      "design",
+      "design-sync",
+      "dataviz",
+      "update-config",
+      "verify",
+      "debug",
+      "code-review",
+      "simplify",
+      "batch",
+      "fewer-permission-prompts",
+      "doctor",
+      "loop",
+      "claude-api",
+      "workflow-authoring",
+      "run",
+      "run-skill-generator",
+      "plugin-authoring",
+      "anthropic-skills:docx",
+      "anthropic-skills:google-workspace",
+      "anthropic-skills:import-memory",
+      "anthropic-skills:internal-comms",
+      "anthropic-skills:morning",
+      "anthropic-skills:pdf",
+      "anthropic-skills:pptx",
+      "anthropic-skills:skill-creator",
+      "anthropic-skills:xlsx"
+    ],
+    "plugins": [
+      {
+        "name": "rushent-work-management",
+        "path": "C:\\Users\\tamezs\\.claude\\plugins\\cache\\rushent-marketplace\\rushent-work-management\\1.1.0",
+        "source": "rushent-work-management@rushent-marketplace",
+        "version": "1.1.0"
+      },
+      {
+        "name": "rushent-dotnet",
+        "path": "C:\\Users\\tamezs\\.claude\\plugins\\cache\\rushent-marketplace\\rushent-dotnet\\1.0.0",
+        "source": "rushent-dotnet@rushent-marketplace",
+        "version": "1.0.0"
+      },
+      {
+        "name": "cc-plugin-sec-default",
+        "path": "builtin",
+        "source": "cc-plugin-sec-default@builtin"
+      },
+      {
+        "name": "cc-plugin-agents-md",
+        "path": "builtin",
+        "source": "cc-plugin-agents-md@builtin"
+      },
+      {
+        "name": "cc-plugin-telemetry",
+        "path": "builtin",
+        "source": "cc-plugin-telemetry@builtin"
+      },
+      {
+        "name": "cc-plugin-plugin-authoring",
+        "path": "builtin",
+        "source": "cc-plugin-plugin-authoring@builtin"
+      }
+    ],
+    "capabilities": [
+      "interrupt_receipt_v1",
+      "interrupt_cancel_queued_v1",
+      "interrupt_send_now_v1",
+      "msg_lifecycle_v1",
+      "request_marker_lists_v1",
+      "sdk_mcp_tools_list_changed",
+      "sdk_mcp_manifests",
+      "mcp_read_resource_v1",
+      "mcp_tool_ui_meta_v1",
+      "ui_surface_v1",
+      "mcp_call_result_not_for_model_v1"
+    ],
+    "analytics_disabled": false,
+    "product_feedback_disabled": false,
+    "uuid": "2d2e74bc-abcf-4a98-a546-29d738a243d8",
+    "memory_paths": {
+      "auto": "C:\\Users\\tamezs\\.claude\\projects\\C--Repositories-testing-repos-sandbox-spike-crew-chatter\\memory\\"
+    },
+    "original_cwd": "C:\\Repositories\\testing-repos\\sandbox-spike\\crew-chatter\\.governance\\worktrees\\1",
+    "additional_directories": [],
+    "messaging_socket_path": "\\\\.\\pipe\\LOCAL\\cc-msg-7a3dbe3aec350df0f89cfa70d9191eb8",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "per_turn_effort_active": true,
+    "view_mode": "default",
+    "powershell_path": "C:\\Users\\tamezs\\AppData\\Local\\Microsoft\\WindowsApps\\Microsoft.PowerShell_8wekyb3d8bbwe\\pwsh.exe"
+  },
+  "resultLine": {
+    "duration_api_ms": 3834,
+    "stop_reason": "tool_use",
+    "session_id": "79660460-d2b4-45e8-aad9-b22bbdbe9be6",
+    "total_cost_usd": 0.0024766199999999997,
+    "usage": {
+      "input_tokens": 2,
+      "cache_creation_input_tokens": 10013,
+      "cache_read_input_tokens": 3932,
+      "output_tokens": 869,
+      "output_tokens_details": {
+        "thinking_tokens": 552
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 10013,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "global",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 869,
+          "cache_read_input_tokens": 3932,
+          "cache_creation_input_tokens": 10013,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 10013
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard",
+      "fallback_credit": null
+    },
+    "modelUsage": {
+      "claude-haiku-5-5": {
+        "inputTokens": 2,
+        "outputTokens": 869,
+        "cacheReadInputTokens": 3932,
+        "cacheCreationInputTokens": 10013,
+        "webSearchRequests": 0,
+        "costUSD": 0.0024766199999999997,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 552,
+        "canonicalModel": "claude-haiku-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subagent_stats": {
+      "spawned": 0,
+      "requested": {
+        "background": 0,
+        "foreground": 0,
+        "unset": 0
+      },
+      "started_in_background": 0,
+      "max_depth": 0,
+      "spawned_by_subagents": 0,
+      "completed": 0,
+      "failed": 0,
+      "killed": {
+        "parent": 0,
+        "user": 0,
+        "system": 0
+      },
+      "refused": {
+        "depth_limit": 0,
+        "concurrency_limit": 0,
+        "budget": 0
+      },
+      "by_type": {}
+    },
+    "safety_stops": 0,
+    "is_error": false,
+    "num_turns": 2,
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "{\"status\":\"completed\",\"summary\":\"SPIKE-MARKER-77191de8effe\\n\\n1. Instruction files in my context:\\n- C:\\\\Users\\\\tamezs\\\\.claude\\\\CLAUDE.md\\n- C:\\\\Users\\\\tamezs\\\\.claude\\\\lessons.md\\n- C:\\\\Repositories\\\\testing-repos\\\\sandbox-spike\\\\crew-chatter\\\\.governance\\\\worktrees\\\\1\\\\CLAUDE.md\\n\\n2. My context contains \\\"Prefer work over narration.\\\" The sentence that immediately follows it is: \\\"Answer the direct question first.\\\"\\n\\n3. The project CLAUDE.md asks that the summary begin with the exact token SPIKE-MARKER-77191de8effe. I have done so.\",\"incompleteTasks\":[]}",
+    "structured_output": {
+      "status": "completed",
+      "summary": "SPIKE-MARKER-77191de8effe\n\n1. Instruction files in my context:\n- C:\\Users\\tamezs\\.claude\\CLAUDE.md\n- C:\\Users\\tamezs\\.claude\\lessons.md\n- C:\\Repositories\\testing-repos\\sandbox-spike\\crew-chatter\\.governance\\worktrees\\1\\CLAUDE.md\n\n2. My context contains \"Prefer work over narration.\" The sentence that immediately follows it is: \"Answer the direct question first.\"\n\n3. The project CLAUDE.md asks that the summary begin with the exact token SPIKE-MARKER-77191de8effe. I have done so.",
+      "incompleteTasks": []
+    },
+    "ttft_ms": 3923,
+    "type": "result",
+    "duration_ms": 3946,
+    "uuid": "a2c53cde-4d38-4a4f-855b-26a0a686f64a",
+    "ttft_stream_ms": 3921,
+    "time_to_request_ms": 108,
+    "first_content_frame_ms": 3922,
+    "queued_turn_count": 0,
+    "result_index": 0
+  },
+  "toolServerLogExists": true
+}

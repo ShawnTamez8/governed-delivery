@@ -369,6 +369,8 @@ each proven by manufacturing the failure:
 
 If any criterion fails, stop and report rather than adjusting the criterion.
 
+Spike run 2026-10-19 in `docs/features/sandboxed-implementer-spike/plan.md`, at a cost of $0.25. Every criterion passed, with two operator-approved amendments. The first: `--safe-mode` discards the tool server, so the command drops it, and `--restricted` alone keeps `CLAUDE.md` files out. The second: `PWD` is a container runtime default. The plan's spike record lists the findings the build must answer.
+
 **Decisions needed.** A section 23 entry replacing hazard 15's mechanism and
 section 11's tool inventory for the three patch dispatches; a section 6 trust
 boundary rewrite.

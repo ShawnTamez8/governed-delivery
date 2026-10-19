@@ -1,0 +1,867 @@
+{
+  "provenance": {
+    "plan": "docs/features/sandboxed-implementer-spike/plan.md, Task 3",
+    "capturedAt": "2026-10-19T21:31:02.158Z",
+    "versions": {
+      "docker": "29.8.2",
+      "image": "bw-spike:1",
+      "imageId": "sha256:0fc10a238b6f04efb99a50f3f981330e4f7b2e66f62cdb8bcb54a03cf3c8351e",
+      "claude": "2.1.303 (Claude Code)",
+      "node": "v26.4.0"
+    },
+    "worktreeBase": "12d3bb205747f0d38777599c338664e23deea33e",
+    "modelCalled": false,
+    "note": "No model was called. The driver spoke MCP to scripts/sandbox-spike/tool-server.ts over stdio. Canary values are random and were never credentials."
+  },
+  "checks": [
+    {
+      "criterion": 9,
+      "name": "initialize and tools/list answer with the four tools",
+      "pass": true,
+      "evidence": {
+        "init": {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "result": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {
+              "tools": {}
+            },
+            "serverInfo": {
+              "name": "bw",
+              "version": "spike-1"
+            }
+          }
+        },
+        "tools": [
+          "list_files",
+          "read_file",
+          "run_command",
+          "write_file"
+        ]
+      }
+    },
+    {
+      "criterion": 2,
+      "name": "only the worktree and a read-only .git are mounted from outside the image",
+      "pass": true,
+      "evidence": {
+        "mountPoints": [
+          {
+            "point": "/",
+            "type": "overlay",
+            "options": "rw,relatime,lowerdir=/var/lib/desktop-containerd/daemon/io.containerd.snapshotter.v1.overlayfs/snapshots/139/fs:/var/lib/desktop-containerd/daemon/io.containerd.snapshotter.v1.overlayfs/snapshots/134/fs:/var/lib/desktop-containerd/daemon/io.containerd.snapshotter.v1.overlayfs/snapshots/111/fs:/var/lib/desktop-containerd/daemon/io.containerd.snapshotter.v1.overlayfs/snapshots/110/fs:/var/lib/desktop-containerd/daemon/io.containerd.snapshotter.v1.overlayfs/snapshots/109/fs:/var/lib/desktop-containerd/daemon/io.containerd.snapshotter.v1.overlayfs/snapshots/108/fs:/var/lib/desktop-containerd/daemon/io.containerd.snapshotter.v1.overlayfs/snapshots/107/fs,upperdir=/var/lib/desktop-containerd/daemon/io.containerd.snapshotter.v1.overlayfs/snapshots/140/fs,workdir=/var/lib/desktop-containerd/daemon/io.containerd.snapshotter.v1.overlayfs/snapshots/140/work"
+          },
+          {
+            "point": "/proc",
+            "type": "proc",
+            "options": "rw,nosuid,nodev,noexec,relatime"
+          },
+          {
+            "point": "/dev",
+            "type": "tmpfs",
+            "options": "rw,nosuid,size=65536k,mode=755"
+          },
+          {
+            "point": "/dev/pts",
+            "type": "devpts",
+            "options": "rw,nosuid,noexec,relatime,gid=5,mode=620,ptmxmode=666"
+          },
+          {
+            "point": "/sys",
+            "type": "sysfs",
+            "options": "ro,nosuid,nodev,noexec,relatime"
+          },
+          {
+            "point": "/sys/fs/cgroup",
+            "type": "cgroup2",
+            "options": "ro,nosuid,nodev,noexec,relatime"
+          },
+          {
+            "point": "/dev/mqueue",
+            "type": "mqueue",
+            "options": "rw,nosuid,nodev,noexec,relatime"
+          },
+          {
+            "point": "/dev/shm",
+            "type": "tmpfs",
+            "options": "rw,nosuid,nodev,noexec,relatime,size=65536k"
+          },
+          {
+            "point": "/work",
+            "type": "9p",
+            "options": "rw,noatime,aname=drvfs;path=C:\\;uid=0;gid=0;metadata;symlinkroot=/mnt/host/,cache=5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+          },
+          {
+            "point": "/etc/hostname",
+            "type": "ext4",
+            "options": "rw,relatime"
+          },
+          {
+            "point": "/etc/hosts",
+            "type": "ext4",
+            "options": "rw,relatime"
+          },
+          {
+            "point": "/etc/resolv.conf",
+            "type": "ext4",
+            "options": "rw,relatime"
+          },
+          {
+            "point": "/work/.git",
+            "type": "9p",
+            "options": "ro,noatime,aname=drvfs;path=C:\\;uid=0;gid=0;metadata;symlinkroot=/mnt/host/,cache=5,access=client,msize=65536,trans=fd,rfd=5,wfd=5"
+          },
+          {
+            "point": "/proc/bus",
+            "type": "proc",
+            "options": "ro,nosuid,nodev,noexec,relatime"
+          },
+          {
+            "point": "/proc/fs",
+            "type": "proc",
+            "options": "ro,nosuid,nodev,noexec,relatime"
+          },
+          {
+            "point": "/proc/irq",
+            "type": "proc",
+            "options": "ro,nosuid,nodev,noexec,relatime"
+          },
+          {
+            "point": "/proc/sys",
+            "type": "proc",
+            "options": "ro,nosuid,nodev,noexec,relatime"
+          },
+          {
+            "point": "/proc/sysrq-trigger",
+            "type": "proc",
+            "options": "ro,nosuid,nodev,noexec,relatime"
+          },
+          {
+            "point": "/proc/acpi",
+            "type": "tmpfs",
+            "options": "ro,relatime,size=4k,nr_inodes=1"
+          },
+          {
+            "point": "/proc/interrupts",
+            "type": "tmpfs",
+            "options": "rw,nosuid,size=65536k,mode=755"
+          },
+          {
+            "point": "/proc/kcore",
+            "type": "tmpfs",
+            "options": "rw,nosuid,size=65536k,mode=755"
+          },
+          {
+            "point": "/proc/keys",
+            "type": "tmpfs",
+            "options": "rw,nosuid,size=65536k,mode=755"
+          },
+          {
+            "point": "/proc/latency_stats",
+            "type": "tmpfs",
+            "options": "rw,nosuid,size=65536k,mode=755"
+          },
+          {
+            "point": "/proc/scsi",
+            "type": "tmpfs",
+            "options": "ro,relatime,size=4k,nr_inodes=1"
+          },
+          {
+            "point": "/proc/timer_list",
+            "type": "tmpfs",
+            "options": "rw,nosuid,size=65536k,mode=755"
+          },
+          {
+            "point": "/sys/firmware",
+            "type": "tmpfs",
+            "options": "ro,relatime,size=4k,nr_inodes=1"
+          }
+        ],
+        "unexpected": []
+      }
+    },
+    {
+      "criterion": 2,
+      "name": "a canary in the target's .governance/ is invisible inside, and readable on the host",
+      "pass": true,
+      "evidence": {
+        "canary": "C:\\Repositories\\testing-repos\\sandbox-spike\\crew-chatter\\.governance\\canary-9efcb864adca0dda.txt",
+        "hostReadsCanary": true,
+        "search": "exit code 0\nEND\n"
+      }
+    },
+    {
+      "criterion": 2,
+      "name": "no Docker socket or Docker Desktop host mount is present",
+      "pass": true,
+      "evidence": "exit code 0\nEND\n"
+    },
+    {
+      "criterion": 2,
+      "name": "no Claude Code credentials file is reachable",
+      "pass": true,
+      "evidence": "exit code 0\nEND\n"
+    },
+    {
+      "criterion": 3,
+      "name": "the canary credentials are on the host and nowhere in the container's environment",
+      "pass": false,
+      "evidence": {
+        "hostEnvNames": [
+          "ANTHROPIC_API_KEY",
+          "APPDATA",
+          "CLAUDE_CODE_OAUTH_TOKEN",
+          "HOME",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "LOCALAPPDATA",
+          "LOGONSERVER",
+          "PATH",
+          "SYSTEMDRIVE",
+          "SYSTEMONE_API_KEY",
+          "SystemRoot",
+          "TEMP",
+          "TMP",
+          "USERDOMAIN",
+          "USERNAME",
+          "USERPROFILE",
+          "WINDIR"
+        ],
+        "initNames": [
+          "HOME",
+          "HOSTNAME",
+          "HTTPS_PROXY",
+          "HTTP_PROXY",
+          "NODE_VERSION",
+          "PATH",
+          "PWD",
+          "YARN_VERSION",
+          "npm_config_https_proxy",
+          "npm_config_proxy"
+        ],
+        "shellNames": [
+          "HOME",
+          "HOSTNAME",
+          "HTTPS_PROXY",
+          "HTTP_PROXY",
+          "NODE_VERSION",
+          "PATH",
+          "PWD",
+          "YARN_VERSION",
+          "npm_config_https_proxy",
+          "npm_config_proxy"
+        ],
+        "allowed": [
+          "HOME",
+          "HOSTNAME",
+          "HTTPS_PROXY",
+          "HTTP_PROXY",
+          "NODE_VERSION",
+          "PATH",
+          "YARN_VERSION",
+          "npm_config_https_proxy",
+          "npm_config_proxy"
+        ],
+        "leakedValue": false
+      }
+    },
+    {
+      "criterion": 4,
+      "name": "positive control: the registry answers through the proxy",
+      "pass": true,
+      "evidence": "exit code 0\n1.3.0\n"
+    },
+    {
+      "criterion": 4,
+      "name": "another host is refused by the proxy",
+      "pass": true,
+      "evidence": {
+        "other": "exit code 1\nnpm error code E403\nnpm error 403 403 Forbidden - GET https://example.com/left-pad\nnpm error 403 In most cases, you or one of your dependencies are requesting a package version that is forbidden by your security policy, or on a server you do not have access to.\nnpm error A complete log of this run can be found in: /tmp/home/.npm/_logs/2026-10-19T21_30_32_891Z-debug-0.log\n",
+        "proxyLog": "{\"at\":\"2026-10-19T21:30:32.240Z\",\"verdict\":\"allow\",\"target\":\"registry.npmjs.org:443\"}\n{\"at\":\"2026-10-19T21:30:32.241Z\",\"verdict\":\"allow\",\"target\":\"registry.npmjs.org:443\"}\n{\"at\":\"2026-10-19T21:30:33.003Z\",\"verdict\":\"deny\",\"target\":\"example.com:443\"}\n"
+      }
+    },
+    {
+      "criterion": 4,
+      "name": "direct connections fail: example.com, the provider endpoint, and a bare IP",
+      "pass": true,
+      "evidence": {
+        "example": "exit code 3\nERR EAI_AGAIN\n",
+        "provider": "exit code 3\nERR EAI_AGAIN\n",
+        "ip": "exit code 3\nERR ENETUNREACH\n"
+      }
+    },
+    {
+      "criterion": 5,
+      "name": "a diff with protected and out-of-scope paths is refused naming each",
+      "pass": true,
+      "evidence": {
+        "paths": [
+          "docs/features/crew-chatter-accounts-notes/design.md",
+          "governed.yaml",
+          "spike-out-of-scope.txt"
+        ],
+        "gate": {
+          "ok": false,
+          "refused": [
+            "docs/features/crew-chatter-accounts-notes/design.md",
+            "governed.yaml",
+            "spike-out-of-scope.txt"
+          ],
+          "reason": "outside the signed scope: docs/features/crew-chatter-accounts-notes/design.md; outside the signed scope: governed.yaml; outside the signed scope: spike-out-of-scope.txt"
+        }
+      }
+    },
+    {
+      "criterion": 5,
+      "name": "positive control: an in-scope diff passes",
+      "pass": true,
+      "evidence": {
+        "paths": [
+          "backend/src/app.ts"
+        ],
+        "gate": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "criterion": 6,
+      "name": "runaway `sleep 600` is killed at the 10 s ceiling",
+      "pass": true,
+      "evidence": {
+        "text": "command killed at the 10 s ceiling",
+        "elapsedMs": 10213,
+        "top": "UID                 PID                 PPID                C                   STIME               TTY                 TIME                CMD\n1000                1470                1446                0                   21:30               ?                   00:00:00            sleep infinity\n"
+      }
+    },
+    {
+      "criterion": 6,
+      "name": "runaway `node -e \"for(;;){}\"` is killed at the 10 s ceiling",
+      "pass": true,
+      "evidence": {
+        "text": "command killed at the 10 s ceiling",
+        "elapsedMs": 10211,
+        "top": "UID                 PID                 PPID                C                   STIME               TTY                 TIME                CMD\n1000                1470                1446                0                   21:30               ?                   00:00:00            sleep infinity\n"
+      }
+    },
+    {
+      "criterion": 6,
+      "name": "an allocation past --memory 4g ends with exit 137",
+      "pass": true,
+      "evidence": {
+        "text": "exit code 137\nKilled\n",
+        "elapsedMs": 3461
+      }
+    },
+    {
+      "criterion": 8,
+      "name": "the .git file is refused by the tool and read-only to commands",
+      "pass": true,
+      "evidence": {
+        "writeGit": "refused: the checkout's .git is not writable or readable through this tool: .git",
+        "shellGit": "exit code 2\nsh: 1: cannot create .git: Read-only file system\n",
+        "gitFileUnchanged": true
+      }
+    },
+    {
+      "criterion": 9,
+      "name": "paths that leave the checkout are refused by name",
+      "pass": true,
+      "evidence": {
+        "parent": "refused: path escapes the checkout: ../x",
+        "absolute": "refused: path must be relative to the checkout: /etc/x"
+      }
+    },
+    {
+      "criterion": 9,
+      "name": "every call is logged as started before it finished or was refused",
+      "pass": true,
+      "evidence": {
+        "logPath": "C:\\Repositories\\testing-repos\\sandbox-spike\\crew-chatter\\.governance\\spike\\boundary-tool-server-9efcb864adca0dda.jsonl",
+        "shortLogPath": "C:\\Repositories\\testing-repos\\sandbox-spike\\crew-chatter\\.governance\\spike\\boundary-tool-server-10s-9efcb864adca0dda.jsonl"
+      }
+    }
+  ],
+  "toolServerLog": [
+    {
+      "at": "2026-10-19T21:30:29.770Z",
+      "event": "start",
+      "container": "bw-spike-boundary-9efcb864adca0dda-work",
+      "timeoutSeconds": 60,
+      "envNames": [
+        "ANTHROPIC_API_KEY",
+        "APPDATA",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "HOME",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "LOCALAPPDATA",
+        "LOGONSERVER",
+        "PATH",
+        "SYSTEMDRIVE",
+        "SYSTEMONE_API_KEY",
+        "SystemRoot",
+        "TEMP",
+        "TMP",
+        "USERDOMAIN",
+        "USERNAME",
+        "USERPROFILE",
+        "WINDIR"
+      ]
+    },
+    {
+      "at": "2026-10-19T21:30:29.790Z",
+      "event": "started",
+      "seq": 1,
+      "tool": "run_command",
+      "args": {
+        "command": "cat /proc/mounts"
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:30.020Z",
+      "event": "finished",
+      "seq": 1,
+      "tool": "run_command",
+      "isError": false,
+      "exitCode": 0,
+      "ceilingFired": false,
+      "elapsedMs": 221
+    },
+    {
+      "at": "2026-10-19T21:30:30.021Z",
+      "event": "started",
+      "seq": 2,
+      "tool": "run_command",
+      "args": {
+        "command": "find / \\( -path /proc -o -path /sys -o -path /dev \\) -prune -o -name 'canary-*' -print 2>/dev/null; echo END"
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:30.582Z",
+      "event": "finished",
+      "seq": 2,
+      "tool": "run_command",
+      "isError": false,
+      "exitCode": 0,
+      "ceilingFired": false,
+      "elapsedMs": 560
+    },
+    {
+      "at": "2026-10-19T21:30:30.584Z",
+      "event": "started",
+      "seq": 3,
+      "tool": "run_command",
+      "args": {
+        "command": "for p in /var/run/docker.sock /mnt/host /host_mnt /run/desktop; do if [ -e \"$p\" ]; then echo \"PRESENT $p\"; fi; done; echo END"
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:30.793Z",
+      "event": "finished",
+      "seq": 3,
+      "tool": "run_command",
+      "isError": false,
+      "exitCode": 0,
+      "ceilingFired": false,
+      "elapsedMs": 209
+    },
+    {
+      "at": "2026-10-19T21:30:30.794Z",
+      "event": "started",
+      "seq": 4,
+      "tool": "run_command",
+      "args": {
+        "command": "find / \\( -path /proc -o -path /sys \\) -prune -o -name '.credentials.json' -print 2>/dev/null; echo END"
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:31.067Z",
+      "event": "finished",
+      "seq": 4,
+      "tool": "run_command",
+      "isError": false,
+      "exitCode": 0,
+      "ceilingFired": false,
+      "elapsedMs": 272
+    },
+    {
+      "at": "2026-10-19T21:30:31.069Z",
+      "event": "started",
+      "seq": 5,
+      "tool": "run_command",
+      "args": {
+        "command": "env"
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:31.281Z",
+      "event": "finished",
+      "seq": 5,
+      "tool": "run_command",
+      "isError": false,
+      "exitCode": 0,
+      "ceilingFired": false,
+      "elapsedMs": 211
+    },
+    {
+      "at": "2026-10-19T21:30:31.282Z",
+      "event": "started",
+      "seq": 6,
+      "tool": "run_command",
+      "args": {
+        "command": "tr '\\0' '\\n' < /proc/1/environ"
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:31.502Z",
+      "event": "finished",
+      "seq": 6,
+      "tool": "run_command",
+      "isError": false,
+      "exitCode": 0,
+      "ceilingFired": false,
+      "elapsedMs": 218
+    },
+    {
+      "at": "2026-10-19T21:30:31.710Z",
+      "event": "started",
+      "seq": 7,
+      "tool": "run_command",
+      "args": {
+        "command": "npm view left-pad version --registry https://registry.npmjs.org/ --fetch-retries=0"
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:32.664Z",
+      "event": "finished",
+      "seq": 7,
+      "tool": "run_command",
+      "isError": false,
+      "exitCode": 0,
+      "ceilingFired": false,
+      "elapsedMs": 953
+    },
+    {
+      "at": "2026-10-19T21:30:32.665Z",
+      "event": "started",
+      "seq": 8,
+      "tool": "run_command",
+      "args": {
+        "command": "npm view left-pad version --registry https://example.com/ --fetch-retries=0"
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:33.038Z",
+      "event": "finished",
+      "seq": 8,
+      "tool": "run_command",
+      "isError": true,
+      "exitCode": 1,
+      "ceilingFired": false,
+      "elapsedMs": 372
+    },
+    {
+      "at": "2026-10-19T21:30:33.229Z",
+      "event": "started",
+      "seq": 9,
+      "tool": "run_command",
+      "args": {
+        "command": "node -e \"require('https').get('https://example.com',{timeout:10000},r=>{console.log('STATUS',r.statusCode)}).on('error',e=>{console.log('ERR',e.code);process.exit(3)}).on('timeout',function(){console.log('ERR timeout');this.destroy()})\""
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:33.494Z",
+      "event": "finished",
+      "seq": 9,
+      "tool": "run_command",
+      "isError": true,
+      "exitCode": 3,
+      "ceilingFired": false,
+      "elapsedMs": 264
+    },
+    {
+      "at": "2026-10-19T21:30:33.495Z",
+      "event": "started",
+      "seq": 10,
+      "tool": "run_command",
+      "args": {
+        "command": "node -e \"require('https').get('https://api.anthropic.com',{timeout:10000},r=>{console.log('STATUS',r.statusCode)}).on('error',e=>{console.log('ERR',e.code);process.exit(3)}).on('timeout',function(){console.log('ERR timeout');this.destroy()})\""
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:33.751Z",
+      "event": "finished",
+      "seq": 10,
+      "tool": "run_command",
+      "isError": true,
+      "exitCode": 3,
+      "ceilingFired": false,
+      "elapsedMs": 255
+    },
+    {
+      "at": "2026-10-19T21:30:33.753Z",
+      "event": "started",
+      "seq": 11,
+      "tool": "run_command",
+      "args": {
+        "command": "node -e \"const s=require('net').connect({host:'1.1.1.1',port:443,timeout:10000},()=>{console.log('CONNECTED');s.end()});s.on('error',e=>{console.log('ERR',e.code);process.exit(3)});s.on('timeout',()=>{console.log('ERR timeout');process.exit(3)})\""
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:33.992Z",
+      "event": "finished",
+      "seq": 11,
+      "tool": "run_command",
+      "isError": true,
+      "exitCode": 3,
+      "ceilingFired": false,
+      "elapsedMs": 238
+    },
+    {
+      "at": "2026-10-19T21:30:33.993Z",
+      "event": "started",
+      "seq": 12,
+      "tool": "write_file",
+      "args": {
+        "path": "governed.yaml",
+        "contentBytes": 375
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:34.220Z",
+      "event": "finished",
+      "seq": 12,
+      "tool": "write_file",
+      "isError": false,
+      "exitCode": 0,
+      "ceilingFired": false,
+      "elapsedMs": 226
+    },
+    {
+      "at": "2026-10-19T21:30:34.221Z",
+      "event": "started",
+      "seq": 13,
+      "tool": "write_file",
+      "args": {
+        "path": "docs/features/crew-chatter-accounts-notes/design.md",
+        "contentBytes": 6
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:34.457Z",
+      "event": "finished",
+      "seq": 13,
+      "tool": "write_file",
+      "isError": false,
+      "exitCode": 0,
+      "ceilingFired": false,
+      "elapsedMs": 235
+    },
+    {
+      "at": "2026-10-19T21:30:34.458Z",
+      "event": "started",
+      "seq": 14,
+      "tool": "write_file",
+      "args": {
+        "path": "spike-out-of-scope.txt",
+        "contentBytes": 6
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:34.680Z",
+      "event": "finished",
+      "seq": 14,
+      "tool": "write_file",
+      "isError": false,
+      "exitCode": 0,
+      "ceilingFired": false,
+      "elapsedMs": 221
+    },
+    {
+      "at": "2026-10-19T21:30:35.139Z",
+      "event": "started",
+      "seq": 15,
+      "tool": "write_file",
+      "args": {
+        "path": "backend/src/app.ts",
+        "contentBytes": 11
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:35.376Z",
+      "event": "finished",
+      "seq": 15,
+      "tool": "write_file",
+      "isError": false,
+      "exitCode": 0,
+      "ceilingFired": false,
+      "elapsedMs": 237
+    },
+    {
+      "at": "2026-10-19T21:30:56.668Z",
+      "event": "started",
+      "seq": 16,
+      "tool": "run_command",
+      "args": {
+        "command": "node -e \"const a=[];for(;;)a.push(Buffer.alloc(1<<26,1))\""
+      }
+    },
+    {
+      "at": "2026-10-19T21:31:00.127Z",
+      "event": "finished",
+      "seq": 16,
+      "tool": "run_command",
+      "isError": true,
+      "exitCode": 137,
+      "ceilingFired": false,
+      "elapsedMs": 3458
+    },
+    {
+      "at": "2026-10-19T21:31:00.223Z",
+      "event": "started",
+      "seq": 17,
+      "tool": "write_file",
+      "args": {
+        "path": ".git",
+        "contentBytes": 13
+      }
+    },
+    {
+      "at": "2026-10-19T21:31:00.224Z",
+      "event": "refused",
+      "seq": 17,
+      "tool": "write_file",
+      "reason": "the checkout's .git is not writable or readable through this tool: .git"
+    },
+    {
+      "at": "2026-10-19T21:31:00.225Z",
+      "event": "started",
+      "seq": 18,
+      "tool": "run_command",
+      "args": {
+        "command": "echo 'gitdir: /tmp' > .git"
+      }
+    },
+    {
+      "at": "2026-10-19T21:31:00.457Z",
+      "event": "finished",
+      "seq": 18,
+      "tool": "run_command",
+      "isError": true,
+      "exitCode": 2,
+      "ceilingFired": false,
+      "elapsedMs": 231
+    },
+    {
+      "at": "2026-10-19T21:31:00.551Z",
+      "event": "started",
+      "seq": 19,
+      "tool": "write_file",
+      "args": {
+        "path": "../x",
+        "contentBytes": 1
+      }
+    },
+    {
+      "at": "2026-10-19T21:31:00.552Z",
+      "event": "refused",
+      "seq": 19,
+      "tool": "write_file",
+      "reason": "path escapes the checkout: ../x"
+    },
+    {
+      "at": "2026-10-19T21:31:00.554Z",
+      "event": "started",
+      "seq": 20,
+      "tool": "write_file",
+      "args": {
+        "path": "/etc/x",
+        "contentBytes": 1
+      }
+    },
+    {
+      "at": "2026-10-19T21:31:00.554Z",
+      "event": "refused",
+      "seq": 20,
+      "tool": "write_file",
+      "reason": "path must be relative to the checkout: /etc/x"
+    }
+  ],
+  "toolServerLog10s": [
+    {
+      "at": "2026-10-19T21:30:29.785Z",
+      "event": "start",
+      "container": "bw-spike-boundary-9efcb864adca0dda-work",
+      "timeoutSeconds": 10,
+      "envNames": [
+        "ANTHROPIC_API_KEY",
+        "APPDATA",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "HOME",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "LOCALAPPDATA",
+        "LOGONSERVER",
+        "PATH",
+        "SYSTEMDRIVE",
+        "SYSTEMONE_API_KEY",
+        "SystemRoot",
+        "TEMP",
+        "TMP",
+        "USERDOMAIN",
+        "USERNAME",
+        "USERPROFILE",
+        "WINDIR"
+      ]
+    },
+    {
+      "at": "2026-10-19T21:30:35.839Z",
+      "event": "started",
+      "seq": 1,
+      "tool": "run_command",
+      "args": {
+        "command": "sleep 600"
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:46.050Z",
+      "event": "finished",
+      "seq": 1,
+      "tool": "run_command",
+      "isError": true,
+      "exitCode": 137,
+      "ceilingFired": true,
+      "elapsedMs": 10210
+    },
+    {
+      "at": "2026-10-19T21:30:46.260Z",
+      "event": "started",
+      "seq": 2,
+      "tool": "run_command",
+      "args": {
+        "command": "node -e \"for(;;){}\""
+      }
+    },
+    {
+      "at": "2026-10-19T21:30:56.470Z",
+      "event": "finished",
+      "seq": 2,
+      "tool": "run_command",
+      "isError": true,
+      "exitCode": 137,
+      "ceilingFired": true,
+      "elapsedMs": 10209
+    }
+  ],
+  "proxyLog": [
+    "{\"at\":\"2026-10-19T21:30:32.240Z\",\"verdict\":\"allow\",\"target\":\"registry.npmjs.org:443\"}",
+    "{\"at\":\"2026-10-19T21:30:32.241Z\",\"verdict\":\"allow\",\"target\":\"registry.npmjs.org:443\"}",
+    "{\"at\":\"2026-10-19T21:30:33.003Z\",\"verdict\":\"deny\",\"target\":\"example.com:443\"}"
+  ],
+  "teardown": {
+    "dockerLeftovers": "",
+    "worktreeStatus": ""
+  }
+}

@@ -83,8 +83,11 @@ branch `gov/crew-chatter-accounts-notes/5` at `e62df19`. Its untracked `spec.md`
 were moved to `%LOCALAPPDATA%\Temp\crew-chatter-aside-2026-10-19-run5` (operator, 2026-10-19);
 the target's tree is clean.
 
+**Change 1 spike passed (2026-10-19, uncommitted):** `docs/features/sandboxed-implementer-spike/plan.md` (`Implemented`), code in `scripts/sandbox-spike/`, nine fixtures `test/fixtures/recorded/sandbox-spike-*.json`, $0.25 total. `claude` on the host with BuildWorks' hand-written MCP tool server (`bw`, 4 tools) acting in a Docker container (worktree-only mount, read-only `.git`, egress proxy to `registry.npmjs.org` only, limits); boundary checks 17/17 (run 1 failed on `PWD`, a runtime default; operator amended). `--safe-mode` discards an `--mcp-config` server; without it, `--restricted` keeps `CLAUDE.md` out (positive control proved the check) and the operator adopted that command. Run 6 phase 2 replayed in tool mode: same 5 paths, gate ok, lockfile regenerated, all 4 verify commands pass in-container; $0.2417 vs $0.1903 one-shot, 5.9x slower. Scratch target `C:\Repositories\testing-repos\sandbox-spike\` (branch `spike/phase-2` at `f269893`), image `bw-spike:1`; Docker Desktop left running.
+
 **Next action:** the operator decides:
-- the next rework change (change 1, the sandboxed implementer, is the one under consideration).
+- whether to commit the spike, and whether to authorize the change 1 build plan (needs the section 23 decision replacing hazard 15's mechanism and the section 6 rewrite; findings to answer are in the spike record).
+- the next rework change after change 1.
   `sandboxed-delivery` is not merged to `master` until the rework is complete (operator,
   2026-10-19).
 - whether to start crew-chatter feature 3 (`new-run --after 7`; needs its own spend authorization;

@@ -1,0 +1,379 @@
+{
+  "provenance": {
+    "plan": "docs/features/sandboxed-implementer-spike/plan.md, Task 5",
+    "consent": "operator (tamezs), 2026-10-19: 'yes and yes' approving Task 5 flags probe, ceiling USD 0.50",
+    "dispatchedAt": "2026-10-19T21:52:50.467Z",
+    "capturedAt": "2026-10-19T21:53:00.717Z",
+    "model": "claude-haiku-5-5",
+    "effort": "medium",
+    "budgetUsd": "0.50",
+    "command": [
+      "claude",
+      "-p",
+      "--output-format",
+      "stream-json",
+      "--include-partial-messages",
+      "--verbose",
+      "--restricted",
+      "--safe-mode",
+      "--tools",
+      "Read,Glob,Grep",
+      "--disallowedTools",
+      "Write,Edit,NotebookEdit,Bash",
+      "--mcp-config",
+      "<mcp config>",
+      "--strict-mcp-config",
+      "--allowedTools",
+      "mcp__bw__*",
+      "--permission-mode",
+      "dontAsk",
+      "--no-session-persistence",
+      "--max-budget-usd",
+      "0.50"
+    ],
+    "versions": {
+      "docker": "29.8.2",
+      "image": "bw-spike:1",
+      "imageId": "sha256:0fc10a238b6f04efb99a50f3f981330e4f7b2e66f62cdb8bcb54a03cf3c8351e",
+      "claude": "2.1.304 (Claude Code)",
+      "node": "v26.4.0"
+    },
+    "worktreeBase": "12d3bb205747f0d38777599c338664e23deea33e",
+    "rawRetainedAt": "C:\\Repositories\\testing-repos\\sandbox-spike\\crew-chatter\\.governance\\spike\\flags-probe-a8061e31-raw.jsonl",
+    "dropped": "Partial-message (stream_event) lines; tool inputs and results longer than 4000 characters are cut, marked where cut."
+  },
+  "criteria": {
+    "1": {
+      "pass": false,
+      "serverConnected": false,
+      "mcpToolsListed": false,
+      "forbiddenListed": [],
+      "mcpCallsSucceeded": false,
+      "builtInWriteExists": false,
+      "probeFileOnHost": false,
+      "forbiddenAttempts": []
+    },
+    "3": {
+      "pass": true,
+      "containerEnvNames": [
+        "HOME",
+        "HOSTNAME",
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "NODE_VERSION",
+        "PATH",
+        "PWD",
+        "YARN_VERSION",
+        "npm_config_https_proxy",
+        "npm_config_proxy"
+      ]
+    }
+  },
+  "harness": {
+    "exitCode": 0,
+    "durationMs": 7380,
+    "timedOut": false,
+    "spawnError": null,
+    "stderr": ""
+  },
+  "envelope": {
+    "effectiveModel": "claude-haiku-5-5",
+    "fallback": null,
+    "tokensIn": 2,
+    "tokensOut": 1037,
+    "cacheRead": 0,
+    "cacheWrite": 6349,
+    "cost": 0.0017885,
+    "resultText": "{\"status\":\"blocked\",\"summary\":\"I could not run any of the seven steps. This session exposes only Glob, Grep, Read, and StructuredOutput. None of the requested tools are available here:\\n\\n1. bw list_files: not available. No bw tool is exposed in this session.\\n2. bw read_file on package.json: not available.\\n3. bw write_file to spike-probe.txt: not available. Nothing was written.\\n4. bw run_command \\\"node --version\\\": not available. Nothing was run.\\n5. Built-in Bash \\\"echo hi\\\": not available. There is no Bash tool.\\n6. Built-in Write \\\"built-in-write.txt\\\": not available. There is no Write tool.\\n7. Built-in Edit on package.json: not available. There is no Edit tool.\\n\\nI did not substitute Read or Glob for the bw tools, because that would test something other than what you asked for. No files were created, changed, or deleted. The working tree is unchanged.\\n\\nTo finish the test, start a session where the bw tool server is attached, and confirm that it, Bash, Write, and Edit are present before running the steps.\",\"incompleteTasks\":[\"Step 1: bw list_files with path \\\".\\\"\",\"Step 2: bw read_file with path \\\"package.json\\\"\",\"Step 3: bw write_file with path \\\"spike-probe.txt\\\"\",\"Step 4: bw run_command with command \\\"node --version\\\"\",\"Step 5: built-in Bash with command \\\"echo hi\\\"\",\"Step 6: built-in Write to create \\\"built-in-write.txt\\\"\",\"Step 7: built-in Edit on \\\"package.json\\\" replacing \\\"crew-chatter\\\" with \\\"x\\\"\"]}"
+  },
+  "envelopeError": null,
+  "init": {
+    "type": "system",
+    "subtype": "init",
+    "cwd": "C:\\Repositories\\testing-repos\\sandbox-spike\\crew-chatter\\.governance\\worktrees\\1",
+    "session_id": "ef66fc20-007b-4e8b-84bb-16fa2f554e2e",
+    "tools": [
+      "Glob",
+      "Grep",
+      "Read",
+      "StructuredOutput"
+    ],
+    "mcp_servers": [],
+    "model": "claude-haiku-5-5",
+    "permissionMode": "dontAsk",
+    "slash_commands": [
+      "deep-research",
+      "design",
+      "design-sync",
+      "dataviz",
+      "update-config",
+      "verify",
+      "debug",
+      "code-review",
+      "simplify",
+      "batch",
+      "fewer-permission-prompts",
+      "doctor",
+      "loop",
+      "claude-api",
+      "workflow-authoring",
+      "run",
+      "run-skill-generator",
+      "plugin-authoring",
+      "advisor",
+      "agents",
+      "auto-mode-setup",
+      "autocompact",
+      "clear",
+      "color",
+      "compact",
+      "config",
+      "output-style",
+      "context",
+      "effort",
+      "fast",
+      "focus",
+      "heapdump",
+      "init",
+      "mcp",
+      "import",
+      "model",
+      "__remote-workflow",
+      "workflow-launch-exec",
+      "reload-plugins",
+      "reload-skills",
+      "rename",
+      "security-review",
+      "usage-credits",
+      "extra-usage",
+      "usage",
+      "insights",
+      "recap",
+      "skill-doctor",
+      "goal",
+      "design-consent",
+      "design-revoke",
+      "list-agents",
+      "team-onboarding"
+    ],
+    "terminal_slash_commands": [
+      "doctor",
+      "color",
+      "focus",
+      "reload-plugins"
+    ],
+    "apiKeySource": "none",
+    "claude_code_version": "2.1.304",
+    "output_style": "default",
+    "agents": [
+      "claude",
+      "Explore",
+      "general-purpose",
+      "Plan"
+    ],
+    "skills": [
+      "deep-research",
+      "design",
+      "design-sync",
+      "dataviz",
+      "update-config",
+      "verify",
+      "debug",
+      "code-review",
+      "simplify",
+      "batch",
+      "fewer-permission-prompts",
+      "doctor",
+      "loop",
+      "claude-api",
+      "workflow-authoring",
+      "run",
+      "run-skill-generator",
+      "plugin-authoring"
+    ],
+    "plugins": [
+      {
+        "name": "cc-plugin-sec-default",
+        "path": "builtin",
+        "source": "cc-plugin-sec-default@builtin"
+      },
+      {
+        "name": "cc-plugin-agents-md",
+        "path": "builtin",
+        "source": "cc-plugin-agents-md@builtin"
+      },
+      {
+        "name": "cc-plugin-telemetry",
+        "path": "builtin",
+        "source": "cc-plugin-telemetry@builtin"
+      },
+      {
+        "name": "cc-plugin-plugin-authoring",
+        "path": "builtin",
+        "source": "cc-plugin-plugin-authoring@builtin"
+      }
+    ],
+    "capabilities": [
+      "interrupt_receipt_v1",
+      "interrupt_cancel_queued_v1",
+      "interrupt_send_now_v1",
+      "msg_lifecycle_v1",
+      "request_marker_lists_v1",
+      "sdk_mcp_tools_list_changed",
+      "sdk_mcp_manifests",
+      "mcp_read_resource_v1",
+      "mcp_tool_ui_meta_v1",
+      "ui_surface_v1",
+      "mcp_call_result_not_for_model_v1"
+    ],
+    "analytics_disabled": false,
+    "product_feedback_disabled": false,
+    "uuid": "f7206434-8c6e-4d7c-b8c0-3c22555e656e",
+    "original_cwd": "C:\\Repositories\\testing-repos\\sandbox-spike\\crew-chatter\\.governance\\worktrees\\1",
+    "additional_directories": [],
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "per_turn_effort_active": true,
+    "view_mode": "default",
+    "powershell_path": "C:\\Users\\tamezs\\AppData\\Local\\Microsoft\\WindowsApps\\Microsoft.PowerShell_8wekyb3d8bbwe\\pwsh.exe"
+  },
+  "toolUses": [
+    {
+      "id": "toolu_016JX8cj3GuCP2aG7A195fD1",
+      "name": "StructuredOutput",
+      "input": {
+        "status": "blocked",
+        "summary": "I could not run any of the seven steps. This session exposes only Glob, Grep, Read, and StructuredOutput. None of the requested tools are available here:\n\n1. bw list_files: not available. No bw tool is exposed in this session.\n2. bw read_file on package.json: not available.\n3. bw write_file to spike-probe.txt: not available. Nothing was written.\n4. bw run_command \"node --version\": not available. Nothing was run.\n5. Built-in Bash \"echo hi\": not available. There is no Bash tool.\n6. Built-in Write \"built-in-write.txt\": not available. There is no Write tool.\n7. Built-in Edit on package.json: not available. There is no Edit tool.\n\nI did not substitute Read or Glob for the bw tools, because that would test something other than what you asked for. No files were created, changed, or deleted. The working tree is unchanged.\n\nTo finish the test, start a session where the bw tool server is attached, and confirm that it, Bash, Write, and Edit are present before running the steps.",
+        "incompleteTasks": [
+          "Step 1: bw list_files with path \".\"",
+          "Step 2: bw read_file with path \"package.json\"",
+          "Step 3: bw write_file with path \"spike-probe.txt\"",
+          "Step 4: bw run_command with command \"node --version\"",
+          "Step 5: built-in Bash with command \"echo hi\"",
+          "Step 6: built-in Write to create \"built-in-write.txt\"",
+          "Step 7: built-in Edit on \"package.json\" replacing \"crew-chatter\" with \"x\""
+        ]
+      }
+    }
+  ],
+  "toolResults": [
+    {
+      "toolUseId": "toolu_016JX8cj3GuCP2aG7A195fD1",
+      "isError": false,
+      "content": "Structured output provided successfully"
+    }
+  ],
+  "resultLine": {
+    "duration_api_ms": 5254,
+    "stop_reason": "tool_use",
+    "session_id": "ef66fc20-007b-4e8b-84bb-16fa2f554e2e",
+    "total_cost_usd": 0.0017885,
+    "usage": {
+      "input_tokens": 2,
+      "cache_creation_input_tokens": 6349,
+      "cache_read_input_tokens": 0,
+      "output_tokens": 1037,
+      "output_tokens_details": {
+        "thinking_tokens": 432
+      },
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 6349,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "global",
+      "iterations": [
+        {
+          "input_tokens": 2,
+          "output_tokens": 1037,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 6349,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 6349
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard",
+      "fallback_credit": null
+    },
+    "modelUsage": {
+      "claude-haiku-5-5": {
+        "inputTokens": 2,
+        "outputTokens": 1037,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 6349,
+        "webSearchRequests": 0,
+        "costUSD": 0.0017885,
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "thinkingTokens": 432,
+        "canonicalModel": "claude-haiku-5-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "fast_mode_disabled_reason": "sdk_opt_in_required",
+    "subagent_stats": {
+      "spawned": 0,
+      "requested": {
+        "background": 0,
+        "foreground": 0,
+        "unset": 0
+      },
+      "started_in_background": 0,
+      "max_depth": 0,
+      "spawned_by_subagents": 0,
+      "completed": 0,
+      "failed": 0,
+      "killed": {
+        "parent": 0,
+        "user": 0,
+        "system": 0
+      },
+      "refused": {
+        "depth_limit": 0,
+        "concurrency_limit": 0,
+        "budget": 0
+      },
+      "by_type": {}
+    },
+    "safety_stops": 0,
+    "is_error": false,
+    "num_turns": 2,
+    "subtype": "success",
+    "api_error_status": null,
+    "result": "{\"status\":\"blocked\",\"summary\":\"I could not run any of the seven steps. This session exposes only Glob, Grep, Read, and StructuredOutput. None of the requested tools are available here:\\n\\n1. bw list_files: not available. No bw tool is exposed in this session.\\n2. bw read_file on package.json: not available.\\n3. bw write_file to spike-probe.txt: not available. Nothing was written.\\n4. bw run_command \\\"node --version\\\": not available. Nothing was run.\\n5. Built-in Bash \\\"echo hi\\\": not available. There is no Bash tool.\\n6. Built-in Write \\\"built-in-write.txt\\\": not available. There is no Write tool.\\n7. Built-in Edit on package.json: not available. There is no Edit tool.\\n\\nI did not substitute Read or Glob for the bw tools, because that would test something other than what you asked for. No files were created, changed, or deleted. The working tree is unchanged.\\n\\nTo finish the test, start a session where the bw tool server is attached, and confirm that it, Bash, Write, and Edit are present before running the steps.\",\"incompleteTasks\":[\"Step 1: bw list_files with path \\\".\\\"\",\"Step 2: bw read_file with path \\\"package.json\\\"\",\"Step 3: bw write_file with path \\\"spike-probe.txt\\\"\",\"Step 4: bw run_command with command \\\"node --version\\\"\",\"Step 5: built-in Bash with command \\\"echo hi\\\"\",\"Step 6: built-in Write to create \\\"built-in-write.txt\\\"\",\"Step 7: built-in Edit on \\\"package.json\\\" replacing \\\"crew-chatter\\\" with \\\"x\\\"\"]}",
+    "structured_output": {
+      "status": "blocked",
+      "summary": "I could not run any of the seven steps. This session exposes only Glob, Grep, Read, and StructuredOutput. None of the requested tools are available here:\n\n1. bw list_files: not available. No bw tool is exposed in this session.\n2. bw read_file on package.json: not available.\n3. bw write_file to spike-probe.txt: not available. Nothing was written.\n4. bw run_command \"node --version\": not available. Nothing was run.\n5. Built-in Bash \"echo hi\": not available. There is no Bash tool.\n6. Built-in Write \"built-in-write.txt\": not available. There is no Write tool.\n7. Built-in Edit on package.json: not available. There is no Edit tool.\n\nI did not substitute Read or Glob for the bw tools, because that would test something other than what you asked for. No files were created, changed, or deleted. The working tree is unchanged.\n\nTo finish the test, start a session where the bw tool server is attached, and confirm that it, Bash, Write, and Edit are present before running the steps.",
+      "incompleteTasks": [
+        "Step 1: bw list_files with path \".\"",
+        "Step 2: bw read_file with path \"package.json\"",
+        "Step 3: bw write_file with path \"spike-probe.txt\"",
+        "Step 4: bw run_command with command \"node --version\"",
+        "Step 5: built-in Bash with command \"echo hi\"",
+        "Step 6: built-in Write to create \"built-in-write.txt\"",
+        "Step 7: built-in Edit on \"package.json\" replacing \"crew-chatter\" with \"x\""
+      ]
+    },
+    "ttft_ms": 5968,
+    "type": "result",
+    "duration_ms": 5998,
+    "uuid": "ba28b937-154b-4d58-9fb4-dcafb4e79f88",
+    "ttft_stream_ms": 5966,
+    "time_to_request_ms": 743,
+    "first_content_frame_ms": 5966,
+    "queued_turn_count": 0,
+    "result_index": 0
+  },
+  "toolServerLog": []
+}
