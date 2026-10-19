@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { validateSpecDoc, writeSpecDoc } from "../src/spec-doc.ts";
+import { runDocumentDir } from "../src/paths.ts";
 import { extractJsonBody } from "../src/parse-output.ts";
 
 function validSpec(): string {
@@ -174,15 +175,19 @@ test("a wrong-case criterion ID stays an ID refusal, not a membership refusal", 
 test("writeSpecDoc writes the file and refuses invalid content without touching the filesystem", () => {
   const root = mkdtempSync(join(tmpdir(), "bw-specdoc-"));
   try {
-    const { path, doc } = writeSpecDoc(root, "my-feature", validSpec());
+    // The run's own governance directory; nothing is written into the
+    // checkout (docs/features/run-documents-in-governance/plan.md).
+    const { path, doc } = writeSpecDoc(root, 1, "my-feature", validSpec());
+    const before = join(runDocumentDir(root, 1), "spec.md");
+    assert.equal(path, before);
     assert.equal(readFileSync(path, "utf8"), validSpec());
+    assert.equal(existsSync(join(root, "docs", "features", "my-feature", "spec.md")), false);
     assert.equal(doc.feature, "my-feature");
-    const before = join(root, "docs", "features", "my-feature", "spec.md");
-    assert.throws(() => writeSpecDoc(root, "my-feature", "not a spec"), /missing the frontmatter/);
+    assert.throws(() => writeSpecDoc(root, 1, "my-feature", "not a spec"), /missing the frontmatter/);
     assert.equal(readFileSync(before, "utf8"), validSpec());
     // Overwrite on revision.
     const revised = validSpec().replace("documented shapes", "documented shapes after revision");
-    writeSpecDoc(root, "my-feature", revised);
+    writeSpecDoc(root, 1, "my-feature", revised);
     assert.equal(readFileSync(before, "utf8"), revised);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -322,7 +327,7 @@ test("writeSpecDoc refuses a declared artifact that names the run's own document
     for (const name of ["design.md", "spec.md", "plan.md"]) {
       const declares = validSpec().replace("src/parser.ts", `docs/features/my-feature/${name}`);
       assert.throws(
-        () => writeSpecDoc(root, "my-feature", declares),
+        () => writeSpecDoc(root, 1, "my-feature", declares),
         (err: unknown) =>
           (err as Error).message ===
           `declared artifact names a document the run itself writes (design, spec, or plan under docs/features/my-feature/): docs/features/my-feature/${name}`,
@@ -331,7 +336,7 @@ test("writeSpecDoc refuses a declared artifact that names the run's own document
     }
     // A sibling document under the same directory is an ordinary future file.
     const sibling = validSpec().replace("src/parser.ts", "docs/features/my-feature/notes.md");
-    writeSpecDoc(root, "my-feature", sibling);
+    writeSpecDoc(root, 1, "my-feature", sibling);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -344,19 +349,19 @@ test("writeSpecDoc refuses a declared artifact that names a directory in the sta
     // An existing directory never satisfies delivery's exact-equality check.
     const declaresDir = validSpec().replace("src/parser.ts", "src");
     assert.throws(
-      () => writeSpecDoc(root, "my-feature", declaresDir, head),
+      () => writeSpecDoc(root, 1, "my-feature", declaresDir, head),
       /declared artifact names a directory in the starting commit tree: src/
     );
     // An existing file stays a legal declared artifact (modify case).
     const existingFile = validSpec().replace("src/parser.ts", "src/exists.ts");
-    writeSpecDoc(root, "my-feature", existingFile, head);
+    writeSpecDoc(root, 1, "my-feature", existingFile, head);
     // A path nothing in the starting tree names is a future file the
     // implementation is expected to create, and passes.
     const futureFile = validSpec().replace("src/parser.ts", "src/future.ts");
-    writeSpecDoc(root, "my-feature", futureFile, head);
+    writeSpecDoc(root, 1, "my-feature", futureFile, head);
     // Without a starting commit the tree rule does not run (the parse rules
     // still do — the trailing-slash case above is independent of git).
-    writeSpecDoc(root, "my-feature", declaresDir);
+    writeSpecDoc(root, 1, "my-feature", declaresDir);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -509,13 +514,13 @@ test("writeSpecDoc refuses run 4's specification when its lockfile is a derived 
   const root = mkdtempSync(join(tmpdir(), "bw-specdoc-derived-"));
   try {
     assert.throws(
-      () => writeSpecDoc(root, "crew-chatter-accounts-notes", RUN_4.spec, null, ["package-lock.json"]),
+      () => writeSpecDoc(root, 1, "crew-chatter-accounts-notes", RUN_4.spec, null, ["package-lock.json"]),
       (err: unknown) =>
         (err as Error).message ===
         "declared artifact names a file the system regenerates (governed.yaml derived:): package-lock.json; the system writes it after every patch commit, so it is never declared"
     );
-    assert.equal(existsSync(join(root, "docs", "features", "crew-chatter-accounts-notes", "spec.md")), false);
-    const { doc } = writeSpecDoc(root, "crew-chatter-accounts-notes", RUN_4.spec);
+    assert.equal(existsSync(join(runDocumentDir(root, 1), "spec.md")), false);
+    const { doc } = writeSpecDoc(root, 1, "crew-chatter-accounts-notes", RUN_4.spec);
     assert.ok(doc.declaredArtifacts.includes("package-lock.json"));
   } finally {
     rmSync(root, { recursive: true, force: true });

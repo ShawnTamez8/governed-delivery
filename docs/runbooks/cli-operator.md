@@ -774,8 +774,7 @@ each proposal ID and feature slug. For each feature, in the listed order:
    ```
 
 Keep the original `docs\features\<slug>\design.md` committed, because every
-feature's design names it. Commit or move aside the original run's untracked
-`docs\features\<slug>\spec.md`; `new-run` refuses a dirty tree. Then commit.
+feature's design names it. Then commit.
 
 Build feature 1 with `new-run` and `run` from step 4 onward. Once it is
 delivered, merge its branch `gov/<feature-slug>/<run-id>` into your branch, by
@@ -801,7 +800,7 @@ Inspect the paused run:
 ```powershell
 & node $BwCli status --repo $Target --run $RunId
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect the approval boundary.' }
-$SpecFile = Join-Path $FeatureDirectory 'spec.md'
+$SpecFile = Join-Path $Target ".governance\documents\$RunId\spec.md"
 ```
 
 Open `$SpecFile` in your editor. Compare the reviewed specification with the
@@ -894,9 +893,10 @@ the repair is a fresh run whose design makes clear which files must change.
 
 Implementation creates a branch named `gov/<slug>/<run-id>` and a retained
 worktree under the target's `.governance\worktrees\<run-id>`. Patches are applied
-and committed there, not to the default branch. Document projections may also
-appear in the original target during earlier stages; do not assume that original
-working copy will stay clean for the next intake.
+and committed there, not to the default branch. The stages keep the run's
+specification and plan under `.governance\documents\<run-id>\` and write nothing
+into the original working copy; the branch carries the committed copies under
+`docs\features\<slug>\`.
 
 The current code-review defaults are three reviewers, two complete panel
 executions, two code-review reconciler calls, and a final blocking threshold of
@@ -967,7 +967,7 @@ target project's normal workflow. No GitHub credentials, remote publication,
 or automatic merge is part of `run`.
 
 Before another feature, deliberately commit or set aside original-worktree
-changes, including generated projections, without discarding unrelated work.
+changes without discarding unrelated work.
 Author the next design, confirm verification configuration, and create a new
 run with explicit identities and model. Do not reuse a completed run as a new
 request; repeating `run` on it performs no new work. Changing frozen configuration
@@ -1055,6 +1055,7 @@ no persistence, transmission, config parsing, or repair.
 | `implementation.derived.failed` or `code_review.remediation.failed` naming a derived artifact | Read the named command's log under `.governance\derived\<run-id>\<label>\`. The command failed, or changed a file that is not derived. Repair the command or the project in `governed.yaml` and start a fresh run. |
 | `implementation.dependency.unapproved` or `code_review.dependency.unapproved` | A commit added a package the signed specification does not list under `## Dependencies added`. The reason names each `manifest:package`. Start a fresh run from a design that names the packages, so they reach the dependency question. |
 | `spec_decision.dependencies.denied` | You denied the spec's packages. The run ends with nothing folded. State in the design what to use instead and start a fresh run. |
+| A run blocked at `spec_review` or `plan_review`, and you want to read what it wrote | The run's specification and plan are under `.governance\documents\<run-id>\`, never in the checkout. A run created before this location existed wrote them to `docs\features\<slug>\` as untracked files; move those aside before the next `new-run` or merge. |
 | Fold blocks the run | Read the `spec_decision` gate diagnostic. The folded spec failed a spec gate, added an ungrounded obligation, or changed a denied open decision. Retain the evidence and start a fresh run. |
 | Run is `interrupted_or_inconsistent` with `chain_incomplete` after upgrading | Runs recorded before the `spec_decision` stage existed have no such stage and cannot continue. Start a fresh run; `status` still reads the old one. |
 | Payload/signature filename already exists | Use new transport filenames; never overwrite canonical approval bytes. |

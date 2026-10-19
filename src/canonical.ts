@@ -38,9 +38,11 @@ export function sha256Hex(input: string | Uint8Array): string {
 
 /**
  * Strip a UTF-8 BOM and normalize CRLF to LF before hashing anything read
- * from the working tree. `docs/features/**` is committed, so a checkout under
- * `core.autocrlf=true` would otherwise change a spec's hash and invalidate an
- * authorization that is still perfectly correct.
+ * from the working tree. A run's spec is committed to `docs/features/**` on
+ * the run branch, and a run created before the documents moved under
+ * governance still reads it from a checkout, where `core.autocrlf=true` would
+ * otherwise change its hash and invalidate an authorization that is still
+ * perfectly correct. A design or an edited copy can carry a BOM or CRLF too.
  */
 export function normalizeText(text: string): string {
   return text.replace(/^﻿/, "").replace(/\r\n/g, "\n");

@@ -1,6 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { appendAudit } from "./audit.ts";
 import { approvalPayload, loadPublicKey, validateExpiry } from "./approval.ts";
@@ -248,6 +248,7 @@ async function approvalHandoff(
   const reader = openStore(rootDir, { readOnly: true });
   let bound;
   let key;
+  let designPath: string;
   try {
     key = loadPublicKey(rootDir);
     if (!key.ok) throw new GuidedCommandError(key.reason);
@@ -304,6 +305,9 @@ async function approvalHandoff(
       );
     }
     stdout.write(formatGuidedApproval(runId, bound.specPath, bound.binding, key.signer, payloadPath, signaturePath));
+    // The design is the operator's file in the checkout; the reviewed spec sits
+    // under the run's governance directory, so its folder holds no design.
+    designPath = join(rootDir, "docs", "features", reader.getRun(runId)!.slug, "design.md");
   } finally {
     reader.close();
   }
@@ -328,7 +332,6 @@ async function approvalHandoff(
         );
       }
     } else if (choice === "2" || choice === "modify" || choice === "feedback") {
-      const designPath = join(dirname(bound.specPath), "design.md");
       stdout.write(
         `\nIn BuildWorks, specifications are generated from your design document.\n` +
         `To modify requirements or provide feedback:\n` +

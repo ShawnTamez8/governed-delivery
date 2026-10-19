@@ -62,6 +62,17 @@ export function promptRef(runId: number, name: string): string {
   return join(GOVERNANCE_DIR, "prompts", String(runId), name);
 }
 
+/**
+ * The directory holding one run's working specification and plan
+ * (`spec.md`, `plan.md`). The stages write them here, never into the
+ * operator's checkout; the implementation stage commits copies to
+ * `docs/features/<slug>/` on the run branch
+ * (docs/features/run-documents-in-governance/plan.md).
+ */
+export function runDocumentDir(rootDir: string, runId: number): string {
+  return join(rootDir, GOVERNANCE_DIR, "documents", String(runId));
+}
+
 /** The directory holding one run's frozen profile (section 12). */
 export function profileDir(rootDir: string, runId: number): string {
   return join(rootDir, GOVERNANCE_DIR, "profiles", String(runId));

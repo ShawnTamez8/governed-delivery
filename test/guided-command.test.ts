@@ -12,7 +12,7 @@ import {
   DEPENDENCY_INTENT, DEPENDENCY_LOCATION, DEPENDENCY_OPTIONS, DEPENDENCY_RECOMMENDED, DEPENDENCY_WHY, dependencyQuestionText,
 } from "../src/dependency-policy.ts";
 import { runGuidedCommand } from "../src/guided-command.ts";
-import { approvalHandoffDir, profilePath } from "../src/paths.ts";
+import { approvalHandoffDir, profilePath, runDocumentDir } from "../src/paths.ts";
 import { createRunIntake } from "../src/run-intake.ts";
 import { openStore, type AgentRunRow, type RunRow } from "../src/store.ts";
 import { runVerifyCommand } from "../src/verify-command.ts";
@@ -131,7 +131,9 @@ function useFixtureExecutor(root: string, runId: number, codeReviewMode = "ok"):
 
 function parkForApproval(root: string, run: RunRow): void {
   const spec = "feature: guided-feature\nchange_kind: feature\n\n## Declared artifacts\n\n- src/result.js\n\n## Acceptance criteria\n\n- AC-001: The result is delivered.\n";
-  const specPath = join(root, "docs", "features", run.slug, "spec.md");
+  // Where the spec stage writes it (docs/features/run-documents-in-governance/plan.md).
+  mkdirSync(runDocumentDir(root, run.id), { recursive: true });
+  const specPath = join(runDocumentDir(root, run.id), "spec.md");
   writeFileSync(specPath, spec);
   const store = openStore(root);
   try {
@@ -997,7 +999,7 @@ test("guided decisions pause on exit, then record the recommendation through ans
     }
 
     // An edited specification invalidates the boundary, so no immutable answer is taken.
-    const specPath = join(root, "docs", "features", "guided-feature", "spec.md");
+    const specPath = join(runDocumentDir(root, run.id), "spec.md");
     const reviewed = readFileSync(specPath);
     writeFileSync(specPath, `${reviewed}\nEdited after review.\n`);
     await assert.rejects(runGuidedCommand(root, {
@@ -1035,7 +1037,7 @@ test("guided decisions pause on exit, then record the recommendation through ans
       assert.deepEqual(snapshot.questions.map((question) => question.answer?.action), ["approve"]);
       assert.equal(snapshot.questions[0]!.answer!.text, "Exports are retained for thirty days.");
       assert.equal(store.getAuditEvents(run.id).filter((event) => event.action === "decision.answer").length, 1);
-      assert.match(readFileSync(join(root, "docs", "features", "guided-feature", "spec.md"), "utf8"),
+      assert.match(readFileSync(join(runDocumentDir(root, run.id), "spec.md"), "utf8"),
         /Exports are retained for thirty days\./);
     } finally {
       store.close();
@@ -1271,7 +1273,12 @@ test("guided approval interactive menu presents options and handles modify guida
     assert.equal(modifyExit, 3);
     assert.match(modifyOut.text(), /Approval options:/);
     assert.match(modifyOut.text(), /In BuildWorks, specifications are generated from your design document/);
-    assert.match(modifyOut.text(), /design\.md with your changes or feedback/);
+    // The operator's design in the checkout, never a path beside the reviewed
+    // spec under the run's governance directory.
+    assert.ok(
+      modifyOut.text().includes(`Edit ${join(root, "docs", "features", run.slug, "design.md")} with your changes or feedback`),
+      modifyOut.text()
+    );
 
     // Test reject option (3) confirmed
     const rejectOut = capture();

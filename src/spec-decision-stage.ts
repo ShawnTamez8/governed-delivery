@@ -363,7 +363,7 @@ export async function runSpecDecisionStage(
     });
     const reason = `design split approved: ${pieces.length} features stored as proposals ${pieces
       .map((p, index) => `${proposalIds[index]} (${p.slug})`)
-      .join(", ")}. This run builds nothing further. Export each with proposal-export --proposal <id> --name <slug>, keep only the text between its ## Problem and ## Why this is upstream headings, move the file to docs/features/<slug>/design.md and git add it (the export is untracked, so git mv refuses it), keep docs/features/${run.slug}/design.md, commit or move aside docs/features/${run.slug}/spec.md, and start the first feature with new-run; start each later feature with new-run --after <the previous feature's run id> once that feature is delivered and merged.`;
+      .join(", ")}. This run builds nothing further. Export each with proposal-export --proposal <id> --name <slug>, keep only the text between its ## Problem and ## Why this is upstream headings, move the file to docs/features/<slug>/design.md and git add it (the export is untracked, so git mv refuses it), keep docs/features/${run.slug}/design.md, and start the first feature with new-run; start each later feature with new-run --after <the previous feature's run id> once that feature is delivered and merged.`;
     store.completeStage(id, "", "block");
     store.setRunStatus(runId, "blocked");
     // Last, so `status` shows it as the run's last recorded event.
@@ -501,6 +501,7 @@ export async function runSpecDecisionStage(
     try {
       written = writeSpecDoc(
         rootDir,
+        run.id,
         run.slug,
         content.spec,
         profile.startingCommit,

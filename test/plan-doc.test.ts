@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { normalizeText, sha256Hex } from "../src/canonical.ts";
 import { planPhases, validatePlanDoc, writePlanDoc } from "../src/plan-doc.ts";
 import { IMPLEMENTATION_MAX_PHASES, IMPLEMENTATION_PHASE_TASKS } from "../src/policy.ts";
+import { runDocumentDir } from "../src/paths.ts";
 
 const SPEC_HASH = "a".repeat(64);
 
@@ -431,8 +432,10 @@ test("writePlanDoc writes the content verbatim and returns the parsed document",
   const root = mkdtempSync(join(tmpdir(), "bw-plan-doc-"));
   try {
     const content = planDoc();
-    const { path, doc } = writePlanDoc(root, "demo", content);
-    assert.equal(path, join(root, "docs", "features", "demo", "plan.md"));
+    const { path, doc } = writePlanDoc(root, 1, content);
+    // The run's own governance directory, not the checkout
+    // (docs/features/run-documents-in-governance/plan.md).
+    assert.equal(path, join(runDocumentDir(root, 1), "plan.md"));
     // Verbatim: the bytes written are the bytes given, so the hash a later
     // stage computes over the file is a hash of what the author produced.
     assert.equal(readFileSync(path, "utf8"), content);
@@ -446,7 +449,7 @@ test("writePlanDoc refuses an invalid document rather than writing it", () => {
   const root = mkdtempSync(join(tmpdir(), "bw-plan-doc-"));
   try {
     assert.throws(
-      () => writePlanDoc(root, "demo", planDoc({ frontmatter: "feature: Thing" })),
+      () => writePlanDoc(root, 1, planDoc({ frontmatter: "feature: Thing" })),
       /plan is missing the frontmatter field plan_for/
     );
   } finally {

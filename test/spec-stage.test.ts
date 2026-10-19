@@ -21,6 +21,7 @@ import { computeScope } from "../src/scope.ts";
 import { DESIGN_SPLIT_INTENT, DESIGN_SPLIT_LOCATION } from "../src/design-split.ts";
 import { DEPENDENCY_INTENT, DEPENDENCY_LOCATION, DEPENDENCY_OPTIONS, readDependencyRecord } from "../src/dependency-policy.ts";
 import { readRunSnapshot } from "../src/operator-state.ts";
+import { runDocumentDir } from "../src/paths.ts";
 
 /**
  * One minimal frozen configuration. The stage states it to the author and
@@ -1597,7 +1598,7 @@ test("a self-critique whose document does not validate blocks instead of falling
     // The draft is still the file on disk — the invalid revision never
     // replaced it — but the run is blocked. Nothing continued on the draft:
     // that is what "no fallback" means here.
-    const onDisk = readFileSync(join(root, "docs", "features", "demo", "spec.md"), "utf8");
+    const onDisk = readFileSync(join(runDocumentDir(root, runId), "spec.md"), "utf8");
     assert.ok(!onDisk.includes("this is not a specification"));
     assert.equal(agentRunCounts(store, runId).reviewer, 0, "the panel never reviewed the draft");
     assert.equal(store.getRun(runId)!.status, "blocked");
@@ -1824,7 +1825,7 @@ test("a reconciliation whose document does not validate blocks instead of overwr
     assert.match(result.reason, /spec reconciliation document refused/);
     // The refusal happened before the write: the gated document is still the
     // file on disk, not the never-approved reconciliation.
-    const onDisk = readFileSync(join(root, "docs", "features", "demo", "spec.md"), "utf8");
+    const onDisk = readFileSync(join(runDocumentDir(root, runId), "spec.md"), "utf8");
     assert.ok(!onDisk.includes("not a specification"));
     assert.equal(store.getRun(runId)!.status, "blocked");
   });
@@ -1965,7 +1966,7 @@ test("a self-critique revision that declares a directory blocks instead of repla
         result.reason,
         /spec self-critique document refused: declared artifact names a directory in the starting commit tree: src/
       );
-      const onDisk = readFileSync(join(root, "docs", "features", "demo", "spec.md"), "utf8");
+      const onDisk = readFileSync(join(runDocumentDir(root, runId), "spec.md"), "utf8");
       assert.ok(onDisk.includes("src/a1.ts"), "the draft, not the refused revision, is the file on disk");
       assert.equal(store.getRun(runId)!.status, "blocked");
     },
@@ -2032,7 +2033,7 @@ test("a self-critique revision that declares the run's own plan document blocks 
         result.reason,
         /spec self-critique document refused: declared artifact names a document the run itself writes \(design, spec, or plan under docs\/features\/demo\/\): docs\/features\/demo\/plan\.md/
       );
-      const onDisk = readFileSync(join(root, "docs", "features", "demo", "spec.md"), "utf8");
+      const onDisk = readFileSync(join(runDocumentDir(root, runId), "spec.md"), "utf8");
       assert.ok(onDisk.includes("src/a1.ts"), "the draft, not the refused revision, is the file on disk");
       assert.equal(store.getRun(runId)!.status, "blocked");
     },
@@ -2251,7 +2252,7 @@ test("a reconciliation that adds an open decision is refused before any decision
     assert.match(invalid[0].summary, /OD-002/);
     const reviewStage = store.getStageChain(runId)[1];
     assert.equal(store.getFindingDecisions(reviewStage.id).length, 0, "no decision was persisted");
-    const onDisk = readFileSync(join(root, "docs", "features", "demo", "spec.md"), "utf8");
+    const onDisk = readFileSync(join(runDocumentDir(root, runId), "spec.md"), "utf8");
     assert.ok(!onDisk.includes("OD-002"), "the refused revision was never written");
   });
 });
@@ -2665,5 +2666,50 @@ test("a reviewed spec listing packages under ## Dependencies added asks the oper
     assert.match(open[0]!.summary, new RegExp(`questions=${finding.id}$`));
     assert.equal(readRunSnapshot(store, root, runId).snapshot.phase, "awaiting_decision");
     assert.equal(verifyAuditChain(store), null);
+  });
+});
+
+// --- run documents in governance (docs/features/run-documents-in-governance/plan.md) ---
+// Crew-chatter runs 3 to 7 each left the spec and plan untracked in the
+// operator's checkout, and runs of one slug overwrote one file: run 5's status
+// later reported "the spec has changed since review" against run 6's spec.
+
+test("the spec stage writes the specification under the run's governance directory and nothing into the checkout", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const result = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    if (!result.ok) return;
+    assert.equal(result.specPath, join(runDocumentDir(root, runId), "spec.md"));
+    assert.ok(existsSync(result.specPath));
+    assert.equal(existsSync(join(root, "docs", "features", "demo", "spec.md")), false, "docs/features/demo/spec.md was written");
+    assert.ok(store.getStageChain(runId).every((s) => s.output_ref === result.specPath));
+  });
+});
+
+test("two runs of one slug keep separate specifications, so the first still matches its gate", async () => {
+  await withRun(async ({ store, root, runId }) => {
+    const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim();
+    const second = store.insertRun("p", "f-1", "demo", "feature");
+    store.setProfileRef(second.id, freezeUniformProfile(root, second.id, head, "m", VERIFICATION).hash);
+    // The second run's author declares a different file, so its spec differs.
+    const scratch = join(root, "emit-spec-stage-second-run.mjs");
+    const source = fixtureSource().replace("- src/a1.ts", "- src/b1.ts");
+    assert.notEqual(source, fixtureSource(), "the artifact substitution must apply");
+    writeFileSync(scratch, source);
+    freezeExecutorIntoProfile(store, root, second.id, fixtureExecutor(scratch));
+
+    const first = await runSpecStage(store, fixtureExecutor(FIXTURE), { runId, requestedModel: "m", rootDir: root });
+    assert.equal(first.ok, true, (first as { reason?: string }).reason);
+    const later = await runSpecStage(store, fixtureExecutor(scratch), { runId: second.id, requestedModel: "m", rootDir: root });
+    assert.equal(later.ok, true, (later as { reason?: string }).reason);
+    if (!first.ok || !later.ok) return;
+    assert.notEqual(first.specPath, later.specPath);
+    // The comparison behind run 5's limitation: the gated hash against the file.
+    const gated = store.query<{ summary: string }>(
+      "SELECT summary FROM audit WHERE run_id = ? AND action = 'spec_decision.gate.pass'",
+      [runId]
+    )[0]!;
+    const onDisk = sha256Hex(normalizeText(readFileSync(first.specPath, "utf8")));
+    assert.match(gated.summary, new RegExp(`specHash=${onDisk};`), "the first run's spec was overwritten");
   });
 });

@@ -1,7 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { normalizeText } from "./canonical.ts";
 import { SEVERITIES } from "./finding.ts";
+import { runDocumentDir } from "./paths.ts";
 import { artifactDirectoryRefusals, normalizePath } from "./scope.ts";
 import { isTaskDocumentPath } from "./task-artifact.ts";
 
@@ -434,9 +435,16 @@ function section(content: string, title: string): string | null {
  * starting commit never includes this run's own projections, so the answer
  * is stable across every revision. A pure text parse must not see a git
  * commit, so the caller passes it only where one exists.
+ *
+ * The file goes under the run's own governance directory, so two runs of one
+ * slug never share it and the operator's checkout stays clean
+ * (docs/features/run-documents-in-governance/plan.md). The returned path is
+ * absolute, as before: a stage stores it as `output_ref`, and `status`, guided
+ * mode and the dashboard show it to the operator to open.
  */
 export function writeSpecDoc(
   rootDir: string,
+  runId: number,
   slug: string,
   content: string,
   startingCommit?: string | null,
@@ -472,8 +480,9 @@ export function writeSpecDoc(
   if (derived.length > 0) {
     throw new Error(derivedArtifactRefusalReason(derived));
   }
-  const path = join(rootDir, "docs", "features", slug, "spec.md");
-  mkdirSync(dirname(path), { recursive: true });
+  const dir = runDocumentDir(rootDir, runId);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, "spec.md");
   writeFileSync(path, content);
   return { path, doc: result.value };
 }

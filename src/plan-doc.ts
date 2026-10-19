@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { normalizeText } from "./canonical.ts";
+import { runDocumentDir } from "./paths.ts";
 import { CRITERION_ID_PATTERN, isCriterionId } from "./spec-doc.ts";
 
 /**
@@ -272,25 +273,28 @@ function section(content: string, title: string): string | null {
 /**
  * The content write: validate once, then write the document verbatim,
  * overwriting any previous revision — the gate decides whether the
- * replacement stands. Mirrors `writeSpecDoc`.
+ * replacement stands. Mirrors `writeSpecDoc`: the file goes under the run's
+ * own governance directory, and the returned absolute path is what a stage
+ * stores as `output_ref`.
  *
- * `docs/features/<slug>/plan.md` is also where a human-authored
- * implementation plan lives for this repository's own work. The system owns
- * the file for a governed run and the two never share a slug, so there is no
- * collision — but the path is deliberately the same one a person would reach
- * for, because a governed plan is the same kind of document.
+ * The implementation stage commits a copy to `docs/features/<slug>/plan.md`
+ * on the run branch, which is also where a human-authored implementation plan
+ * lives for this repository's own work. The path is deliberately the same one
+ * a person would reach for, because a governed plan is the same kind of
+ * document.
  */
 export function writePlanDoc(
   rootDir: string,
-  slug: string,
+  runId: number,
   content: string
 ): { path: string; doc: PlanDoc } {
   const result = validatePlanDoc(content);
   if (!result.ok) {
     throw new Error(result.reason);
   }
-  const path = join(rootDir, "docs", "features", slug, "plan.md");
-  mkdirSync(dirname(path), { recursive: true });
+  const dir = runDocumentDir(rootDir, runId);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, "plan.md");
   writeFileSync(path, content);
   return { path, doc: result.value };
 }

@@ -1420,6 +1420,13 @@ docs/features/<slug>/
   status.md     projection of run state; never hand-edited
 ```
 
+During a run, the stages keep `spec.md` and `plan.md` under the run's own
+`.governance/documents/<run>/` (section 15) and never write them into the
+operator's checkout. They reach `docs/features/<slug>/` only through the run
+branch's projections commit, so a merged feature lands them here and a run that
+stops before delivery leaves the checkout as it found it (2026-10-19,
+`docs/features/run-documents-in-governance/plan.md`).
+
 **Status is derived, never stored.** *This is the rule that matters.* `status.md`
 is a rebuildable projection. The authoritative answer to "what state is this
 in?" is a query against `run` and `stage` — the same query the dashboard runs.
@@ -1465,6 +1472,8 @@ report lives there.
                             agent_run.input_hash; identical prompts share a file
   content/<hash>    content-addressed overflow for oversized prompts and results
   profiles/<run>/   the frozen profile snapshot for a run
+  documents/<run>/  the run's working spec.md and plan.md, which each stage's
+                    output_ref names; load-bearing for approval, like profiles/
   approval-handoff/<run>/  canonical approval payload plus the detached
                            signature supplied by the external authority
   verification/<run>/  retained command output, one file per command, plus the
@@ -1494,7 +1503,8 @@ candidate; proposal.evidence_ref references only the
 machine-local and gitignored. Migrations are committed with the system source
 under `src/migrations/`, because the schema must be readable and reviewable.
 Projections under `docs/features/<slug>/` are
-committed, because they are what a human reviews in a diff. Agent definitions,
+committed on the run branch, because they are what a human reviews in a diff;
+they reach a checkout only through that branch. Agent definitions,
 policy, and the design document are committed, because they are inputs that must
 be reviewable and protected. Tracking an audit directory while
 ignoring run state leaves the tree dirty after every run, so the next one fails

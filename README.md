@@ -793,9 +793,7 @@ proposal ID and feature slug. For each feature, in the listed order:
    ```
 
 Before committing, keep the original `docs\features\<slug>\design.md`
-committed, because every feature's design names it, and commit or move aside
-the original run's untracked `docs\features\<slug>\spec.md`; `new-run` refuses
-a dirty tree. Then commit.
+committed, because every feature's design names it. Then commit.
 
 Build feature 1 with `new-run` and `run` as usual. Once it is delivered, merge
 its branch `gov/<feature-slug>/<run-id>` into your branch, by merge or
@@ -831,7 +829,8 @@ its manifest.
 
 ### Review and sign outside the CLI
 
-Read the reviewed specification and the displayed scope, risk, spec hash,
+Read the reviewed specification, at
+`Join-Path $Target ".governance\documents\$RunId\spec.md"`, and the displayed scope, risk, spec hash,
 starting commit, profile hash, and signer readiness. Missing or mismatched
 public-key readiness withholds actionable signing/submission instructions.
 The CLI never opens a private key or runs the signer.

@@ -385,9 +385,10 @@ export async function runImplementationStage(
     // and the projections are the branch's first commit. The scope gate does
     // not apply here: this is the system's own content write, not an
     // agent-proposed patch — exactly as steps 3 and 5 wrote projections
-    // without a scope check. The paths are constructed from the slug, the
-    // repo-relative locations `writeSpecDoc`/`writePlanDoc` use in the main
-    // tree.
+    // without a scope check. The paths are constructed from the slug: the
+    // stages keep their working copies under the run's governance directory
+    // (`runDocumentDir`), and this commit is the only place the documents
+    // reach `docs/features/<slug>/`.
     const repoSpec = `docs/features/${run.slug}/spec.md`;
     const repoPlan = `docs/features/${run.slug}/plan.md`;
     try {

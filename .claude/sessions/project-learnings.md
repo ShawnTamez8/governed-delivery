@@ -67,8 +67,10 @@ committed 2026-10-19 at the operator's word and not pushed (`origin/sandboxed-de
   `docs/features/<slug>/` in the operator's checkout, and every reader follows that `output_ref`. Git
   refuses a fast-forward over an identical untracked file (probed), and runs of one slug overwrite each
   other: `status --run 5` now reports "the spec has changed since review". The fix plan is
-  `docs/features/run-documents-in-governance/plan.md` (`Proposed`, operator-requested, not authorized
-  to build).
+  `docs/features/run-documents-in-governance/plan.md` (`Reconciled` 2026-10-19 against a Copilot
+  review: 18 accepted, 2 rejected, 1 deferred; documents go under `.governance/documents/<run>/` via
+  `runDocumentDir` in `src/paths.ts`). Built 2026-10-19 under `/implement-plan`; the operator chose
+  to keep stored refs absolute ("Keep absolute"), overriding the plan's repo-relative refs.
 
 **Run 5** (2026-10-18, crew-chatter feature 1 from `ec2049c`, operator-authorized): blocked at
 verification `typecheck` on one implementer line unrelated to the mechanisms,
@@ -83,7 +85,8 @@ the target's tree is clean.
 - the next rework change (change 1, the sandboxed implementer, is the one under consideration).
   `sandboxed-delivery` is not merged to `master` until the rework is complete (operator,
   2026-10-19).
-- whether to build `docs/features/run-documents-in-governance/plan.md`.
+- whether to commit `docs/features/run-documents-in-governance/plan.md`'s build (`Implemented` 2026-10-19, uncommitted;
+  full suite 1695/1690/0/5, smoke 13/13). Its first paid run should record the target's `git status --short`.
 - whether to start crew-chatter feature 3 (`new-run --after 7`; needs its own spend authorization;
   features 3-7 are proposals 30-34, not yet exported; export, keep the text from `## Problem` up to
   `## Why this is upstream`, commit it as the feature's `design.md`). Run 5 is superseded by run 6.
@@ -303,7 +306,7 @@ on this machine, checked 2026-10-16):
 - `| tail -N` buffered paid output; redirect logs. A timed-out wait can leave the chain running; never relaunch blindly.
 - A hot journal made read-only SQLite return 776; readers never repair. Read-only Git needs `--no-optional-locks` and `-c diff.autoRefreshIndex=false`.
 - `envPassthrough` freezes names, not values. A doctor pass is not auth proof.
-- A run that stops before delivery leaves `docs/features/<slug>/spec.md` and `plan.md` untracked in the target; the next `new-run`/`doctor` refuses the dirty tree. Move them aside first.
+- A run's working `spec.md` and `plan.md` live in the target's `.governance/documents/<run>/`, and each stage's `output_ref` stores that absolute path; only the run branch's projections commit puts them under `docs/features/<slug>/`. A run whose stages ran before that change left them untracked in the checkout, where the next `new-run`, `doctor` or fast-forward merge refuses; move those aside first.
 - A full `npm test` can leave an empty "moved" commit (author `t`) on the current branch; check `git log -1` after full runs.
 - A dispatch that exits 1 within seconds is usually the claude.ai session limit: a `rate_limit_event` with `status: "rejected"` at the stream's tail. It is not always free (crew-chatter run 2 phase 6: $0.1291 the store did not record), and a hit mid-range strands earlier phases ($9.63 in that run). Fixture `test/fixtures/recorded/crew-chatter-run-2-session-limit-refusal.json`.
 - Spec, plan, fold and split authors run in the target root; reviewers do not (the executor does not enforce `deniedPaths`). A commit to the target after `new-run` never reaches that run (worktree from the frozen starting commit).

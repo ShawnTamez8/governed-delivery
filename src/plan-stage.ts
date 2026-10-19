@@ -313,7 +313,7 @@ export async function runPlanStage(
     let planContent = authorContent.plan;
     let written: { path: string; doc: PlanDoc };
     try {
-      written = writePlanDoc(rootDir, run.slug, planContent);
+      written = writePlanDoc(rootDir, run.id,planContent);
     } catch (err) {
       return abort(planStage.id, "plan.content.invalid", (err as Error).message);
     }
@@ -446,7 +446,7 @@ export async function runPlanStage(
       return abort(planStage.id, "plan.artifact.untasked", critiqueTasked.reason);
     }
     try {
-      written = writePlanDoc(rootDir, run.slug, critique.value.artifact);
+      written = writePlanDoc(rootDir, run.id,critique.value.artifact);
     } catch (err) {
       return abort(planStage.id, "plan.selfcritique.invalid", (err as Error).message);
     }
@@ -770,7 +770,7 @@ export async function runPlanStage(
         );
       }
       try {
-        written = writePlanDoc(rootDir, run.slug, reconcileContent.plan);
+        written = writePlanDoc(rootDir, run.id,reconcileContent.plan);
       } catch (err) {
         return abort(reviewStage.id, "plan.reconcile.invalid", (err as Error).message);
       }

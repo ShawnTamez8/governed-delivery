@@ -15,6 +15,7 @@ import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { policyHash } from "../src/policy.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
+import { runDocumentDir } from "../src/paths.ts";
 
 /**
  * One minimal frozen configuration. The plan author, self-critique and reconcile
@@ -1351,7 +1352,7 @@ test("a reconciliation with missing, unknown, and duplicate coverage IDs blocks 
 
     // The refusal happened before the write: the gated round-1 document is
     // still the file on disk, not the never-approved revision.
-    const onDisk = readFileSync(join(root, "docs", "features", SLUG, "plan.md"), "utf8");
+    const onDisk = readFileSync(join(runDocumentDir(root, runId), "plan.md"), "utf8");
     assert.ok(!onDisk.includes("REVISED-plan"), "the refused revision must not replace the gated plan");
     assert.equal(store.getRun(runId)!.status, "blocked");
   });
@@ -1612,7 +1613,7 @@ test("a self-critique with missing, unknown, and duplicate coverage IDs blocks a
       result.reason,
       "plan coverage IDs are invalid: missing=[AC-003]; unknown=[AC-999]; duplicate=[AC-002]"
     );
-    const onDisk = readFileSync(join(root, "docs", "features", SLUG, "plan.md"), "utf8");
+    const onDisk = readFileSync(join(runDocumentDir(root, runId), "plan.md"), "utf8");
     assert.ok(!onDisk.includes("SELFCRITIQUED"), "the refused revision must not replace the draft");
     assert.equal(agentRunCounts(store, runId).reviewer, 0, "the free gate refuses before the panel spends");
     assert.equal(store.getRun(runId)!.status, "blocked");
@@ -1748,7 +1749,7 @@ test("a reconciliation whose plan does not validate blocks instead of overwritin
     assert.equal(result.ok, false);
     if (result.ok) return;
     assert.match(result.reason, /plan reconciliation document refused/);
-    const onDisk = readFileSync(join(root, "docs", "features", SLUG, "plan.md"), "utf8");
+    const onDisk = readFileSync(join(runDocumentDir(root, runId), "plan.md"), "utf8");
     assert.ok(!onDisk.includes("not a plan"));
     assert.equal(store.getRun(runId)!.status, "blocked");
   });
@@ -2012,4 +2013,18 @@ test("the plan author, self-critique and reconcile prompts carry the frozen prof
     assert.ok(before.length > 0, `${reviewer} was dispatched`);
     assert.deepEqual(hashesFor(changed, reviewer), before, `${reviewer} prompt changed with the commands`);
   }
+});
+
+// docs/features/run-documents-in-governance/plan.md: the working plan belongs to
+// the run, so a second run of the same slug cannot overwrite it and the
+// operator's checkout is left as the run found it.
+test("the plan stage writes the plan under the run's governance directory and nothing into the checkout", async () => {
+  await withApprovedRun(async ({ store, root, runId }) => {
+    const result = await runPlanStage(store, fixtureExecutor(FIXTURE), { runId, rootDir: root });
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    if (!result.ok) return;
+    assert.equal(result.planPath, join(runDocumentDir(root, runId), "plan.md"));
+    assert.ok(readFileSync(result.planPath, "utf8").includes("REVISED-plan"));
+    assert.equal(existsSync(join(root, "docs", "features", SLUG, "plan.md")), false);
+  });
 });
