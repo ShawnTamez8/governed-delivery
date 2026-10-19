@@ -5,7 +5,7 @@ history and may name superseded state; Current state wins when they disagree. Th
 the system of record; machine-local memory is only a cache
 (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-10-19: changes 2 and 10 done; crew-chatter run 6 completed; nothing in flight; no spend authorized)
+## Current state (2026-10-19: changes 2 and 10 done; crew-chatter runs 6 and 7 completed and merged; nothing in flight; no spend authorized)
 
 **Resume point.** Branch `sandboxed-delivery` carries the build of two `Implemented` plans,
 committed 2026-10-19 at the operator's word and not pushed (`origin/sandboxed-delivery` is at
@@ -52,6 +52,23 @@ committed 2026-10-19 at the operator's word and not pushed (`origin/sandboxed-de
   branch, so run 6 can be the `--after` predecessor for feature 2. The untracked copies of its
   `spec.md` and `plan.md`, byte-identical to the branch, went to
   `%LOCALAPPDATA%\Temp\crew-chatter-aside-2026-10-19-run6`. The target's tree is clean.
+- **Run 7, crew-chatter feature 2 (`crew-chatter-folders-tags`, operator: "I approve the spend",
+  2026-10-19) completed**: $5.56758051 in 23 Claude dispatches plus 13 Decision-1 requests. The
+  design is proposal 29's text, committed as crew-chatter `1497e7a`; `new-run --after 6`; settings as
+  run 6. No operator question (OD-001, subfolder handling on folder delete, routed follow-up). Plan
+  passed in one round; 4 phases (31 tasks); every lockfile regeneration was unchanged; self-review
+  had 0 patches; verification passed first time. Code review round 1 had 7 medium/low findings, all
+  kept, with one remediation; round 2 had 5 medium/low findings below the threshold (138 and 139 say
+  the remediation's double-submit guard drops a second legitimate create, so remediation introduced
+  them, as in run 6). Delivery passed 12/12 over `887a644..c5d2ff3`. The only intervention was the
+  approval signature. Merged: crew-chatter `main` fast-forwarded to `c5d2ff3`; the untracked
+  spec and plan went to `%LOCALAPPDATA%\Temp\crew-chatter-aside-2026-10-19-run7`.
+- **The untracked spec/plan residue is a BuildWorks defect**: the writers put every run's documents at
+  `docs/features/<slug>/` in the operator's checkout, and every reader follows that `output_ref`. Git
+  refuses a fast-forward over an identical untracked file (probed), and runs of one slug overwrite each
+  other: `status --run 5` now reports "the spec has changed since review". The fix plan is
+  `docs/features/run-documents-in-governance/plan.md` (`Proposed`, operator-requested, not authorized
+  to build).
 
 **Run 5** (2026-10-18, crew-chatter feature 1 from `ec2049c`, operator-authorized): blocked at
 verification `typecheck` on one implementer line unrelated to the mechanisms,
@@ -66,8 +83,10 @@ the target's tree is clean.
 - the next rework change (change 1, the sandboxed implementer, is the one under consideration).
   `sandboxed-delivery` is not merged to `master` until the rework is complete (operator,
   2026-10-19).
-- whether to start crew-chatter feature 2 (`new-run --after 6`; needs its own spend authorization;
-  features 2-7 are proposals 29-34, not yet exported). Run 5 is superseded by run 6.
+- whether to build `docs/features/run-documents-in-governance/plan.md`.
+- whether to start crew-chatter feature 3 (`new-run --after 7`; needs its own spend authorization;
+  features 3-7 are proposals 30-34, not yet exported; export, keep the text from `## Problem` up to
+  `## Why this is upstream`, commit it as the feature's `design.md`). Run 5 is superseded by run 6.
 - grounding: the recommendation is to leave it unadopted until more recorded positives exist.
 - No PR to `master` (operator, 2026-10-17). No spend is authorized.
 
@@ -93,7 +112,7 @@ it does not exist in Windows PowerShell 5.1, so `docs/runbooks/cli-operator.md` 
 still need a fix that works in both.
 
 **Crew-chatter feature 1 on this machine** (`C:\Repositories\testing-repos\crew-chatter`, `main`
-at `3c706fb` after merging run 6; `ec2049c` adds the lockfile `derived:` block; `8f539e5` adds the feature-1 design; `eb1fa30` the TS backend plus React frontend
+at `c5d2ff3` after merging runs 6 and 7; `1497e7a` adds the feature-2 design; `ec2049c` adds the lockfile `derived:` block; `8f539e5` adds the feature-1 design; `eb1fa30` the TS backend plus React frontend
 baseline, `npm ci`, typecheck, lint, build):
 - Run 1 (whole PRD): $1.80; spec declared 32 files; the operator approved a split into 7 features
   (proposals 28-34; 29-34 not exported); ended `blocked` as designed.
