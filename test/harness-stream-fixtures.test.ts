@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { CLAUDE_CODE } from "../src/executor.ts";
 import { parseEnvelope } from "../src/harness.ts";
-import { PATCH_RESULT_SCHEMA } from "../src/agent-result.ts";
-import { SELF_REVIEW_RESULT_SCHEMA } from "../src/implementation-self-review.ts";
+import { WORKSPACE_REPLY_SCHEMA } from "../src/agent-result.ts";
+import { SELF_REVIEW_REPLY_SCHEMA } from "../src/implementation-self-review.ts";
 import { IMPLEMENTATION_PROMPT_PREFIX } from "../src/prompts.ts";
 
 // Hazard 4: a hand-written stream shape must not drift from the real one. The
@@ -42,16 +42,14 @@ const recordedResult = recorded.at(-1) as StreamLine & {
   modelUsage: Record<string, Record<string, unknown>>;
 };
 
-// The result line of a real --json-schema dispatch
-// (docs/features/structured-patch-output/plan.md): schema-mode emissions are held
-// to its fields, since the text-mode recording above has no structured_output.
-const SCHEMA_PROBE = JSON.parse(
-  readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "json-schema-probe-web-calculator-phase-2.json"), "utf8")
-) as { calls: { resultLineVerbatim: string }[] };
-const recordedSchemaResult = JSON.parse(SCHEMA_PROBE.calls[0]!.resultLineVerbatim) as StreamLine & {
-  usage: Record<string, unknown>;
-  modelUsage: Record<string, Record<string, unknown>>;
-};
+// The result line of a real tool-mode dispatch, which sent --json-schema and the
+// tool server (docs/features/sandboxed-implementer/plan.md, Task 10): every
+// patch dispatch's emission is held to its fields, since the text-mode
+// recording above has no structured_output.
+const SPIKE = JSON.parse(
+  readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "sandbox-spike-crew-chatter-phase-2.json"), "utf8")
+) as { resultLine: StreamLine & { usage: Record<string, unknown>; modelUsage: Record<string, Record<string, unknown>> } };
+const recordedSchemaResult = SPIKE.resultLine;
 
 function subset(actual: string[], allowed: Iterable<string>, what: string): void {
   const permitted = new Set(allowed);
@@ -66,16 +64,18 @@ interface Emission {
   env?: Record<string, string>;
   /** Arguments after the script path, as the harness appends them. */
   args?: string[];
-  /** True when the dispatch sent --json-schema: held to the schema probe's result line. */
+  /** True when the dispatch sent --json-schema and the tool server: held to the spike's result line. */
   structured?: boolean;
   /** Fields the result line carries beyond the recorded ones, by design. */
   extraResultFields?: string[];
 }
 
 const BASE_COMMIT = "a".repeat(40);
-const PHASE_PROMPT = `This is phase 1 of 1.\nbaseCommit must be exactly: ${BASE_COMMIT}\n\nPatch only these paths:\n\nsrc/a.ts\n\n`;
-const SELF_REVIEW_PROMPT = `This is your own self-review of the complete change, after the last phase.\nbaseCommit must be exactly: ${BASE_COMMIT}\n\nPatch only these paths:\n\nbase.txt\n\n`;
-const REMEDIATION_PROMPT = `you are the code-review remediator implementer\n\nbaseCommit must be exactly ${BASE_COMMIT}.\n\nApproved scope:\n\n- base.txt\n\nFindings to remediate:\n\n`;
+const PHASE_PROMPT = `This is phase 1 of 1.\n\nPatch only these paths:\n\nsrc/a.ts\n\n`;
+const SELF_REVIEW_PROMPT = `This is your own self-review of the complete change, after the last phase.\n\nPatch only these paths:\n\nbase.txt\n\n`;
+const REMEDIATION_PROMPT = `you are the code-review remediator implementer\n\nThe repository checkout is at commit ${BASE_COMMIT}: read the surrounding code there.\n\nApproved scope:\n\n- base.txt\n\nFindings to remediate:\n\n`;
+/** The tool server's flag, as the harness appends it to a patch dispatch; the emitters never read the file. */
+const TOOL_SERVER = ["--mcp-config", "unused.json"];
 const EMISSIONS: Emission[] = [
   { name: "emit-spec-stage (unrecognized prompt)", script: "emit-spec-stage.mjs", prompt: "hello" },
   { name: "emit-plan-stage (unrecognized prompt)", script: "emit-plan-stage.mjs", prompt: "hello" },
@@ -83,35 +83,38 @@ const EMISSIONS: Emission[] = [
     name: "emit-implementation-stage (phase, structured)",
     script: "emit-implementation-stage.mjs",
     prompt: PHASE_PROMPT,
-    args: ["--json-schema", JSON.stringify(PATCH_RESULT_SCHEMA)],
+    args: ["--json-schema", JSON.stringify(WORKSPACE_REPLY_SCHEMA), ...TOOL_SERVER],
     structured: true,
   },
   {
     name: "emit-implementation-stage (self-review, structured)",
     script: "emit-implementation-stage.mjs",
     prompt: SELF_REVIEW_PROMPT,
-    args: ["--json-schema", JSON.stringify(SELF_REVIEW_RESULT_SCHEMA)],
+    args: ["--json-schema", JSON.stringify(SELF_REVIEW_REPLY_SCHEMA), ...TOOL_SERVER],
     structured: true,
   },
   {
     name: "emit-implementation-stage (self-review reply that is not JSON)",
     script: "emit-implementation-stage.mjs",
     prompt: SELF_REVIEW_PROMPT,
-    args: ["--json-schema", JSON.stringify(SELF_REVIEW_RESULT_SCHEMA)],
+    args: ["--json-schema", JSON.stringify(SELF_REVIEW_REPLY_SCHEMA), ...TOOL_SERVER],
     env: { EMIT_MODE: "self-review-not-json" },
   },
   {
     name: "emit-code-review (remediation, structured)",
     script: "emit-code-review.mjs",
     prompt: REMEDIATION_PROMPT,
-    args: ["--json-schema", JSON.stringify(PATCH_RESULT_SCHEMA)],
+    args: ["--json-schema", JSON.stringify(WORKSPACE_REPLY_SCHEMA), ...TOOL_SERVER],
     structured: true,
   },
   {
     name: "emit-cli-run (implementation route, structured)",
     script: "emit-cli-run.mjs",
     prompt: `${IMPLEMENTATION_PROMPT_PREFIX} implementer\n\n${PHASE_PROMPT}`,
-    args: ["--model", "m", "--effort", "medium", "--json-schema", JSON.stringify(PATCH_RESULT_SCHEMA)],
+    args: [
+      "--model", "m", "--effort", "medium", "--json-schema", JSON.stringify(WORKSPACE_REPLY_SCHEMA),
+      ...TOOL_SERVER, "--allowedTools", "mcp__bw__*", "--max-budget-usd", "2.00",
+    ],
     structured: true,
   },
   {
@@ -180,22 +183,30 @@ for (const emission of EMISSIONS) {
   });
 }
 
-test("each emitter refuses a dispatch that sends --json-schema where the stage must not, or omits it where it must", () => {
+test("each emitter refuses a dispatch that sends --json-schema or the tool server where the stage must not, or omits either where it must", () => {
   // The guard the stage wiring is proved against: a stage that stops sending the
-  // schema, sends the wrong one, or sends one to a free-text dispatch fails loudly.
-  const patch = JSON.stringify(PATCH_RESULT_SCHEMA);
-  const selfReview = JSON.stringify(SELF_REVIEW_RESULT_SCHEMA);
+  // schema or the tool server, sends the wrong schema, or sends either to a
+  // free-text dispatch fails loudly.
+  const workspace = JSON.stringify(WORKSPACE_REPLY_SCHEMA);
+  const selfReview = JSON.stringify(SELF_REVIEW_REPLY_SCHEMA);
   const reviewerPrompt = "you are the code reviewer code-reviewer-correctness with specialty x\n\nChanged paths:\n\nsrc/a.ts\n\n";
+  const implementationRoute = `${IMPLEMENTATION_PROMPT_PREFIX} implementer\n\n${PHASE_PROMPT}`;
   const cases: Array<[string, string, string[], RegExp]> = [
-    ["emit-implementation-stage.mjs", PHASE_PROMPT, [], /a phase prompt arrived without --json-schema/],
-    ["emit-implementation-stage.mjs", PHASE_PROMPT, ["--json-schema", selfReview], /a phase prompt arrived with the wrong --json-schema/],
-    ["emit-implementation-stage.mjs", SELF_REVIEW_PROMPT, [], /a self-review prompt arrived without --json-schema/],
-    ["emit-implementation-stage.mjs", SELF_REVIEW_PROMPT, ["--json-schema", patch], /a self-review prompt arrived with the wrong --json-schema/],
-    ["emit-code-review.mjs", REMEDIATION_PROMPT, [], /a remediation prompt arrived without --json-schema/],
-    ["emit-code-review.mjs", REMEDIATION_PROMPT, ["--json-schema", selfReview], /a remediation prompt arrived with the wrong --json-schema/],
-    ["emit-code-review.mjs", reviewerPrompt, ["--json-schema", patch], /a reviewer prompt arrived with --json-schema/],
-    ["emit-cli-run.mjs", `${IMPLEMENTATION_PROMPT_PREFIX} implementer\n\n${PHASE_PROMPT}`, [], /a IMPLEMENTATION_PROMPT_PREFIX prompt arrived without --json-schema/],
-    ["emit-cli-run.mjs", reviewerPrompt, ["--json-schema", patch], /a CODE_REVIEW_PROMPT_PREFIX prompt arrived with --json-schema/],
+    ["emit-implementation-stage.mjs", PHASE_PROMPT, [...TOOL_SERVER], /a phase prompt arrived without --json-schema/],
+    ["emit-implementation-stage.mjs", PHASE_PROMPT, ["--json-schema", workspace], /a phase prompt arrived without --mcp-config/],
+    ["emit-implementation-stage.mjs", PHASE_PROMPT, ["--json-schema", selfReview, ...TOOL_SERVER], /a phase prompt arrived with the wrong --json-schema/],
+    ["emit-implementation-stage.mjs", SELF_REVIEW_PROMPT, [...TOOL_SERVER], /a self-review prompt arrived without --json-schema/],
+    ["emit-implementation-stage.mjs", SELF_REVIEW_PROMPT, ["--json-schema", selfReview], /a self-review prompt arrived without --mcp-config/],
+    ["emit-implementation-stage.mjs", SELF_REVIEW_PROMPT, ["--json-schema", workspace, ...TOOL_SERVER], /a self-review prompt arrived with the wrong --json-schema/],
+    ["emit-code-review.mjs", REMEDIATION_PROMPT, [...TOOL_SERVER], /a remediation prompt arrived without --json-schema/],
+    ["emit-code-review.mjs", REMEDIATION_PROMPT, ["--json-schema", workspace], /a remediation prompt arrived without --mcp-config/],
+    ["emit-code-review.mjs", REMEDIATION_PROMPT, ["--json-schema", selfReview, ...TOOL_SERVER], /a remediation prompt arrived with the wrong --json-schema/],
+    ["emit-code-review.mjs", reviewerPrompt, ["--json-schema", workspace], /a reviewer prompt arrived with --json-schema/],
+    ["emit-code-review.mjs", reviewerPrompt, [...TOOL_SERVER], /a reviewer prompt arrived with --mcp-config/],
+    ["emit-cli-run.mjs", implementationRoute, [...TOOL_SERVER], /a IMPLEMENTATION_PROMPT_PREFIX prompt arrived without --json-schema/],
+    ["emit-cli-run.mjs", implementationRoute, ["--json-schema", workspace], /a IMPLEMENTATION_PROMPT_PREFIX prompt arrived without --mcp-config/],
+    ["emit-cli-run.mjs", reviewerPrompt, ["--json-schema", workspace], /a CODE_REVIEW_PROMPT_PREFIX prompt arrived with --json-schema/],
+    ["emit-cli-run.mjs", reviewerPrompt, [...TOOL_SERVER], /a CODE_REVIEW_PROMPT_PREFIX prompt arrived with --mcp-config/],
   ];
   const cwd = mkdtempSync(join(tmpdir(), "bw-stream-fixture-"));
   try {

@@ -1,11 +1,11 @@
-import { PATCH_RESULT_SCHEMA } from "./agent-result.ts";
+import { WORKSPACE_REPLY_SCHEMA, validateWorkspaceReply, type WorkspaceReply } from "./agent-result.ts";
 
 /**
  * The implementation self-review result
  * (`docs/features/implementation-self-review/plan.md`): the implementer's own
  * pass over the complete change after the last phase, before verification.
- * The same dispatch returns its fixes as ordinary `proposedPatches`; this is
- * the payload that travels beside them in `proposedContentChanges.selfReview`.
+ * The same dispatch makes its fixes in the workspace through the tool server;
+ * this is the critique that travels beside the workspace reply.
  *
  * Not `SelfCritique` (`src/self-critique.ts`). That shape carries a revised
  * document and a panel request, neither of which a code change has, and one
@@ -46,36 +46,33 @@ export function validateImplementationSelfReview(
 }
 
 /**
- * The JSON Schema the self-review dispatch sends with `--json-schema`
- * (`docs/features/structured-patch-output/plan.md`): the patch schema plus the
- * required `proposedContentChanges.selfReview.critique`, bounded as
- * `validateImplementationSelfReview` bounds it (at least one entry, none empty).
- * Built from `PATCH_RESULT_SCHEMA`, so the patch half cannot drift from it.
- * `minLength` cannot express the validator's whitespace-only refusal; the
- * validator still makes that check.
+ * The self-review's reply in tool mode (docs/features/sandboxed-implementer/plan.md):
+ * the workspace reply plus the critique, bounded as
+ * `validateImplementationSelfReview` bounds it (at least one entry, none
+ * empty). Fixes are made through the tool server, so no patch travels in the
+ * reply. Built from `WORKSPACE_REPLY_SCHEMA`, so the shared half cannot drift
+ * from it. `minLength` cannot express the validator's whitespace-only refusal;
+ * the validator still makes that check.
  */
-export const SELF_REVIEW_RESULT_SCHEMA = {
-  ...PATCH_RESULT_SCHEMA,
-  required: [...PATCH_RESULT_SCHEMA.required, "proposedContentChanges"],
+export const SELF_REVIEW_REPLY_SCHEMA = {
+  ...WORKSPACE_REPLY_SCHEMA,
+  required: [...WORKSPACE_REPLY_SCHEMA.required, "critique"],
   properties: {
-    ...PATCH_RESULT_SCHEMA.properties,
-    proposedContentChanges: {
-      type: "object",
-      additionalProperties: false,
-      required: ["selfReview"],
-      properties: {
-        selfReview: {
-          type: "object",
-          additionalProperties: false,
-          required: ["critique"],
-          properties: {
-            critique: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
-          },
-        },
-      },
-    },
+    ...WORKSPACE_REPLY_SCHEMA.properties,
+    critique: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
   },
 };
+
+/** The workspace reply and the critique, every refusal named. */
+export function validateSelfReviewReply(
+  raw: unknown
+): { ok: true; value: WorkspaceReply & ImplementationSelfReview } | { ok: false; reason: string } {
+  const reply = validateWorkspaceReply(raw);
+  if (!reply.ok) return reply;
+  const critique = validateImplementationSelfReview(raw);
+  if (!critique.ok) return critique;
+  return { ok: true, value: { ...reply.value, critique: critique.value.critique } };
+}
 
 /** The longest critique entry the audit log records whole. */
 export const SELF_REVIEW_AUDIT_ENTRY_CHARS = 2000;

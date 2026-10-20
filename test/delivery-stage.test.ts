@@ -22,6 +22,7 @@ import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { policyHash } from "../src/policy.ts";
 import type { Profile } from "../src/profile.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
+import { standInSandbox } from "./fixtures/docker/stand-in.ts";
 
 /** A passing command whose fixture writes nothing, so the worktree stays clean. */
 const VERIFICATION: VerificationConfig = {
@@ -118,7 +119,7 @@ async function withDeliveryRun(fn: (ctx: Ctx) => Promise<void>, opts: Opts = {})
     const head = git(root, ["rev-parse", "HEAD"]).stdout.trim();
 
     const run = store.insertRun("p", "f-1", SLUG, "feature");
-    const frozen = freezeProfile(root, run.id, head, MODEL, VERIFICATION);
+    const frozen = freezeProfile(root, run.id, head, MODEL, VERIFICATION, standInSandbox());
     store.setProfileRef(run.id, frozen.hash);
 
     const scope = opts.scope ?? [ARTIFACT];

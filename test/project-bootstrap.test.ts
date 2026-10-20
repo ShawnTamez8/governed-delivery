@@ -8,10 +8,12 @@ import { syncBuiltinESMExports } from "node:module";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { Writable } from "node:stream";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 import { parseGovernedConfig } from "../src/governed-config.ts";
-import { VERIFY_ENV_PASSTHROUGH } from "../src/policy.ts";
 import { prepareGuidedProject } from "../src/project-bootstrap.ts";
 import { checkIntakeRepository } from "../src/readiness.ts";
+// The starter's install and test run through the seeded `docker`; the stand-in answers.
+import "./fixtures/docker/redirect-docker.mjs";
 
 function workspace(): string {
   return mkdtempSync(join(dirname(resolve(".")), ".buildworks-bootstrap-"));
@@ -65,16 +67,6 @@ async function withTools<T>(root: string, fn: () => Promise<T>): Promise<T> {
 function answers(...values: string[]) {
   const pending = [...values];
   return async () => pending.shift() ?? "";
-}
-
-// What the verification stage gives a project's commands: named variables only.
-function verificationEnv(): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const name of VERIFY_ENV_PASSTHROUGH) {
-    const value = process.env[name];
-    if (value !== undefined) env[name] = value;
-  }
-  return env;
 }
 
 test("an absent target becomes the exact committed static-web starter and waits for design", async () => {
@@ -134,11 +126,11 @@ test("an absent target becomes the exact committed static-web starter and waits 
         path: "package-lock.json",
         command: ["npm", "install", "--package-lock-only", "--ignore-scripts"],
       }]);
-      const shell = process.platform === "win32";
-      const install = spawnSync("npm", ["ci"], { cwd: target, encoding: "utf8", shell, env: verificationEnv() });
-      assert.equal(install.status, 0, install.stderr);
-      const tested = spawnSync("npm", ["test"], { cwd: target, encoding: "utf8", shell, env: verificationEnv() });
-      assert.equal(tested.status, 0, tested.stderr);
+      // The starter's own commands ran in a sandbox, and their evidence says so.
+      for (const command of config.config.commands) {
+        const log = readFileSync(join(target, ".governance", "bootstrap", `${command.name}.log`), "utf8");
+        assert.ok(log.startsWith(`# ran in container `) && log.split("\n")[0]!.endsWith(JSON.stringify(command.command)), log.slice(0, 300));
+      }
       assert.match(written.text(), /Generated static-web baseline/);
       assert.ok(written.text().includes(join(target, "docs", "features", "first-feature", "design.md")));
       assert.equal(checkIntakeRepository(target).ok, true);
@@ -191,6 +183,27 @@ test("the starter's install and test run under the verification environment, not
     else process.env.npm_config_allow_scripts = saved;
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("the bootstrap preflight fails docker_engine when no engine answers, because the starter's commands run in a container", () => {
+  // A spawned process without the redirect runs the real `docker`; no engine answers that host.
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    DOCKER_HOST: process.platform === "win32" ? "npipe:////./pipe/bw_no_such_engine" : "unix:///nonexistent/bw-no-such-engine.sock",
+  };
+  delete env.NODE_OPTIONS;
+  const readiness = pathToFileURL(resolve("src", "readiness.ts")).href;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", [
+    `const { inspectBootstrapPrerequisites } = await import(${JSON.stringify(readiness)});`,
+    `const check = inspectBootstrapPrerequisites(process.cwd()).find((c) => c.name === "docker_engine");`,
+    "process.stdout.write(JSON.stringify(check ?? null));",
+  ].join("\n")], { encoding: "utf8", env, timeout: 120_000 });
+  assert.equal(result.status, 0, result.stderr);
+  const check = JSON.parse(result.stdout) as { status: string; evidence: string; repair: string } | null;
+  assert.ok(check, "inspectBootstrapPrerequisites reports no docker_engine check");
+  assert.equal(check.status, "fail");
+  assert.notEqual(check.evidence, "");
+  assert.match(check.repair, /the starter's install and test run in a container/);
 });
 
 test("rerun commits only the nonempty operator design and refuses accompanied dirt", async () => {

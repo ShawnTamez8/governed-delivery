@@ -1,10 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { loadPublicKey } from "./approval.ts";
 import { appendAudit } from "./audit.ts";
-import { checkIntakeRepository, type IntakeRepositoryResult } from "./readiness.ts";
+import { dockerReady, ensureImage, type FrozenSandbox } from "./container.ts";
+import type { VerificationConfig } from "./governed-config.ts";
+import { checkIntakeRepository, sandboxProgramRefusals, type IntakeRepositoryResult } from "./readiness.ts";
 import { freezeProfile, type AfterLink, type NarrationCheckConfig, type SettingsInput } from "./profile.ts";
 import { narrationQuestionHash } from "./narration-check.ts";
-import { NARRATION_THRESHOLD, SYSTEMONE_REQUEST_TIMEOUT_MS } from "./policy.ts";
+import { NARRATION_THRESHOLD, SANDBOX_DOCKER_COMMAND, SYSTEMONE_REQUEST_TIMEOUT_MS, seededSandbox } from "./policy.ts";
 import { readSystemOneConfig, readSystemOneKey } from "./systemone.ts";
 import { readRunSnapshot, RunMissingError } from "./operator-state.ts";
 import type { ChangeKind, RunRow, Store } from "./store.ts";
@@ -107,6 +109,30 @@ function readNarrationCheck(choice: "on" | "off", env: Record<string, string | u
   };
 }
 
+/**
+ * The sandbox this run freezes (docs/features/sandboxed-implementer/plan.md,
+ * Task 7), at $0 and before the run row: the engine must answer, the image is
+ * built from `container/Dockerfile` when absent and its ID frozen, and every
+ * frozen verification and derived command's top-level program must be in it.
+ * Each refusal names its cause.
+ */
+function freezeSandbox(verification: VerificationConfig): FrozenSandbox {
+  const engine = dockerReady(SANDBOX_DOCKER_COMMAND);
+  if (!engine.ok) {
+    throw new Error(`a run needs a Docker engine running Linux containers, and none answered: ${engine.reason}; start Docker Desktop and retry`);
+  }
+  let image: ReturnType<typeof ensureImage>;
+  try {
+    image = ensureImage(SANDBOX_DOCKER_COMMAND);
+  } catch (error) {
+    throw new Error(`cannot build or find the sandbox image: ${(error as Error).message}`);
+  }
+  const sandbox = seededSandbox(image.imageId);
+  const refusals = sandboxProgramRefusals(sandbox, verification);
+  if (refusals.length > 0) throw new Error(refusals.join("; "));
+  return sandbox;
+}
+
 export function createRunIntake(
   store: Store,
   rootDir: string,
@@ -122,6 +148,7 @@ export function createRunIntake(
   // Before the run row, so a refused link or narration configuration leaves nothing behind.
   const after = input.after === undefined ? null : checkAfter(store, rootDir, input.after, input.project, intake.startingCommit!);
   const narrationCheck = readNarrationCheck(input.narrationCheck, options.env ?? process.env);
+  const sandbox = freezeSandbox(intake.verification!);
 
   const run = store.insertRun(
     input.project,
@@ -145,6 +172,7 @@ export function createRunIntake(
       intake.startingCommit!,
       input.model,
       intake.verification!,
+      sandbox,
       {},
       input.settings,
       after,

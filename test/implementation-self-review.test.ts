@@ -4,10 +4,11 @@ import {
   critiqueAuditEntries,
   SELF_REVIEW_AUDIT_ENTRY_CHARS,
   SELF_REVIEW_AUDIT_MAX_ENTRIES,
-  SELF_REVIEW_RESULT_SCHEMA,
+  SELF_REVIEW_REPLY_SCHEMA,
   validateImplementationSelfReview,
+  validateSelfReviewReply,
 } from "../src/implementation-self-review.ts";
-import { PATCH_RESULT_SCHEMA } from "../src/agent-result.ts";
+import { WORKSPACE_REPLY_SCHEMA } from "../src/agent-result.ts";
 
 // docs/features/implementation-self-review/plan.md, Task 6. The prompt's own
 // advertised example is checked against this validator in test/prompts.test.ts.
@@ -54,20 +55,8 @@ test("51 entries record 50, in critique order", () => {
   assert.deepEqual(recorded, critique.slice(0, 50));
 });
 
-// docs/features/structured-patch-output/plan.md, Task 2: the schema the
-// self-review dispatch sends with --json-schema.
-
-test("the self-review schema keeps every patch-schema property and adds the required critique", () => {
-  const { proposedContentChanges, ...patchProperties } = SELF_REVIEW_RESULT_SCHEMA.properties;
-  assert.deepEqual(patchProperties, PATCH_RESULT_SCHEMA.properties);
-  assert.deepEqual(SELF_REVIEW_RESULT_SCHEMA.required, [...PATCH_RESULT_SCHEMA.required, "proposedContentChanges"]);
-  assert.equal(SELF_REVIEW_RESULT_SCHEMA.additionalProperties, false);
-  assert.deepEqual(proposedContentChanges.required, ["selfReview"]);
-  assert.deepEqual(proposedContentChanges.properties.selfReview.required, ["critique"]);
-});
-
 test("the schema's critique bounds forbid what the validator refuses", () => {
-  const critique = SELF_REVIEW_RESULT_SCHEMA.properties.proposedContentChanges.properties.selfReview.properties.critique;
+  const critique = SELF_REVIEW_REPLY_SCHEMA.properties.critique;
   // An empty critique: the validator refuses it and minItems forbids it.
   assert.equal(validateImplementationSelfReview({ critique: [] }).ok, false);
   assert.equal(critique.minItems, 1);
@@ -76,4 +65,30 @@ test("the schema's critique bounds forbid what the validator refuses", () => {
   assert.deepEqual(critique.items, { type: "string", minLength: 1 });
   // The smallest critique both allow.
   assert.ok(validateImplementationSelfReview({ critique: ["x"] }).ok);
+});
+
+// docs/features/sandboxed-implementer/plan.md, Task 6: the self-review's
+// reply once its fixes go through the tool server.
+
+test("the self-review reply schema is the workspace reply plus a required, bounded critique", () => {
+  const { critique, ...shared } = SELF_REVIEW_REPLY_SCHEMA.properties;
+  assert.deepEqual(shared, WORKSPACE_REPLY_SCHEMA.properties);
+  assert.deepEqual(SELF_REVIEW_REPLY_SCHEMA.required, [...WORKSPACE_REPLY_SCHEMA.required, "critique"]);
+  assert.equal(SELF_REVIEW_REPLY_SCHEMA.additionalProperties, false);
+  assert.deepEqual(critique, { type: "array", minItems: 1, items: { type: "string", minLength: 1 } });
+});
+
+test("the self-review reply validator checks both halves, each refusal named", () => {
+  const valid = { status: "completed", summary: "checked", incompleteTasks: [], critique: ["checked the reset path"] };
+  assert.deepEqual(validateSelfReviewReply(valid), { ok: true, value: valid });
+  assert.deepEqual(validateSelfReviewReply({ ...valid, status: "proposed" }), {
+    ok: false,
+    reason: 'invalid reply status "proposed": allowed values are completed, blocked',
+  });
+  assert.deepEqual(validateSelfReviewReply({ ...valid, critique: [] }), {
+    ok: false,
+    reason: "self-review critique must not be empty: say what was checked when nothing was found",
+  });
+  const { critique: _dropped, ...noCritique } = valid;
+  assert.deepEqual(validateSelfReviewReply(noCritique), { ok: false, reason: "self-review has no critique" });
 });

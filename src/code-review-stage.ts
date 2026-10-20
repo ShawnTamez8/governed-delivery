@@ -2,7 +2,13 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { AgentDefinition } from "./agents.ts";
-import { PATCH_RESULT_SCHEMA, validateAgentResult, type ProposedPatch } from "./agent-result.ts";
+import {
+  describeIncompleteReply,
+  parseWorkspaceReply,
+  validateAgentResult,
+  validateWorkspaceReply,
+  WORKSPACE_REPLY_SCHEMA,
+} from "./agent-result.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
 import {
@@ -21,14 +27,15 @@ import {
   type ReconcilerDecision,
 } from "./code-review-reconcile.ts";
 import { verifyCommit } from "./commit-verification.ts";
+import { unquiescedReason } from "./container.ts";
 import { derivedPathExclusion, regenerateDerivedArtifacts } from "./derived-artifacts.ts";
 import { unapprovedDependencyAdditions } from "./dependency-policy.ts";
 import { validateSpecDoc } from "./spec-doc.ts";
-import { dispatchOnce } from "./dispatch.ts";
+import { dispatchInSandbox, dispatchOnce } from "./dispatch.ts";
 import { type ExecutorDefinition } from "./executor.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import { parseVerificationHandoff } from "./handoff.ts";
-import { applyProposedPatches, checkWorktreeClean } from "./patch-application.ts";
+import { checkWorktreeClean, commitWorkspace } from "./workspace-commit.ts";
 import {
   codeReviewEvidenceDir,
   codeReviewEvidenceRef,
@@ -812,7 +819,22 @@ export async function runCodeReviewStage(
         return { ok: false, reason };
       }
 
-      const authorDispatch = await dispatchOnce(
+      // The remediation runs in its own sandbox and changes the worktree
+      // through the tool server; the system computes the diff against the
+      // reviewed commit, gates it and commits it
+      // (docs/features/sandboxed-implementer/plan.md, Task 9). Reviewers and
+      // the reconciler above still read free text.
+      const cleanBeforeAuthor = checkWorktreeClean(worktreePath);
+      if (!cleanBeforeAuthor.ok) {
+        return abort(
+          stage.id,
+          "code_review.worktree.dirty",
+          cleanBeforeAuthor.detail !== undefined
+            ? `round ${roundNumber}: cannot check worktree cleanliness before the implementer: ${cleanBeforeAuthor.detail}`
+            : `round ${roundNumber}: the worktree is dirty before the implementer in: ${cleanBeforeAuthor.entries.join(", ")}`
+        );
+      }
+      const sandboxed = await dispatchInSandbox(
         store,
         executor,
         {
@@ -834,70 +856,66 @@ export async function runCodeReviewStage(
             profile.verification
           ),
           // The answer comes back as structured output, never free text
-          // (docs/features/structured-patch-output/plan.md). Reviewers and the
-          // reconciler above still read free text.
-          invocation: { cwd: worktreePath, jsonSchema: PATCH_RESULT_SCHEMA },
+          // (docs/features/structured-patch-output/plan.md).
+          invocation: { cwd: worktreePath, jsonSchema: WORKSPACE_REPLY_SCHEMA },
         },
+        { frozen: profile.sandbox, runId, label: `remediation-${roundNumber}`, worktreePath },
         rootDir
       );
+      if (!sandboxed.started) {
+        return abort(stage.id, "code_review.sandbox.failed", `round ${roundNumber}: cannot start the remediation sandbox: ${sandboxed.reason}`);
+      }
+      // A process left in an unremoved work container could still be writing
+      // the worktree, so nothing reads it until the container is proven gone.
+      if (!sandboxed.teardown.workContainerGone) {
+        const primary = sandboxed.dispatch.ok ? null : sandboxed.dispatch.reason;
+        return abort(
+          stage.id,
+          "code_review.sandbox.quiescence.failed",
+          `round ${roundNumber}: ${unquiescedReason(sandboxed.sandbox, sandboxed.teardown, primary)}`
+        );
+      }
+      const teardownFailures = [...(sandboxed.proxyLogFailure === null ? [] : [sandboxed.proxyLogFailure]), ...sandboxed.teardown.failures];
+      if (teardownFailures.length > 0) {
+        audit(stage.id, "code_review.sandbox.teardown.failed", `round=${roundNumber}; sandbox ${sandboxed.sandbox.name}: ${teardownFailures.join("; ")}`);
+      }
+      const authorDispatch = sandboxed.dispatch;
       if (!authorDispatch.ok) {
         return abort(stage.id, "code_review.remediation.failed", `round ${roundNumber}, commit ${currentCommit}, implementer: ${authorDispatch.reason}`);
       }
-      const headAfterAuthor = runGit(["rev-parse", "HEAD"], worktreePath);
-      if (!headAfterAuthor.ok || headAfterAuthor.stdout.trim() !== currentCommit) {
-        return abort(
-          stage.id,
-          "code_review.worktree.dirty",
-          !headAfterAuthor.ok
-            ? `round ${roundNumber}: the worktree head could not be re-read after implementer: ${headAfterAuthor.detail}`
-            : `round ${roundNumber}: implementer moved the worktree head from ${currentCommit} to ${headAfterAuthor.stdout.trim()}`
-        );
+      const reply = parseWorkspaceReply(authorDispatch.envelope.resultText, validateWorkspaceReply);
+      if (!reply.ok) {
+        return abort(stage.id, "code_review.remediation.failed", `round ${roundNumber}: ${reply.reason}`);
       }
-      const cleanAfterAuthor = checkWorktreeClean(worktreePath);
-      if (!cleanAfterAuthor.ok) {
-        return abort(
-          stage.id,
-          "code_review.worktree.dirty",
-          cleanAfterAuthor.detail !== undefined
-            ? `round ${roundNumber}: cannot check worktree cleanliness after implementer: ${cleanAfterAuthor.detail}`
-            : `round ${roundNumber}: implementer left the worktree dirty in: ${cleanAfterAuthor.entries.join(", ")}`
-        );
+      if (reply.value.status !== "completed") {
+        return abort(stage.id, "code_review.remediation.failed", `round ${roundNumber}: implementer returned ${describeIncompleteReply(reply.value)}`);
       }
-      const authorBody = extractJsonBody(authorDispatch.envelope.resultText);
-      if (authorBody.kind === "refused") {
-        return abort(stage.id, "code_review.remediation.failed", `round ${roundNumber}: implementer body refused: ${authorBody.reason}`);
-      }
-      const authorResult = validateAgentResult(author.id, authorBody.value);
-      if (!authorResult.ok) {
-        return abort(stage.id, "code_review.remediation.failed", `round ${roundNumber}: implementer result refused: ${authorResult.reason}`);
-      }
-      if (authorResult.value.status !== "proposed" || authorResult.value.role !== "author") {
-        return abort(stage.id, "code_review.remediation.failed", `round ${roundNumber}: implementer returned status ${authorResult.value.status} and role ${authorResult.value.role}, not a proposed author result`);
-      }
-      const patches = authorResult.value.proposedPatches;
-      if (!Array.isArray(patches) || patches.length === 0) {
-        return abort(stage.id, "code_review.remediation.failed", `round ${roundNumber}: implementer returned no proposed patches`);
-      }
-      const applied = applyProposedPatches({
+      const committed = commitWorkspace({
         worktreePath,
-        runId,
-        slug: run.slug,
+        base: currentCommit,
         scope,
-        proposalBase: currentCommit,
-        patches: patches as ProposedPatch[],
-        commitMessage: `bw run ${runId}: code review remediation round ${roundNumber} (base ${currentCommit.slice(0, 8)})`,
-        audit: (action, summary) => audit(stage.id, `code_review.remediation.${action}`, `round=${roundNumber}; ${summary}`),
+        slug: run.slug,
+        derivedPaths: profile.verification.derived.map((d) => d.path),
+        sandbox: profile.sandbox,
+        message: `bw run ${runId}: code review remediation round ${roundNumber} (base ${currentCommit.slice(0, 8)})`,
+        // The refusal is the abort's own record, below.
+        onAudit: (action, summary) => {
+          if (action === "derived.discarded") audit(stage.id, "code_review.remediation.derived.discarded", `round=${roundNumber}; ${summary}`);
+        },
       });
-      if (!applied.ok) {
-        return abort(stage.id, "code_review.remediation.failed", `round ${roundNumber}, base ${currentCommit}: ${applied.reason}`);
-      }
-      if (applied.resultingCommit === currentCommit) {
-        return abort(stage.id, "code_review.remediation.failed", `round ${roundNumber}: remediation produced no new commit from ${currentCommit}`);
+      if (!committed.ok) {
+        return abort(
+          stage.id,
+          "code_review.remediation.failed",
+          committed.kind === "empty"
+            ? `round ${roundNumber}: remediation produced no new commit from ${currentCommit}`
+            : `round ${roundNumber}, base ${currentCommit}: ${committed.reason}`
+        );
       }
       process.stderr.write(
-        `round ${roundNumber}/${profile.policy.codeReviewMaxRounds} remediation committed ${applied.resultingCommit.slice(0, 8)} from ${currentCommit.slice(0, 8)}\n`
+        `round ${roundNumber}/${profile.policy.codeReviewMaxRounds} remediation committed ${committed.head.slice(0, 8)} from ${currentCommit.slice(0, 8)}\n`
       );
-      const dependencies = unapprovedDependencyAdditions(worktreePath, patchBase, applied.resultingCommit, approvedDependencies);
+      const dependencies = unapprovedDependencyAdditions(worktreePath, patchBase, committed.head, approvedDependencies);
       if (!dependencies.ok) {
         return abort(stage.id, "code_review.dependency.unapproved", `round ${roundNumber}, base ${currentCommit}: ${dependencies.reason}`);
       }
@@ -909,16 +927,16 @@ export async function runCodeReviewStage(
         worktreePath,
         runId,
         derived: profile.verification.derived,
-        expectedHead: applied.resultingCommit,
+        expectedHead: committed.head,
         label: `remediation-${roundNumber}`,
         evidenceDir: derivedEvidenceDir(rootDir, runId, `remediation-${roundNumber}`),
+        sandbox: profile.sandbox,
         policy: {
           timeoutSeconds: profile.policy.verifyCommandTimeoutSeconds,
           maxBytes: profile.policy.resultMaxBytes,
           retentionMaxBytes: profile.policy.verifyRetentionMaxBytes,
-          envPassthrough: profile.policy.verifyEnvPassthrough,
         },
-        audit: (action, summary) => audit(stage.id, `code_review.remediation.${action}`, `round=${roundNumber}; ${summary}`),
+        audit: (action, summary) => audit(stage.id, sandboxAction(action, "code_review.remediation."), `round=${roundNumber}; ${summary}`),
       });
       if (!regenerated.ok) {
         return abort(stage.id, "code_review.remediation.failed", `round ${roundNumber}, base ${currentCommit}: ${regenerated.reason}`);
@@ -933,20 +951,32 @@ export async function runCodeReviewStage(
         timeoutSeconds: profile.policy.verifyCommandTimeoutSeconds,
         maxBytes: profile.policy.resultMaxBytes,
         retentionMaxBytes: profile.policy.verifyRetentionMaxBytes,
-        envPassthrough: profile.policy.verifyEnvPassthrough,
+        sandbox: profile.sandbox,
+        runId,
+        label: `remediation-${roundNumber}-verify`,
         evidenceDir: codeReviewVerificationDir(rootDir, runId, roundNumber),
-        audit: (action, summary) => audit(stage.id, `code_review.verification.${action}`, `round=${roundNumber}; commit=${remediatedCommit}; ${summary}`),
+        audit: (action, summary) => audit(stage.id, sandboxAction(action, "code_review.verification."), `round=${roundNumber}; commit=${remediatedCommit}; ${summary}`),
         progress: (command, because, durationMs) => {
           process.stderr.write(
             `round ${roundNumber}/${profile.policy.codeReviewMaxRounds} verification ${because === null ? "pass" : "BLOCK"} ${command.name} at ${remediatedCommit.slice(0, 8)} in ${durationMs}ms\n`
           );
         },
       });
+      if (verification.record === null) {
+        // The sandbox failed, not a command: there is no verification result
+        // to record for the round.
+        return abort(
+          stage.id,
+          "code_review.verification.block",
+          `code_review remediation verification blocked after round ${roundNumber}: ${verification.reason}`,
+          `round=${roundNumber}; commit=${remediatedCommit}; ${verification.reason}`
+        );
+      }
       roundRecord.remediation = {
         author: author.id,
         baseCommit: currentCommit,
         resultingCommit: remediatedCommit,
-        changedPaths: applied.changedPaths,
+        changedPaths: committed.paths,
         verification: verification.record,
       };
       if (verification.record.outcome === "block") {
@@ -957,7 +987,7 @@ export async function runCodeReviewStage(
         audit(stage.id, "code_review.verification.block", `round=${roundNumber}; commit=${remediatedCommit}; ${verification.reason}`);
         return { ok: false, reason };
       }
-      audit(stage.id, "code_review.remediation.pass", `round=${roundNumber}; base=${currentCommit}; commit=${remediatedCommit}; changedPaths=${applied.changedPaths.join(",")}; verification=pass`);
+      audit(stage.id, "code_review.remediation.pass", `round=${roundNumber}; base=${currentCommit}; commit=${remediatedCommit}; changedPaths=${committed.paths.join(",")}; verification=pass`);
       currentCommit = remediatedCommit;
     }
     throw new Error("the frozen code-review round budget ended without a terminal decision");
@@ -973,6 +1003,15 @@ export async function runCodeReviewStage(
     store.setRunStatus(runId, "blocked");
     return { ok: false, reason };
   }
+}
+
+/**
+ * The audit action for a remediation's derived regeneration or verification:
+ * a sandbox event is the stage's own (`code_review.sandbox.failed`), every
+ * other keeps the step's prefix.
+ */
+function sandboxAction(action: string, stepPrefix: string): string {
+  return action.startsWith("sandbox.") ? `code_review.${action}` : `${stepPrefix}${action}`;
 }
 
 function buildReport(record: CodeReviewRecord): string {

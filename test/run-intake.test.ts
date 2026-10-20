@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
@@ -20,6 +20,10 @@ import { computeRisk } from "../src/select.ts";
 import { validateSpecDoc } from "../src/spec-doc.ts";
 import { openStore, type Store } from "../src/store.ts";
 import { runVerificationStage } from "../src/verification-stage.ts";
+// Every `docker` spawn in this process runs the stand-in: `createRunIntake`
+// freezes the seeded `["docker"]`, and the suite needs no engine.
+import "./fixtures/docker/redirect-docker.mjs";
+import { STAND_IN_IMAGE_ID, standInSandbox } from "./fixtures/docker/stand-in.ts";
 
 function workspace(): string {
   return mkdtempSync(join(dirname(resolve(".")), ".buildworks-intake-"));
@@ -31,10 +35,10 @@ function git(cwd: string, ...args: string[]): string {
   return result.stdout.trim();
 }
 
-function repository(root: string): void {
+function repository(root: string, command = '["node", "--version"]'): void {
   git(root, "init", "-q");
   writeFileSync(join(root, ".gitignore"), ".governance/\n");
-  writeFileSync(join(root, "governed.yaml"), 'verify:\n  - name: unit\n    command: ["node", "--version"]\n');
+  writeFileSync(join(root, "governed.yaml"), `verify:\n  - name: unit\n    command: ${command}\n`);
   git(root, "add", "-A");
   git(root, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
     "commit", "-qm", "base");
@@ -176,6 +180,87 @@ test("a shared profile-freeze failure blocks and audits the created run", () => 
   }
 });
 
+// --- the frozen sandbox (sandboxed-implementer Task 7) ----------------------
+
+const PLAIN = { project: "project", featureId: "feature-1", slug: "feature-one", changeKind: "feature" as const, model: "test-model", narrationCheck: "off" as const };
+
+test("intake freezes the seeded sandbox around the image ID the engine reports", () => {
+  const root = workspace();
+  const beforeKey = process.env.BW_APPROVAL_PUBLIC_KEY;
+  process.env.BW_APPROVAL_PUBLIC_KEY = join(root, "missing-public.pem");
+  try {
+    repository(root, '["npm", "ci"]');
+    const store = openStore(root);
+    try {
+      const created = createRunIntake(store, root, PLAIN);
+      const profile = JSON.parse(readFileSync(profilePath(root, created.run.id), "utf8"));
+      // The recorded build's image ID, behind the seeded `["docker"]`.
+      assert.equal(profile.sandbox.imageId, STAND_IN_IMAGE_ID);
+      assert.deepEqual(profile.sandbox, { ...standInSandbox(), dockerCommand: ["docker"] });
+    } finally {
+      store.close();
+    }
+  } finally {
+    if (beforeKey === undefined) delete process.env.BW_APPROVAL_PUBLIC_KEY;
+    else process.env.BW_APPROVAL_PUBLIC_KEY = beforeKey;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("intake refuses a verification command whose program the image lacks, before any run row", () => {
+  const root = workspace();
+  const beforeKey = process.env.BW_APPROVAL_PUBLIC_KEY;
+  process.env.BW_APPROVAL_PUBLIC_KEY = join(root, "missing-public.pem");
+  try {
+    repository(root, '["dotnet", "build"]');
+    const store = openStore(root);
+    try {
+      assert.throws(
+        () => createRunIntake(store, root, PLAIN),
+        new RegExp(`^Error: the verification command "unit" needs "dotnet", which image ${STAND_IN_IMAGE_ID} does not provide; this BuildWorks build supports Node/npm targets \\(see docs/proposals/target-declared-environments\\.md\\)$`)
+      );
+      assert.deepEqual(store.query("SELECT * FROM run"), [], "the refusal leaves no run row");
+      assert.deepEqual(store.query("SELECT * FROM audit"), []);
+    } finally {
+      store.close();
+    }
+  } finally {
+    if (beforeKey === undefined) delete process.env.BW_APPROVAL_PUBLIC_KEY;
+    else process.env.BW_APPROVAL_PUBLIC_KEY = beforeKey;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("new-run refuses at $0 when no Docker engine answers, naming the cause", () => {
+  // A spawned CLI without the stand-in, pointed at an engine that does not
+  // exist: a real client fails to connect, and a machine with no client fails
+  // to spawn. Both are "no engine answered".
+  const root = workspace();
+  try {
+    repository(root);
+    const result = spawnSync(process.execPath, [resolve("src", "cli.ts"), "new-run", "--repo", root, "--no-narration-check",
+      "--project", "p", "--feature", "f", "--slug", "s", "--change-kind", "feature", "--model", "test-model"], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        BW_APPROVAL_PUBLIC_KEY: join(root, "missing-public.pem"),
+        DOCKER_HOST: process.platform === "win32" ? "npipe:////./pipe/bw_no_such_engine" : "unix:///nonexistent/bw-no-such-engine.sock",
+      },
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /a run needs a Docker engine running Linux containers, and none answered: .+; start Docker Desktop and retry/);
+    assert.equal(existsSync(join(root, ".governance", "profiles")), false, "no profile is frozen");
+    const store = openStore(root);
+    try {
+      assert.deepEqual(store.query("SELECT * FROM run"), [], "the refusal leaves no run row");
+    } finally {
+      store.close();
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // --- the narration check (narration-check-spec-review Task 3) ---------------
 
 /**
@@ -303,7 +388,7 @@ async function withDeliveredRun(fn: (ctx: Delivered) => void | Promise<void>): P
     const startingCommit = commitAll(root);
     const run = store.insertRun("operator", "demo", "demo", "feature");
     const frozen = freezeProfile(root, run.id, startingCommit, "fixture-model",
-      { commands: [{ name: "node", command: ["node", "--version"] }], derived: [] });
+      { commands: [{ name: "node", command: ["node", "--version"] }], derived: [] }, standInSandbox());
     const { profile } = loadProfile(root, run.id);
     profile.approvalSigner = null;
     profile.executor = { ...profile.executor,

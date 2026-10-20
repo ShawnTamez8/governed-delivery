@@ -20,6 +20,7 @@ import { advanceRun } from "../src/run-command.ts";
 import { readRunSnapshot } from "../src/operator-state.ts";
 import type { OperatorResult, RunCommandResult } from "../src/operator-output.ts";
 import { validateSpecDoc } from "../src/spec-doc.ts";
+import { standInSandbox } from "./fixtures/docker/stand-in.ts";
 
 const SPEC_FIXTURE = resolve("test", "fixtures", "harness", "emit-spec-stage.mjs");
 const JOURNEY_FIXTURE = resolve("test", "fixtures", "harness", "emit-cli-run.mjs");
@@ -60,7 +61,7 @@ async function withRun(fn: (fixture: Fixture) => Promise<void>, command = [proce
     freezeProfile(root, run.id, git(root, "rev-parse", "HEAD"), "m", {
       commands: [{ name: "node", command: ["node", "--version"] }],
       derived: [],
-    });
+    }, standInSandbox());
     const { profile } = loadProfile(root, run.id);
     profile.executor.command = command;
     profile.executor.probe = [process.execPath, "--version"];
@@ -568,7 +569,7 @@ test("Task 8 an ordinary implementation refusal stops the consented range before
   const result = await advanceRun(root, runId, { yes: true, stderr: capture().stderr });
   assert.equal(result.outcome, "blocked");
   assert.equal(result.errorCode, "policy_block");
-  assert.match(result.reason!, /implementer returned status .*not proposed/);
+  assert.match(result.reason!, /implementer returned status blocked, not completed: /);
   assert.deepEqual(data(result).execution.groupsAttempted, ["plan", "implementation"]);
   assert.deepEqual(data(result).execution.groupsCompleted, ["plan"]);
   assert.equal(store.getStageChain(runId).at(-1)!.kind, "implementation");

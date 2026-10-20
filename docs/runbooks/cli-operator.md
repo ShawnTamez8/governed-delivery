@@ -57,9 +57,15 @@ later invocation. There is no voluntary stop-after option.
 
 ### 1. Install the checkout-linked command
 
-Use Node 24 or newer, npm, Git with a commit identity, and the native Claude
-Code executable on `PATH`. Arrange authorized Claude provider access and model
-entitlement separately. Obtain the BuildWorks repository through your normal
+Use Node 24 or newer, npm, Git with a commit identity, the native Claude
+Code executable on `PATH`, and a running Docker engine (Docker Desktop on
+Windows). Every run that reaches implementation runs the implementer's tools,
+the verification commands and the derived commands in a container built from
+the checkout's `container/Dockerfile`; `new-run` refuses without an engine
+before any spend. The image provides Node, npm and Git and reaches only the npm
+registry, so this build supports Node/npm targets; the README's "Docker and the
+supported toolchain" states what the program check cannot see. Arrange
+authorized Claude provider access and model entitlement separately. Obtain the BuildWorks repository through your normal
 Git workflow, then run:
 
 ```powershell
@@ -89,8 +95,8 @@ $env:BW_APPROVAL_PUBLIC_KEY = 'C:\Public Approval Material\approval.pub'
 ```
 
 The matching private key must remain outside the filesystem and process
-identity available to the BuildWorks host. Verification receives `HOME` and
-`USERPROFILE` and is not filesystem-sandboxed. Do not store the private key
+identity available to the BuildWorks host. Verification runs in a container,
+but the agent sessions run on the host as you. Do not store the private key
 under the same user profile, place it in either repository, give it to an
 agent, or invoke a signer from guided mode.
 
@@ -448,8 +454,8 @@ derived:
 BuildWorks then runs that command after every implementation and remediation
 commit and commits the lockfile itself. No agent writes it, and a spec that
 declares it is refused. The command must change nothing but the derived path,
-apart from ignored output, which BuildWorks removes. It runs on the host with
-the same environment passthrough and network access as verification.
+apart from ignored output, which BuildWorks removes. It runs in a container of
+the run's image, with the same isolation and network access as verification.
 
 Verification runs in the newly created run worktree, not your original project
 directory. Untracked dependencies are not copied there. Include appropriate
@@ -457,13 +463,11 @@ dependency setup when required, and make generated outputs ignored so commands
 leave tracked files unchanged. Ensure the test command discovers real tests and
 does not silently succeed with zero tests.
 
-Commands run under bounded time/output limits and a restricted environment
-passthrough. Arbitrary shell environment variables are not forwarded.
-`VERIFY_ENV_PASSTHROUGH` in [the policy source](../../src/policy.ts) lists the
-names. Values and accessible files are not frozen credentials. Verification is
-not filesystem/network-sandboxed; dependency installation can execute package
-scripts. Use only commands and repositories you are authorized to run, without
-production credentials or data exposed to them.
+Commands run as argv in a disposable container over the run worktree, under
+bounded time and output limits. The container receives no host environment
+variables, mounts only the worktree, and reaches only the npm registry through
+a proxy. Dependency installation still executes package scripts inside it. Use
+only commands and repositories you are authorized to run.
 
 Version-only commands such as `node --version` do not establish product
 correctness. Do not use them as the project's only delivery evidence.
@@ -494,10 +498,10 @@ that point and the spend is lost. The run cannot be retried; a fresh run is the
 repair. Nothing in BuildWorks checks this earlier, so check it yourself. It costs
 nothing and takes the time the commands take.
 
-Create a throwaway worktree of the committed starting state under the same
-directory the run worktree will use. The location matters: dependency lookup
-walks up from the worktree to your project's own ignored `node_modules`, and a
-worktree elsewhere would not see it.
+`doctor` runs one part of this check for you at no cost: its `sandbox_programs`
+row refuses a command whose top-level program the image lacks. It cannot run
+the commands. Create a throwaway worktree of the committed starting state under
+the same directory the run worktree will use.
 
 ```powershell
 $PreCheck = Join-Path $Target '.governance\worktrees\precheck'
@@ -506,14 +510,23 @@ if ($LASTEXITCODE -ne 0) { throw 'Could not create the precheck worktree.' }
 Get-Content -LiteralPath (Join-Path $PreCheck 'governed.yaml')
 ```
 
-Run each command that file lists, in order, with exactly its argv, from inside
-`$PreCheck`. Then judge the result:
+Run each command that file lists, in order, with exactly its argv, inside the
+sandbox image with `$PreCheck` as its only mount, the way the run will. `doctor`'s
+`sandbox_image` row names the image tag (`bw-sandbox:<hash>`); `new-run` builds
+it when it is absent. For example:
+
+```powershell
+$Image = Read-Host 'Sandbox image tag from doctor (bw-sandbox:...)'
+docker run --rm -v "${PreCheck}:/work" -w /work --user node $Image npm ci
+```
+
+Then judge the result:
 
 | Result | Meaning and action |
 | --- | --- |
 | Every command exits 0 | The commands can run there. Continue to intake. |
-| A command fails because a tool or module is missing (a Node `MODULE_NOT_FOUND` error, `command not found`, a missing SDK or restore) | The environment is wrong. Repair the project's install, for example `npm ci`, `pnpm install --frozen-lockfile` or `dotnet restore`, and repeat this check in a **new** throwaway worktree. A repair made only inside `$PreCheck` is not reproduced in the run worktree. |
-| A command fails because the code it checks does not exist yet, as in a feature that creates the application | This is expected for a project that starts red. Instead run each tool's own version command from `$PreCheck`, for example `npx tsc --version`, and require it to exit 0. A tool that does not start cannot check anything later. |
+| A command fails because a tool or module is missing (a Node `MODULE_NOT_FOUND` error, `command not found`) | The commands are wrong for a fresh checkout in the image. Make the first command install what the later ones need, for example `npm ci`, commit the change to `governed.yaml`, and repeat this check in a **new** throwaway worktree. A repair made only inside `$PreCheck` is not reproduced in the run worktree. A tool the image cannot provide at all, such as a .NET SDK, waits for `docs/proposals/target-declared-environments.md`. |
+| A command fails because the code it checks does not exist yet, as in a feature that creates the application | This is expected for a project that starts red. Instead run each tool's own version command the same way, for example `npx tsc --version`, and require it to exit 0. A tool that does not start cannot check anything later. |
 
 Remove the throwaway worktree when finished. It is your scratch directory, not a
 run worktree, and `--force` is needed because commands may have written ignored
@@ -524,9 +537,9 @@ git -C $Target worktree remove --force $PreCheck
 git -C $Target status --short
 ```
 
-This check is not exact. Verification runs with the restricted environment named
-by `VERIFY_ENV_PASSTHROUGH` in [the policy source](../../src/policy.ts), and your
-shell has more variables, so a command that needs a variable outside that list
+This check is not exact. The `docker run` above has the engine's default network
+and none of the run's CPU, memory, process or time limits, so a command that
+reaches a host other than the npm registry, or needs more than the run's limits,
 passes here and fails in the run. A pass shows the commands can run, not that the
 feature will work.
 
@@ -546,7 +559,8 @@ The external authority creates and protects the key pair. If it uses
 `scripts\sign-approval.mjs`, it runs that script on its separate authority
 host. The BuildWorks host receives only `approval.pub` and later detached
 signature files. A private key under the BuildWorks user's profile is reachable
-to unsandboxed verification and is not acceptable containment.
+to the agent sessions, which run on the host as that user, and is not acceptable
+containment.
 
 **Set `BW_APPROVAL_PUBLIC_KEY` before creating a run.** The signer fingerprint
 is frozen at intake. Adding or replacing a key later does not retroactively
@@ -1053,6 +1067,16 @@ no persistence, transmission, config parsing, or repair.
 | `new-run` refuses with `--after: ...` | Read the reason. The named run must belong to the same `--project`, be completed with a verifying delivery record, and have its delivered commit in your checkout's history: merge (not squash) its branch and commit, then rerun. |
 | The spec stage blocks with `declared artifact names a file the system regenerates (governed.yaml derived:): ...` | The author declared a file `governed.yaml` lists under `derived:`, such as the lockfile. The signed specification cannot change inside the run. Start a fresh run; if the design asks for the file to be edited, say instead which packages it adds. |
 | `implementation.derived.failed` or `code_review.remediation.failed` naming a derived artifact | Read the named command's log under `.governance\derived\<run-id>\<label>\`. The command failed, or changed a file that is not derived. Repair the command or the project in `governed.yaml` and start a fresh run. |
+| `new-run` or guided intake refuses with `a run needs a Docker engine running Linux containers, and none answered: ...` | Start Docker Desktop and confirm `docker version` reports a Linux server, then rerun. No run was created and nothing was spent. `doctor`'s `docker_engine` row shows the same reason. |
+| `new-run` refuses with `... needs "<program>", which image <id> does not provide; this BuildWorks build supports Node/npm targets ...` | A verification or derived command in `governed.yaml` names a program the sandbox image lacks. Change the command to one the image provides, commit it, and rerun; `doctor`'s `sandbox_programs` row checks this at no cost. Other stacks wait for `docs/proposals/target-declared-environments.md`. No run was created. |
+| `<stage>.sandbox.failed` (`implementation`, `verification` or `code_review`) | A sandbox step failed: an image, network, proxy or work-container start, or reading a command's exit status after it ran. The reason names the operation, the object, Docker's argv, its exit code and the end of its stderr. A start failure dispatched nothing for that step; an exit-status failure comes after its commands ran, and a derived-artifact one after the phase or remediation it followed had already been paid for. Either way the run is blocked and no later `run` continues it. Repair Docker from that message, confirm `doctor` passes, and start a fresh run. When the reason says the frozen image is absent (`doctor`'s `frozen_sandbox_image` row), the fresh run also builds a new image, because a rebuild need not reproduce the frozen image ID. |
+| `<stage>.sandbox.quiescence.failed` | The work container could not be proven removed, so the system committed and recorded nothing after it, because a process left in it could still write the worktree. The reason names the container and the removal error, after the stage's own error when there was one. Run `doctor`, remove the containers its `sandbox_leftovers` row lists with the command it prints, retain the worktree as evidence, and start a fresh run. |
+| `<stage>.sandbox.teardown.failed` | A proxy container, network or proxy log could not be removed or captured. The stage kept its own outcome. Remove the leftovers `doctor` lists under `sandbox_leftovers` with the commands it prints. |
+| `implementation.workspace.refused`, `implementation.selfreview.failed` or `code_review.remediation.failed` naming `the agent's changes were refused: ...` | The agent's diff deleted or renamed a file, made a symbolic link or a nested Git repository, or touched a path outside the signed scope or a protected path; the reason names each path and cause. The refused change is kept as the commit the reason names, under `refs/buildworks/refused/<sha>` and outside every branch: inspect it in the target with `git show --stat <sha>` and `git diff <base> <sha>`. The worktree was reset to the dispatch's base. Read what the agent did in its tool log, `.governance\tools\<run-id>\<hash>.jsonl`, with each command's output beside it in `<hash>-call-<n>.log`; the failed event names the files. The signed scope cannot change inside the run: start a fresh run, and if the file is needed, say so in the design. Delete the ref with `git update-ref -d refs/buildworks/refused/<sha>` once it is no longer evidence. |
+| `implementation.workspace.failed` | The system could not compute or commit the phase's diff: a Git or Docker failure, or a moved head. It is not a judgement of the agent's change. The reason names the operation, the Git argv or Docker error, and its stderr; a moved head is the row below. Repair the cause, confirm `doctor` passes, and start a fresh run. |
+| An implementation, self-review or remediation reason with `the reply says completed but lists incomplete tasks: ...` | The agent answered `completed` and still listed work it did not finish, which its prompt forbids, so the reply was refused as unusable: a phase or remediation blocks, and a self-review is skipped with its changes discarded. The reason quotes the list. Read the dispatch's tool log to see what it did, then start a fresh run. |
+| A stage reason with `compute diff: the worktree head moved from <base> to <head> while the agent ran` | Something committed in the worktree during an agent dispatch, although the agent's `.git` is read-only. The worktree is kept as it is. Retain it and escalate. |
+| `implementation.derived.discarded`, `implementation.selfreview.derived.discarded` or `code_review.remediation.derived.discarded` | Not a failure. The agent changed a file `governed.yaml` lists under `derived:`, usually the lockfile after `npm install`; the system restored it before computing the diff and regenerates it after the commit. The event names each file and whether it was restored or removed. |
 | `implementation.dependency.unapproved` or `code_review.dependency.unapproved` | A commit added a package the signed specification does not list under `## Dependencies added`. The reason names each `manifest:package`. Start a fresh run from a design that names the packages, so they reach the dependency question. |
 | `spec_decision.dependencies.denied` | You denied the spec's packages. The run ends with nothing folded. State in the design what to use instead and start a fresh run. |
 | A run blocked at `spec_review` or `plan_review`, and you want to read what it wrote | The run's specification and plan are under `.governance\documents\<run-id>\`, never in the checkout. A run created before this location existed wrote them to `docs\features\<slug>\` as untracked files; move those aside before the next `new-run` or merge. |

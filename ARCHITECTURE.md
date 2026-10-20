@@ -147,7 +147,9 @@ Enumerate them; each is testable. Agents may not:
 
 - approve their own work;
 - mutate authoritative state directly;
-- run commands outside an explicit allowlist;
+- run commands outside the run's container, and only through the tool server
+  (2026-10-19, `docs/features/sandboxed-implementer/plan.md`; the read-only
+  dispatches run no command at all);
 - write outside allowed paths;
 - expand scope without approval;
 - modify policy files, agent definitions, or tool permissions;
@@ -174,9 +176,11 @@ must never write.
 
 The guided CLI may create one concrete `static-web` baseline in an absent or
 empty local target. It preflights Node, npm, Git, the native Claude executable,
-and Git commit identity before it writes project content; exclusively creates
-its closed starter file set; executes the generated verification commands; and
-commits only the displayed baseline after operator confirmation. Existing
+a Docker engine and Git commit identity before it writes project content;
+exclusively creates its closed starter file set; executes the generated
+verification commands in a run-0 container (evidence under
+`.governance/bootstrap/`); and commits only the displayed baseline after
+operator confirmation. Existing
 nonempty non-Git directories and existing repositories that do not already
 satisfy intake are refused rather than adopted or rewritten. This is one
 concrete initializer under the CLI mutation authority, not a target-stack
@@ -187,8 +191,25 @@ must still be clean between runs, which is a constraint on the ignore rules
 rather than on the operator: if anything the system writes during a run is
 tracked, every run ends dirty and the next one cannot start. The rule is simple
 — the system commits everything it writes to the run branch (projections and
-applied patches) and writes run state only to the ignored `.governance/`
-directory.
+the agents' gated changes) and writes run state only to the ignored
+`.governance/` directory.
+
+**Supported toolchain (2026-10-19, `docs/features/sandboxed-implementer/plan.md`).**
+Every run that reaches implementation needs a Docker engine; `new-run` refuses
+without one, before any spend. Patch dispatches, verification and derived
+regeneration run in a disposable container built from the committed
+`container/Dockerfile`, whose image ID `new-run` freezes. That image provides
+Node, npm and Git, and its only network host is the npm registry
+(`registry.npmjs.org:443`). `new-run` also refuses a target whose frozen
+verification or derived command names a top-level program the image lacks
+(`dotnet`, `cargo`), naming the command, the program and the image ID. The check
+sees only that top-level program: a tool a script calls, a native compiler a
+package needs at install time, a browser a test downloads, or a running service
+passes it and fails later, at a phase or at verification. The frozen image ID is
+the toolchain's identity. A run whose image is no longer present locally refuses
+at its next sandbox, and the recovery is a fresh run, not a rebuild, because the
+Dockerfile does not pin everything it installs. Other stacks wait for
+`docs/proposals/target-declared-environments.md`.
 
 Verification commands live in a committed `governed.yaml` at the repository
 root, authored by the operator before the first run. The verification stage
@@ -223,9 +244,10 @@ claim the working tree, not a commit. The spec and plan reviewers do not run
 there: the target's `.governance/` holds the other reviewers' raw reports, and
 nothing enforces the executor's denied paths, so a reviewer started in the
 target could read its siblings' findings (hazard 14). Their prompts carry every
-document they judge. The implementer reads the
-target in its own worktree, and its prompt tells it to read what each command
-runs before it chooses a file's content.
+document they judge. The implementer works in its own worktree through the
+tool server (section 11): it reads and writes files and runs commands there,
+and its prompt tells it to read what each command runs before it chooses a
+file's content.
 
 ### What the system writes
 
@@ -235,19 +257,20 @@ runs before it chooses a file's content.
 - The feature branch and worktree — source changes, one run at a time.
 - Derived artifacts — after every implementation phase commit, self-review
   commit and code-review remediation commit, the system runs each frozen
-  `derived:` command in the worktree. It requires that only derived paths
-  changed, commits them as the system, removes ignored output the command left,
-  and requires a clean tree. A command that fails or touches any other file
-  blocks the run. This is a system write, not an agent patch, so the scope gate
-  does not apply to it.
+  `derived:` command on the worktree in a fresh container. It requires that only
+  derived paths changed, commits them as the system, removes ignored output the
+  command left, and requires a clean tree. A command that fails or touches any
+  other file blocks the run. This is a system write, not an agent change, so the
+  scope gate does not apply to it. An agent's own edit to a derived path is
+  discarded before its diff is computed, and recorded as `*.derived.discarded`.
 
-Nothing else. A patch touching a path outside the run's signed scope is refused
-at apply time.
+Nothing else. An agent change touching a path outside the run's signed scope is
+refused when the system computes and gates the diff.
 
 ### Protected paths
 
-Agents may never write these, and the prohibition is enforced at the point a
-patch is applied rather than requested in a prompt:
+Agents may never write these, and the prohibition is enforced at the boundary
+that computes and gates an agent's diff rather than requested in a prompt:
 
 - agent definitions and the executor definition;
 - `governed.yaml`, policy, and configuration the run snapshotted;
@@ -263,10 +286,12 @@ because a prompt-level instruction is a request and this is a rule.
 Delivery happens on a retained branch named `gov/<slug>/<run-id>`, in a
 worktree created for the run under `.governance/worktrees/<run-id>`, never on
 the default branch and never in the operator's working copy. The base commit
-is recorded at run start and anchors the run's branch. A patch binds to the
-head in effect when it is proposed, and re-validation at apply time refuses it
-if head has moved in any path it touches since proposal. Only the system moves
-the run's branch, so the only head movement a patch can see is its own run's.
+is recorded at run start and anchors the run's branch. The worktree is checked
+out with LF line endings (`core.autocrlf=false`, `core.eol=lf`), so a Linux
+container and the host read the same bytes. Each patch dispatch's diff is
+computed against the head in effect when it started; the agent's `.git` is
+mounted read-only, and a head that moved during the dispatch is refused and kept
+as evidence. Only the system moves the run's branch.
 
 Retain the worktree after the run ends, including when it ends blocked. A failed
 run whose evidence has been deleted cannot be diagnosed, and the branch is the
@@ -277,18 +302,17 @@ deliverable.
 ### AgentResult
 
 A status of `proposed`, `blocked`, or `failed`; the agent, role, and executor
-identity; a summary; proposed content changes; proposed patches; diagnostics;
-and questions for a human. Plus risk, optional confidence, and an optional
-recommended transition.
+identity; a summary; proposed content changes; diagnostics; and questions for a
+human. Plus risk, optional confidence, and an optional recommended transition.
+The document stages and the reviewers answer in this shape.
 
-Two properties are easy to lose and expensive to omit.
-
-- **A proposed patch is bound to a base commit.** Required, not optional.
-  Re-validation at apply time refuses the patch if the branch has moved in any
-  path it touches since proposal, so a patch built on a stale tree is never
-  applied.
-- **Deletion is schema-legal but refused.** Accept the field so the schema does
-  not churn later; reject the operation until its semantics are designed.
+The three patch dispatches (each implementation phase, the self-review and
+code-review remediation) answer in a smaller one instead, the workspace reply
+(2026-10-19, `docs/features/sandboxed-implementer/plan.md`): a status of
+`completed` or `blocked`, a summary, and the tasks or findings it could not
+complete. A `completed` reply that still lists one contradicts itself and is
+refused as unusable. The self-review adds its critique. Their change is not in the reply:
+it is in the worktree, and the system computes it (below).
 
 ### Write modes
 
@@ -300,15 +324,35 @@ The system validates it against the schema for that document and writes it. Used
 where the system owns the file and there is no prior content to conflict with —
 a specification, a plan, a review.
 
-**Patch write.** The agent proposes a diff against a named base commit. The
-system re-validates the diff against the current head before applying, refuses
-it if the tree has moved, and checks every touched path against the run's signed
-scope. Used for source changes, where the agent is editing content it does not
-own.
+**Computed diff.** The agent changes files in the run's worktree through the
+tool server, inside a container (section 11). When the dispatch ends and its
+work container is proven gone, the system computes the diff itself
+(`commitWorkspace`, `src/workspace-commit.ts`):
 
-A content write cannot express a source change, and a patch write must never be
-accepted without its base commit. Everything downstream of approval is a patch
-write.
+1. the head must still be the dispatch's base;
+2. ignored output is removed from inside a container (hazard 22);
+3. every frozen derived path the agent changed returns to its base state;
+4. everything is staged, and the staged diff against the base is read with
+   rename detection off, so a rename arrives as an addition and a deletion;
+5. a deletion, a symbolic link, a nested Git repository (a gitlink, whose
+   agent-written config a later host `git status` would honour), and any path
+   outside the signed scope, protected, escaping the repository or naming a
+   task document is refused by name;
+6. an empty diff is "changed nothing";
+7. the system commits as itself, then checks the committed set equals the
+   staged set.
+
+A refusal first keeps the refused change as a commit on the base under
+`refs/buildworks/refused/<sha>`, outside every branch, and names it, because
+nothing else holds what the agent wrote. It then resets the worktree to the
+base and cleans it, so the branch keeps only committed work (2026-10-20 second
+code review). Used for source changes, where the agent is editing content
+it does not own. This replaced the patch write, in which the agent returned file
+contents bound to a base commit inside its JSON reply (hazards 1 and 20).
+
+A content write cannot express a source change, and nothing an agent writes
+reaches the run branch except a diff the system computed and gated. Everything
+downstream of approval is a computed diff.
 
 ### Finding identity
 
@@ -620,7 +664,7 @@ above it until a second harness exists.
 
 ```yaml
 id: claude-code
-command: [claude, -p, --output-format, stream-json, --include-partial-messages, --verbose, --restricted, --safe-mode, --tools, "Read,Glob,Grep", --disallowedTools, "Write,Edit,NotebookEdit,Bash,mcp__*", --permission-mode, dontAsk, --strict-mcp-config, --no-session-persistence]
+command: [claude, -p, --output-format, stream-json, --include-partial-messages, --verbose, --restricted, --tools, "Read,Glob,Grep", --disallowedTools, "Write,Edit,NotebookEdit,Bash", --permission-mode, dontAsk, --strict-mcp-config, --no-session-persistence]
 probe: [claude, --version]
 capabilities: [spec, plan, review, implementation]
 telemetry:                  # what this harness can actually report
@@ -644,6 +688,14 @@ must fail at configuration time, not at the moment it is dispatched. Allowed
 paths are stage-scoped: document stages write under `docs/features/**`; the
 implementation stage writes only inside the run's signed scope.
 
+The command carries no `--safe-mode` (2026-10-19,
+`docs/features/sandboxed-implementer/plan.md`): `--safe-mode` discards a server
+named by `--mcp-config`, and `--restricted` alone keeps every `CLAUDE.md` out
+(the spike's positive-controlled probes, Claude Code 2.1.303).
+`--strict-mcp-config` admits only servers named by `--mcp-config`, so a dispatch
+that names none, which is every dispatch but the three patch dispatches, sees no
+MCP server at all.
+
 ### Invocation
 
 **Non-interactive, one process per invocation.** Prompt on **stdin**, never in
@@ -663,12 +715,30 @@ which is why that definition names no model.
 implementation self-review and code-review remediation append `--json-schema`
 with the JSON Schema of the result they ask for, so the model submits its answer
 through the CLI's structured output tool instead of as reply text. The schema is
-a code constant beside the validator it mirrors (`PATCH_RESULT_SCHEMA` in
-`src/agent-result.ts`, `SELF_REVIEW_RESULT_SCHEMA` in
+a code constant beside the validator it mirrors (`WORKSPACE_REPLY_SCHEMA` in
+`src/agent-result.ts`, `SELF_REVIEW_REPLY_SCHEMA` in
 `src/implementation-self-review.ts`), not part of the frozen executor definition
 and not hashed into `agent_run.input_hash`. No other dispatch sends one: spec and
 plan authors, self-critiques, reviewers, the split and both reconcilers still
 return free text (hazard 1).
+
+**The same three dispatches act through the tool server** (2026-10-19,
+`docs/features/sandboxed-implementer/plan.md`). Each runs in its own sandbox
+(`dispatchInSandbox`, `src/dispatch.ts`): a private Docker network, an egress
+proxy container that admits only the frozen allowlist, and a work container with
+the frozen limits, the run's worktree mounted at `/work` and its `.git`
+read-only. The invocation appends `--mcp-config <file>`, naming BuildWorks' MCP
+stdio server (`src/tool-server.ts`, started with `process.execPath`, the
+frozen `docker` command and the stage's own Docker client variables, which the
+harness environment drops, so its calls reach the engine that created the
+container), `--allowedTools mcp__bw__*`, and `--max-budget-usd`
+with the frozen per-dispatch cap ($2.00). The server's four tools —
+`list_files`, `read_file`, `write_file` and `run_command` — act only inside the
+work container, refuse `.git`, absolute and `..` paths by name, run each command
+under the frozen ceiling (300 s, below the idle budget, hazard 19), and log each
+call before it runs. The agent has no other write path and no git. After the
+dispatch the proxy's log is captured, the sandbox is destroyed, and the system
+computes the diff (section 8) only once the work container is proven gone.
 
 **Probe before any run.** Run the probe command at setup and refuse to proceed
 if the executable does not resolve in the environment that will actually spawn
@@ -692,15 +762,18 @@ refuses without it.
 **The sandbox is enforced by the caller, not requested of the agent.** Allowed
 and denied paths, the command allowlist, and an explicit environment passthrough
 list. Pass named variables through; never inherit the whole environment, which
-leaks credentials and machine state into a model context.
+leaks credentials and machine state into a model context. A work container
+receives only its explicit `--env` assignments (the proxy settings), never the
+harness environment, so no credential reaches a command the agent runs.
 
-Enforcement starts at the invocation: proposal subprocesses run read-only
-(restricted mode, an explicit read-only tool inventory, no session
-persistence), and the stage asserts a clean worktree before and after the
-quiescent dispatch group. A code-review panel may contain concurrent read-only
-subprocesses, so its postcondition is checked once only after every member has
-settled; a prompt-level instruction is a request and the tree is checked, not
-trusted.
+Enforcement starts at the invocation: every subprocess runs restricted, with an
+explicit read-only built-in tool inventory and no session persistence. A
+read-only dispatch has nothing more, and the stage asserts a clean worktree
+before and after the quiescent dispatch group. A code-review panel may contain
+concurrent read-only subprocesses, so its postcondition is checked once only
+after every member has settled. A patch dispatch's writes reach only its
+container's worktree, and only the computed, gated diff reaches the branch; a
+prompt-level instruction is a request, and the tree is checked, not trusted.
 
 ### Reading the result
 
@@ -1017,9 +1090,9 @@ The **system name** is configuration, resolved at run start and frozen in the
 profile, defaulting to BuildWorks. The CLI, projection headers, and
 notifications read it; nothing functional depends on it.
 
-**After approval.** One authorization covers the rest. Each patch is validated
-against the signed scope and re-validated against its base commit, then applied
-without a fresh human decision. A stage
+**After approval.** One authorization covers the rest. Each computed diff is
+validated against the signed scope and the dispatch's base commit, then
+committed without a fresh human decision. A stage
 that fails its requirement blocks the run rather than requesting a new
 signature.
 
@@ -1027,10 +1100,22 @@ signature.
 the next ten items of the plan's `## Tasks` section in plan order (hazard 20).
 An item is a top-level list entry, and the lines indented beneath it travel with
 it; the ceiling below counts items, not lines. Deterministic code splits the
-parsed task items; no model chooses the boundaries. Each phase proposes against the head the previous phase committed,
-passes through the same scope, base/head, link, staged-set, committed-set, and
-clean-tree guards as a single patch always did, and is committed before the next
-phase starts. The ten-task size and an eight-phase ceiling are frozen in the
+parsed task items; no model chooses the boundaries. Each phase starts from the
+head the previous phase committed, in a clean worktree and its own sandbox
+(section 11), and changes files through the tool server. Its reply is the
+workspace reply (section 8): a status other than `completed` blocks, quoting the
+reply's summary and incomplete tasks. The system then computes the phase's diff
+(section 8) and commits it before the next phase starts. A refused diff blocks
+with `implementation.workspace.refused`, naming every refused path and its
+cause; a diff that cannot be computed or committed (a Git or Docker failure, or
+a moved head) blocks with `implementation.workspace.failed`; a phase that
+changed nothing blocks with `implementation.content.invalid`;
+`implementation.phase.apply` names the committed paths. A sandbox that cannot
+start blocks before the dispatch with `implementation.sandbox.failed`; a work
+container not proven removed blocks before anything reads the worktree, with
+`implementation.sandbox.quiescence.failed`, and no commit follows; any other
+teardown failure is recorded as `implementation.sandbox.teardown.failed` and
+changes nothing. The ten-task size and an eight-phase ceiling are frozen in the
 profile. A plan with more tasks than the ceiling covers refuses before the first
 dispatch is spent. A phase that fails blocks the run with no retry, and the
 commits of earlier phases stay on the branch as evidence. The stage records one
@@ -1041,14 +1126,9 @@ net range they read before phasing existed. A plan of ten tasks or fewer is one
 phase and behaves as it did.
 
 Each phase's prompt also states which signed-scope paths exist in the worktree
-at that moment and which do not, using the existence test the patch applier
-refuses on, so the implementer does not guess what earlier phases created.
-
-A phase drops a returned `modify` file whose content is unchanged at the
-phase's base, by the self-review's rule below, and records the dropped paths in
-an `implementation.phase.dropped` event, because such a file stages nothing and
-the applier refuses the patch (2026-10-14). A phase left with no file blocks the
-run, as the phase prompt says it will.
+at that moment and which do not, so the implementer does not guess what earlier
+phases created. Since the change is computed from the worktree, the lists are
+information, not a rule the boundary enforces.
 
 After each phase commits, and after the self-review commits a fix, two checks
 run in this order (2026-10-18). First, every `package.json` the range from the
@@ -1058,25 +1138,27 @@ dependency field that the list does not name for that manifest blocks the run
 with `implementation.dependency.unapproved`. Removals and version changes are
 not additions. Second, the frozen `derived:` commands regenerate the derived
 files and the system commits them (section 7), and a failure blocks the run
-with `implementation.derived.failed`. The next phase proposes against the
+with `implementation.derived.failed`. The next phase starts from the
 regenerated commit, and the gate event's head includes it. The self-review is
 shown the change with every derived path left out of its changed paths and
 diff.
 
 **The self-review** (operator decisions, 2026-10-13 and 2026-10-14). After the
-last phase commits, one more implementer dispatch reads the whole change, the
-plan and the specification, and returns a non-empty critique and zero or more
-patches against the last phase's commit. The patches pass the same guards as a
-phase and commit before verification. A file whose content is unchanged is
-dropped before applying, because it would stage nothing and the applier refuses
-such a patch; the pass event names each dropped path. Each critique entry is
+last phase commits, one more implementer dispatch, in its own sandbox, reads the
+whole change, the plan and the specification, fixes what it finds through the
+tool server, and returns a non-empty critique with the workspace reply. Its diff
+is computed against the last phase's commit by the same boundary as a phase and
+commits before verification; a diff that changes nothing is a pass with no
+commit, and the pass event names the changed paths. Each critique entry is
 recorded as an audit event, at most fifty, each cut at two thousand characters,
 and the retained raw output keeps it whole. A reply the stage cannot use — a
-failed dispatch, a body that does not parse, a refused result, a status other
-than proposed, or a malformed critique or patch — is recorded as skipped, and
-the stage passes on the last phase's commit, because every phase has already
-spent and code review still reads the change. A moved head, a dirty tree, or a
-refused patch blocks the run, because each shows the boundary failed.
+failed dispatch, a body that does not parse, a refused reply, a status other
+than `completed`, or a malformed critique — is recorded as skipped: whatever the
+dispatch changed is discarded, the skip event names the discarded paths, and the
+stage passes on the last phase's commit, because every phase has already spent
+and code review still reads the change (2026-10-19). A moved head, a refused
+diff, or a discard that cannot run blocks the run, because each shows the
+boundary failed.
 
 What phasing does not establish: each phase sees the plan and the checkout, not
 the reasoning of the previous phase, and no code review runs between phases.
@@ -1086,10 +1168,16 @@ describes process isolation only. `code_review` still reads the complete net
 diff once, after all phases and the self-review.
 
 **`verification`.** Fails closed when commands are missing or do not pass.
-Bounded remediation rounds are the retry budget; exhausting one blocks. When
-every command passes, it removes the ignored output the commands left in the
-worktree, such as installed packages and build output, and records each removed
-path in the audit (2026-10-13). Code review's clean-tree guard counts ignored
+Bounded remediation rounds are the retry budget; exhausting one blocks. The
+frozen commands run as argv in a fresh container over the worktree, never in a
+host shell (2026-10-19, `docs/features/sandboxed-implementer/plan.md`); each
+command's exit status is recorded inside the container, so a failing command is
+an outcome and a Docker failure is named as one. A sandbox that cannot start, an
+unreadable exit status, or a work container not proven removed records no
+result and blocks (`verification.sandbox.*`). When every command passes, it
+removes the ignored output the commands left in the worktree, such as installed
+packages and build output, from inside a container (hazard 22), and records
+each removed path in the audit (2026-10-13). Code review's clean-tree guard counts ignored
 entries so that an agent writing into an ignored path is visible; without the
 removal, every target whose commands install or build would fail that guard. No
 agent runs between the last command and the removal, so it hides nothing an
@@ -1130,20 +1218,22 @@ start. A round is one complete execution of the configured panel. When any
 finding is reported and another round remains, the code-review reconciler
 first judges every finding (below), and every finding it keeps is handed with
 all its attributable reports, together, to the frozen `implementer`. The implementer
-proposes code patches bound to the current reviewed commit; the system applies
-them through the same scope, protected-path, base/head, link, staged-set,
-committed-set, and clean-tree guards as initial implementation, then runs the
-same frozen verification commands against the resulting commit. Only a passing
+fixes them through the tool server in its own sandbox, starting from the current
+reviewed commit; the system computes, gates and commits its diff by the same
+boundary as initial implementation (section 8), then runs the same frozen
+verification commands against the resulting commit. A reply other than
+`completed`, a refused diff, or a sandbox failure blocks with
+`code_review.remediation.failed` or `code_review.sandbox.*`. Only a passing
 verified commit reaches the next complete panel, which receives a newly
-computed full diff from the original patch base. Between the patch commit and
+computed full diff from the original patch base. Between the remediation commit and
 verification, the remediation runs the unapproved-addition check over the range
 from the patch base (`code_review.dependency.unapproved`), then regenerates the
 derived files. The regenerated commit is the one verified, recorded as the
 remediation's resulting commit and reviewed next. Every panel's changed paths
 and diff leave the derived paths out, so a regenerated lockfile never reaches a
 review prompt. A reviewer that cites a derived path fails the location check,
-and its panel is invalid. A remediation that produces
-no patch or no new verified commit blocks instead of buying an identical
+and its panel is invalid. A remediation that changes
+nothing or produces no new verified commit blocks instead of buying an identical
 retry. Remediation, verification, and later panel rounds remain sequential;
 only independent reviewers within the current panel execute concurrently.
 
@@ -1181,7 +1271,7 @@ must agree. A rejected finding that the final panel reports again still counts
 at the gate, so the reconciler can turn a run that a remediation would have
 fixed into a block.
 
-The final panel never triggers another patch. It passes with no findings, and
+The final panel never triggers another remediation. It passes with no findings, and
 also passes when every final finding is below the frozen
 `codeReviewBlockingSeverity`; those below-threshold reports remain attributable
 evidence and are not described as harmless or resolved. It blocks when any
@@ -1452,8 +1542,8 @@ newest. Run creation still uses the same validation, audit, and profile-freeze
 transaction as `new-run`. One matching nonterminal run resumes; ambiguous
 nonterminal or terminal-only matches refuse with their IDs.
 
-The rule underneath all of this: **enforce what has consequences.** Applying a
-patch, resolving an approval, completing a run — those get gates, because
+The rule underneath all of this: **enforce what has consequences.** Committing an
+agent's change, resolving an approval, completing a run — those get gates, because
 getting them wrong costs money or corrupts the tree. Whether a proposal is
 "accepted" is bookkeeping, and bookkeeping enforced by code becomes state
 machines that must agree with each other.
@@ -1469,7 +1559,17 @@ report lives there.
   state.db          authoritative: runs, stages, agent runs, findings, audit
   raw/<run>/...     retained raw model output, one file per invocation
   prompts/<run>/<hash>.txt  the exact prompt each dispatch sent, named by its
-                            agent_run.input_hash; identical prompts share a file
+                            agent_run.input_hash; identical prompts share a file;
+                            a patch dispatch's MCP config sits beside it as
+                            <hash>-mcp.json
+  tools/<run>/<hash>.jsonl  a patch dispatch's tool-server log, one record per
+                            tool call written before the call runs, with each
+                            run_command's output in <hash>-call-<n>.log and
+                            the egress proxy's log, captured before teardown,
+                            in <hash>-proxy.log (2026-10-19,
+                            docs/features/sandboxed-implementer/plan.md)
+  bootstrap/        the guided starter's verification evidence from its run-0
+                    container
   content/<hash>    content-addressed overflow for oversized prompts and results
   profiles/<run>/   the frozen profile snapshot for a run
   documents/<run>/  the run's working spec.md and plan.md, which each stage's
@@ -1629,10 +1729,12 @@ defeated the only signed authorization gate in the pipeline. The configured
 public key, canonical payload, and detached signature are not secret.
 
 The repository's file signer remains an advanced external transport tool. It
-does not make a private key safe when the signer and verification share a host
-identity: verification is not filesystem-contained and receives `HOME` and
-`USERPROFILE`, so a predictable key under that identity is reachable even when
-its path is absent from the child environment. Guided mode therefore creates no
+does not make a private key safe when the signer and an agent session share a
+host identity: an agent session runs on the host as the operator, so a
+predictable key under that identity is reachable by any tool that reads files.
+Before 2026-10-19 verification commands were reachable the same way; they now
+run in a container that mounts only the worktree (below), but a key beside the
+agent's host process is still not safe. Guided mode therefore creates no
 default key and invokes no signer. An operator using the file signer must run it
 in an authority outside the BuildWorks host and return only the detached
 signature.
@@ -1642,23 +1744,32 @@ which is the operator's authority, not the host's. The browser reads the key
 file only when the operator selects it, signs the canonical payload, and sends
 only the detached signature; the dashboard host never receives, stores, or
 reads the key. This does not change where the key file lives. A key kept under
-the same user profile that verification commands run as is still reachable in
-the way the previous paragraph describes, and that limitation stands.
+the user profile the agent sessions run as is still reachable in the way the
+previous paragraph describes, and that limitation stands.
 
 **Pass named environment variables, never the whole environment.** Inheriting
 the parent environment puts credentials and machine state into a model context
-and into any transcript it produces. This applies to verification commands as
-well as to agent sessions: a verification command is code the implementer
-wrote, and full inheritance would put the approval public key inside its
-reach.
+and into any transcript it produces. A container goes further: it receives no
+host environment at all, only its explicit `--env` assignments (the proxy
+settings).
 
-**Verification commands are not otherwise contained, and that is a stated
-limitation rather than a claim.** They run with the run's worktree as their
-working directory, but nothing stops one from reading or writing elsewhere on
-the filesystem — `.governance/` is reachable by relative path — or from
-reaching the network, which is `inherit` for the executor too. The system has
-no sandboxing mechanism to apply here. Treat the named passthrough as the only
-containment that exists today, and see `docs/proposals/` for the options.
+**Commands are contained** (2026-10-19,
+`docs/features/sandboxed-implementer/plan.md`). Every command an agent runs
+through the tool server, every verification command and every derived command
+runs in a disposable container with every capability dropped,
+`no-new-privileges`, the frozen user and CPU, memory and process limits. It
+mounts only the run's worktree, with `.git` read-only, so the main repository's
+`.governance/` and the operator's profile are out of reach. Its only network is
+a private one whose sole exit is an egress proxy admitting the frozen allowlist
+(`registry.npmjs.org:443`); ignored-output removal runs with no network at all.
+The spike's attempted violations are re-run as integration tests against a real
+engine (`test/container.test.ts`). What it does not contain: the agent session
+itself runs on the host, read-only by its tool inventory (section 11), and a
+package the allowlist admits runs its install scripts inside the container.
+The system's own Git calls that commit or reset the worktree run on the host,
+so they run with the target's hooks turned off (`core.hooksPath` pointed at a
+path that holds none): a hook that runs repository content would otherwise run
+an agent's change there, as the operator (2026-10-20 code review).
 
 **Treat retained raw output and retained prompts as sensitive.** Raw output is
 model text produced from repository content and prompts, and a retained prompt
@@ -1794,16 +1905,24 @@ price.
   default two and configurable from one through five, frozen in the profile
   independently of panel size. Findings on a non-final panel first pass the
   code-review reconciler, whose call count is its own frozen limit of two or
-  three; the findings it keeps trigger one patch proposal and verification
+  three; the findings it keeps trigger one remediation and verification
   before another full panel. The final panel is the severity gate and never
-  triggers an unreviewed patch. A breach blocks rather than silently accepting
+  triggers an unreviewed change. A breach blocks rather than silently accepting
   or dispatching beyond the frozen budget.
 - **Implementation phases.** Ten plan task items per phase and at most eight
   phases, both frozen in the profile with the rest of policy. A plan that needs
   more phases than the ceiling refuses by name before the first implementer
   dispatch, never truncating the plan. A failed phase blocks the run and is not
   retried. The stage's dispatch ceiling is the phase ceiling plus one, for the
-  self-review after the last phase.
+  self-review after the last phase. Since 2026-10-19 a phase's change no longer
+  travels in its reply (section 8), so the phase size is no longer a
+  response-size workaround (hazard 20), only the cadence at which the change is
+  committed, checked and regenerated.
+- **Patch dispatches** (2026-10-19, `docs/features/sandboxed-implementer/plan.md`).
+  Each phase, the self-review and each remediation is capped at $2.00 through
+  `--max-budget-usd`, and each command it runs at 300 seconds, inside a
+  container limited to 2 CPUs, 4 GB of memory and 512 processes. All four values
+  are frozen in the profile's `sandbox`.
 - **Verification retries.** No limit is in force, because there is no round
   loop: the first verification command that does not pass blocks the run.
   Adding retries later means adding a limit of its own, frozen in the profile
@@ -2032,6 +2151,46 @@ record: the decision-fold prompt also states that the dependency list stays
 exactly as reviewed, because the fold refuses a changed list. The implementation
 and code-review stages refuse before their stage row when the signed
 specification no longer validates, since they now read its dependency list.
+
+**Sandboxed implementer — 2026-10-19.** The operator authorized building change
+1 of `docs/proposals/sandboxed-delivery-rework.md` as
+`docs/features/sandboxed-implementer/plan.md` states it, by invoking the plan's
+implementation on 2026-10-19. The reason: an implementer that can only read
+files cannot run what it builds, install a package or regenerate a lockfile,
+and its whole change had to travel inside one JSON reply (hazards 1 and 20).
+The change 1 spike (`docs/features/sandboxed-implementer-spike/plan.md`)
+passed every exit criterion, so the boundary moves rather than the guarantee.
+
+What it authorizes:
+- the three patch-producing dispatches (each implementation phase, the
+  implementation self-review and code-review remediation) change files through
+  BuildWorks' own MCP tool server, whose four tools act only inside a
+  disposable Docker container holding the run's worktree, with its `.git`
+  read-only. This replaces hazard 15's read-only mechanism for those three
+  dispatches;
+- the harness computes the diff from the worktree, gates it, and commits it.
+  That diff is the only path from an agent to the run branch;
+- verification and derived-file regeneration run in the same kind of
+  container;
+- the one executor command without `--safe-mode`, because `--safe-mode`
+  discards a server named by `--mcp-config` and `--restricted` alone keeps
+  every `CLAUDE.md` out (spike record, positive-controlled);
+- Docker as a prerequisite of every run that reaches implementation;
+- the operator's four choices: an agent's edit to a derived file is discarded
+  and the file regenerated; run worktrees are checked out with LF line
+  endings; each patch dispatch is capped at $2.00; and the command above;
+- Node/npm targets only, with the plan's four extension points kept open and
+  held by tests: the image is a frozen reference, network access is a frozen
+  allowlist, the run's private network can take more members, and no
+  package-manager logic sits in the sandbox, tool server or boundary code;
+- the plan's error-handling rules: every failure names its operation, object,
+  argv, exit code and stderr; no error is swallowed; and no host step runs
+  while a container that can write the worktree may survive.
+
+It does not authorize changes 4, 7 or 9, a second agent, a second image or
+ecosystem, target-declared environments
+(`docs/proposals/target-declared-environments.md`), service containers, network
+access beyond the frozen allowlist, or any paid run.
 
 ## 24. Non-goals
 

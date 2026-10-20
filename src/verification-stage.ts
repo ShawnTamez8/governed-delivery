@@ -47,8 +47,8 @@ interface VerificationRecord {
 /**
  * The verification stage (build order step 7), one row continuing section 5's
  * chain from the passed `implementation` row: run the commands frozen at run
- * start inside the run's worktree, under a named environment passthrough, a
- * bounded per-command ceiling, and a bounded output budget; prove before and
+ * start against the run's worktree, in one sandbox of the run's frozen image,
+ * under a bounded per-command ceiling and a bounded output budget; prove before and
  * after every command that the worktree still holds the commit implementation
  * left and is clean; retain every command's complete output before deciding
  * anything; and hand `delivery_check` a record naming the worktree and the
@@ -179,7 +179,9 @@ export async function runVerificationStage(
       timeoutSeconds: profile.policy.verifyCommandTimeoutSeconds,
       maxBytes: profile.policy.resultMaxBytes,
       retentionMaxBytes: profile.policy.verifyRetentionMaxBytes,
-      envPassthrough: profile.policy.verifyEnvPassthrough,
+      sandbox: profile.sandbox,
+      runId,
+      label: "verification",
       evidenceDir,
       audit: (action, summary) => audit(stage.id, `verification.${action}`, summary),
       progress: (command, because, durationMs) => {
@@ -188,6 +190,15 @@ export async function runVerificationStage(
         );
       },
     });
+    if (verifiedResult.record === null) {
+      // The sandbox failed, not a command: no verification result exists, so
+      // none is written for delivery to read.
+      const reason = `verification blocked: ${verifiedResult.reason}`;
+      store.completeStage(stage.id, "", "block");
+      store.setRunStatus(runId, "blocked");
+      audit(stage.id, "verification.gate.block", reason);
+      return { ok: false, reason };
+    }
     const { outcome, blockingCommand, commands } = verifiedResult.record;
     const blockReason = verifiedResult.reason;
     const record: VerificationRecord = {

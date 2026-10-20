@@ -2,8 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { PATCH_ACTIONS, PATCH_RESULT_SCHEMA, STATUSES, validateAgentResult } from "../src/agent-result.ts";
-import { IMPLEMENTER } from "../src/agents/implementer.ts";
+import {
+  describeIncompleteReply,
+  parseWorkspaceReply,
+  WORKSPACE_REPLY_SCHEMA,
+  WORKSPACE_STATUSES,
+  validateAgentResult,
+  validateWorkspaceReply,
+} from "../src/agent-result.ts";
+import { RESULT_SCHEMA as SPIKE_RESULT_SCHEMA } from "../scripts/sandbox-spike/spike-target.ts";
 
 function validResult(): Record<string, unknown> {
   return {
@@ -53,33 +60,6 @@ test("missing fields are refused naming the field", () => {
   }
 });
 
-test("a patch without baseCommit is refused", () => {
-  const result = validateAgentResult("spec-author", {
-    ...validResult(),
-    proposedPatches: [{ files: [{ path: "a.ts", action: "add", content: "x" }] }],
-  });
-  assert.deepEqual(result, { ok: false, reason: "proposed patch is missing baseCommit" });
-});
-
-test("a delete action is schema-legal but refused", () => {
-  const result = validateAgentResult("spec-author", {
-    ...validResult(),
-    proposedPatches: [{ baseCommit: "abc", files: [{ path: "a.ts", action: "delete" }] }],
-  });
-  assert.deepEqual(result, { ok: false, reason: "deletion is schema-legal but refused" });
-});
-
-test("an invalid patch action is refused naming the allowed values", () => {
-  const result = validateAgentResult("spec-author", {
-    ...validResult(),
-    proposedPatches: [{ baseCommit: "abc", files: [{ path: "a.ts", action: "rename" }] }],
-  });
-  assert.deepEqual(result, {
-    ok: false,
-    reason: "invalid patch action rename: allowed values are add, modify",
-  });
-});
-
 test("a blocked result validates fine", () => {
   const result = validateAgentResult("spec-reviewer-traceability", {
     status: "blocked",
@@ -101,34 +81,70 @@ test("unknown extra fields are ignored, never an error", () => {
   assert.equal(result.ok, true);
 });
 
-// --- the patch schema (docs/features/structured-patch-output/plan.md, Task 2) ---
-
 const RECORDED = join(process.cwd(), "test", "fixtures", "recorded");
-const SMALL_PROBE: { provenance: { schema: unknown }; calls: { resultLineVerbatim: string }[] } = JSON.parse(
-  readFileSync(join(RECORDED, "json-schema-probe-web-calculator-phase-2.json"), "utf8")
-);
-const GATE_PROBE: { calls: { label: string; resultLineVerbatim: string }[] } = JSON.parse(
-  readFileSync(join(RECORDED, "json-schema-probe-gate.json"), "utf8")
-);
 
-test("the patch schema is the schema the 2026-10-14 probes sent", () => {
-  assert.deepEqual(PATCH_RESULT_SCHEMA, SMALL_PROBE.provenance.schema);
+// docs/features/sandboxed-implementer/plan.md, Task 6: the reply a patch
+// dispatch returns once it changes files through the tool server.
+
+test("the workspace reply schema is the schema the spike's recorded phase sent", () => {
+  assert.deepEqual(WORKSPACE_REPLY_SCHEMA, SPIKE_RESULT_SCHEMA);
+  assert.deepEqual(WORKSPACE_REPLY_SCHEMA.properties.status.enum, [...WORKSPACE_STATUSES]);
 });
 
-test("the patch schema's enums are the validator's own constants", () => {
-  const properties = PATCH_RESULT_SCHEMA.properties;
-  assert.deepEqual(properties.status.enum, [...STATUSES]);
-  assert.deepEqual(properties.proposedPatches.items.properties.files.items.properties.action.enum, [...PATCH_ACTIONS]);
+test("the spike's recorded structured answer passes the workspace reply validator", () => {
+  const recorded = JSON.parse(readFileSync(join(RECORDED, "sandbox-spike-crew-chatter-phase-2.json"), "utf8")) as {
+    resultLine: { structured_output: unknown };
+  };
+  const result = validateWorkspaceReply(recorded.resultLine.structured_output);
+  assert.ok(result.ok, result.ok ? "" : result.reason);
+  assert.equal(result.value.status, "completed");
+  assert.deepEqual(Object.keys(recorded.resultLine.structured_output as object).sort(), [...WORKSPACE_REPLY_SCHEMA.required].sort());
 });
 
-test("every structured answer recorded under the patch schema passes the validator", () => {
-  const calls = [...SMALL_PROBE.calls, ...GATE_PROBE.calls];
-  assert.equal(calls.length, 4);
-  for (const call of calls) {
-    const output = JSON.parse(call.resultLineVerbatim).structured_output;
-    const result = validateAgentResult(IMPLEMENTER.id, output);
-    assert.ok(result.ok, result.ok ? "" : result.reason);
-    assert.equal(result.value.status, "proposed");
-    assert.ok(result.value.proposedPatches!.length > 0);
+test("each malformed workspace reply is refused by name", () => {
+  const valid = { status: "completed", summary: "did it", incompleteTasks: [] };
+  const cases: [unknown, string][] = [
+    [null, "the reply must be an object"],
+    [[valid], "the reply must be an object"],
+    [{ ...valid, status: "proposed" }, 'invalid reply status "proposed": allowed values are completed, blocked'],
+    [{ ...valid, summary: " " }, "the reply summary must be a non-empty string"],
+    [{ ...valid, incompleteTasks: "none" }, "the reply incompleteTasks must be an array of strings"],
+    [{ ...valid, incompleteTasks: [3] }, "the reply incompleteTasks must be an array of strings"],
+    // Each prompt defines completed as nothing left undone (src/prompts.ts).
+    [{ ...valid, incompleteTasks: ["task 7", "task 8"] }, "the reply says completed but lists incomplete tasks: task 7; task 8"],
+  ];
+  for (const [raw, reason] of cases) {
+    assert.deepEqual(validateWorkspaceReply(raw), { ok: false, reason }, JSON.stringify(raw));
   }
+  assert.deepEqual(validateWorkspaceReply({ ...valid, status: "blocked", incompleteTasks: ["task 3"] }), {
+    ok: true,
+    value: { status: "blocked", summary: "did it", incompleteTasks: ["task 3"] },
+  });
+});
+
+test("a stage reads the spike's recorded answer from its serialized structured output, and names each refusal", () => {
+  // `parseEnvelope` hands a --json-schema dispatch's structured_output on serialized.
+  const recorded = JSON.parse(readFileSync(join(RECORDED, "sandbox-spike-crew-chatter-phase-2.json"), "utf8")) as {
+    resultLine: { structured_output: unknown };
+  };
+  const read = parseWorkspaceReply(JSON.stringify(recorded.resultLine.structured_output), validateWorkspaceReply);
+  assert.deepEqual(read, { ok: true, value: recorded.resultLine.structured_output });
+  assert.deepEqual(parseWorkspaceReply('{"status": "done"}', validateWorkspaceReply), {
+    ok: false,
+    reason: 'implementer reply refused: invalid reply status "done": allowed values are completed, blocked',
+  });
+  const unparsed = parseWorkspaceReply("not json", validateWorkspaceReply);
+  assert.equal(unparsed.ok, false);
+  if (!unparsed.ok) assert.match(unparsed.reason, /^implementer body refused: /);
+});
+
+test("an incomplete reply is quoted whole, so the block reason carries what the agent said", () => {
+  assert.equal(
+    describeIncompleteReply({ status: "blocked", summary: "the registry was unreachable", incompleteTasks: ["task 3", "task 4"] }),
+    "status blocked, not completed: the registry was unreachable; incomplete: task 3; task 4"
+  );
+  assert.equal(
+    describeIncompleteReply({ status: "blocked", summary: "stopped", incompleteTasks: [] }),
+    "status blocked, not completed: stopped; incomplete: none listed"
+  );
 });

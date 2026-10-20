@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import * as promptBuilders from "../src/prompts.ts";
 import {
@@ -36,11 +36,11 @@ import { validatePanelRequest } from "../src/select.ts";
 import { readSpecDeclaredArtifacts, validateSpecDoc } from "../src/spec-doc.ts";
 import { validateDesignSplit } from "../src/design-split.ts";
 import { planPhases, validatePlanDoc, type PlanPhase } from "../src/plan-doc.ts";
-import { PATCH_RESULT_SCHEMA, validateAgentResult, type AgentResult } from "../src/agent-result.ts";
+import { validateAgentResult, validateWorkspaceReply, WORKSPACE_REPLY_SCHEMA, type AgentResult, type WorkspaceReply } from "../src/agent-result.ts";
 import { CLAUDE_CODE } from "../src/executor.ts";
 import { parseEnvelope } from "../src/harness.ts";
 import { validateSelfCritique } from "../src/self-critique.ts";
-import { SELF_REVIEW_RESULT_SCHEMA, validateImplementationSelfReview } from "../src/implementation-self-review.ts";
+import { SELF_REVIEW_REPLY_SCHEMA, validateSelfReviewReply } from "../src/implementation-self-review.ts";
 import {
   planNormativeNodes,
   specNormativeNodes,
@@ -183,9 +183,9 @@ const REMEDIATION_REREAD_RULE =
 const SAME_DEFECT_SWEEP_RULE =
   "When you fix a defect, look for the same defect in every other file of the approved scope and fix it there too.";
 
-/** The phase prompt's task check (the same plan, Task 3). */
+/** The phase prompt's task check (the same plan, Task 3), over the files the phase changed now that none are returned. */
 const PHASE_READ_BACK_RULE =
-  "Before you return, read back each task of this phase, and each acceptance criterion whose line in the plan's Coverage section names a file you return, against the files you return, and correct any file that leaves one unmet.";
+  "Before you answer, read back each task of this phase, and each acceptance criterion whose line in the plan's Coverage section names a file you changed, against the files you changed, and correct any file that leaves one unmet.";
 
 /** The reconcilers' dependent-sections rule (the same plan, Task 4), one per document. */
 const SPEC_RECONCILE_DEPENDENTS_RULE =
@@ -208,10 +208,31 @@ const SELF_REVIEW_RULES = [
 ];
 const SELF_REVIEW_REPLY_RULES = [
   "critique holds one entry per problem you found and what you did about it, or one entry saying what you checked when you found nothing.",
-  "proposedPatches holds only the files whose content you change, each with its complete new content, and is [] when nothing needs fixing.",
-  "Never return a file whose content you did not change.",
+  "Change only the files that need a fix, and leave the checkout as it is when nothing needs fixing.",
   "These commands run right after this review, and the first that fails blocks the run.",
 ];
+
+/**
+ * The tool-mode contract the three patch prompts share
+ * (docs/features/sandboxed-implementer/plan.md, Task 9), the spike's measured
+ * preamble generalized (`PREAMBLE` in scripts/sandbox-spike/phase-replay.ts,
+ * kept in test/fixtures/recorded/sandbox-spike-crew-chatter-phase-2.json), plus
+ * what commitWorkspace and gatePatchPaths refuse.
+ */
+const WORKSPACE_TOOLS_RULES = [
+  "Change files only through the bw tools: list_files, read_file, write_file and run_command. Paths are relative to the checkout root.",
+  "run_command runs a shell command in the checkout inside a Linux container with Node and npm; the package registry is the only network host it can reach.",
+  "You have no other way to change files and no git: the system computes your changes from the checkout and commits them.",
+  "Change only the approved scope paths listed below; any other change is refused, and so is deleting or renaming a file or making a symbolic link.",
+  "A tasks.md path is prohibited because task execution and status belong in run-state database rows.",
+];
+
+/** The reply every patch prompt advertises and the sentence stating its status values, per prompt. */
+const WORKSPACE_STATUS_RULES = {
+  phase: "status must be one of completed, blocked: completed when every task of this phase is done, and blocked otherwise, with each task you could not complete listed in incompleteTasks.",
+  "self-review": "status must be one of completed, blocked: completed when you finished this self-review, and blocked otherwise, with each task or acceptance criterion you could not fix listed in incompleteTasks.",
+  remediation: "status must be one of completed, blocked: completed when every finding below is fixed, and blocked otherwise, with each finding you could not fix listed in incompleteTasks.",
+};
 
 /**
  * The three patch prompts' reply rule (docs/features/structured-patch-output/plan.md):
@@ -239,8 +260,15 @@ const PLAN_NO_INVENTED_CHANGE_RULE =
  */
 const DERIVED_ARTIFACT_SENTENCES = [
   "After every implementation and remediation commit, the system regenerates these files itself by running their commands, and commits them:",
-  "Never declare, propose or edit these files: the system refuses a specification that declares one and a patch that changes one.",
+  "Never declare, propose or edit these files: the system refuses a specification that declares one.",
 ];
+/**
+ * The patch prompts' added sentence (docs/features/sandboxed-implementer/plan.md,
+ * Task 9, quoted from the plan): commitWorkspace returns every derived path to
+ * its base state before the commit.
+ */
+const DERIVED_REWRITE_RULE =
+  "Installing packages can rewrite the derived files listed above; the system discards your changes to them and regenerates them.";
 
 /** The lockfile entry the static-web starter declares, parsed by the real parser. */
 const WITH_DERIVED: VerificationConfig = (() => {
@@ -278,10 +306,9 @@ function structuredPatchPrompts(verification: VerificationConfig = VERIFICATION)
   ];
 }
 
-// The patch rules (baseCommit, the add/modify action enum, whole-file
-// content, the no-deletion rule) arrived with the implementation stage —
-// the step whose prompts request patches, exactly as this comment promised
-// they would.
+// The patch rules now state the tool-mode contract (WORKSPACE_TOOLS_RULES): the
+// reply carries no file, so the old baseCommit, action and content rules left
+// with the patch reply (docs/features/sandboxed-implementer/plan.md, Task 9).
 const CONSTRAINT_STRINGS = [
   "proposed",
   "blocked",
@@ -312,37 +339,27 @@ const CONSTRAINT_STRINGS = [
   "every line in ## Coverage is a normative node",
   "Do not casually edit, polish, or rephrase coverage entries",
   "proposedContentChanges.plan",
-  // The patch rules the implementation prompt states.
-  "proposedPatches",
-  "baseCommit",
-  "add",
-  "modify",
-  "deletion",
-  "content",
-  "A tasks.md path is prohibited",
+  // The tool-mode contract the three patch prompts state.
+  ...WORKSPACE_TOOLS_RULES,
+  ...Object.values(WORKSPACE_STATUS_RULES),
+  // JSON escaping, which the design split prompt still states for its free-text
+  // reply. Hazard 1, item 10: team-notes run 9 returned a 113,649-character
+  // patch with one raw line break inside a string; the extractor now repairs
+  // that, and the rule tells the model where the repair is a backstop.
   "JSON-standard escaping",
   "literal UTF-8",
   "\\uXXXX",
-  "\\UXXXXXXXX",
-  // Hazard 1, item 10: team-notes run 9 returned a 113,649-character patch with
-  // one raw line break inside a string. The extractor now repairs that, and the
-  // prompts state the rule so the model is told where the repair is a backstop.
   "Write every line break inside a JSON string",
   "never put a raw line break or tab inside a string literal",
   // The phase rules (docs/features/phased-implementation/plan.md, hazard 20).
   // One dispatch is one phase of the plan's tasks, and the model keeps no memory
-  // between phases, so what each rule says is stated where it is requested. The
-  // add-versus-modify rule is the one the patch applier enforces: add over an
-  // existing file and modify over a missing one are both refused.
+  // between phases, so what each rule says is stated where it is requested.
   "Implement only the tasks listed under",
   "Earlier phases are already committed in this checkout",
-  "takes action modify with its complete new file content",
-  "use action add only for a file that does not exist yet",
-  // The existence lists (team-notes run 7, hazard 20): phase 4 proposed modify
-  // for a scope path no phase had created.
-  "take the action each list states, and never modify a path listed as not existing yet",
+  // The existence lists (team-notes run 7, hazard 20), now information.
+  "The two lists after the scope list name which scope paths exist in the checkout right now.",
   "do not implement a task outside this phase",
-  "Return at least one file",
+  "Change at least one file: a phase that changes nothing blocks the run.",
   // The code-review contract's constrained fields. The severity rubric is
   // here because the gate compares severity against a threshold frozen in the
   // profile (hazard 3): a threshold over an unstated scale is a comparison
@@ -574,6 +591,7 @@ const CONSTRAINT_STRINGS = [
   // package-lock.json that a read-only implementer cannot write. Also kept above
   // the criterion-quality block.
   ...DERIVED_ARTIFACT_SENTENCES,
+  DERIVED_REWRITE_RULE,
   ...DEPENDENCIES_SCHEMA_SENTENCES,
   DEPENDENCY_ADDITION_RULE,
   FOLD_KEEPS_DEPENDENCIES_RULE,
@@ -841,40 +859,45 @@ test("the generated plan reviewer prompt states the finding constraints and name
 /** One phase of one: what a plan of at most one phase's tasks gets. */
 const ONLY_PHASE: PlanPhase = { index: 1, count: 1, firstTask: 1, tasks: ["Build the thing"] };
 
-test("the generated implementation author prompt states the patch contract", () => {
+test("the generated implementation author prompt states the tool-mode contract", () => {
   const baseCommit = "b".repeat(40);
   const prompt = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", [
     "src/a1.ts",
     "test/a1.test.ts",
   ], baseCommit, ONLY_PHASE, [], VERIFICATION);
   for (const constraint of [
-    "proposed, blocked, failed",
-    "proposedPatches",
-    "action one of add, modify",
-    "deletion is refused by the system",
-    "complete new file content",
-    "A tasks.md path is prohibited",
-    "Run no git commands",
-    "This checkout is read-only for you",
+    ...WORKSPACE_TOOLS_RULES,
+    WORKSPACE_STATUS_RULES.phase,
     "Patch only these paths:",
     STRUCTURED_OUTPUT_RULE,
-    "JSON-standard escaping",
-    "literal UTF-8",
-    "\\uXXXX",
-    "\\UXXXXXXXX",
-    // Asserted per prompt: the remediation prompt carries its own copy, and the
-    // whole-file scan passes while either one still does.
-    "Write every line break inside a JSON string, including each line break of a file's content, as `\\n` and every tab as `\\t`; never put a raw line break or tab inside a string literal.",
   ]) {
     assert.ok(prompt.includes(constraint), `implementation author prompt missing: ${constraint}`);
   }
-  // The base commit is handed to the model, not left to it to compute: it is
-  // what the system verifies every proposed patch against.
-  assert.ok(prompt.includes(`baseCommit must be exactly: ${baseCommit}`));
-  // The signed scope is stated as the only paths a patch may touch, one
-  // `- <path>` line per entry.
+  // The checkout's commit is named, and the signed scope is stated as the only
+  // paths a change may touch, one `- <path>` line per entry.
+  assert.ok(prompt.includes(`in the repository checkout, which is at commit ${baseCommit}.`));
   assert.ok(prompt.includes("- src/a1.ts"));
   assert.ok(prompt.includes("- test/a1.test.ts"));
+  // Nothing of the patch reply survives: no file travels in the answer, and the
+  // checkout is no longer read-only to the implementer.
+  for (const gone of ["proposedPatches", "baseCommit", "read-only", "action one of add, modify", "complete new file content"]) {
+    assert.ok(!prompt.includes(gone), `implementation author prompt still says: ${gone}`);
+  }
+});
+
+test("the reply each patch prompt advertises validates against the schema its dispatch sends", () => {
+  for (const { name, prompt } of structuredPatchPrompts()) {
+    const advertised = /in exactly this shape:\n(\{[^\n]+\})\n/.exec(prompt);
+    assert.ok(advertised, `${name} prompt advertises one reply shape`);
+    const parsed = JSON.parse(advertised![1]!) as Record<string, unknown>;
+    const schema = name === "self-review" ? SELF_REVIEW_REPLY_SCHEMA : WORKSPACE_REPLY_SCHEMA;
+    assert.deepEqual(Object.keys(parsed).sort(), [...schema.required].sort(), `${name}: exactly the schema's fields`);
+    const result = name === "self-review" ? validateSelfReviewReply(parsed) : validateWorkspaceReply(parsed);
+    assert.ok(result.ok, result.ok ? "" : result.reason);
+    assert.ok(prompt.includes(WORKSPACE_STATUS_RULES[name as keyof typeof WORKSPACE_STATUS_RULES]), `${name} states its status values`);
+    // The contract sits straight after the opening paragraph's first line.
+    assert.ok(prompt.includes(`\n${WORKSPACE_TOOLS_RULES.join("\n")}\n\n`), `${name} carries the tool-mode contract whole`);
+  }
 });
 
 test("the implementation prompt names its phase, lists that phase's tasks verbatim, and states the phase rules", () => {
@@ -892,8 +915,8 @@ test("the implementation prompt names its phase, lists that phase's tasks verbat
     "tasks 11 through 12 of the approved plan",
     "Earlier phases are already committed in this checkout",
     "Later phases will implement the remaining tasks, so do not implement a task outside this phase",
-    "A file that already exists in the checkout takes action modify with its complete new file content; use action add only for a file that does not exist yet.",
-    "Return at least one file",
+    "The two lists after the scope list name which scope paths exist in the checkout right now.",
+    "Change at least one file",
     "Tasks for this phase (tasks 11 through 12 of the approved plan):",
     "- src/server/auth.ts: implement sessions.",
     "- src/server/auth.ts: implement password reset.",
@@ -914,7 +937,7 @@ test("the implementation prompt names its phase, lists that phase's tasks verbat
   assert.equal(/This is phase (\d+) of (\d+)\./.exec(prompt)!.slice(1).join("/"), "2/6");
 });
 
-test("the implementation prompt splits the scope into paths that exist (modify) and paths that do not (add)", () => {
+test("the implementation prompt splits the scope into paths that exist and paths that do not", () => {
   const scope = ["src/a.ts", "src/b.ts", "src/c.ts"];
   const phase: PlanPhase = { index: 4, count: 8, firstTask: 31, tasks: ["src/c.ts: implement it."] };
   const prompt = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", scope, "b".repeat(40), phase, ["src/a.ts", "src/c.ts"], VERIFICATION);
@@ -922,8 +945,8 @@ test("the implementation prompt splits the scope into paths that exist (modify) 
   // heading, up to the next blank line.
   const list = (heading: string): string[] =>
     /\n\n([\s\S]*?)\n\n/.exec(prompt.slice(prompt.indexOf(heading) + heading.length))![1]!.split("\n");
-  assert.deepEqual(list("these exist in the checkout now, so each takes action modify:"), ["- src/a.ts", "- src/c.ts"]);
-  assert.deepEqual(list("these do not exist yet, so each takes action add:"), ["- src/b.ts"]);
+  assert.deepEqual(list("these exist in the checkout now:"), ["- src/a.ts", "- src/c.ts"]);
+  assert.deepEqual(list("these do not exist yet:"), ["- src/b.ts"]);
   // Both lists come after the scope list and before the phase's tasks, and the
   // scope block the emitters scrape still ends at its first blank line.
   assert.ok(prompt.indexOf("Patch only these paths:") < prompt.indexOf("these exist in the checkout now"));
@@ -931,9 +954,9 @@ test("the implementation prompt splits the scope into paths that exist (modify) 
   assert.deepEqual(/Patch only these paths:\n\n([\s\S]*?)\n\n/.exec(prompt)![1]!.split("\n"), scope.map((p) => `- ${p}`));
   // An empty side is stated as `none.`, not left as a heading with nothing under it.
   const none = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", scope, "b".repeat(40), phase, [], VERIFICATION);
-  assert.ok(none.includes("so each takes action modify:\n\nnone.\n\n"));
+  assert.ok(none.includes("these exist in the checkout now:\n\nnone.\n\n"));
   const all = buildImplementationAuthorPrompt(IMPLEMENTER, "# plan", "# spec", scope, "b".repeat(40), phase, scope, VERIFICATION);
-  assert.ok(all.includes("so each takes action add:\n\nnone.\n\n"));
+  assert.ok(all.includes("these do not exist yet:\n\nnone.\n\n"));
 });
 
 test("the first phase claims no earlier work, the last claims no later work, and a lone phase claims neither", () => {
@@ -950,10 +973,10 @@ test("the first phase claims no earlier work, the last claims no later work, and
   assert.ok(!prompts.last.includes("Later phases will implement"));
   assert.ok(!prompts.only.includes("Earlier phases are already committed"));
   assert.ok(!prompts.only.includes("Later phases will implement"));
-  // The add-versus-modify rule is true of every phase: a target may already
+  // The existence-lists sentence is true of every phase: a target may already
   // hold files, so it is not conditional on the phase number.
   for (const [name, prompt] of Object.entries(prompts)) {
-    assert.ok(prompt.includes("use action add only for a file that does not exist yet"), name);
+    assert.ok(prompt.includes("The two lists after the scope list name which scope paths exist in the checkout right now."), name);
     assert.ok(prompt.includes("This is phase "), name);
     // The task check before returning (implementation-self-review Task 3) is true of every phase.
     assert.ok(prompt.includes(PHASE_READ_BACK_RULE), `${name} phase prompt missing the read-back rule`);
@@ -973,23 +996,19 @@ test("the implementation prompt states the frozen commands after the path lists 
   for (const sentence of [...VERIFICATION_BLOCK_SENTENCES, ...IMPLEMENTER_VERIFICATION_SENTENCES]) at(sentence);
   // The block, the two lines and the dependency rule are one paragraph, then the phase's tasks.
   at(`${VERIFICATION_BLOCK_SENTENCES[2]}\n${IMPLEMENTER_VERIFICATION_SENTENCES.join("\n")}\n${DEPENDENCY_ADDITION_RULE}\n\nTasks for this phase (tasks 11 through 11`);
-  assert.ok(at("these do not exist yet, so each takes action add:") < at(VERIFICATION_BLOCK_SENTENCES[0]!));
+  assert.ok(at("these do not exist yet:") < at(VERIFICATION_BLOCK_SENTENCES[0]!));
   assert.ok(at(IMPLEMENTER_VERIFICATION_SENTENCES.at(-1)!) < at("Tasks for this phase (tasks"));
   // The emitter reads the scope block and both lists as the text after a heading
   // up to the first blank line. No command line may fall inside any of them.
   const blockAfter = (heading: string): string[] =>
     /\n\n([\s\S]*?)\n\n/.exec(prompt.slice(at(heading) + heading.length))![1]!.split("\n");
-  for (const heading of [
-    "Patch only these paths:",
-    "these exist in the checkout now, so each takes action modify:",
-    "these do not exist yet, so each takes action add:",
-  ]) {
+  for (const heading of ["Patch only these paths:", "these exist in the checkout now:", "these do not exist yet:"]) {
     const scraped = blockAfter(heading);
     assert.ok(scraped.every((line) => line === "none." || scope.includes(line.slice(2))), `${heading} holds only paths: ${scraped.join(" | ")}`);
     for (const line of RUN_10_COMMAND_LINES) assert.ok(!scraped.includes(line), `${heading} holds a command line`);
   }
-  // The values the emitter scrapes once each: the base commit and the phase.
-  assert.equal([...prompt.matchAll(/baseCommit must be exactly: [0-9a-f]{40}/g)].length, 1);
+  // The values the emitter scrapes once each: the scope block and the phase.
+  assert.equal(prompt.split("Patch only these paths:").length, 2);
   assert.equal([...prompt.matchAll(/This is phase (\d+) of (\d+)\./g)].length, 1);
 });
 
@@ -1014,9 +1033,11 @@ function selfReviewPrompt(verification: VerificationConfig = VERIFICATION): stri
 test("the self-review prompt states its marker and every rule, and is never a phase", () => {
   const prompt = selfReviewPrompt();
   assert.ok(prompt.startsWith(`${promptBuilders.IMPLEMENTATION_PROMPT_PREFIX} ${IMPLEMENTER.id}\n\n${SELF_REVIEW_MARKER}\n`));
-  for (const text of [...SELF_REVIEW_RULES, ...SELF_REVIEW_REPLY_RULES, "This checkout is read-only for you",
-    "Run no git commands", "JSON-standard escaping", "deletion is refused by the system", "A tasks.md path is prohibited"]) {
+  for (const text of [...SELF_REVIEW_RULES, ...SELF_REVIEW_REPLY_RULES, ...WORKSPACE_TOOLS_RULES, WORKSPACE_STATUS_RULES["self-review"]]) {
     assert.ok(prompt.includes(text), `self-review prompt missing: ${text}`);
+  }
+  for (const gone of ["proposedPatches", "baseCommit", "read-only"]) {
+    assert.ok(!prompt.includes(gone), `self-review prompt still says: ${gone}`);
   }
   // The emitter looks for a phase only after this marker, and a phase sentence here would route it as one.
   assert.ok(!prompt.includes("This is phase"), "the self-review prompt reads as a phase");
@@ -1024,15 +1045,14 @@ test("the self-review prompt states its marker and every rule, and is never a ph
   for (const word of ["reviewer", "finding"]) assert.ok(!prompt.includes(word), `self-review prompt says ${word}`);
 });
 
-test("the self-review prompt names the last commit as the base and keeps the scraped blocks in the phase prompt's shape", () => {
+test("the self-review prompt names the last commit and keeps the scraped blocks in the phase prompt's shape", () => {
   const prompt = selfReviewPrompt();
-  assert.equal([...prompt.matchAll(/baseCommit must be exactly: ([0-9a-f]{40})/g)].map((m) => m[1]).join(), "d".repeat(40));
-  assert.ok(prompt.includes(`Your working directory is the repository checkout at commit ${"d".repeat(40)}`));
+  assert.ok(prompt.includes(`The repository checkout is at commit ${"d".repeat(40)}, which holds the complete change`));
   const blockAfter = (heading: string): string[] =>
     /\n\n([\s\S]*?)\n\n/.exec(prompt.slice(prompt.indexOf(heading) + heading.length))![1]!.split("\n");
   assert.deepEqual(/Patch only these paths:\n\n([\s\S]*?)\n\n/.exec(prompt)![1]!.split("\n"), ["- src/a.ts", "- src/b.ts", "- src/c.ts"]);
-  assert.deepEqual(blockAfter("these exist in the checkout now, so each takes action modify:"), ["- src/a.ts", "- src/c.ts"]);
-  assert.deepEqual(blockAfter("these do not exist yet, so each takes action add:"), ["- src/b.ts"]);
+  assert.deepEqual(blockAfter("these exist in the checkout now:"), ["- src/a.ts", "- src/c.ts"]);
+  assert.deepEqual(blockAfter("these do not exist yet:"), ["- src/b.ts"]);
   assert.deepEqual(blockAfter("Changed paths:"), ["- src/a.ts", "- src/c.ts"]);
   // The commands follow the lists, then the plan and specification, and the diff comes last.
   assert.ok(prompt.includes(`\n\n${RUN_10_COMMAND_LINES.join("\n")}\n\n`), "the commands are one block, in order");
@@ -1044,27 +1064,15 @@ test("the self-review prompt names the last commit as the base and keeps the scr
   for (const line of RUN_10_COMMAND_LINES) assert.ok(!other.includes(line), `still carries ${line}`);
 });
 
-test("the result and selfReview the self-review prompt advertises validate against their receiving validators", () => {
-  const prompt = selfReviewPrompt();
-  const advertised = /Return exactly a JSON AgentResult object with this shape:\n(\{[^\n]+\})/.exec(prompt);
-  assert.ok(advertised, "the prompt advertises one AgentResult shape");
-  const parsed = JSON.parse(advertised![1]!);
-  const result = validateAgentResult(IMPLEMENTER.id, parsed);
-  assert.ok(result.ok, result.ok ? "" : result.reason);
-  assert.equal(result.value.status, "proposed");
-  assert.deepEqual(result.value.proposedPatches, []);
-  const selfReview = validateImplementationSelfReview((parsed.proposedContentChanges as { selfReview: unknown }).selfReview);
-  assert.ok(selfReview.ok, selfReview.ok ? "" : selfReview.reason);
-});
-
 test("each patch prompt asks for one structured answer and no longer asks for the object as text", () => {
   for (const { name, prompt } of structuredPatchPrompts()) {
     assert.ok(prompt.includes(STRUCTURED_OUTPUT_RULE), `${name} prompt missing the structured-output rule`);
     assert.equal(prompt.split(STRUCTURED_OUTPUT_RULE).length, 2, `${name} prompt states the rule once`);
     assert.ok(!prompt.includes("Output the JSON object"), `${name} prompt still asks for the object as text`);
-    // The rule sits between the advertised shape and the escaping lines it governs.
-    assert.ok(prompt.indexOf("Return exactly a JSON AgentResult object with this shape:") < prompt.indexOf(STRUCTURED_OUTPUT_RULE), name);
-    assert.ok(prompt.indexOf(STRUCTURED_OUTPUT_RULE) < prompt.indexOf("JSON-standard escaping"), name);
+    // The rule follows the advertised shape and its status sentence.
+    const status = WORKSPACE_STATUS_RULES[name as keyof typeof WORKSPACE_STATUS_RULES];
+    assert.ok(prompt.indexOf("in exactly this shape:") < prompt.indexOf(status), name);
+    assert.ok(prompt.indexOf(status) < prompt.indexOf(STRUCTURED_OUTPUT_RULE), name);
   }
   // The dispatches that still read free text keep their sentence and never get the rule.
   for (const prompt of [
@@ -1980,7 +1988,7 @@ test("the correctness, security, and resilience prompts carry distinct protected
   assert.notEqual(security, resilience);
 });
 
-test("the remediation prompt carries every report and advertises a valid patch result", () => {
+test("the remediation prompt carries every report and states the tool-mode contract", () => {
   const base = "b".repeat(40);
   const prompt = buildCodeReviewRemediationPrompt(
     IMPLEMENTER,
@@ -2018,20 +2026,16 @@ test("the remediation prompt carries every report and advertises a valid patch r
     "SPEC-TEXT",
     "PLAN-TEXT",
     "DIFF-TEXT",
-    base,
-    "Do not return finding dispositions, proposals, waivers, questions",
-    "JSON-standard escaping",
-    "literal UTF-8",
-    "\\uXXXX",
-    "\\UXXXXXXXX",
-    "Write every line break inside a JSON string, including each line break of a file's content, as `\\n` and every tab as `\\t`; never put a raw line break or tab inside a string literal.",
+    `The repository checkout is at commit ${base}: read the surrounding code there.`,
+    "Do not edit the approved specification, plan, governance policy, or agent definitions, and do not answer with finding dispositions, proposals, waivers or questions.",
+    ...WORKSPACE_TOOLS_RULES,
+    WORKSPACE_STATUS_RULES.remediation,
   ]) {
     assert.ok(prompt.includes(text), `remediation prompt missing: ${text}`);
   }
-  const advertised = /Return exactly a JSON AgentResult object with this shape:\n(\{[^\n]+\})/.exec(prompt);
-  assert.ok(advertised);
-  const result = validateAgentResult(IMPLEMENTER.id, JSON.parse(advertised![1]!));
-  assert.equal(result.ok, true, result.ok ? "" : result.reason);
+  for (const gone of ["proposedPatches", "baseCommit", "JSON-standard escaping"]) {
+    assert.ok(!prompt.includes(gone), `remediation prompt still says: ${gone}`);
+  }
   // The two run 6 rules, asserted on the built prompt and placed before the scope.
   for (const rule of [REMEDIATION_REREAD_RULE, SAME_DEFECT_SWEEP_RULE]) {
     const at = prompt.indexOf(rule);
@@ -2060,29 +2064,38 @@ function derivedAwarePrompts(verification: VerificationConfig): Array<{ name: st
 }
 
 const DERIVED_BLOCK = `${DERIVED_ARTIFACT_SENTENCES[0]}\n${DERIVED_ENTRY_LINE}\n${DERIVED_ARTIFACT_SENTENCES[1]}`;
+const PATCH_PROMPT_NAMES = ["phase", "self-review", "remediation"];
+
+/** The derived lines a prompt renders: the three patch prompts add the rewrite sentence. */
+function derivedBlockFor(name: string): string {
+  return PATCH_PROMPT_NAMES.includes(name) ? `${DERIVED_BLOCK}\n${DERIVED_REWRITE_RULE}` : DERIVED_BLOCK;
+}
 
 test("with a derived artifact, every prompt that states the commands lists it after them, and remediation lists it before the scope", () => {
   for (const { name, prompt } of derivedAwarePrompts(WITH_DERIVED)) {
+    const block = derivedBlockFor(name);
     if (name === "remediation") {
       assert.ok(
-        prompt.includes(`${SAME_DEFECT_SWEEP_RULE}\n${DEPENDENCY_ADDITION_RULE}\n\n${DERIVED_BLOCK}\n\nApproved scope:\n\n`),
+        prompt.includes(`${SAME_DEFECT_SWEEP_RULE}\n${DEPENDENCY_ADDITION_RULE}\n\n${block}\n\nApproved scope:\n\n`),
         `${name} prompt does not list the derived file before its scope:\n${prompt}`
       );
     } else {
       assert.ok(
-        prompt.includes(`${VERIFICATION_BLOCK_SENTENCES[2]}\n\n${DERIVED_BLOCK}`),
+        prompt.includes(`${VERIFICATION_BLOCK_SENTENCES[2]}\n\n${block}\n`),
         `${name} prompt does not list the derived file after its commands`
       );
     }
     assert.equal(prompt.split(DERIVED_ARTIFACT_SENTENCES[0]!).length, 2, `${name} states the derived files once`);
+    assert.equal(prompt.includes(DERIVED_REWRITE_RULE), PATCH_PROMPT_NAMES.includes(name), `${name}: the rewrite sentence only in a patch prompt`);
   }
 });
 
 test("with no derived artifact, every one of those prompts is the same prompt without the derived lines", () => {
   const withDerived = derivedAwarePrompts(WITH_DERIVED);
   for (const [index, { name, prompt }] of derivedAwarePrompts(VERIFICATION).entries()) {
-    for (const sentence of DERIVED_ARTIFACT_SENTENCES) assert.ok(!prompt.includes(sentence), `${name} states ${sentence}`);
-    const removed = name === "remediation" ? `\n${DERIVED_BLOCK}\n` : `\n\n${DERIVED_BLOCK}`;
+    for (const sentence of [...DERIVED_ARTIFACT_SENTENCES, DERIVED_REWRITE_RULE]) assert.ok(!prompt.includes(sentence), `${name} states ${sentence}`);
+    const block = derivedBlockFor(name);
+    const removed = name === "remediation" ? `\n${block}\n` : `\n\n${block}`;
     assert.equal(withDerived[index]!.prompt.replace(removed, ""), prompt, `${name}: the derived lines are the only difference`);
   }
 });
@@ -2343,6 +2356,9 @@ const router: {
   selectPromptRoute(prompt: string): PromptRoute;
 } = await import(pathToFileURL(CLI_ROUTER).href);
 
+/** The tool server's flag, as the harness appends it to a patch dispatch; the emitters never read the file. */
+const TOOL_SERVER_ARGS = ["--mcp-config", "unused.json"];
+
 function routingPrompts(document: string) {
   const hash = "a".repeat(64);
   const base = "b".repeat(40);
@@ -2357,10 +2373,10 @@ function routingPrompts(document: string) {
     { builder: "buildPlanSelfCritiquePrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanSelfCritiquePrompt(PLAN_AUTHOR, document, document, hash, scope, PANEL, VERIFICATION) },
     { builder: "buildPlanReviewPrompt", prefix: "PLAN_REVIEW_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanReviewPrompt(SPEC_REVIEWER_TRACEABILITY, document, document) },
     { builder: "buildPlanReconcilePrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanReconcilePrompt(PLAN_AUTHOR, document, document, hash, scope, PAIR, VERIFICATION) },
-    { builder: "buildImplementationAuthorPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, document, document, scope, base, ONLY_PHASE, [], VERIFICATION), schema: PATCH_RESULT_SCHEMA },
-    { builder: "buildImplementationSelfReviewPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationSelfReviewPrompt(IMPLEMENTER, document, document, scope, base, scope, scope, document, VERIFICATION), schema: SELF_REVIEW_RESULT_SCHEMA },
+    { builder: "buildImplementationAuthorPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, document, document, scope, base, ONLY_PHASE, [], VERIFICATION), schema: WORKSPACE_REPLY_SCHEMA },
+    { builder: "buildImplementationSelfReviewPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationSelfReviewPrompt(IMPLEMENTER, document, document, scope, base, scope, scope, document, VERIFICATION), schema: SELF_REVIEW_REPLY_SCHEMA },
     { builder: "buildCodeReviewPrompt", prefix: "CODE_REVIEW_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, document, document, scope, document, base) },
-    { builder: "buildCodeReviewRemediationPrompt", prefix: "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, document, document, scope, base, scope, document, [], VERIFICATION), schema: PATCH_RESULT_SCHEMA },
+    { builder: "buildCodeReviewRemediationPrompt", prefix: "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, document, document, scope, base, scope, document, [], VERIFICATION), schema: WORKSPACE_REPLY_SCHEMA },
     { builder: "buildCodeReviewReconcilerPrompt", prefix: "CODE_REVIEW_RECONCILER_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewReconcilerPrompt([], document, document, document, base) },
     { builder: "buildDesignSplitPrompt", prefix: "DESIGN_SPLIT_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildDesignSplitPrompt(SPEC_AUTHOR, document, document, SPLIT_CONTEXT) },
   ];
@@ -2433,8 +2449,8 @@ test("CLI fixture directly forwards exact stdin bytes to every selected emitter 
     }
     for (const { builder, prompt, schema } of routingPrompts("# Wrapped\r\nUTF-8 🌙\r\n")) {
       const input = Buffer.concat([Buffer.from(prompt), Buffer.from([0, 255, 13, 10])]);
-      // A patch dispatch's schema travels to the selected emitter; nothing else does.
-      const schemaArgs = schema === undefined ? [] : ["--json-schema", JSON.stringify(schema)];
+      // A patch dispatch's schema and tool server travel to the selected emitter; nothing else does.
+      const schemaArgs = schema === undefined ? [] : ["--json-schema", JSON.stringify(schema), ...TOOL_SERVER_ARGS];
       const child = spawnSync(process.execPath, [fixture, "--model", "m", ...schemaArgs], { input });
       assert.equal(child.status, 7, child.stderr.toString());
       assert.deepEqual(child.stdout, input, `${builder}: router must forward original bytes, not decoded text`);
@@ -2445,17 +2461,28 @@ test("CLI fixture directly forwards exact stdin bytes to every selected emitter 
   }
 });
 
-/** `schema` is the --json-schema a patch dispatch sends; the answer is then read from structured_output. */
-function runRouter(cwd: string, prompt: string, agentId: string, args: string[] = [], schema?: object): AgentResult {
-  const schemaArgs = schema === undefined ? [] : ["--json-schema", JSON.stringify(schema)];
-  const child = spawnSync(process.execPath, [CLI_ROUTER, ...args, "--model", "fixture-model", ...schemaArgs], {
+function runRouter(cwd: string, prompt: string, agentId: string, args: string[] = []): AgentResult {
+  const child = spawnSync(process.execPath, [CLI_ROUTER, ...args, "--model", "fixture-model"], {
     cwd, input: prompt, encoding: "utf8",
   });
   assert.equal(child.status, 0, child.stderr);
-  const envelope = parseEnvelope(CLAUDE_CODE, child.stdout, schema !== undefined);
+  const envelope = parseEnvelope(CLAUDE_CODE, child.stdout);
   const result = validateAgentResult(agentId, JSON.parse(envelope.resultText));
   assert.ok(result.ok, result.ok ? "" : result.reason);
   return result.value;
+}
+
+/** A patch dispatch: the workspace reply schema and the tool server are sent, and the answer is read from structured_output. */
+function runWorkspaceRouter(cwd: string, prompt: string, args: string[] = []): WorkspaceReply {
+  const child = spawnSync(
+    process.execPath,
+    [CLI_ROUTER, ...args, "--model", "fixture-model", "--json-schema", JSON.stringify(WORKSPACE_REPLY_SCHEMA), ...TOOL_SERVER_ARGS],
+    { cwd, input: prompt, encoding: "utf8" }
+  );
+  assert.equal(child.status, 0, child.stderr);
+  const reply = validateWorkspaceReply(JSON.parse(parseEnvelope(CLAUDE_CODE, child.stdout, true).resultText));
+  assert.ok(reply.ok, reply.ok ? "" : reply.reason);
+  return reply.value;
 }
 
 function proposedChanges(result: AgentResult): Record<string, unknown> {
@@ -2530,22 +2557,10 @@ test("CLI fixture composes existing emitters for all builder families with recei
 
     const base = "b".repeat(40);
     const implementationPrompt = buildImplementationAuthorPrompt(IMPLEMENTER, planText as string, specText as string, scope, base, planPhases(plan.value.taskItems, 10)[0]!, [], VERIFICATION);
-    const implemented = runRouter(root, implementationPrompt, IMPLEMENTER.id, [], PATCH_RESULT_SCHEMA);
-    assert.equal(implemented.status, "proposed");
-    const patches = implemented.proposedPatches!;
-    assert.deepEqual(patches.flatMap((patch) => patch.files.map((file) => file.path)), scope);
-    for (const patch of patches) {
-      assert.equal(patch.baseCommit, base);
-      for (const file of patch.files) {
-        assert.equal(file.action, "add");
-        assert.equal(typeof file.content, "string");
-        const path = join(root, file.path);
-        mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(path, file.content!);
-      }
-    }
-    assert.equal(runRouter(root, implementationPrompt, IMPLEMENTER.id, ["--implementation-mode", "non-proposed"], PATCH_RESULT_SCHEMA).status, "failed");
-    assert.equal(runRouter(root, implementationPrompt, IMPLEMENTER.id, ["--implementation-mode", "base-mismatch"], PATCH_RESULT_SCHEMA).proposedPatches![0]!.baseCommit, "0".repeat(40));
+    // In tool mode the emitter writes the scope paths into its working directory.
+    assert.equal(runWorkspaceRouter(root, implementationPrompt).status, "completed");
+    for (const path of scope) assert.ok(existsSync(join(root, path)), `${path} was written`);
+    assert.equal(runWorkspaceRouter(root, implementationPrompt, ["--implementation-mode", "non-proposed"]).status, "blocked");
 
     for (const mode of ["ok", "high", "low", "high-then-clean"]) {
       for (const reviewer of [CODE_REVIEWER_CORRECTNESS, CODE_REVIEWER_SECURITY, CODE_REVIEWER_STATE_INTEGRITY]) {
@@ -2560,20 +2575,16 @@ test("CLI fixture composes existing emitters for all builder families with recei
       }
     }
     const remediationPrompt = buildCodeReviewRemediationPrompt(IMPLEMENTER, specText as string, planText as string, scope, base, scope, "", [], VERIFICATION);
-    const remediated = runRouter(root, remediationPrompt, IMPLEMENTER.id, ["--code-review-mode", "high-then-clean"], PATCH_RESULT_SCHEMA);
-    assert.equal(remediated.proposedPatches![0]!.baseCommit, base);
-    const repaired = remediated.proposedPatches![0]!.files[0]!;
-    assert.equal(repaired.path, scope[0]);
-    assert.equal(repaired.action, "modify");
-    writeFileSync(join(root, repaired.path), repaired.content!);
+    assert.equal(runWorkspaceRouter(root, remediationPrompt, ["--code-review-mode", "high-then-clean"]).status, "completed");
+    const repaired = readFileSync(join(root, scope[0]!), "utf8");
+    assert.ok(repaired.endsWith("\ncode-review-remediated\n"), "the remediation wrote its fix into the first scope path");
     const after = runRouter(root, buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, specText as string, planText as string, scope, "", base), CODE_REVIEWER_CORRECTNESS.id, ["--code-review-mode", "high-then-clean"]);
     assert.deepEqual(proposedChanges(after).findings, []);
-    for (const mode of ["remediation-empty", "remediation-wrong-base", "remediation-outside-scope"]) {
-      const result = runRouter(root, remediationPrompt, IMPLEMENTER.id, ["--code-review-mode", mode], PATCH_RESULT_SCHEMA);
-      if (mode === "remediation-empty") assert.deepEqual(result.proposedPatches, []);
-      if (mode === "remediation-wrong-base") assert.equal(result.proposedPatches![0]!.baseCommit, "0".repeat(40));
-      if (mode === "remediation-outside-scope") assert.ok(!scope.includes(result.proposedPatches![0]!.files[0]!.path));
-    }
+    assert.equal(runWorkspaceRouter(root, remediationPrompt, ["--code-review-mode", "remediation-empty"]).status, "completed");
+    assert.equal(readFileSync(join(root, scope[0]!), "utf8"), repaired, "remediation-empty changes nothing");
+    assert.equal(runWorkspaceRouter(root, remediationPrompt, ["--code-review-mode", "remediation-blocked"]).status, "blocked");
+    runWorkspaceRouter(root, remediationPrompt, ["--code-review-mode", "remediation-outside-scope"]);
+    assert.ok(existsSync(join(root, "outside.txt")) && !scope.includes("outside.txt"), "remediation-outside-scope wrote outside the scope");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

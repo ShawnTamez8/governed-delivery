@@ -30,7 +30,7 @@ export interface CommandOutcome {
 }
 
 export interface RunVerifyCommandOptions {
-  /** The run's worktree: commands verify the branch, not the main tree. */
+  /** The directory the spawned client starts in; the run's worktree. */
   cwd: string;
   timeoutSeconds: number;
   /**
@@ -54,9 +54,14 @@ export interface RunVerifyCommandOptions {
    * then, so the caller blocks either way.
    */
   retentionMaxBytes: number;
-  envPassthrough: string[];
   /** Where the complete output is retained, regardless of the budget. */
   evidencePath: string;
+  /**
+   * A first line written to the evidence file before any output, naming where
+   * the command ran (`runInSandbox`: the container, the image and the argv).
+   * It counts toward neither ceiling.
+   */
+  evidenceHeader?: string;
 }
 
 const WINDOWS = process.platform === "win32";
@@ -70,9 +75,15 @@ const WINDOWS = process.platform === "win32";
 const CLOSE_GRACE_MS = 1000;
 
 /**
- * Run one verification command inside the run's worktree, under a named
- * environment, a bounded wall-clock ceiling, and a bounded in-memory output
- * budget.
+ * Spawn one command's client under a bounded wall-clock ceiling and a bounded
+ * in-memory output budget. Its only caller is `runInSandbox`
+ * (`src/container.ts`), which hands it the `docker exec` argv that runs a
+ * verification, derived or tool-server command inside a run's container
+ * (docs/features/sandboxed-implementer/plan.md). The argv is spawned directly,
+ * with no shell: `docker` is a native executable (hazard 8), and its `sh -c`
+ * wrapper carries `$`, `;` and `>`, which `cmd.exe` would interpret. The
+ * Docker client inherits this process's environment; the container receives
+ * only the frozen `--env` list `createSandbox` gives it (section 17).
  *
  * **Retention is independent of the budget.** Every chunk of stdout and
  * stderr is written to the evidence file as it arrives, before any exit code
@@ -83,7 +94,7 @@ const CLOSE_GRACE_MS = 1000;
  * blocks on it.
  *
  * The promise resolves for every ordinary failure — a non-zero exit, a
- * timeout, a shell that cannot start — so the caller can retain evidence and
+ * timeout, a client that cannot start — so the caller can retain evidence and
  * decide. It rejects only when the evidence file itself cannot be written,
  * because that is the one failure where continuing would claim a retention
  * the run does not have.
@@ -93,26 +104,14 @@ export function runVerifyCommand(
   opts: RunVerifyCommandOptions
 ): Promise<CommandOutcome> {
   const started = Date.now();
-  // Section 17: named variables only, never the whole environment. This
-  // stage runs implementer-authored code, and a spread of `process.env` would
-  // hand it BW_APPROVAL_PUBLIC_KEY.
-  const env: Record<string, string> = {};
-  for (const name of opts.envPassthrough) {
-    const value = process.env[name];
-    if (value !== undefined) env[name] = value;
-  }
 
   mkdirSync(dirname(opts.evidencePath), { recursive: true });
   const evidence = createWriteStream(opts.evidencePath);
+  if (opts.evidenceHeader !== undefined) evidence.write(opts.evidenceHeader);
 
   const child: ChildProcess = spawn(cmd.command[0], cmd.command.slice(1), {
-    // hazard 8: `npm run typecheck` is an npm shim, and a shim needs shell
-    // resolution on Windows. The parser constrains every token to characters
-    // the shell leaves alone, so the argv the audit records is the argv that
-    // ran.
-    shell: WINDOWS,
+    shell: false,
     stdio: ["ignore", "pipe", "pipe"],
-    env,
     detached: !WINDOWS, // so the negative pid reaches the whole group
     cwd: opts.cwd,
   });

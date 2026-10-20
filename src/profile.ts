@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { AGENTS, type AgentDefinition } from "./agents.ts";
 import { loadPublicKey } from "./approval.ts";
 import { canonicalJson, sha256Hex } from "./canonical.ts";
+import { HOST_KILL_GRACE_SECONDS, type FrozenSandbox } from "./container.ts";
 import { CLAUDE_CODE, type ExecutorDefinition } from "./executor.ts";
 import { profileDir, profilePath } from "./paths.ts";
 import {
@@ -91,6 +92,16 @@ export interface Profile {
    * choice, never what a missing variable turns into — `new-run` refuses then.
    */
   narrationCheck: NarrationCheckConfig | null;
+  /**
+   * The sandbox every implementation phase, self-review, remediation,
+   * verification and derived regeneration runs in, frozen at `new-run`
+   * (docs/features/sandboxed-implementer/plan.md): the image ID `new-run`
+   * built or found, and the seeded limits, egress allowlist, user,
+   * environment, per-command ceiling and per-dispatch budget. A run whose image
+   * is later absent locally refuses at its next sandbox; a fresh run is the
+   * recovery, because a rebuild is not guaranteed to reproduce the ID.
+   */
+  sandbox: FrozenSandbox;
   frozenAt: string;
   agents: AgentDefinition[];
   executor: ExecutorDefinition;
@@ -255,6 +266,9 @@ export function freezeProfile(
   startingCommit: string | null,
   model: string,
   verification: VerificationConfig,
+  // `createRunIntake` builds it from the image `new-run` found or built
+  // (`seededSandbox`); tests freeze the Docker stand-in's.
+  sandbox: FrozenSandbox,
   // A test seam, and the only one here: the seeded registry seats three
   // distinct specialties and the configured maximum is two, so the staffing
   // refusal below is unreachable with the real agents and could otherwise
@@ -272,6 +286,16 @@ export function freezeProfile(
   const modelError = validateModelName(model);
   if (modelError !== null) {
     throw new Error(modelError);
+  }
+  const sandboxError = invalidSandboxReason(sandbox);
+  if (sandboxError !== null) {
+    throw new Error(`cannot freeze a profile for run ${runId}: ${sandboxError}`);
+  }
+  // Hazard 19: a tool call emits nothing while its command runs, and the host
+  // kills the client `HOST_KILL_GRACE_SECONDS` after the ceiling, so the
+  // ceiling stays below the idle budget of the executor this run freezes.
+  if (sandbox.commandTimeoutSeconds + HOST_KILL_GRACE_SECONDS >= CLAUDE_CODE.sandbox.idleTimeoutSeconds) {
+    throw new Error(`cannot freeze a profile for run ${runId}: the sandbox commandTimeoutSeconds (${sandbox.commandTimeoutSeconds}) plus the ${HOST_KILL_GRACE_SECONDS}-second host grace must stay below the executor's ${CLAUDE_CODE.sandbox.idleTimeoutSeconds}-second idle budget (hazard 19)`);
   }
   const policy = buildPolicy();
   // Section 11's rule, applied to the panel: a configuration the registry
@@ -325,6 +349,7 @@ export function freezeProfile(
     verification,
     after,
     narrationCheck,
+    sandbox,
     frozenAt: new Date().toISOString(),
     agents: [...agents].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     executor: CLAUDE_CODE,
@@ -457,6 +482,11 @@ export function invalidProfileReason(profile: unknown): string | null {
   if (p.narrationCheck !== null && !isNarrationCheckConfig(p.narrationCheck)) {
     return `the frozen profile narrationCheck must be null or { endpoint, deployment, deploymentType, threshold, timeoutMs, questionHash }, found ${JSON.stringify(p.narrationCheck)}`;
   }
+  if (!("sandbox" in p)) {
+    return "the frozen profile carries no sandbox: it predates the sandboxed implementer, and a run frozen without one cannot say which image or limits its commands run under";
+  }
+  const sandboxReason = invalidSandboxReason(p.sandbox);
+  if (sandboxReason !== null) return sandboxReason;
   if (typeof p.frozenAt !== "string" || p.frozenAt === "") {
     return `the frozen profile frozenAt must be a non-empty string, found ${JSON.stringify(p.frozenAt)}`;
   }
@@ -510,6 +540,48 @@ export function invalidProfileReason(profile: unknown): string | null {
 
 function isPositiveInt(v: unknown): boolean {
   return typeof v === "number" && Number.isInteger(v) && v > 0;
+}
+
+const SANDBOX_KEYS = "commandTimeoutSeconds,dockerCommand,egressAllowlist,env,imageId,limits,patchDispatchBudgetUsd,user";
+
+/**
+ * Is this a sandbox the stages can run? Exactly the `FrozenSandbox` keys: a
+ * non-empty Docker argv, a full image ID, limits Docker accepts in form, a
+ * positive per-command ceiling, `host:port` allowlist entries, `NAME=value`
+ * assignments, a user, and a dollar budget. Returns the reason, or null. The
+ * ceiling's relation to the executor's idle budget is checked where the two
+ * meet, in `freezeProfile`.
+ */
+export function invalidSandboxReason(v: unknown): string | null {
+  const refuse = (detail: string) => `the frozen profile sandbox ${detail}, found ${JSON.stringify(v)}`;
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return refuse("must be an object");
+  const s = v as Record<string, unknown>;
+  if (Object.keys(s).sort().join(",") !== SANDBOX_KEYS) return refuse(`must have exactly the keys ${SANDBOX_KEYS}`);
+  const strings = (x: unknown) => Array.isArray(x) && x.every((e) => typeof e === "string" && e !== "");
+  if (!strings(s.dockerCommand) || (s.dockerCommand as string[]).length === 0) return refuse("dockerCommand must be a non-empty array of non-empty strings");
+  if (typeof s.imageId !== "string" || !/^sha256:[0-9a-f]{64}$/.test(s.imageId)) return refuse("imageId must be a full sha256 image ID");
+  const limits = s.limits as Record<string, unknown> | null;
+  if (
+    limits === null || typeof limits !== "object" || Array.isArray(limits) ||
+    Object.keys(limits).sort().join(",") !== "cpus,memory,pidsLimit" ||
+    typeof limits.cpus !== "string" || !/^\d+(\.\d+)?$/.test(limits.cpus) ||
+    typeof limits.memory !== "string" || !/^\d+[bkmg]$/i.test(limits.memory) ||
+    !isPositiveInt(limits.pidsLimit)
+  ) {
+    return refuse("limits must be { cpus, memory, pidsLimit } in Docker's forms");
+  }
+  if (!isPositiveInt(s.commandTimeoutSeconds)) return refuse("commandTimeoutSeconds must be a positive integer");
+  if (!Array.isArray(s.egressAllowlist) || !s.egressAllowlist.every((e) => typeof e === "string" && /^[a-z0-9.-]+:\d+$/.test(e))) {
+    return refuse("egressAllowlist must be an array of host:port entries");
+  }
+  if (!Array.isArray(s.env) || !s.env.every((e) => typeof e === "string" && /^[A-Za-z_][A-Za-z0-9_]*=/.test(e))) {
+    return refuse("env must be an array of NAME=value assignments");
+  }
+  if (typeof s.user !== "string" || s.user === "") return refuse("user must be a non-empty string");
+  if (typeof s.patchDispatchBudgetUsd !== "string" || !/^\d+(\.\d{1,2})?$/.test(s.patchDispatchBudgetUsd)) {
+    return refuse("patchDispatchBudgetUsd must be a dollar amount such as 2.00");
+  }
+  return null;
 }
 
 /**

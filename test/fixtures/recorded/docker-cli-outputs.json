@@ -1,0 +1,405 @@
+{
+  "provenance": {
+    "plan": "docs/features/sandboxed-implementer/plan.md, Task 4",
+    "capturedAt": "2026-10-20T01:03:07.268Z",
+    "host": "Windows 11, Docker Desktop (WSL 2)",
+    "docker": "linux 29.8.2",
+    "node": "v26.4.0",
+    "claude": "2.1.304 (Claude Code)",
+    "image": {
+      "tag": "bw-sandbox:9a000fdd1de3",
+      "imageId": "sha256:9612ebf8441c7cdd6e035a085ea669eecef9443375de66c3ec5c56f65b5aee3e"
+    },
+    "method": "Each form ran once through spawnSync('docker', argv) with no shell, in the order listed; container and network names were random per capture. Nothing was dropped from stdout or stderr."
+  },
+  "forms": [
+    {
+      "label": "version",
+      "argv": [
+        "docker",
+        "version",
+        "--format",
+        "{{.Server.Os}} {{.Server.Version}}"
+      ],
+      "exitCode": 0,
+      "stdout": "linux 29.8.2\n",
+      "stderr": ""
+    },
+    {
+      "label": "image inspect, present tag",
+      "argv": [
+        "docker",
+        "image",
+        "inspect",
+        "--format",
+        "{{.Id}}",
+        "bw-sandbox:9a000fdd1de3"
+      ],
+      "exitCode": 0,
+      "stdout": "sha256:9612ebf8441c7cdd6e035a085ea669eecef9443375de66c3ec5c56f65b5aee3e\n",
+      "stderr": ""
+    },
+    {
+      "label": "image inspect, present ID",
+      "argv": [
+        "docker",
+        "image",
+        "inspect",
+        "--format",
+        "{{.Id}}",
+        "sha256:9612ebf8441c7cdd6e035a085ea669eecef9443375de66c3ec5c56f65b5aee3e"
+      ],
+      "exitCode": 0,
+      "stdout": "sha256:9612ebf8441c7cdd6e035a085ea669eecef9443375de66c3ec5c56f65b5aee3e\n",
+      "stderr": ""
+    },
+    {
+      "label": "image inspect, absent",
+      "argv": [
+        "docker",
+        "image",
+        "inspect",
+        "--format",
+        "{{.Id}}",
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      ],
+      "exitCode": 1,
+      "stdout": "\n",
+      "stderr": "Error response from daemon: No such image: sha256:0000000000000000000000000000000000000000000000000000000000000000\n"
+    },
+    {
+      "label": "network create",
+      "argv": [
+        "docker",
+        "network",
+        "create",
+        "--internal",
+        "--label",
+        "bw.repo=record",
+        "bw-record-bc49b0-net"
+      ],
+      "exitCode": 0,
+      "stdout": "685ced365be4d1fdaff4b57fc47918570833bb1718f0a294c623609644ad593b\n",
+      "stderr": ""
+    },
+    {
+      "label": "run -d",
+      "argv": [
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "bw-record-bc49b0-work",
+        "--label",
+        "bw.repo=record",
+        "--network",
+        "685ced365be4d1fdaff4b57fc47918570833bb1718f0a294c623609644ad593b",
+        "--user",
+        "node",
+        "-v",
+        "C:\\Users\\tamezs\\AppData\\Local\\Temp\\1\\bw-record-LnNtB4\\w:/work",
+        "-w",
+        "/work",
+        "sha256:9612ebf8441c7cdd6e035a085ea669eecef9443375de66c3ec5c56f65b5aee3e",
+        "sleep",
+        "infinity"
+      ],
+      "exitCode": 0,
+      "stdout": "25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa\n",
+      "stderr": ""
+    },
+    {
+      "label": "run -d, bridge",
+      "argv": [
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "bw-record-bc49b0-proxy",
+        "--label",
+        "bw.repo=record",
+        "--user",
+        "node",
+        "sha256:9612ebf8441c7cdd6e035a085ea669eecef9443375de66c3ec5c56f65b5aee3e",
+        "sleep",
+        "infinity"
+      ],
+      "exitCode": 0,
+      "stdout": "bf1d9d57d6392a92bb387f6d15066bcf0f4cbd8b4acfeeb54c9e85b71d2c173a\n",
+      "stderr": ""
+    },
+    {
+      "label": "network connect",
+      "argv": [
+        "docker",
+        "network",
+        "connect",
+        "--alias",
+        "proxy",
+        "685ced365be4d1fdaff4b57fc47918570833bb1718f0a294c623609644ad593b",
+        "bf1d9d57d6392a92bb387f6d15066bcf0f4cbd8b4acfeeb54c9e85b71d2c173a"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "label": "rm -f, bridge",
+      "argv": [
+        "docker",
+        "rm",
+        "-f",
+        "bf1d9d57d6392a92bb387f6d15066bcf0f4cbd8b4acfeeb54c9e85b71d2c173a"
+      ],
+      "exitCode": 0,
+      "stdout": "bf1d9d57d6392a92bb387f6d15066bcf0f4cbd8b4acfeeb54c9e85b71d2c173a\n",
+      "stderr": ""
+    },
+    {
+      "label": "exec with the exit-status wrapper, failing command",
+      "argv": [
+        "docker",
+        "exec",
+        "-i",
+        "25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa",
+        "sh",
+        "-c",
+        "timeout --signal=KILL \"$0\" \"$@\"; echo $? > /tmp/bw-exit-22138f8dae4b3f40",
+        "30",
+        "sh",
+        "-c",
+        "echo out; echo err >&2; exit 3"
+      ],
+      "exitCode": 0,
+      "stdout": "out\n",
+      "stderr": "err\n"
+    },
+    {
+      "label": "exit-status file read, present",
+      "argv": [
+        "docker",
+        "exec",
+        "25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa",
+        "cat",
+        "/tmp/bw-exit-22138f8dae4b3f40"
+      ],
+      "exitCode": 0,
+      "stdout": "3\n",
+      "stderr": ""
+    },
+    {
+      "label": "exit-status file read, absent",
+      "argv": [
+        "docker",
+        "exec",
+        "25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa",
+        "cat",
+        "/tmp/bw-exit-66f7550bce31763c"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "cat: /tmp/bw-exit-66f7550bce31763c: No such file or directory\n"
+    },
+    {
+      "label": "ps -a by label",
+      "argv": [
+        "docker",
+        "ps",
+        "-a",
+        "--filter",
+        "label=bw.repo=record",
+        "--format",
+        "{{.ID}} {{.Names}}"
+      ],
+      "exitCode": 0,
+      "stdout": "25775c90b21d bw-record-bc49b0-work\n",
+      "stderr": ""
+    },
+    {
+      "label": "network ls by label",
+      "argv": [
+        "docker",
+        "network",
+        "ls",
+        "--filter",
+        "label=bw.repo=record",
+        "--format",
+        "{{.ID}} {{.Name}}"
+      ],
+      "exitCode": 0,
+      "stdout": "685ced365be4 bw-record-bc49b0-net\n",
+      "stderr": ""
+    },
+    {
+      "label": "container inspect, present",
+      "argv": [
+        "docker",
+        "container",
+        "inspect",
+        "--format",
+        "{{.Id}}",
+        "25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa"
+      ],
+      "exitCode": 0,
+      "stdout": "25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa\n",
+      "stderr": ""
+    },
+    {
+      "label": "logs",
+      "argv": [
+        "docker",
+        "logs",
+        "25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "label": "program check",
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--user",
+        "node",
+        "sha256:9612ebf8441c7cdd6e035a085ea669eecef9443375de66c3ec5c56f65b5aee3e",
+        "sh",
+        "-c",
+        "for p in \"$@\"; do command -v \"$p\" >/dev/null 2>&1 || echo \"missing $p\"; done",
+        "sh",
+        "sh",
+        "timeout",
+        "sleep",
+        "node",
+        "npm",
+        "npx",
+        "git",
+        "dotnet",
+        "cargo"
+      ],
+      "exitCode": 0,
+      "stdout": "missing dotnet\nmissing cargo\n",
+      "stderr": ""
+    },
+    {
+      "label": "remove ignored output",
+      "argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--user",
+        "node",
+        "-v",
+        "C:\\Users\\tamezs\\AppData\\Local\\Temp\\1\\bw-record-LnNtB4\\w:/work",
+        "-w",
+        "/work",
+        "sha256:9612ebf8441c7cdd6e035a085ea669eecef9443375de66c3ec5c56f65b5aee3e",
+        "sh",
+        "-c",
+        "rm -rf -- \"$@\"",
+        "sh",
+        "x.txt"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "label": "rm -f, present",
+      "argv": [
+        "docker",
+        "rm",
+        "-f",
+        "25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa"
+      ],
+      "exitCode": 0,
+      "stdout": "25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa\n",
+      "stderr": ""
+    },
+    {
+      "label": "container inspect, removed",
+      "argv": [
+        "docker",
+        "container",
+        "inspect",
+        "--format",
+        "{{.Id}}",
+        "25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa"
+      ],
+      "exitCode": 1,
+      "stdout": "\n",
+      "stderr": "Error response from daemon: No such container: 25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa\n"
+    },
+    {
+      "label": "exec against a removed container",
+      "argv": [
+        "docker",
+        "exec",
+        "-i",
+        "25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa",
+        "sh",
+        "-c",
+        "timeout --signal=KILL \"$0\" \"$@\"; echo $? > /tmp/bw-exit-22138f8dae4b3f40",
+        "30",
+        "true"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "Error response from daemon: No such container: 25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa\n"
+    },
+    {
+      "label": "exit-status file read, removed container",
+      "argv": [
+        "docker",
+        "exec",
+        "25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa",
+        "cat",
+        "/tmp/bw-exit-22138f8dae4b3f40"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "Error response from daemon: No such container: 25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa\n"
+    },
+    {
+      "label": "rm -f, removed",
+      "argv": [
+        "docker",
+        "rm",
+        "-f",
+        "25775c90b21d4473cb4ebd245b17d08309f9e2c3e61fd96bc6279e348b0fd6aa"
+      ],
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "label": "network rm",
+      "argv": [
+        "docker",
+        "network",
+        "rm",
+        "685ced365be4d1fdaff4b57fc47918570833bb1718f0a294c623609644ad593b"
+      ],
+      "exitCode": 0,
+      "stdout": "685ced365be4d1fdaff4b57fc47918570833bb1718f0a294c623609644ad593b\n",
+      "stderr": ""
+    },
+    {
+      "label": "network rm, removed",
+      "argv": [
+        "docker",
+        "network",
+        "rm",
+        "685ced365be4d1fdaff4b57fc47918570833bb1718f0a294c623609644ad593b"
+      ],
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "Error response from daemon: network 685ced365be4d1fdaff4b57fc47918570833bb1718f0a294c623609644ad593b not found\nexit status 1\n"
+    }
+  ]
+}

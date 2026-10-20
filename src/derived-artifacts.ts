@@ -2,11 +2,19 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { removeIgnoredOutput } from "./commit-verification.ts";
+import {
+  ContainerError,
+  execTarget,
+  runInSandbox,
+  unquiescedReason,
+  withSandbox,
+  type FrozenSandbox,
+  type Sandbox,
+} from "./container.ts";
 import type { DerivedArtifact } from "./governed-config.ts";
-import { checkWorktreeClean } from "./patch-application.ts";
+import { checkWorktreeClean, NO_HOOKS } from "./workspace-commit.ts";
 import { SYSTEM_NAME } from "./policy.ts";
 import { normalizePath } from "./scope.ts";
-import { runVerifyCommand } from "./verify-command.ts";
 
 export interface RegenerationInput {
   rootDir: string;
@@ -18,14 +26,22 @@ export interface RegenerationInput {
   /** Where in the run this regeneration happens: `phase-1`, `self-review`, `remediation-1`. */
   label: string;
   evidenceDir: string;
+  /** The run's frozen sandbox; the declared commands run in one container of it. */
+  sandbox: FrozenSandbox;
   policy: {
     timeoutSeconds: number;
     maxBytes: number;
     retentionMaxBytes: number;
-    envPassthrough: string[];
   };
   audit: (
-    action: "derived.commit" | "derived.unchanged" | "derived.fail" | "derived.refused",
+    action:
+      | "derived.commit"
+      | "derived.unchanged"
+      | "derived.fail"
+      | "derived.refused"
+      | "sandbox.failed"
+      | "sandbox.quiescence.failed"
+      | "sandbox.teardown.failed",
     summary: string
   ) => void;
 }
@@ -40,7 +56,8 @@ function runGit(
 ): { ok: true; stdout: string } | { ok: false; detail: string } {
   let result;
   try {
-    result = spawnSync("git", args, { cwd, encoding: "utf8" });
+    // Hooks off: the regeneration commit runs after an agent's change is in HEAD.
+    result = spawnSync("git", [...NO_HOOKS, ...args], { cwd, encoding: "utf8" });
   } catch (err) {
     return { ok: false, detail: (err as Error).message };
   }
@@ -87,12 +104,62 @@ export function derivedPathExclusion(derived: readonly DerivedArtifact[]): strin
 }
 
 /**
+ * Run each declared command in the sandbox, stopping at the first that fails.
+ * Returns why regeneration failed, or null when every command passed. An exec
+ * whose exit status cannot be read is a sandbox failure, never the command's.
+ */
+async function runDerivedCommands(input: RegenerationInput, sandbox: Sandbox): Promise<string | null> {
+  for (const artifact of input.derived) {
+    const evidencePath = join(input.evidenceDir, `${artifact.name}.log`);
+    let outcome;
+    try {
+      outcome = await runInSandbox(
+        execTarget(sandbox),
+        sandbox.frozen.imageId,
+        { name: artifact.name, command: artifact.command },
+        {
+          cwd: input.worktreePath,
+          timeoutSeconds: input.policy.timeoutSeconds,
+          maxBytes: input.policy.maxBytes,
+          retentionMaxBytes: input.policy.retentionMaxBytes,
+          evidencePath,
+        }
+      );
+    } catch (err) {
+      if (!(err instanceof ContainerError)) throw err;
+      const reason = `derived artifact ${artifact.name} could not be run in sandbox ${sandbox.name}: ${err.message}`;
+      input.audit("sandbox.failed", `label=${input.label}; ${reason}`);
+      return reason;
+    }
+    let because: string | null = null;
+    if (outcome.timedOut) {
+      because = `the command exceeded the ${input.policy.timeoutSeconds}-second ceiling and its process tree was killed${outcome.killError !== null ? ` (the kill failed: ${outcome.killError})` : ""}`;
+    } else if (outcome.outputOverflow) {
+      because = `the command produced more than the ${input.policy.maxBytes}-byte output budget`;
+    } else if (outcome.exitCode !== 0) {
+      because = `the command exited with code ${outcome.exitCode}`;
+    }
+    if (because !== null) {
+      const reason = `derived artifact ${artifact.name} could not be regenerated: ${because}`;
+      input.audit(
+        "derived.fail",
+        `label=${input.label}; ${artifact.name}: ${artifact.command.join(" ")}; evidence=${relative(input.rootDir, evidencePath)}; ${reason}`
+      );
+      return reason;
+    }
+  }
+  return null;
+}
+
+/**
  * Regenerate the files `governed.yaml` declares under `derived:` and commit
  * them. This is a system write under architecture section 7, not an agent
  * patch: the commands are the operator's, frozen at run start, and the scope
  * gate does not apply because no agent proposed the change. What the gate
  * would have protected is checked here instead: the commands may change only
- * the derived paths, and the tree must be clean before and after.
+ * the derived paths, and the tree must be clean before and after. The
+ * commands run in one sandbox of the run's frozen image, and the tree is read
+ * only after its work container is proven gone.
  *
  * Runs after every patch commit. An empty list runs nothing.
  */
@@ -122,38 +189,27 @@ export async function regenerateDerivedArtifacts(input: RegenerationInput): Prom
   }
 
   mkdirSync(evidenceDir, { recursive: true });
-  for (const artifact of derived) {
-    const evidencePath = join(evidenceDir, `${artifact.name}.log`);
-    const outcome = await runVerifyCommand(
-      { name: artifact.name, command: artifact.command },
-      {
-        cwd: worktreePath,
-        timeoutSeconds: input.policy.timeoutSeconds,
-        maxBytes: input.policy.maxBytes,
-        retentionMaxBytes: input.policy.retentionMaxBytes,
-        envPassthrough: input.policy.envPassthrough,
-        evidencePath,
-      }
-    );
-    let because: string | null = null;
-    if (outcome.spawnError !== null) {
-      because = `the command could not be started: ${outcome.spawnError}`;
-    } else if (outcome.timedOut) {
-      because = `the command exceeded the ${input.policy.timeoutSeconds}-second ceiling and its process tree was killed${outcome.killError !== null ? ` (the kill failed: ${outcome.killError})` : ""}`;
-    } else if (outcome.outputOverflow) {
-      because = `the command produced more than the ${input.policy.maxBytes}-byte output budget`;
-    } else if (outcome.exitCode !== 0) {
-      because = `the command exited with code ${outcome.exitCode}`;
-    }
-    if (because !== null) {
-      const reason = `derived artifact ${artifact.name} could not be regenerated: ${because}`;
-      input.audit(
-        "derived.fail",
-        `label=${label}; ${artifact.name}: ${artifact.command.join(" ")}; evidence=${relative(input.rootDir, evidencePath)}; ${reason}`
-      );
-      return { ok: false, reason };
-    }
+  const run = await withSandbox(
+    { frozen: input.sandbox, rootDir: input.rootDir, runId: input.runId, label: `derived-${label}`, worktreePath },
+    (sandbox) => runDerivedCommands(input, sandbox)
+  );
+  if (!run.started) {
+    const reason = `cannot start the derived-artifact sandbox: ${run.error.message}`;
+    input.audit("sandbox.failed", `label=${label}; ${reason}`);
+    return { ok: false, reason };
   }
+  if (!run.teardown.workContainerGone) {
+    const reason = unquiescedReason(run.sandbox, run.teardown, run.value);
+    input.audit("sandbox.quiescence.failed", `label=${label}; ${reason}`);
+    return { ok: false, reason };
+  }
+  if (run.teardown.failures.length > 0) {
+    input.audit(
+      "sandbox.teardown.failed",
+      `label=${label}; sandbox ${run.sandbox.name} left objects behind: ${run.teardown.failures.join("; ")}`
+    );
+  }
+  if (run.value !== null) return { ok: false, reason: run.value };
 
   const status = runGit(["status", "--porcelain", "-z", "--untracked-files=all"], worktreePath);
   if (!status.ok) {
@@ -213,7 +269,7 @@ export async function regenerateDerivedArtifacts(input: RegenerationInput): Prom
 
   // After the commit, not before: the cleanup refuses any entry that is not
   // ignored, so it can run only once the tree holds nothing else.
-  const cleanup = removeIgnoredOutput(worktreePath, evidenceDir);
+  const cleanup = removeIgnoredOutput(input.sandbox, worktreePath, evidenceDir);
   if (!cleanup.ok) {
     return {
       ok: false,

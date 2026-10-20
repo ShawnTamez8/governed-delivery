@@ -63,6 +63,21 @@ export function promptRef(runId: number, name: string): string {
 }
 
 /**
+ * The directory holding one run's tool-server logs and sandbox evidence
+ * (`docs/features/sandboxed-implementer/plan.md`): each patch dispatch's tool
+ * calls, named by the prompt's `agent_run.input_hash` like the retained
+ * prompt, and the egress proxy's log beside it.
+ */
+export function toolLogDir(rootDir: string, runId: number): string {
+  return join(rootDir, GOVERNANCE_DIR, "tools", String(runId));
+}
+
+/** The same file relative to the repository root, as `promptRef` is. */
+export function toolLogRef(runId: number, name: string): string {
+  return join(GOVERNANCE_DIR, "tools", String(runId), name);
+}
+
+/**
  * The directory holding one run's working specification and plan
  * (`spec.md`, `plan.md`). The stages write them here, never into the
  * operator's checkout; the implementation stage commits copies to

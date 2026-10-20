@@ -29,11 +29,19 @@ export interface ExecutorDefinition {
  * exactly, plus the absolute ceiling the same section requires as "a
  * multiple of the idle budget."
  *
- * The invocation is read-only: proposal subprocesses run in restricted/safe
- * mode with the inventory fixed to Read, Glob, and Grep (see
- * test/executor.test.ts for the flag semantics and hazard 11 for why
- * `--bare` is absent). A prompt is a request; enforcement is this command
- * plus the stage's clean-tree assertions.
+ * The built-in inventory is read-only: every subprocess runs in restricted
+ * mode with the tools fixed to Read, Glob, and Grep and the writing tools
+ * denied (see test/executor.test.ts for the flag semantics and hazard 11 for
+ * why `--bare` is absent). The three patch dispatches change files only
+ * through BuildWorks' tool server, which `invokeHarness` admits per
+ * invocation with `--mcp-config` and `--allowedTools mcp__bw__*`
+ * (docs/features/sandboxed-implementer/plan.md). `--safe-mode` is gone
+ * because it discards a server named by `--mcp-config`; `--restricted` alone
+ * keeps every `CLAUDE.md` out, and `--strict-mcp-config` admits only
+ * `--mcp-config` servers, so a dispatch without one sees no MCP server at all
+ * (the spike's positive-controlled probes, Claude Code 2.1.303). A prompt is a
+ * request; enforcement is this command, the container the tool server acts
+ * in, and the boundary that computes and gates the diff.
  */
 export const CLAUDE_CODE: ExecutorDefinition = {
   id: "claude-code",
@@ -45,11 +53,10 @@ export const CLAUDE_CODE: ExecutorDefinition = {
     "--include-partial-messages",
     "--verbose",
     "--restricted",
-    "--safe-mode",
     "--tools",
     "Read,Glob,Grep",
     "--disallowedTools",
-    "Write,Edit,NotebookEdit,Bash,mcp__*",
+    "Write,Edit,NotebookEdit,Bash",
     "--permission-mode",
     "dontAsk",
     "--strict-mcp-config",

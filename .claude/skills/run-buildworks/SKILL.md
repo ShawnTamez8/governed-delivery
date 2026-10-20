@@ -27,6 +27,15 @@ Node v24.14.0, npm 11.18.0, git-bash and PowerShell, 2026-08-31.
 - `npm install --global <absolute-checkout>` for checkout-linked
   `buildworks` and `bw` commands. This is not a packed or published artifact;
   retain the checkout at that path.
+- **A running Docker engine** with Linux containers (Docker Desktop on
+  Windows), for the smoke as well as the paid chain: `new-run` refuses without
+  one, and builds the sandbox image from `container/Dockerfile` the first time
+  (2026-10-19, `docs/features/sandboxed-implementer/plan.md`). The implementer's
+  tools, verification and derived commands all run in that image, which
+  provides Node, npm and Git and reaches only the npm registry, so a target's
+  `governed.yaml` commands must be Node/npm commands. The unit suite does not
+  need an engine: stage tests use the Docker stand-in, and
+  `test/container.test.ts` skips by name without one.
 - Only for the paid chain: the native `claude` CLI on PATH (`claude --version`
   printed `2.1.263 (Claude Code)` here on 2026-09-07).
 
@@ -305,9 +314,9 @@ worktree-integrity check, and consumes their results in frozen panel order.
 Non-final panel findings first go to the code-review reconciler, which may
 reject one only when every frozen call agrees, each quoting the approved
 specification; the findings it keeps go together
-to the frozen implementer; guarded
-patches are committed, the frozen verification commands run, and the full
-panel reviews the new commit. Remediation and later rounds remain sequential.
+to the frozen implementer, which fixes them through the tool server in its own
+sandbox; the system computes, gates and commits its diff, the frozen
+verification commands run, and the full panel reviews the new commit. Remediation and later rounds remain sequential.
 The final panel blocks only at or above the independently frozen
 `CODE_REVIEW_BLOCKING_SEVERITY` (default `high`); lower-severity findings remain
 in the record without blocking. Policy edits affect only new runs. Raising
@@ -318,7 +327,7 @@ The paid driver reports panel executions, remediation attempts, final commit,
 and final gate from `.governance/code-review/<run>/result.json`. A block is a
 result, not a driver failure: the command exits 1 with the final blocking
 finding ids, severities, and locations, and retains the run, worktree, reports,
-patch evidence, and verification logs. Code review creates no proposal, spike,
+tool-server and proxy logs (`.governance/tools/<run>/`), and verification logs. Code review creates no proposal, spike,
 waiver, or human-review decision. The fixture-backed `high-then-clean` stage
 test is the free remediation exercise; the 13-step smoke remains dispatch-free.
 
@@ -411,7 +420,8 @@ Then any command from the CLI's advanced usage. Keep
 - **Guided mode never owns the private key.** Its fixed handoff directory
   contains only canonical payload bytes and the detached signature returned by
   an external authority. The private key must remain outside the filesystem and
-  identity available to unsandboxed target verification; placing it under
+  identity available to the BuildWorks host: verification now runs in a
+  container, but the agent sessions run on the host as you, so placing it under
   `HOME` or `USERPROFILE` is not containment.
 - **`sign-approval.mjs keygen` refuses `--out` under the current directory**,
   not just inside a git repository: the check is

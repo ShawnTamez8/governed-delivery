@@ -444,6 +444,54 @@ after the dispatch, blocking the run and naming the paths when anything
 changed. A prompt-level instruction is a request; the tree is checked, not
 trusted.
 
+**2026-10-19: for the three patch dispatches the mechanism moved, not the
+guarantee** (`docs/features/sandboxed-implementer/plan.md`, after the spike in
+`docs/features/sandboxed-implementer-spike/plan.md`). Each implementation
+phase, the self-review and code-review remediation now write the worktree on
+purpose, through BuildWorks' tool server, whose tools act only inside a
+disposable container with the worktree's `.git` read-only. The guarantee is
+restated as "nothing reaches the run branch except a diff the system computes
+and gates": `commitWorkspace` (`src/workspace-commit.ts`) refuses a moved head,
+deletions, links and any path outside the signed scope, and resets the worktree
+on a refusal. It runs only after the work container is proven removed, so no
+process can write behind it. Every other dispatch keeps this entry's original
+mechanism unchanged: read-only invocation and clean-tree checks before and
+after. The spike's attempted violations are re-run against a real engine in
+`test/container.test.ts`. What this does not show: the agent session itself
+still runs on the host, read-only by its tool inventory, and that inventory is
+the executor's flags, not a container.
+
+**2026-10-20: the system's own commit was a host path for the agent's code**
+(a code-path gap, reproduced by the build's independent review,
+`docs/features/sandboxed-implementer/2026-10-20-code-review.md`). Git runs a
+worktree's hooks on the host, and a target whose `core.hooksPath` names a
+tracked directory, or whose hook runs a lint or test step, executes repository
+content there. `commitWorkspace` committed the agent's gated change with hooks
+on, so that change could run as the operator, outside every container, with
+the full environment. Every host Git call in `src/workspace-commit.ts` and
+`src/derived-artifacts.ts` now sets `core.hooksPath` to a path holding no hook,
+which also covers `post-commit` and `reference-transaction`, which
+`--no-verify` would not; each test keeps a positive control proving the hooks
+fire for an ordinary commit. What this does not show: a hook is only one way a
+host program reads content an agent wrote, and the rule it leaves is that no
+host step may execute worktree content.
+
+**2026-10-20: a committed nested repository was a second host path** (a
+code-path gap, reproduced with Git for Windows 2.53 in the second review,
+`docs/features/sandboxed-implementer/2026-10-20-code-review-2.md`). Only the
+worktree's own `.git` is read-only in the container, so `run_command` can
+`git init` a directory and write that repository's config, including
+`core.fsmonitor`, which Git runs as a command. `git add -A` stages such a
+directory as a gitlink (mode 160000). A path the agent creates at a declared
+artifact that does not yet exist fits the signed scope, so `commitWorkspace`
+committed it, and the next host `git status` recursed into it and ran the
+command. Before the commit, the untracked, staged, refused and reset states ran
+nothing. `commitWorkspace` now refuses a gitlink by name, as it refuses a
+symbolic link; the test keeps a positive control proving a committed gitlink
+does run the config. The first review had withheld this case, reasoning that a
+scope entry cannot name a directory. That rule refuses only directories already
+in the starting commit, and the reasoning missed a path the agent creates.
+
 ## 16. A remediation loop aimed at the wrong artifact cannot repair an upstream omission
 
 A reviewer's finding is sometimes correct about a concern the artifact under
@@ -791,6 +839,26 @@ unchanged file is unmeasured. The comparison inherits the self-review's CRLF lim
 refuses it). Code-review remediation uses the same applier and still blocks on an
 unchanged file; it was left as it was.
 
+**2026-10-19: a phase's change no longer travels in its reply**
+(`docs/features/sandboxed-implementer/plan.md`). The implementer changes files
+in the worktree through the tool server, and its reply is a status, a summary
+and the tasks it could not complete. The system computes the phase's diff from
+the worktree. So the failures above that came from carrying every file inside
+one JSON response stop being reachable for these dispatches: the escaped-content
+refusal of run 6, the parse failure of run 9, the `add`/`modify` existence
+refusal of run 7 and the unchanged-file refusal of web-calculator run 1. Run 5's
+output-token ceiling was reached in thinking before any write, so whether tool
+mode avoids it is not shown. The patch applier, its existence and overlap
+rules, and `implementation.phase.dropped` are deleted. A file rewritten
+unchanged now stages nothing and is simply absent from the diff; a phase whose
+diff is empty still blocks. Phases stay at ten items, as the cadence at which a
+change is committed, checked and regenerated, not as a response-size limit.
+Each prompt still lists which scope paths exist, now as information. What this
+does not show: no paid run has yet completed under tool mode (plan Task 13), so
+whether a large phase fits the $2.00 per-dispatch cap, or how many tool calls a
+phase takes, is unmeasured; a deletion is still refused, so run 6's second
+objection (a scaffold the plan never mentioned) stands.
+
 ## 21. Agents are never told the gate that will judge their work
 
 The frozen `governed.yaml` commands decide whether delivered code is accepted at
@@ -917,6 +985,18 @@ agent writes. The same function serves the verification stage and code-review
 remediation, so both are covered. What this does not show: a command that writes
 an ignored path outside the worktree is untouched, and whether removal of a large
 `node_modules/` ever fails on Windows (a locked file, a long path) is untested.
+
+**2026-10-19: the removal runs inside a container**
+(`docs/features/sandboxed-implementer/plan.md`). The spike found that `npm`
+inside a Linux container leaves Linux symlinks in `node_modules/` on the bind
+mount, which Git for Windows cannot open, so a host-side removal would fail.
+`removeIgnoredOutputInContainer` (`src/container.ts`) now removes the ignored
+paths from inside a container with no network, for verification, derived
+regeneration and the boundary that commits an agent's change, which also removes
+ignored output before it computes the diff. Verification itself now runs in a
+container (`ARCHITECTURE.md` section 17), so a command can no longer write an
+ignored path outside the worktree. What this does not show: removal of a large
+`node_modules/` is proven only on the spike's targets and the test fixtures.
 
 ## 23. A fix that never sees the decisions behind the code it changes
 

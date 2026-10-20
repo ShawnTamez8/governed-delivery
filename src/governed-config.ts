@@ -68,11 +68,14 @@ const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 /**
  * Command tokens are constrained to characters that survive a Windows shell.
- * `runVerifyCommand` spawns with `shell: true` (hazard 8: npm-shimmed
- * executables need shell resolution), and a token containing a space, quote,
- * or metacharacter would be reinterpreted there — the argv the audit records
- * would not be the argv that ran. `src/profile.ts` states the same risk for
- * model names.
+ * The rule was written when `runVerifyCommand` spawned with `shell: true` on
+ * Windows (hazard 8), where a token containing a space, quote, or
+ * metacharacter would be reinterpreted and the argv the audit records would
+ * not be the argv that ran. Commands now reach `docker exec` as arguments,
+ * with no shell on the host and the in-container wrapper forwarding them as
+ * `"$@"` (`src/container.ts`), so the rule is stricter than that path needs;
+ * relaxing it is a separate decision. `src/profile.ts` states the same risk
+ * for model names.
  */
 const TOKEN = /^[A-Za-z0-9._:=@+/-]+$/;
 

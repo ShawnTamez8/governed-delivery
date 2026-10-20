@@ -38,6 +38,9 @@ import { proposalIdentity } from "../src/proposal.ts";
 import { listRuns, readRunSnapshot, type RunSnapshot } from "../src/operator-state.ts";
 import type { DoctorResult, OperatorResult, RunCommandResult } from "../src/operator-output.ts";
 import { formatOperatorResult, snapshotText } from "../src/operator-output.ts";
+import { REDIRECT_PRELOAD, redirectNodeOptions } from "./fixtures/docker/stand-in.ts";
+// In-process readiness runs the seeded `docker`; the stand-in answers instead.
+import "./fixtures/docker/redirect-docker.mjs";
 
 const CLI = resolve("src", "cli.ts");
 const SIGNER = resolve("scripts", "sign-approval.mjs");
@@ -53,7 +56,8 @@ function workspace(): string {
 function cli(cwd: string, boundary: string, ...args: string[]) {
   return spawnSync(process.execPath, [CLI, ...args], {
     cwd, encoding: "utf8",
-    env: { ...process.env, GIT_CEILING_DIRECTORIES: dirname(boundary), GIT_OPTIONAL_LOCKS: "1" },
+    env: { ...process.env, GIT_CEILING_DIRECTORIES: dirname(boundary), GIT_OPTIONAL_LOCKS: "1",
+      NODE_OPTIONS: redirectNodeOptions(process.env.NODE_OPTIONS) },
   });
 }
 
@@ -554,6 +558,7 @@ function doctorFixture(parent: string, externalPublicKey?: string) {
       return nativeSpawn(command, ...args);
     };
     syncBuiltinESMExports();
+    await import(${JSON.stringify(pathToFileURL(REDIRECT_PRELOAD).href)});
   `);
   const keyPath = externalPublicKey ?? join(parent, "approval-public.pem");
   if (externalPublicKey === undefined) {
@@ -1498,8 +1503,9 @@ test("a self-review fix commits directly after the last phase, and verification,
     assert.equal(delivery.finalReviewedCommit, head);
     assert.equal(delivery.deliveredCommit, head);
     const audit = durableCliRun(fixture.root, fixture.run.id).audit;
-    assert.equal(audit.filter((event) => event.action === "implementation.selfreview.patch.apply").length, 1);
+    // The pass event names what the self-review changed in the checkout.
     assert.ok(audit.some((event) => event.action === "implementation.selfreview.pass"
+      && /; changed=(?!none;)[^;]+; /.test(event.summary)
       && event.summary.endsWith(`; base=${lastPhase}; head=${head}`)));
   } finally {
     rmSync(parent, { recursive: true, force: true });
@@ -1523,7 +1529,7 @@ test("a self-review reply that is not JSON is skipped, and the run completes on 
     assert.equal(skipped.length, 1);
     // Under --json-schema a reply that never reached the structured channel is a
     // failed dispatch (docs/features/structured-patch-output/plan.md).
-    assert.ok(skipped[0]!.summary.startsWith(`base=${head}; reason=self-review: dispatch failed: dispatched agent implementer (author) on stage `), skipped[0]!.summary);
+    assert.ok(skipped[0]!.summary.startsWith(`base=${head}; discarded=none; reason=self-review: dispatch failed: dispatched agent implementer (author) on stage `), skipped[0]!.summary);
     assert.match(skipped[0]!.summary, /envelope parse failed: harness envelope for executor claude-code has a result line without a structured_output object although the dispatch requested --json-schema: line \d+/);
     assert.ok(!audit.some((event) => event.action === "implementation.selfreview.pass"));
   } finally {

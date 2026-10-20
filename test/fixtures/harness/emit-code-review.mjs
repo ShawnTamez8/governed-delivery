@@ -45,11 +45,14 @@ function emit(agentResult) {
 }
 
 // The remediation dispatch sends `--json-schema <schema>` after the model and
-// effort (docs/features/structured-patch-output/plan.md); reviewers and the
-// reconciler send none. Each branch below checks its own case, so a stage that
-// sends the flag to the wrong dispatch, or stops sending it, fails here.
+// effort (docs/features/structured-patch-output/plan.md) and `--mcp-config
+// <file>` naming the tool server (docs/features/sandboxed-implementer/plan.md);
+// reviewers and the reconciler send neither. Each branch below checks its own
+// case, so a stage that sends a flag to the wrong dispatch, or stops sending
+// it, fails here.
 const schemaAt = process.argv.indexOf("--json-schema");
 const schemaArg = schemaAt < 0 ? undefined : process.argv[schemaAt + 1];
+const hasToolServer = process.argv.includes("--mcp-config");
 function requireSchema(promptKind, wanted) {
   if (wanted && schemaArg === undefined) {
     throw new Error(`emit-code-review: a ${promptKind} prompt arrived without --json-schema`);
@@ -57,8 +60,11 @@ function requireSchema(promptKind, wanted) {
   if (!wanted && schemaArg !== undefined) {
     throw new Error(`emit-code-review: a ${promptKind} prompt arrived with --json-schema`);
   }
-  // Remediation takes the patch schema, never the self-review one.
-  if (wanted && JSON.parse(schemaArg).required.includes("proposedContentChanges")) {
+  if (wanted !== hasToolServer) {
+    throw new Error(`emit-code-review: a ${promptKind} prompt arrived ${hasToolServer ? "with" : "without"} --mcp-config`);
+  }
+  // Remediation takes the workspace reply schema, never the self-review one.
+  if (wanted && JSON.parse(schemaArg).required.includes("critique")) {
     throw new Error(`emit-code-review: a ${promptKind} prompt arrived with the wrong --json-schema`);
   }
 }
@@ -147,12 +153,13 @@ if (stdin.startsWith("you are the code-review reconciler")) {
 }
 
 // The same executor also stands in for the frozen implementer between panel
-// executions. Its patch is derived from the prompt and current checkout.
+// executions. In tool mode it writes its fix into its working directory (the
+// worktree), derived from the prompt and the current checkout, and answers in
+// the workspace reply shape (WORKSPACE_REPLY_SCHEMA in src/agent-result.ts).
 const remediationMatch = /you are the code-review remediator (\S+)/.exec(stdin);
 if (remediationMatch) {
   requireSchema("remediation", true);
-  const remediator = remediationMatch[1];
-  const baseCommit = /baseCommit must be exactly ([0-9a-f]{40,64})/.exec(stdin)?.[1];
+  const baseCommit = /The repository checkout is at commit ([0-9a-f]{40,64}):/.exec(stdin)?.[1];
   const scopeBlock = /Approved scope:\n\n([\s\S]*?)\n\nFindings to remediate:/.exec(stdin)?.[1];
   if (!baseCommit || !scopeBlock) {
     throw new Error("emit-code-review: incomplete remediation prompt");
@@ -191,47 +198,31 @@ if (remediationMatch) {
       writeFileSync(join(reviewBarrierDir, "remediation-order-verified"), "verified\n");
     }
   }
-  const current = readFileSync(target, "utf8");
-  const manifest = scope.find((p) => p === "package.json" || p.endsWith("/package.json"));
-  const file =
-    mode === "remediation-add-dependency"
-      ? {
-          // @tiptap/react at ^3, the first package crew-chatter run 4's
-          // specification chose (test/fixtures/recorded/spec-crew-chatter-run-4-dependency-in-prose.json).
-          path: manifest,
-          action: "modify",
-          content: `${JSON.stringify({ dependencies: { "@tiptap/react": "^3" } }, null, 2)}\n`,
-        }
-      : {
-          path: mode === "remediation-outside-scope" ? "outside.txt" : target,
-          action: "modify",
-          content: `${current.trimEnd()}\ncode-review-remediated\n`,
-        };
-  if (mode === "remediation-add-dependency" && manifest === undefined) {
-    throw new Error("emit-code-review: remediation-add-dependency needs a package.json in scope");
-  }
-  if (mode === "remediation-mutate") writeFileSync("remediator-residue.txt", "fixture wrote this\n");
   if (mode === "remediation-prose") {
     // A reply that never reached the structured channel: text, no structured_output.
     emitRaw("I fixed every finding.");
     process.exit(0);
   }
-  emitStructured({
-    status: "proposed",
-    agent: remediator,
-    role: "author",
-    executor: "claude-code",
-    summary: "fixture remediated the panel findings",
-    proposedPatches:
-      mode === "remediation-empty"
-        ? []
-        : [
-            {
-              baseCommit: mode === "remediation-wrong-base" ? "0".repeat(40) : baseCommit,
-              files: [file],
-            },
-          ],
-  });
+  if (mode === "remediation-blocked") {
+    emitStructured({ status: "blocked", summary: "fixture could not remediate", incompleteTasks: ["finding 1"] });
+    process.exit(0);
+  }
+  const current = readFileSync(target, "utf8");
+  const manifest = scope.find((p) => p === "package.json" || p.endsWith("/package.json"));
+  if (mode === "remediation-add-dependency") {
+    if (manifest === undefined) {
+      throw new Error("emit-code-review: remediation-add-dependency needs a package.json in scope");
+    }
+    // @tiptap/react at ^3, the first package crew-chatter run 4's
+    // specification chose (test/fixtures/recorded/spec-crew-chatter-run-4-dependency-in-prose.json).
+    writeFileSync(manifest, `${JSON.stringify({ dependencies: { "@tiptap/react": "^3" } }, null, 2)}\n`);
+  } else if (mode !== "remediation-empty") {
+    // remediation-empty answers completed and changes nothing.
+    writeFileSync(mode === "remediation-outside-scope" ? "outside.txt" : target, `${current.trimEnd()}\ncode-review-remediated\n`);
+  }
+  // Beside the fix, a write outside the scope: the boundary refuses the whole change.
+  if (mode === "remediation-mutate") writeFileSync("remediator-residue.txt", "fixture wrote this\n");
+  emitStructured({ status: "completed", summary: "fixture remediated the panel findings", incompleteTasks: [] });
   process.exit(0);
 }
 
@@ -402,7 +393,7 @@ if (mode === "parallel-fail") {
   agentResult = onlyFrom(CORRECTNESS, [finding({ severity: "high", location: `${first}:1`, intentKey: "beyond-spec-hardening" })]);
 } else if (
   mode === "remediation-empty" ||
-  mode === "remediation-wrong-base" ||
+  mode === "remediation-blocked" ||
   mode === "remediation-outside-scope" ||
   mode === "remediation-mutate" ||
   mode === "remediation-prose" ||

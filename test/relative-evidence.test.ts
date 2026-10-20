@@ -10,6 +10,7 @@ import { freezeProfile } from "../src/profile.ts";
 import { openStore } from "../src/store.ts";
 import { validateSpecDoc } from "../src/spec-doc.ts";
 import { validatePlanDoc } from "../src/plan-doc.ts";
+import { standInSandbox } from "./fixtures/docker/stand-in.ts";
 
 const CLI = resolve("src", "cli.ts");
 
@@ -27,7 +28,7 @@ test("low-level consumers resolve stored evidence against the selected repositor
           const frozen = freezeProfile(root, run.id, start, "fixture-model", {
             commands: [{ name: "node", command: ["node", "--version"] }],
             derived: [],
-          });
+          }, standInSandbox());
           store.setProfileRef(run.id, frozen.hash);
           const ref = (path: string) => absolute ? path : relative(root, path);
           const specPath = join(root, "docs", "features", "demo", "spec.md");

@@ -4,9 +4,14 @@ import { dirname, join, resolve } from "node:path";
 import { type ExecutorDefinition } from "./executor.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
 import { loadVerifiedProfile, requireFrozenBinding, resolveSettings } from "./profile.ts";
-import { dispatchOnce } from "./dispatch.ts";
-import { PATCH_RESULT_SCHEMA, validateAgentResult, type ProposedPatch } from "./agent-result.ts";
-import { extractJsonBody } from "./parse-output.ts";
+import { dispatchInSandbox, type DispatchInput, type DispatchResult } from "./dispatch.ts";
+import {
+  describeIncompleteReply,
+  parseWorkspaceReply,
+  validateWorkspaceReply,
+  WORKSPACE_REPLY_SCHEMA,
+} from "./agent-result.ts";
+import { unquiescedReason } from "./container.ts";
 import { derivedEvidenceDir, worktreePath as governanceWorktreePath } from "./paths.ts";
 import { derivedPathExclusion, regenerateDerivedArtifacts } from "./derived-artifacts.ts";
 import { unapprovedDependencyAdditions } from "./dependency-policy.ts";
@@ -14,14 +19,14 @@ import { validateSpecDoc } from "./spec-doc.ts";
 import { buildImplementationAuthorPrompt, buildImplementationSelfReviewPrompt } from "./prompts.ts";
 import {
   critiqueAuditEntries,
-  SELF_REVIEW_RESULT_SCHEMA,
-  validateImplementationSelfReview,
+  SELF_REVIEW_REPLY_SCHEMA,
+  validateSelfReviewReply,
 } from "./implementation-self-review.ts";
 import { formatImplementationGate } from "./handoff.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
 import { SYSTEM_NAME } from "./policy.ts";
-import { applyProposedPatches, checkWorktreeClean } from "./patch-application.ts";
+import { checkWorktreeClean, commitWorkspace, discardWorkspace } from "./workspace-commit.ts";
 import { planPhases, validatePlanDoc } from "./plan-doc.ts";
 
 export type ImplementationStageResult =
@@ -32,11 +37,12 @@ export type ImplementationStageResult =
  * The implementation stage (build order step 6), one row continuing section
  * 5's chain from the passed `plan_review` row: create the run's worktree on
  * branch `gov/<slug>/<run-id>` at the approved starting commit, commit the
- * run's projections there, dispatch the implementer, apply each proposed
- * patch only when every touched path is inside the signed scope and
- * untouched since proposal, commit each applied patch to the run branch, and
- * block the run — retaining the worktree — when the deterministic gate
- * refuses.
+ * run's projections there, dispatch the implementer once per phase in its own
+ * sandbox (it changes the worktree through BuildWorks' tool server in the
+ * run's container), commit the diff the system computes when every changed
+ * path is inside the signed scope (`commitWorkspace`), and block the run —
+ * retaining the worktree — when the deterministic gate refuses
+ * (docs/features/sandboxed-implementer/plan.md, Task 9).
  *
  * **On the duplication with `src/spec-stage.ts` and `src/plan-stage.ts`.**
  * The three orchestrators share a shape: preconditions each refused by name,
@@ -61,16 +67,18 @@ export type ImplementationStageResult =
  *
  * **The self-review** (`docs/features/implementation-self-review/plan.md`).
  * After the last phase commits, the implementer reads its own complete change
- * once, in one more dispatch, and returns a critique and any fixes, which pass
- * through the same patch guards and commit before verification. Failures split
- * in two. A reply the stage cannot use (a failed dispatch, a body that does not
- * parse, a refused result, a status other than proposed, a malformed critique or
- * patch envelope) is recorded as `implementation.selfreview.skipped` and the
- * stage passes on the last phase's commit: every phase has already spent, and
- * code review still reads the whole change independently. A guard failure (a
- * moved head, a dirty tree, or any patch refusal) blocks the run, because it
- * shows the boundary failed. This differs from the spec and plan self-critique,
- * which block on any failure because they fail before most of a run's spend.
+ * once, in one more sandboxed dispatch, makes any fixes in the worktree and
+ * returns a critique; the fixes pass through the same boundary and commit
+ * before verification. Failures split in two. A reply the stage cannot use (a
+ * failed dispatch, a body that does not parse, a refused reply, a status other
+ * than completed) has its workspace changes discarded, is recorded as
+ * `implementation.selfreview.skipped`, and the stage passes on the last
+ * phase's commit: every phase has already spent, and code review still reads
+ * the whole change independently. A guard failure (a sandbox that does not
+ * start or cannot be proven gone, a moved head, a refused diff, or a discard
+ * that fails) blocks the run, because it shows the boundary failed. This
+ * differs from the spec and plan self-critique, which block on any failure
+ * because they fail before most of a run's spend.
  *
  * The self-review is the author's own pass, not review (hazard 14): code review
  * remains the independent check. Its `agent_run` row reads
@@ -323,7 +331,7 @@ export async function runImplementationStage(
   /** The cleanliness refusals share one shape: name what is dirty. */
   const refuseDirty = (
     sid: number,
-    when: "before dispatch" | "after dispatch" | "after applying patches",
+    when: "before dispatch",
     check: { ok: false; entries: string[]; detail?: string },
     where = ""
   ): ImplementationStageResult =>
@@ -355,11 +363,11 @@ export async function runImplementationStage(
         expectedHead,
         label,
         evidenceDir: derivedEvidenceDir(rootDir, runId, label),
+        sandbox: profile.sandbox,
         policy: {
           timeoutSeconds: profile.policy.verifyCommandTimeoutSeconds,
           maxBytes: profile.policy.resultMaxBytes,
           retentionMaxBytes: profile.policy.verifyRetentionMaxBytes,
-          envPassthrough: profile.policy.verifyEnvPassthrough,
         },
         audit: (action, summary) => audit(stage.id, `implementation.${action}`, summary),
       });
@@ -367,10 +375,7 @@ export async function runImplementationStage(
     // The worktree is never deleted: section 7 retains it, including when
     // the run ends blocked.
     const branch = `gov/${run.slug}/${run.id}`;
-    const added = runGit(
-      ["worktree", "add", worktreePath, "-b", branch, approval.starting_commit],
-      rootDir
-    );
+    const added = runGit(worktreeAddArgs(worktreePath, branch, approval.starting_commit), rootDir);
     if (!added.ok) {
       return abort(stage.id, "implementation.worktree.failed", `git worktree add failed: ${added.detail}`);
     }
@@ -431,15 +436,6 @@ export async function runImplementationStage(
       `committed projections ${repoSpec} (${specHash}) and ${repoPlan} (${planHash})`
     );
 
-    // The proposal base must be clean before the subprocess ever runs: the
-    // gate later treats this tree as the base every patch is validated
-    // against, and a dirty start would inherit residue the implementer never
-    // caused.
-    const cleanBeforeDispatch = checkWorktreeClean(worktreePath);
-    if (!cleanBeforeDispatch.ok) {
-      return refuseDirty(stage.id, "before dispatch", cleanBeforeDispatch);
-    }
-
     // --- the dispatch ---
     // The author comes from the frozen profile, not the live registry, and
     // is bound to the executor the run froze (section 9: a field that
@@ -458,22 +454,48 @@ export async function runImplementationStage(
     if (!author.outputs.includes("patches")) {
       return abort(stage.id, "implementation.author.failed", `configured agent ${author.id} does not allow patches output`);
     }
-    // `headAtProposal` is the head in effect when the patch is proposed —
-    // after the projections commit — and the base every proposed patch must
-    // name. The harness runs with its working directory set to the worktree
-    // root so the implementer reads the repository it is patching; raw
-    // output retention and the audit stay in the main repository.
+    // `headAtProposal` is the head in effect when the first phase starts —
+    // after the projections commit — and the handoff base. The harness runs
+    // with its working directory set to the worktree root so the implementer
+    // reads the repository it changes; raw output retention and the audit stay
+    // in the main repository.
     const headResult = runGit(["rev-parse", "HEAD"], worktreePath);
     if (!headResult.ok) {
       return abort(stage.id, "implementation.author.failed", `cannot read the worktree head: ${headResult.detail}`);
     }
     const headAtProposal = headResult.stdout.trim();
+    const derivedPaths = profile.verification.derived.map((d) => d.path);
 
-    // One dispatch per phase, in plan order, each applied and committed before
-    // the next begins. The `implementer` keeps no memory between dispatches:
-    // what earlier phases built reaches it only through the checkout, which is
-    // why every phase proposes against the head the previous phase committed
-    // (never `headAtProposal`, which stays the handoff base).
+    // One patch dispatch in its own sandbox. A sandbox that does not start
+    // blocks before the dispatch; a work container not proven gone blocks
+    // before anything reads the worktree, because a process left in it could
+    // still be writing (docs/features/sandboxed-implementer/plan.md, Task 9).
+    // Any other teardown failure is recorded and changes no outcome.
+    const sandboxedDispatch = async (
+      label: string,
+      where: string,
+      dispatch: Omit<DispatchInput, "toolServer">
+    ): Promise<{ ok: true; dispatch: DispatchResult } | { ok: false; result: ImplementationStageResult }> => {
+      const run = await dispatchInSandbox(store, executor, dispatch, { frozen: profile.sandbox, runId, label, worktreePath }, rootDir);
+      if (!run.started) {
+        return { ok: false, result: abort(stage.id, "implementation.sandbox.failed", `${where}cannot start the implementation sandbox: ${run.reason}`) };
+      }
+      if (!run.teardown.workContainerGone) {
+        const primary = run.dispatch.ok ? null : run.dispatch.reason;
+        return { ok: false, result: abort(stage.id, "implementation.sandbox.quiescence.failed", `${where}${unquiescedReason(run.sandbox, run.teardown, primary)}`) };
+      }
+      const failures = [...(run.proxyLogFailure === null ? [] : [run.proxyLogFailure]), ...run.teardown.failures];
+      if (failures.length > 0) {
+        audit(stage.id, "implementation.sandbox.teardown.failed", `${where}sandbox ${run.sandbox.name}: ${failures.join("; ")}`);
+      }
+      return { ok: true, dispatch: run.dispatch };
+    };
+
+    // One dispatch per phase, in plan order, each committed before the next
+    // begins. The `implementer` keeps no memory between dispatches: what
+    // earlier phases built reaches it only through the checkout, which is why
+    // every phase's diff is computed against the head the previous phase
+    // committed (never `headAtProposal`, which stays the handoff base).
     let phaseBase = headAtProposal;
     let finalHead = headAtProposal;
     for (const phase of phases) {
@@ -487,129 +509,82 @@ export async function runImplementationStage(
         }
         phaseBase = headNow.stdout.trim();
       }
-      // Which scope paths exist now, by the test the patch applier refuses on
-      // (`existsSync` in the worktree). The model is told rather than left to
-      // guess what earlier phases created (team-notes run 7, hazard 20).
+      // The phase's base must be clean before the subprocess ever runs: the
+      // boundary computes the phase's diff against it, and a dirty start would
+      // inherit residue the implementer never caused.
+      const cleanBeforeDispatch = checkWorktreeClean(worktreePath);
+      if (!cleanBeforeDispatch.ok) {
+        return refuseDirty(stage.id, "before dispatch", cleanBeforeDispatch, where);
+      }
+      // Which scope paths exist now, told to the model rather than left to it
+      // to guess what earlier phases created (team-notes run 7, hazard 20).
       const existingPaths = scope.filter((p) => existsSync(join(worktreePath, p)));
-      const authorDispatch = await dispatchOnce(
-        store,
-        executor,
-        {
-          stageId: stage.id,
-          agent: author.id,
-          role: "author",
-          requestedModel: implementerSettings.model,
-          requestedEffort: implementerSettings.effort,
-          setting: author.id,
-          prompt: buildImplementationAuthorPrompt(
-            author,
-            planContent,
-            specContent,
-            scope,
-            phaseBase,
-            phase,
-            existingPaths,
-            profile.verification
-          ),
-          // The answer comes back as structured output, never free text
-          // (docs/features/structured-patch-output/plan.md).
-          invocation: { cwd: worktreePath, jsonSchema: PATCH_RESULT_SCHEMA },
-        },
-        rootDir
-      );
+      const sandboxed = await sandboxedDispatch(`phase-${phase.index}`, where, {
+        stageId: stage.id,
+        agent: author.id,
+        role: "author",
+        requestedModel: implementerSettings.model,
+        requestedEffort: implementerSettings.effort,
+        setting: author.id,
+        prompt: buildImplementationAuthorPrompt(
+          author,
+          planContent,
+          specContent,
+          scope,
+          phaseBase,
+          phase,
+          existingPaths,
+          profile.verification
+        ),
+        // The answer comes back as structured output, never free text
+        // (docs/features/structured-patch-output/plan.md).
+        invocation: { cwd: worktreePath, jsonSchema: WORKSPACE_REPLY_SCHEMA },
+      });
+      if (!sandboxed.ok) return sandboxed.result;
+      const authorDispatch = sandboxed.dispatch;
       if (!authorDispatch.ok) {
         return abort(stage.id, "implementation.author.failed", `${where}${authorDispatch.reason}`);
       }
-
-      // The subprocess boundary backstop: the model may have mutated the tree
-      // it was invited to read. Any change — tracked, staged, untracked, or
-      // ignored — blocks the run and names the paths before anything is
-      // parsed or applied. A prompt is a request; this is the check. It runs
-      // after every phase's dispatch; the tree before a later phase is already
-      // proven clean by `applyProposedPatches`, which ends on the same check.
-      const cleanAfterDispatch = checkWorktreeClean(worktreePath);
-      if (!cleanAfterDispatch.ok) {
-        return refuseDirty(stage.id, "after dispatch", cleanAfterDispatch, where);
+      const reply = parseWorkspaceReply(authorDispatch.envelope.resultText, validateWorkspaceReply);
+      if (!reply.ok) {
+        return abort(stage.id, "implementation.content.invalid", `${where}${reply.reason}`);
+      }
+      if (reply.value.status !== "completed") {
+        return abort(stage.id, "implementation.author.failed", `${where}implementer returned ${describeIncompleteReply(reply.value)}`);
       }
 
-      // --- parse, validate, and refuse an empty delivery ---
-      const authorBody = extractJsonBody(authorDispatch.envelope.resultText);
-      if (authorBody.kind === "refused") {
-        return abort(stage.id, "implementation.content.invalid", `${where}implementer body refused: ${authorBody.reason}`);
-      }
-      const authorResult = validateAgentResult(author.id, authorBody.value);
-      if (!authorResult.ok) {
-        return abort(stage.id, "implementation.content.invalid", `${where}implementer result refused: ${authorResult.reason}`);
-      }
-      if (authorResult.value.status !== "proposed") {
-        return abort(
-          stage.id,
-          "implementation.author.failed",
-          `${where}implementer returned status ${authorResult.value.status}, not proposed`
-        );
-      }
-      const patches = authorResult.value.proposedPatches;
-      if (!Array.isArray(patches) || patches.length === 0) {
-        return abort(
-          stage.id,
-          "implementation.content.invalid",
-          `${where}implementer returned no proposed patches: a run that delivers nothing cannot pass`
-        );
-      }
-
-      // A file returned unchanged at the phase's base is dropped and recorded,
-      // by the self-review's rule; a phase left with nothing blocks, as its
-      // prompt says (docs/features/structured-patch-output/plan.md).
-      const unchanged = dropUnchangedFiles(worktreePath, phaseBase, scope, patches as ProposedPatch[]);
-      if (!unchanged.ok) {
-        return abort(stage.id, "implementation.patch.refused", `${where}${unchanged.reason}`);
-      }
-      if (unchanged.dropped.length > 0) {
-        audit(
-          stage.id,
-          "implementation.phase.dropped",
-          `phase ${phase.index} of ${phase.count}: unchanged at ${phaseBase}: ${unchanged.dropped.join(", ")}`
-        );
-      }
-      if (unchanged.kept.length === 0) {
-        return abort(
-          stage.id,
-          "implementation.content.invalid",
-          `${where}every returned file is unchanged at ${phaseBase} (${unchanged.dropped.join(", ")}): a phase that changes nothing blocks the run`
-        );
-      }
-
-      // The patch helper is shared with code-review remediation. It owns the
-      // complete write-path guard sequence but never mutates run or stage state.
-      const applied = applyProposedPatches({
+      // The boundary: the system computes the phase's diff from the worktree,
+      // gates it against the signed scope and commits it. A refusal leaves the
+      // worktree reset to the phase's base.
+      const committed = commitWorkspace({
         worktreePath,
-        runId,
-        slug: run.slug,
+        base: phaseBase,
         scope,
-        proposalBase: phaseBase,
-        patches: unchanged.kept,
-        commitMessage:
+        slug: run.slug,
+        derivedPaths,
+        sandbox: profile.sandbox,
+        message:
           phase.count > 1
             ? `bw run ${runId}: phase ${phase.index}/${phase.count} (base ${phaseBase.slice(0, 8)})`
             : `bw run ${runId}: apply patch (base ${phaseBase.slice(0, 8)})`,
-        audit: (action, summary) => audit(stage.id, `implementation.${action}`, summary.replace(`; run ${runId}`, "")),
+        // The refusal is the abort's own record, below.
+        onAudit: (action, summary) => {
+          if (action === "derived.discarded") audit(stage.id, "implementation.derived.discarded", `${where}${summary}`);
+        },
       });
-      if (!applied.ok) {
-        const action =
-          applied.kind === "content_invalid"
-            ? "implementation.content.invalid"
-            : applied.kind === "worktree_dirty"
-              ? "implementation.worktree.dirty"
-              : applied.kind === "gate_failed"
-                ? "implementation.gate.failed"
-                : "implementation.patch.refused";
-        return abort(stage.id, action, `${where}${applied.reason}`);
+      if (!committed.ok) {
+        // A refusal is the agent's diff breaking a rule; a failure is Git,
+        // Docker or a moved head, which the operator repairs rather than reads
+        // as the agent's doing.
+        return committed.kind === "empty"
+          ? abort(stage.id, "implementation.content.invalid", `${where}the implementer changed nothing at ${phaseBase}: a phase that changes nothing blocks the run`)
+          : abort(stage.id, committed.kind === "refused" ? "implementation.workspace.refused" : "implementation.workspace.failed", `${where}${committed.reason}`);
       }
-      finalHead = applied.resultingCommit;
+      finalHead = committed.head;
       audit(
         stage.id,
         "implementation.phase.apply",
-        `phase ${phase.index} of ${phase.count}: tasks ${phase.firstTask}-${phase.firstTask + phase.tasks.length - 1}; base=${phaseBase}; head=${finalHead}`
+        `phase ${phase.index} of ${phase.count}: tasks ${phase.firstTask}-${phase.firstTask + phase.tasks.length - 1}; base=${phaseBase}; head=${finalHead}; paths=${committed.paths.join(",")}`
       );
       const dependencies = unapprovedDependencyAdditions(worktreePath, headAtProposal, finalHead, approvedDependencies);
       if (!dependencies.ok) {
@@ -639,90 +614,87 @@ export async function runImplementationStage(
     if (!changedDiff.ok) {
       return selfReviewFailed(`cannot read the diff for ${headAtProposal}..${base}: ${changedDiff.detail}`);
     }
-    const reviewDispatch = await dispatchOnce(
-      store,
-      executor,
-      {
-        stageId: stage.id,
-        agent: author.id,
-        role: "author",
-        requestedModel: implementerSettings.model,
-        requestedEffort: implementerSettings.effort,
-        setting: author.id,
-        prompt: buildImplementationSelfReviewPrompt(
-          author,
-          planContent,
-          specContent,
-          scope,
-          base,
-          scope.filter((p) => existsSync(join(worktreePath, p))),
-          changedNames.stdout.split("\0").filter((p) => p !== ""),
-          changedDiff.stdout,
-          profile.verification
-        ),
-        // Structured output, as the phases (docs/features/structured-patch-output/plan.md).
-        invocation: { cwd: worktreePath, jsonSchema: SELF_REVIEW_RESULT_SCHEMA },
-      },
-      rootDir
-    );
-    // The boundary is checked before the reply is read, and whether or not the
-    // dispatch succeeded: a failed dispatch that also touched the tree blocks.
-    const headAfterReview = runGit(["rev-parse", "HEAD"], worktreePath);
-    if (!headAfterReview.ok) {
-      return selfReviewFailed(`cannot read the worktree head: ${headAfterReview.detail}`);
-    }
-    if (headAfterReview.stdout.trim() !== base) {
-      return selfReviewFailed(`the worktree head moved during the self-review dispatch: expected ${base}, found ${headAfterReview.stdout.trim()}`);
-    }
-    const cleanAfterReview = checkWorktreeClean(worktreePath);
-    if (!cleanAfterReview.ok) {
+    const cleanBeforeReview = checkWorktreeClean(worktreePath);
+    if (!cleanBeforeReview.ok) {
       return selfReviewFailed(
-        cleanAfterReview.detail !== undefined
-          ? `cannot check worktree cleanliness after the self-review dispatch: ${cleanAfterReview.detail}`
-          : `worktree is not clean after the self-review dispatch: ${cleanAfterReview.entries.join(", ")}`
+        cleanBeforeReview.detail !== undefined
+          ? `cannot check worktree cleanliness before the self-review dispatch: ${cleanBeforeReview.detail}`
+          : `worktree is not clean before the self-review dispatch: ${cleanBeforeReview.entries.join(", ")}`
       );
     }
-    const reply = readSelfReviewReply(
-      author.id,
-      reviewDispatch.ok ? { ok: true, resultText: reviewDispatch.envelope.resultText } : reviewDispatch
-    );
-    if (!reply.ok) {
+    const sandboxedReview = await sandboxedDispatch("self-review", "self-review: ", {
+      stageId: stage.id,
+      agent: author.id,
+      role: "author",
+      requestedModel: implementerSettings.model,
+      requestedEffort: implementerSettings.effort,
+      setting: author.id,
+      prompt: buildImplementationSelfReviewPrompt(
+        author,
+        planContent,
+        specContent,
+        scope,
+        base,
+        scope.filter((p) => existsSync(join(worktreePath, p))),
+        changedNames.stdout.split("\0").filter((p) => p !== ""),
+        changedDiff.stdout,
+        profile.verification
+      ),
+      // Structured output, as the phases (docs/features/structured-patch-output/plan.md).
+      invocation: { cwd: worktreePath, jsonSchema: SELF_REVIEW_REPLY_SCHEMA },
+    });
+    if (!sandboxedReview.ok) return sandboxedReview.result;
+    const reviewDispatch = sandboxedReview.dispatch;
+    const reply = reviewDispatch.ok
+      ? parseWorkspaceReply(reviewDispatch.envelope.resultText, validateSelfReviewReply)
+      : { ok: false as const, reason: `dispatch failed: ${reviewDispatch.reason}` };
+    if (!reply.ok || reply.value.status !== "completed") {
+      // An unusable reply is a skip: whatever the dispatch changed is
+      // discarded, so the stage passes on the last phase's commit. A discard
+      // that cannot run, or a moved head, is a guard failure and blocks.
+      const reason = reply.ok ? `implementer returned ${describeIncompleteReply(reply.value)}` : reply.reason;
+      const discarded = discardWorkspace({ worktreePath, base, sandbox: profile.sandbox });
+      if (!discarded.ok) return selfReviewFailed(`${reason}; and its changes could not be discarded: ${discarded.reason}`);
       // The reason goes last because it is free text.
-      audit(stage.id, "implementation.selfreview.skipped", `base=${base}; reason=self-review: ${reply.reason}`);
+      audit(
+        stage.id,
+        "implementation.selfreview.skipped",
+        `base=${base}; discarded=${discarded.discarded.length > 0 ? discarded.discarded.join(",") : "none"}; reason=self-review: ${reason}`
+      );
     } else {
-      const unchanged = dropUnchangedFiles(worktreePath, base, scope, reply.patches);
-      if (!unchanged.ok) return selfReviewFailed(unchanged.reason);
-      const { kept, dropped } = unchanged;
+      const committed = commitWorkspace({
+        worktreePath,
+        base,
+        scope,
+        slug: run.slug,
+        derivedPaths,
+        sandbox: profile.sandbox,
+        message: `bw run ${runId}: self-review (base ${base.slice(0, 8)})`,
+        onAudit: (action, summary) => {
+          if (action === "derived.discarded") audit(stage.id, "implementation.selfreview.derived.discarded", summary);
+        },
+      });
+      // No change at all is a pass with no commit.
+      if (!committed.ok && committed.kind !== "empty") return selfReviewFailed(committed.reason);
       let reviewedHead = base;
-      if (kept.length > 0) {
-        const applied = applyProposedPatches({
-          worktreePath,
-          runId,
-          slug: run.slug,
-          scope,
-          proposalBase: base,
-          patches: kept,
-          commitMessage: `bw run ${runId}: self-review (base ${base.slice(0, 8)})`,
-          audit: (action, summary) =>
-            audit(stage.id, `implementation.selfreview.${action}`, summary.replace(`; run ${runId}`, "")),
-        });
-        if (!applied.ok) return selfReviewFailed(applied.reason);
-        const dependencies = unapprovedDependencyAdditions(worktreePath, headAtProposal, applied.resultingCommit, approvedDependencies);
+      const changed = committed.ok ? committed.paths : [];
+      if (committed.ok) {
+        const dependencies = unapprovedDependencyAdditions(worktreePath, headAtProposal, committed.head, approvedDependencies);
         if (!dependencies.ok) {
           return abort(stage.id, "implementation.dependency.unapproved", `self-review: ${dependencies.reason}`);
         }
-        const regenerated = await regenerate("self-review", applied.resultingCommit);
+        const regenerated = await regenerate("self-review", committed.head);
         if (!regenerated.ok) {
           return abort(stage.id, "implementation.derived.failed", `self-review: ${regenerated.reason}`);
         }
         reviewedHead = regenerated.head;
       }
-      const recorded = critiqueAuditEntries(reply.critique);
+      const recorded = critiqueAuditEntries(reply.value.critique);
       for (const entry of recorded) audit(stage.id, "implementation.selfreview.critique", entry);
       audit(
         stage.id,
         "implementation.selfreview.pass",
-        `critique=${reply.critique.length}; recorded=${recorded.length}; patches=${kept.length}; dropped=${dropped.length > 0 ? dropped.join(", ") : "none"}; base=${base}; head=${reviewedHead}`
+        `critique=${reply.value.critique.length}; recorded=${recorded.length}; changed=${changed.length > 0 ? changed.join(",") : "none"}; base=${base}; head=${reviewedHead}`
       );
       finalHead = reviewedHead;
     }
@@ -750,132 +722,11 @@ export async function runImplementationStage(
 }
 
 /**
- * The self-review reply, or the reason the stage cannot use it. Every refusal
- * here is a skip, never a block: the guard checks have already run.
- * `validateAgentResult` reads a patch or file entry's fields without checking
- * that the entry is an object, so a `null` entry throws there; the throw is
- * caught and becomes a skip like any other malformed envelope.
+ * The `git` arguments that create the run's worktree, checked out LF whatever
+ * the host's `core.autocrlf` says: the work container is Linux, and a CRLF
+ * checkout reads as a change to every file it edits
+ * (docs/features/sandboxed-implementer/plan.md, Task 7).
  */
-function readSelfReviewReply(
-  agentId: string,
-  dispatch: { ok: true; resultText: string } | { ok: false; reason: string }
-): { ok: true; critique: string[]; patches: ProposedPatch[] } | { ok: false; reason: string } {
-  if (!dispatch.ok) {
-    return { ok: false, reason: `dispatch failed: ${dispatch.reason}` };
-  }
-  const body = extractJsonBody(dispatch.resultText);
-  if (body.kind === "refused") {
-    return { ok: false, reason: `implementer body refused: ${body.reason}` };
-  }
-  let result: ReturnType<typeof validateAgentResult>;
-  try {
-    result = validateAgentResult(agentId, body.value);
-  } catch (err) {
-    return { ok: false, reason: `implementer result refused: ${(err as Error).message}` };
-  }
-  if (!result.ok) {
-    return { ok: false, reason: `implementer result refused: ${result.reason}` };
-  }
-  if (result.value.status !== "proposed") {
-    return { ok: false, reason: `implementer returned status ${result.value.status}, not proposed` };
-  }
-  const changes = result.value.proposedContentChanges;
-  const selfReview =
-    typeof changes === "object" && changes !== null && !Array.isArray(changes)
-      ? (changes as { selfReview?: unknown }).selfReview
-      : undefined;
-  const critique = validateImplementationSelfReview(selfReview);
-  if (!critique.ok) {
-    return { ok: false, reason: critique.reason };
-  }
-  const patches = result.value.proposedPatches ?? [];
-  for (const patch of patches) {
-    if (patch.files.length === 0) {
-      return { ok: false, reason: "a proposed patch has no files" };
-    }
-    for (const file of patch.files) {
-      if (typeof file.content !== "string") {
-        return { ok: false, reason: `proposed file ${file.path} has no string content` };
-      }
-    }
-  }
-  return { ok: true, critique: critique.value.critique, patches };
-}
-
-/**
- * The patches with every file returned unchanged at `commit` removed, and the
- * paths removed. A file returned unchanged stages nothing, and the applier
- * refuses a patch whose staged set differs from the proposed set (web-calculator
- * run 1, phase 2, hazard 20). Only a `modify` of an approved scope path with
- * string content is compared; anything else reaches the applier's own refusal.
- * A patch the drop empties is removed. Each phase and the self-review use it,
- * each against the commit it proposed on.
- */
-function dropUnchangedFiles(
-  worktreePath: string,
-  commit: string,
-  scope: string[],
-  patches: ProposedPatch[]
-): { ok: true; kept: ProposedPatch[]; dropped: string[] } | { ok: false; reason: string } {
-  const dropped: string[] = [];
-  const kept: ProposedPatch[] = [];
-  for (const patch of patches) {
-    const files: ProposedPatch["files"] = [];
-    for (const file of patch.files) {
-      if (file.action === "modify" && scope.includes(file.path) && typeof file.content === "string") {
-        const same = sameBlobAtCommit(worktreePath, commit, file.path, file.content);
-        if (!same.ok) return same;
-        if (same.same) {
-          dropped.push(file.path);
-          continue;
-        }
-      }
-      files.push(file);
-    }
-    // A patch that arrived with no file is kept for the applier to refuse.
-    if (files.length > 0 || patch.files.length === 0) kept.push({ ...patch, files });
-  }
-  return { ok: true, kept, dropped };
-}
-
-/**
- * Whether `content`, staged at `path`, would produce the blob `commit` already
- * holds there. `--path` applies the path's line-ending and filter conversion,
- * so content that differs only in line endings from an LF blob under
- * `core.autocrlf` counts as the same. One case disagrees with `git add`: when
- * the committed blob itself holds CRLF, `git add` keeps CRLF content as it is
- * while `hash-object` still converts it, so an unchanged file is not dropped
- * and the applier refuses its patch. Files the phases create are LF blobs.
- * A path absent at `commit` is not the same; a git failure is named.
- */
-function sameBlobAtCommit(
-  worktreePath: string,
-  commit: string,
-  path: string,
-  content: string
-): { ok: true; same: boolean } | { ok: false; reason: string } {
-  const atCommit = spawnSync("git", ["rev-parse", "--verify", "--quiet", `${commit}:${path}`], {
-    cwd: worktreePath,
-    encoding: "utf8",
-  });
-  if (atCommit.error) {
-    return { ok: false, reason: `cannot read ${path} at ${commit}: ${atCommit.error.message}` };
-  }
-  // `--verify --quiet` exits 1 with no output when the path is absent.
-  if (atCommit.status === 1 && (atCommit.stdout ?? "").trim() === "") {
-    return { ok: true, same: false };
-  }
-  if (atCommit.status !== 0) {
-    return { ok: false, reason: `cannot read ${path} at ${commit}: ${(atCommit.stderr ?? "").trim() || `git rev-parse exited with code ${atCommit.status}`}` };
-  }
-  const proposed = spawnSync("git", ["hash-object", `--path=${path}`, "--stdin"], {
-    cwd: worktreePath,
-    encoding: "utf8",
-    input: content,
-  });
-  if (proposed.error || proposed.status !== 0) {
-    const detail = proposed.error?.message ?? ((proposed.stderr ?? "").trim() || `git hash-object exited with code ${proposed.status}`);
-    return { ok: false, reason: `cannot hash the proposed content of ${path}: ${detail}` };
-  }
-  return { ok: true, same: proposed.stdout.trim() === atCommit.stdout.trim() };
+export function worktreeAddArgs(worktreePath: string, branch: string, startingCommit: string): string[] {
+  return ["-c", "core.autocrlf=false", "-c", "core.eol=lf", "worktree", "add", worktreePath, "-b", branch, startingCommit];
 }

@@ -277,6 +277,84 @@ test("a failed dispatch retains its prompt, and its audit summary names the file
   });
 });
 
+// docs/features/sandboxed-implementer/plan.md, Task 6: a patch dispatch's tool server.
+
+/**
+ * Run `fn` with the Docker CLI's engine-selection variables (its documented
+ * environment) set to exactly `env`, so an expected `--docker-env` does not
+ * depend on the shell the suite runs in.
+ */
+async function withDockerEnv(env: Record<string, string>, fn: () => Promise<void>): Promise<void> {
+  const names = ["DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "DOCKER_CERT_PATH", "DOCKER_TLS_VERIFY"];
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  for (const name of names) delete process.env[name];
+  Object.assign(process.env, env);
+  try {
+    await fn();
+  } finally {
+    for (const name of names) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
+  }
+}
+
+test("a patch dispatch's tool server is named by interpreter path, with its log named like the prompt", async () => {
+  await withDockerEnv({ DOCKER_CONTEXT: "engine-a" }, () => withDispatchContext(async (store, root, stageId) => {
+    const prompt = "phase 1";
+    const result = await dispatchOnce(
+      store,
+      fixtureExecutor("echo-json"),
+      {
+        stageId, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt,
+        toolServer: { container: "work-id", dockerCommand: ["docker"], timeoutSeconds: 300 },
+        invocation: { budgetUsd: "2.00" },
+      },
+      root
+    );
+    assert.ok(result.ok, result.ok ? "" : result.reason);
+    const hash = sha256Hex(prompt);
+    const configPath = join(root, ".governance", "prompts", "1", `${hash}-mcp.json`);
+    const config = JSON.parse(readFileSync(configPath, "utf8")) as { mcpServers: { bw: { type: string; command: string; args: string[] } } };
+    // Hazard 9: the interpreter is this process's, by absolute path.
+    assert.equal(config.mcpServers.bw.command, process.execPath);
+    assert.equal(config.mcpServers.bw.type, "stdio");
+    assert.deepEqual(config.mcpServers.bw.args, [
+      join(process.cwd(), "src", "tool-server.ts"),
+      "--container", "work-id",
+      "--docker", '["docker"]',
+      // Hazards 9 and 12: the harness environment drops these, so they travel by value.
+      "--docker-env", '{"DOCKER_CONTEXT":"engine-a"}',
+      "--log", join(root, ".governance", "tools", "1", `${hash}.jsonl`),
+      "--timeout", "300",
+    ]);
+    assert.ok(existsSync(join(root, ".governance", "tools", "1")), "the log directory exists before the server starts");
+    const row = store.getAgentRun(result.agentRunId)!;
+    const argv = (JSON.parse(readFileSync(join(root, row.raw_output_ref), "utf8").trimEnd().split("\n").at(-1)!) as { argv: string[] }).argv;
+    assert.deepEqual(argv.slice(-6), ["--mcp-config", configPath, "--allowedTools", "mcp__bw__*", "--max-budget-usd", "2.00"]);
+  }));
+});
+
+test("a failed patch dispatch's reason names the tool log and the proxy log beside the prompt", async () => {
+  await withDispatchContext(async (store, root, stageId) => {
+    const result = await dispatchOnce(
+      store,
+      fixtureExecutor("exit-nonzero"),
+      {
+        stageId, agent: "a", role: "author", requestedModel: "m", requestedEffort: "medium", setting: "a", prompt: "p",
+        toolServer: { container: "work-id", dockerCommand: ["docker"], timeoutSeconds: 300 },
+      },
+      root
+    );
+    assert.equal(result.ok, false);
+    const hash = sha256Hex("p");
+    const prompt = join(".governance", "prompts", "1", `${hash}.txt`);
+    const log = join(".governance", "tools", "1", `${hash}.jsonl`);
+    const proxy = join(".governance", "tools", "1", `${hash}-proxy.log`);
+    assert.ok(result.reason.includes(`; prompt ${prompt}; tool log ${log}; proxy log ${proxy})`), result.reason);
+  });
+});
+
 test("an identical prompt dispatched twice in one run is retained once", async () => {
   await withDispatchContext(async (store, root, stageId) => {
     const executor = fixtureExecutor("echo-json");

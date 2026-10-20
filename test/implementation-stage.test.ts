@@ -7,7 +7,6 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,7 +19,8 @@ import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { parseImplementationGate } from "../src/handoff.ts";
 import { policyHash } from "../src/policy.ts";
 import { deliveryCoverage } from "../src/delivery-coverage.ts";
-import { PATCH_RESULT_SCHEMA, validateAgentResult } from "../src/agent-result.ts";
+import { parseWorkspaceReply, validateWorkspaceReply, WORKSPACE_REPLY_SCHEMA } from "../src/agent-result.ts";
+import { markUnremovable, markUnstartable, sandboxPrefix } from "./fixtures/docker/stand-in.ts";
 import { parseEnvelope, PROMPT_MAX_BYTES } from "../src/harness.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
@@ -581,51 +581,64 @@ async function expectGateRefusal(
   }, opts.mode, opts.emitPath);
 }
 
-test("a patch with a forged base commit is refused naming both hashes", () =>
+/** The head the projections commit left: the branch head before any phase. */
+function projectionsHead(store: Store, runId: number, worktreePath: string): string {
+  const log = git(worktreePath, ["log", "--format=%H|%s"]).stdout.trim().split("\n");
+  const line = log.find((l) => l.endsWith(`|bw run ${runId}: projections (spec and plan)`));
+  assert.ok(line, "the projections commit exists");
+  return line.split("|")[0]!;
+}
+
+/** The sentence a refusal ends with: where the refused change is kept (`commitWorkspace`). */
+const KEPT = String.raw`; the refused change is kept as commit ([0-9a-f]{40,64}) \(refs\/buildworks\/refused\/\1\)`;
+
+test("an out-of-scope write is refused naming the path, kept as a commit, and the worktree is reset to the phase's base", () =>
   expectGateRefusal(
-    { mode: "base-mismatch" },
-    /patch base commit 0{40} does not match the branch head [0-9a-f]{40,64}/
+    { mode: "out-of-scope" },
+    new RegExp(String.raw`^the agent's changes were refused: outside the signed scope: src\/never-approved\.ts${KEPT}$`),
+    async ({ store, runId, worktreePath }) => {
+      assert.equal(auditActionCount(store, runId, "implementation.workspace.refused"), 1);
+      assert.equal(git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim(), projectionsHead(store, runId, worktreePath));
+      assert.ok(!existsSync(join(worktreePath, "src", "never-approved.ts")), "the refused write was reset");
+      assert.equal(git(worktreePath, ["status", "--porcelain", "--untracked-files=all"]).stdout, "");
+      const kept = new RegExp(KEPT).exec(auditSummaries(store, runId, "implementation.workspace.refused")[0]!)![1]!;
+      assert.equal(git(worktreePath, ["diff", "--name-only", projectionsHead(store, runId, worktreePath), kept]).stdout.trim(), "src/never-approved.ts");
+    }
   ));
 
-test("an out-of-scope patch is refused naming the path", () =>
-  expectGateRefusal({ mode: "out-of-scope" }, /outside the signed scope: src\/never-approved\.ts/));
+test("a phase whose diff cannot be computed (a moved head) blocks as a workspace failure, not a refusal", () =>
+  expectGateRefusal(
+    { mode: "commit" },
+    /^compute diff: the worktree head moved from [0-9a-f]{40,64} to [0-9a-f]{40,64} while the agent ran; the worktree is kept as evidence$/,
+    async ({ store, runId }) => {
+      assert.equal(auditActionCount(store, runId, "implementation.workspace.failed"), 1);
+      assert.equal(auditActionCount(store, runId, "implementation.workspace.refused"), 0);
+    }
+  ));
 
-test("a patch touching a protected path is refused naming it", () =>
+test("a phase reply that says completed but lists an incomplete task is refused as invalid content", () =>
+  expectGateRefusal(
+    { mode: "completed-with-incomplete" },
+    /^implementer reply refused: the reply says completed but lists incomplete tasks: Build the other thing$/,
+    async ({ store, runId }) => {
+      assert.equal(auditActionCount(store, runId, "implementation.content.invalid"), 1);
+      assert.equal(auditActionCount(store, runId, "implementation.phase.apply"), 0);
+    }
+  ));
+
+test("a write touching a protected path is refused naming it", () =>
   expectGateRefusal(
     { mode: "protected", scope: ["src/agents/evil.ts"] },
     /touches a protected path: src\/agents\/evil\.ts/
   ));
 
-test("an empty delivery is refused naming the missing patches", () =>
-  expectGateRefusal({ mode: "empty" }, /no proposed patches/));
-
-test("a patch with no files remains an invalid-content event after patch-helper extraction", () =>
-  expectGateRefusal({ mode: "empty-files" }, /patch with no files/, async ({ store, runId }) => {
-    assert.equal(
-      store.query<{ n: number }>(
-        "SELECT COUNT(*) AS n FROM audit WHERE run_id = ? AND action = 'implementation.content.invalid'",
-        [runId]
-      )[0]!.n,
-      1
-    );
-  }));
-
-test("an add over an existing file is refused naming the rule", () =>
+test("a completed phase that changed nothing is refused as invalid content", () =>
   expectGateRefusal(
-    { mode: "add-existing", scope: ["docs/features/demo/spec.md"] },
-    /add requires the file not to exist: docs\/features\/demo\/spec\.md/
-  ));
-
-test("a modify over a missing file is refused naming the rule", () =>
-  expectGateRefusal(
-    { mode: "modify-missing", scope: ["src/missing.ts"] },
-    /modify requires the file to exist: src\/missing\.ts/
-  ));
-
-test("a patch path that escapes the repository is refused naming the escape", () =>
-  expectGateRefusal(
-    { mode: "protected", emitPath: "../evil.ts" },
-    /path escapes the repository: \.\.\/evil\.ts/
+    { mode: "empty" },
+    /^the implementer changed nothing at [0-9a-f]{40,64}: a phase that changes nothing blocks the run$/,
+    async ({ store, runId }) => {
+      assert.equal(auditActionCount(store, runId, "implementation.content.invalid"), 1);
+    }
   ));
 
 test("a phase reply that never reached the structured channel is a failed dispatch, refused at the envelope", () =>
@@ -639,91 +652,44 @@ test("a phase reply that never reached the structured channel is a failed dispat
       assert.equal(auditActionCount(store, runId, "implementation.content.invalid"), 0);
       // With no row, the audit event is where the reported cost survives; the
       // emitter's result line reports total_cost_usd 0. dispatchOnce appends the
-      // requested model, the effort and the retained prompt after the refusal.
+      // requested model, the effort, the retained prompt and the tool evidence
+      // after the refusal.
       assert.match(
         auditSummaries(store, runId, "implementation.author.failed")[0]!,
-        /; the line reports total_cost_usd 0 \(requested model m, effort medium; prompt \S+\.txt\)$/
+        /; the line reports total_cost_usd 0 \(requested model m, effort medium; prompt \S+\.txt; tool log \S+\.jsonl; proxy log \S+-proxy\.log\)$/
       );
     }
   ));
 
-test("a non-proposed implementer result is refused naming the status", () =>
-  expectGateRefusal({ mode: "non-proposed" }, /implementer returned status failed, not proposed/));
-
-test("a junction redirecting the write into a protected path is refused for the link, not the target", () =>
+test("a reply that did not complete is refused quoting its summary and incomplete tasks", () =>
   expectGateRefusal(
-    { mode: "symlink-dir", scope: ["src/alias/x.ts"] },
-    /contains a link component: src\/alias/
+    { mode: "non-proposed" },
+    /^implementer returned status blocked, not completed: fixture implementation refused; incomplete: Build the thing$/
   ));
 
-test("a junction redirecting the write outside the worktree is refused for the link, not the escape", () =>
-  expectGateRefusal(
-    { mode: "escape-link", scope: ["src/escape/x.ts"] },
-    /contains a link component: src\/escape/
-  ));
-
-test("a dangling link is refused by name because its target cannot be resolved", () =>
-  expectGateRefusal(
-    { mode: "dangling-link", scope: ["src/alias/x.ts"] },
-    /contains a link component: src\/alias/
-  ));
-
-test("a link redirecting the write to an ordinary out-of-scope target is refused for the link, not the target", () =>
-  expectGateRefusal(
-    { mode: "link-ordinary", scope: ["src/alias/x.ts"] },
-    /patch path src\/alias\/x\.ts contains a link component: src\/alias/
-  ));
-
-test("a file symlink redirecting the write into the run's design document is refused", async (t) => {
-  // Pre-flight: Windows without Developer Mode refuses file symlinks for
-  // unprivileged processes. The junction case above is the always-run proof
-  // of the same guard; this single case skips with a recorded reason.
-  const scratch = mkdtempSync(join(tmpdir(), "bw-filelink-"));
-  let fileLinksWork = true;
-  try {
-    symlinkSync(join(scratch, "target.md"), join(scratch, "link.md"), "file");
-  } catch {
-    fileLinksWork = false;
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
-  if (!fileLinksWork) {
-    t.skip("file symlinks are refused by this OS (Windows without Developer Mode); the junction case covers the guard");
-    return;
-  }
-  await expectGateRefusal(
-    { mode: "symlink-design", scope: ["src/alias.md"] },
-    /contains a link component: src\/alias\.md/
-  );
-});
-
-test("an executor that mutates the worktree before returning a proposal is refused naming every path", async () => {
+test("an executor that writes beyond its scope is refused naming every path, and only ignored output is removed silently", async () => {
+  // The recorded smoke's implementer wrote outside what it was asked to change.
+  // In tool mode that is an out-of-scope write: the boundary removes ignored
+  // output, then refuses the untracked file and the tracked modification by name.
   await withMode(async () => {
     await withApprovedRun(
       async ({ store, root, runId, worktreePath, head }) => {
         const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
         assert.equal(result.ok, false);
         if (result.ok) return;
-        assert.match(result.reason, /worktree is not clean after dispatch/);
-        // All three residue classes are named: untracked, tracked, ignored
-        // (asserted individually — git's entry order is not pinned).
-        for (const entry of ["unreported.txt", "base.txt", "ignored-residue.txt"]) {
+        assert.match(result.reason, /^the agent's changes were refused: /);
+        // Both refused paths are named (asserted individually: git's order is not pinned).
+        for (const entry of ["outside the signed scope: unreported.txt", "outside the signed scope: base.txt"]) {
           assert.ok(result.reason.includes(entry), `the refusal must name ${entry}: ${result.reason}`);
         }
+        assert.ok(!result.reason.includes("ignored-residue.txt"), "ignored output is removed, not refused");
         const stage = store.getStageChain(runId).find((s) => s.kind === "implementation")!;
         assert.equal(stage.status, "blocked");
         assert.equal(stage.gate_result, "block");
         assert.equal(store.getRun(runId)!.status, "blocked");
         assert.equal(existsSync(worktreePath), true, "the worktree survives the block");
-        assert.ok(existsSync(join(worktreePath, "unreported.txt")), "the untracked write is retained");
-        assert.ok(existsSync(join(worktreePath, "ignored-residue.txt")), "the ignored write is retained");
-        // Nothing was applied: only the projections commit exists, and no
-        // patch-apply audit event was written.
-        const applied = store.query<{ n: number }>(
-          "SELECT COUNT(*) AS n FROM audit WHERE run_id = ? AND action = 'implementation.patch.apply'",
-          [runId]
-        )[0].n;
-        assert.equal(applied, 0, "no patch was applied");
+        // Nothing was committed, and the worktree is reset to the phase's base.
+        assert.equal(auditActionCount(store, runId, "implementation.phase.apply"), 0);
         const log = git(worktreePath, ["log", "--format=%s", `${head}..HEAD`]);
         assert.equal(log.status, 0);
         assert.equal(
@@ -731,33 +697,17 @@ test("an executor that mutates the worktree before returning a proposal is refus
           1,
           "the branch holds only the projections commit"
         );
+        assert.equal(readFileSync(join(worktreePath, "base.txt"), "utf8"), BASE_MARKER, "the tracked change was reset");
+        for (const residue of ["unreported.txt", "ignored-residue.txt", "src/a1.ts"]) {
+          assert.ok(!existsSync(join(worktreePath, residue)), `${residue} was removed by the reset`);
+        }
       },
       { gitignore: "ignored-residue.txt" }
     );
   }, "mutate-then-propose");
 });
 
-test("an option-like patch path is refused alongside a dirty worktree before any git add", async () => {
-  await withMode(async () => {
-    await withApprovedRun(
-      async ({ store, root, runId, worktreePath }) => {
-        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
-        assert.equal(result.ok, false);
-        if (result.ok) return;
-        // The cleanliness gate fires before any git add can see the "-A"
-        // argument: the block is the ordering proof, and against the old
-        // code `git add -A` committed the dirty file alongside "-A".
-        assert.match(result.reason, /worktree is not clean after dispatch/);
-        assert.ok(!existsSync(join(worktreePath, "-A")), "the patch was never applied");
-        const stage = store.getStageChain(runId).find((s) => s.kind === "implementation")!;
-        assert.equal(stage.status, "blocked");
-      },
-      { scope: ["-A"] }
-    );
-  }, "mutate-then-propose");
-});
-
-test("an option-like patch path is committed as a literal path", async () => {
+test("an option-like scope path is committed as a literal path", async () => {
   await withApprovedRun(async ({ store, root, runId, worktreePath }) => {
     const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
     assert.equal(result.ok, true, (result as { reason?: string }).reason);
@@ -773,55 +723,63 @@ test("an option-like patch path is committed as a literal path", async () => {
   }, { scope: ["-A"] });
 });
 
-test("the stage's git add invocation stages exactly the literal paths", () => {
-  // A contract pin for the git semantics the stage relies on: a bare "-A"
-  // argument is the --all option and stages everything, while the literal
-  // invocation — the global `--literal-pathspecs`, the `--` terminator, and
-  // the paths — stages exactly what it names. The stage-level ordering guard
-  // is the dirty-worktree test above; this pins the invocation itself.
-  const scratch = mkdtempSync(join(tmpdir(), "bw-literal-paths-"));
-  try {
-    const init = git(scratch, ["init", "-q"]);
-    assert.equal(init.status, 0, init.stderr);
-    const base = git(scratch, ["-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"]);
-    assert.equal(base.status, 0, base.stderr);
-    writeFileSync(join(scratch, "-A"), "a");
-    writeFileSync(join(scratch, "other.txt"), "b");
-    writeFileSync(join(scratch, "unreported.txt"), "c");
-    const add = git(scratch, ["--literal-pathspecs", "add", "--", "-A", "other.txt"]);
-    assert.equal(add.status, 0, add.stderr);
-    const staged = git(scratch, ["diff", "--cached", "--name-only", "-z"]);
-    assert.equal(staged.status, 0, staged.stderr);
-    assert.deepEqual(
-      staged.stdout.split("\0").filter((l) => l !== "").sort(),
-      ["-A", "other.txt"],
-      "exactly the literal paths are staged, nothing else"
-    );
-  } finally {
-    rmSync(scratch, { recursive: true, force: true });
-  }
-});
-
-test("a second patch touching a path the first applied is refused by the head-moved re-validation", async () => {
-  await withMode(async () => {
-    await withApprovedRun(async (ctx) => {
-      const { store, root, runId, worktreePath } = ctx;
+test("a phase whose work container cannot be removed blocks before anything reads the worktree, and the branch head is unchanged", async () => {
+  // docs/features/sandboxed-implementer/plan.md, Task 10: a container not
+  // proven gone could still be writing, so no commit follows it.
+  await withApprovedRun(async ({ store, root, runId, worktreePath }) => {
+    const unmark = markUnremovable(sandboxPrefix(root, runId, "phase-1"));
+    try {
       const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
       assert.equal(result.ok, false);
       if (result.ok) return;
-      assert.match(result.reason, /branch moved since proposal in: src\/a1\.ts/);
-      const stage = store.getStageChain(runId).find((s) => s.kind === "implementation")!;
-      assert.equal(stage.status, "blocked");
+      assert.match(result.reason, /^work container \S+ \(\S+\) could not be proven removed, so a process left in it could still write the worktree: /);
+      assert.deepEqual(auditSummaries(store, runId, "implementation.sandbox.quiescence.failed"), [result.reason]);
+      assert.equal(auditActionCount(store, runId, "implementation.phase.apply"), 0);
+      assert.equal(agentRunCount(store, runId), 1, "the phase was dispatched; the self-review never was");
+      assert.equal(git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim(), projectionsHead(store, runId, worktreePath));
+      assert.ok(existsSync(join(worktreePath, "src", "a1.ts")), "the uncommitted write is kept as evidence");
       assert.equal(store.getRun(runId)!.status, "blocked");
-      assert.equal(existsSync(worktreePath), true);
-      // Projections plus the first applied patch: the second patch was never
-      // committed (the range excludes the base commit the branch was created
-      // from).
-      const log = git(worktreePath, ["log", "--oneline", `${ctx.head}..HEAD`]);
-      assert.equal(log.status, 0);
-      assert.equal(log.stdout.trim().split("\n").filter((l) => l !== "").length, 2);
-    });
-  }, "two-patches");
+    } finally {
+      unmark();
+    }
+  });
+});
+
+test("a phase whose sandbox cannot start blocks with implementation.sandbox.failed before any dispatch", async () => {
+  // docs/features/sandboxed-implementer/plan.md, Task 9 step 2.
+  await withApprovedRun(async ({ store, root, runId, worktreePath }) => {
+    const unmark = markUnstartable(sandboxPrefix(root, runId, "phase-1"));
+    try {
+      const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(result.reason, /^cannot start the implementation sandbox: start proxy \S+ failed \(docker exit 125\): .*unstartable/);
+      assert.deepEqual(auditSummaries(store, runId, "implementation.sandbox.failed"), [result.reason]);
+      assert.equal(agentRunCount(store, runId), 0, "nothing was dispatched");
+      assert.equal(git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim(), projectionsHead(store, runId, worktreePath));
+      assert.equal(store.getRun(runId)!.status, "blocked");
+    } finally {
+      unmark();
+    }
+  });
+});
+
+test("a self-review whose sandbox cannot start blocks the run, and the phase commit stays", async () => {
+  await withApprovedRun(async ({ store, root, runId, worktreePath }) => {
+    const unmark = markUnstartable(sandboxPrefix(root, runId, "self-review"));
+    try {
+      const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.match(result.reason, /^self-review: cannot start the implementation sandbox: start proxy \S+ failed/);
+      assert.deepEqual(auditSummaries(store, runId, "implementation.sandbox.failed"), [result.reason]);
+      assert.equal(agentRunCount(store, runId), 1, "the phase was dispatched; the self-review never was");
+      assert.equal(git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim(), lastPhaseHead(store, runId));
+      assert.equal(store.getRun(runId)!.status, "blocked");
+    } finally {
+      unmark();
+    }
+  });
 });
 
 // --- config-time failure and the fixture contract ----------------------------
@@ -914,27 +872,26 @@ test("the ok fixture body passes the same contract real output is held to", () =
   const scratch = mkdtempSync(join(tmpdir(), "bw-fixture-contract-"));
   try {
     writeFileSync(join(scratch, "base.txt"), BASE_MARKER);
-    const prompt = [
-      "This is phase 1 of 1.",
-      `baseCommit must be exactly: ${"a".repeat(40)}`,
-      "",
-      "Patch only these paths:",
-      "",
-      "- src/a.ts",
-      "",
-      "",
-    ].join("\n");
+    const prompt = ["This is phase 1 of 1.", "", "Patch only these paths:", "", "- src/a.ts", "", ""].join("\n");
     const env = { ...process.env };
     delete env.EMIT_MODE;
-    // The phase dispatch sends the patch schema, and its answer is read from structured_output.
-    const run = spawnSync("node", [FIXTURE, "--json-schema", JSON.stringify(PATCH_RESULT_SCHEMA)], {
-      cwd: scratch, input: prompt, encoding: "utf8", env,
-    });
+    // The phase dispatch sends the workspace reply schema and a tool server;
+    // the answer is read from structured_output.
+    const args = [FIXTURE, "--json-schema", JSON.stringify(WORKSPACE_REPLY_SCHEMA), "--mcp-config", "unused.json"];
+    const run = spawnSync("node", args, { cwd: scratch, input: prompt, encoding: "utf8", env });
     assert.equal(run.status, 0, run.stderr);
     const envelope = parseEnvelope(fixtureExecutor(), run.stdout, true);
-    const body = JSON.parse(envelope.resultText) as unknown;
-    const verdict = validateAgentResult("implementer", body);
-    assert.equal(verdict.ok, true, verdict.ok ? "" : verdict.reason);
+    const reply = parseWorkspaceReply(envelope.resultText, validateWorkspaceReply);
+    assert.equal(reply.ok, true, reply.ok ? "" : reply.reason);
+    assert.ok(readFileSync(join(scratch, "src", "a.ts"), "utf8").includes(BASE_MARKER), "the write landed in the working directory");
+    // Without either flag the fixture refuses, so a stage that forgets one fails its tests.
+    for (const missing of ["--json-schema", "--mcp-config"]) {
+      const at = args.indexOf(missing);
+      const without = [...args.slice(0, at), ...args.slice(at + 2)];
+      const refused = spawnSync("node", without, { cwd: scratch, input: prompt, encoding: "utf8", env });
+      assert.notEqual(refused.status, 0);
+      assert.match(refused.stderr, new RegExp(`a phase prompt arrived without ${missing}`));
+    }
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -942,8 +899,8 @@ test("the ok fixture body passes the same contract real output is held to", () =
 
 test("the gate event records the handoff: the projections commit as base, the applied head as head", async () => {
   // Step 8 task 2: the `implementation.gate.pass` event carries both commits
-  // in the one canonical shape — the base the patches bound to (the head
-  // after the projections commit, before any apply) and the final head.
+  // in the one canonical shape — the base the phases started from (the head
+  // after the projections commit, before any phase commit) and the final head.
   // Delivery diffs `base..head` for the changed paths, so a wrong base here
   // would silently re-admit or exclude whole sets of changes.
   await withApprovedRun(async ({ store, root, runId, head, worktreePath }) => {
@@ -1056,7 +1013,7 @@ test("the 57-task plan team-notes run 6 produced is implemented in six phases, o
           )
           .map((e) => e.summary);
         assert.equal(events.length, 6);
-        assert.match(events[0]!, /^phase 1 of 6: tasks 1-10; base=[0-9a-f]{40,64}; head=[0-9a-f]{40,64}$/);
+        assert.match(events[0]!, /^phase 1 of 6: tasks 1-10; base=[0-9a-f]{40,64}; head=[0-9a-f]{40,64}; paths=src\/p1\.ts$/);
         assert.match(events[5]!, /^phase 6 of 6: tasks 51-57; /);
 
         // The projections commit, then one commit per phase, newest first.
@@ -1068,7 +1025,7 @@ test("the 57-task plan team-notes run 6 produced is implemented in six phases, o
         assert.equal(messages[6], `bw run ${runId}: projections (spec and plan)`);
 
         // Each phase proposed against the head the previous phase committed.
-        const heads = events.map((e) => /head=([0-9a-f]+)$/.exec(e)![1]!);
+        const heads = events.map((e) => /head=([0-9a-f]+);/.exec(e)![1]!);
         const bases = events.map((e) => /base=([0-9a-f]+);/.exec(e)![1]!);
         assert.deepEqual(bases.slice(1), heads.slice(0, -1), "phase k+1 starts where phase k ended");
 
@@ -1103,7 +1060,10 @@ test("a phase that is refused stops the run there: later phases are never dispat
           const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
           assert.equal(result.ok, false);
           if (result.ok) return;
-          assert.match(result.reason, /^phase 3 of 6: implementer returned status blocked, not proposed$/);
+          assert.match(
+            result.reason,
+            /^phase 3 of 6: implementer returned status blocked, not completed: fixture refused this phase; incomplete: phase 3$/
+          );
           // Three dispatches were paid for, not six.
           assert.equal(agentRunCount(store, runId), 3);
           const stage = store.getStageChain(runId).find((s) => s.kind === "implementation")!;
@@ -1128,7 +1088,7 @@ test("a phase that is refused stops the run there: later phases are never dispat
   );
 });
 
-test("an executor that writes into the tree during a later phase is refused naming that phase and every path", async () => {
+test("an executor that writes beyond its scope during a later phase is refused naming that phase and the path", async () => {
   await withMode(
     async () => {
       await withApprovedRun(
@@ -1136,10 +1096,11 @@ test("an executor that writes into the tree during a later phase is refused nami
           const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
           assert.equal(result.ok, false);
           if (result.ok) return;
-          assert.match(result.reason, /^phase 2 of 6: worktree is not clean after dispatch: .*unreported\.txt/);
+          assert.match(result.reason, new RegExp(String.raw`^phase 2 of 6: the agent's changes were refused: outside the signed scope: unreported\.txt${KEPT}$`));
           assert.equal(agentRunCount(store, runId), 2);
           assert.equal(auditActionCount(store, runId, "implementation.phase.apply"), 1, "only phase 1 was applied");
-          assert.ok(existsSync(join(worktreePath, "unreported.txt")), "the write is retained as evidence");
+          assert.ok(existsSync(join(worktreePath, "src", "p1.ts")), "phase 1's commit stays");
+          assert.ok(!existsSync(join(worktreePath, "unreported.txt")), "the worktree is reset to phase 2's base");
           assert.equal(store.getRun(runId)!.status, "blocked");
         },
         { plan: run6Plan, scope: phaseScope(6) }
@@ -1164,74 +1125,6 @@ test("a later phase may modify a path an earlier phase added", async () => {
       { plan: run6Plan, scope: phaseScope(1) }
     );
   }, "phased-modify");
-});
-
-test("a later phase adding a path an earlier phase committed is refused by the existing add rule, naming the phase", async () => {
-  await withMode(async () => {
-    await withApprovedRun(
-      async ({ store, root, runId }) => {
-        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
-        assert.equal(result.ok, false);
-        if (result.ok) return;
-        assert.match(result.reason, /^phase 2 of 6: add requires the file not to exist: src\/p1\.ts$/);
-        assert.equal(agentRunCount(store, runId), 2);
-        assert.equal(store.getRun(runId)!.status, "blocked");
-      },
-      { plan: run6Plan, scope: phaseScope(1) }
-    );
-  }, "phased-add-existing");
-});
-
-test("a phase drops a file it returned unchanged, records it, and commits only what changed", async () => {
-  // Web-calculator run 1, phase 2 (test/fixtures/recorded/web-calculator-selfreview-run-1-phase-2-trailing-prose.json):
-  // the reply returned index.html byte-identical to the phase 1 commit, and the
-  // applier refused the whole patch. The emitter sends phase 1's file back
-  // unchanged beside phase 2's own new file.
-  await withMode(async () => {
-    await withApprovedRun(
-      async ({ store, root, runId, worktreePath }) => {
-        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
-        assert.equal(result.ok, true, (result as { reason?: string }).reason);
-        assert.equal(agentRunCount(store, runId), 3, "two phases and the self-review");
-        const applies = auditSummaries(store, runId, "implementation.phase.apply");
-        assert.equal(applies.length, 2);
-        const phase2Base = /base=([0-9a-f]+);/.exec(applies[1]!)![1]!;
-        const phase2Head = /head=([0-9a-f]+)$/.exec(applies[1]!)![1]!;
-        assert.deepEqual(auditSummaries(store, runId, "implementation.phase.dropped"), [
-          `phase 2 of 2: unchanged at ${phase2Base}: src/p1.ts`,
-        ]);
-        const touched = git(worktreePath, ["diff", "--name-only", phase2Base, phase2Head]);
-        assert.deepEqual(touched.stdout.trim().split("\n"), ["src/p2.ts"], "phase 2's commit holds only its own file");
-      },
-      { plan: tasksPlan(20), scope: phaseScope(2) }
-    );
-  }, "phased-unchanged");
-});
-
-test("a phase whose every returned file is unchanged blocks the run, naming the files, and commits nothing", async () => {
-  await withMode(async () => {
-    await withApprovedRun(
-      async ({ store, root, runId, worktreePath }) => {
-        const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
-        assert.equal(result.ok, false);
-        if (result.ok) return;
-        const phase1Head = lastPhaseHead(store, runId);
-        assert.equal(
-          result.reason,
-          `phase 2 of 2: every returned file is unchanged at ${phase1Head} (src/p1.ts): a phase that changes nothing blocks the run`
-        );
-        assert.deepEqual(auditSummaries(store, runId, "implementation.content.invalid"), [result.reason]);
-        assert.deepEqual(auditSummaries(store, runId, "implementation.phase.dropped"), [
-          `phase 2 of 2: unchanged at ${phase1Head}: src/p1.ts`,
-        ]);
-        assert.equal(auditActionCount(store, runId, "implementation.phase.apply"), 1, "only phase 1 was applied");
-        assert.equal(git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim(), phase1Head, "no phase 2 commit");
-        assert.equal(agentRunCount(store, runId), 2, "the self-review was never dispatched");
-        assert.equal(store.getRun(runId)!.status, "blocked");
-      },
-      { plan: tasksPlan(20), scope: phaseScope(2) }
-    );
-  }, "phased-all-unchanged");
 });
 
 test("each phase is told which scope paths exist in the worktree now, so a later phase modifies what an earlier one added", async () => {
@@ -1478,7 +1371,7 @@ function auditSummaries(store: Store, runId: number, action: string): string[] {
 function lastPhaseHead(store: Store, runId: number): string {
   const events = auditSummaries(store, runId, "implementation.phase.apply");
   assert.ok(events.length > 0, "a phase was applied");
-  return /head=([0-9a-f]+)$/.exec(events[events.length - 1]!)![1]!;
+  return /head=([0-9a-f]+);/.exec(events[events.length - 1]!)![1]!;
 }
 
 test("a clean self-review is one more implementer dispatch, commits nothing, and records its critique", async () => {
@@ -1496,7 +1389,7 @@ test("a clean self-review is one more implementer dispatch, commits nothing, and
     assert.equal(gateHandoff(store, runId).head, phaseHead, "the gate head is the last phase's commit");
     const pass = auditSummaries(store, runId, "implementation.selfreview.pass");
     assert.equal(pass.length, 1);
-    assert.equal(pass[0], `critique=1; recorded=1; patches=0; dropped=none; base=${phaseHead}; head=${phaseHead}`);
+    assert.equal(pass[0], `critique=1; recorded=1; changed=none; base=${phaseHead}; head=${phaseHead}`);
     assert.equal(auditSummaries(store, runId, "implementation.selfreview.critique").length, 1);
     assert.equal(auditSummaries(store, runId, "implementation.selfreview.skipped").length, 0);
     assert.equal(verifyAuditChain(store), null);
@@ -1516,10 +1409,9 @@ test("a self-review fix commits after the last phase, becomes the gate head, and
       assert.equal(messages[0], `bw run ${runId}: self-review (base ${phaseHead.slice(0, 8)})`);
       assert.ok(readFileSync(join(worktreePath, "src", "a1.ts"), "utf8").endsWith("// self-review\n"));
       assert.equal(gateHandoff(store, runId).head, tip, "the gate head is the self-review's commit");
-      assert.equal(auditSummaries(store, runId, "implementation.selfreview.patch.apply").length, 1);
       assert.equal(
         auditSummaries(store, runId, "implementation.selfreview.pass")[0],
-        `critique=1; recorded=1; patches=1; dropped=none; base=${phaseHead}; head=${tip}`
+        `critique=1; recorded=1; changed=${SCOPE[0]}; base=${phaseHead}; head=${tip}`
       );
       const verification = await runVerificationStage(store, { runId, rootDir: root });
       assert.equal(verification.ok, true, (verification as { reason?: string }).reason);
@@ -1529,7 +1421,7 @@ test("a self-review fix commits after the last phase, becomes the gate head, and
   }, "self-review-fix");
 });
 
-test("a self-review that returns a file unchanged drops it, commits nothing, and names it", async () => {
+test("a self-review that rewrites a file unchanged commits nothing and passes on the last phase", async () => {
   await withMode(async () => {
     await withApprovedRun(async ({ store, root, runId, head, worktreePath }) => {
       const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
@@ -1539,21 +1431,21 @@ test("a self-review that returns a file unchanged drops it, commits nothing, and
       assert.equal(gateHandoff(store, runId).head, phaseHead);
       assert.equal(
         auditSummaries(store, runId, "implementation.selfreview.pass")[0],
-        `critique=1; recorded=1; patches=0; dropped=${SCOPE[0]}; base=${phaseHead}; head=${phaseHead}`
+        `critique=1; recorded=1; changed=none; base=${phaseHead}; head=${phaseHead}`
       );
     });
   }, "self-review-unchanged");
 });
 
-for (const [mode, expected] of [
-  ["self-review-empty-critique", /self-review critique must not be empty/],
+for (const [mode, expected, discarded] of [
+  ["self-review-empty-critique", /self-review critique must not be empty/, "none"],
   // Under --json-schema a reply that never reached the structured channel is a
   // failed dispatch, refused at the envelope (docs/features/structured-patch-output/plan.md).
-  ["self-review-not-json", /dispatch failed: dispatched agent implementer \(author\) on stage \d+: envelope parse failed: harness envelope for executor claude-code has a result line without a structured_output object although the dispatch requested --json-schema: line \d+/],
-  ["self-review-bad-patch", /a proposed patch has no files/],
-  ["self-review-blocked", /implementer returned status blocked, not proposed/],
-  // A null entry makes validateAgentResult throw; the stage catches it as a refusal.
-  ["self-review-null-patch", /implementer result refused: /],
+  ["self-review-not-json", /dispatch failed: dispatched agent implementer \(author\) on stage \d+: envelope parse failed: harness envelope for executor claude-code has a result line without a structured_output object although the dispatch requested --json-schema: line \d+/, "none"],
+  ["self-review-blocked", /implementer returned status blocked, not completed: fixture self-review; incomplete: none listed$/, "none"],
+  // A failed dispatch that also wrote into the checkout: what it wrote is
+  // discarded and named, and the stage passes on the last phase.
+  ["self-review-mutate-fail", /reason=self-review: dispatch failed: /, "unreported.txt"],
 ] as const) {
   test(`a self-review reply the stage cannot use is skipped, and the stage passes on the last phase (${mode})`, async () => {
     await withMode(async () => {
@@ -1564,8 +1456,9 @@ for (const [mode, expected] of [
         const phaseHead = lastPhaseHead(store, runId);
         const skipped = auditSummaries(store, runId, "implementation.selfreview.skipped");
         assert.equal(skipped.length, 1);
-        assert.ok(skipped[0]!.startsWith(`base=${phaseHead}; reason=self-review: `), skipped[0]);
+        assert.ok(skipped[0]!.startsWith(`base=${phaseHead}; discarded=${discarded}; reason=self-review: `), skipped[0]);
         assert.match(skipped[0]!, expected);
+        assert.equal(git(worktreePath, ["status", "--porcelain", "--untracked-files=all"]).stdout, "", "the checkout is clean");
         assert.equal(auditSummaries(store, runId, "implementation.selfreview.pass").length, 0);
         assert.equal(auditSummaries(store, runId, "implementation.selfreview.critique").length, 0);
         assert.equal(git(worktreePath, ["log", "--format=%s", `${head}..HEAD`]).stdout.trim().split("\n").length, 2);
@@ -1612,23 +1505,17 @@ async function expectSelfReviewBlock(
   }, mode);
 }
 
-test("a self-review patch outside the signed scope blocks the run by name, and the phase commits stay", () =>
+test("a self-review write outside the signed scope blocks the run by name, and the phase commits stay", () =>
   expectSelfReviewBlock("self-review-out-of-scope", ({ worktreePath, head }, reason, phaseHead) => {
-    assert.match(reason, /src\/never-approved\.ts/);
+    assert.match(reason, new RegExp(String.raw`^self-review: the agent's changes were refused: outside the signed scope: src\/never-approved\.ts${KEPT}$`));
     assert.equal(git(worktreePath, ["rev-parse", "HEAD"]).stdout.trim(), phaseHead, "nothing was committed");
     assert.equal(git(worktreePath, ["log", "--format=%s", `${head}..HEAD`]).stdout.trim().split("\n").length, 2);
   }));
 
-test("a self-review dispatch that writes into the tree blocks the run naming the path", () =>
+test("a self-review that writes beyond its scope beside a clean reply blocks the run naming the path", () =>
   expectSelfReviewBlock("self-review-mutate", ({ worktreePath }, reason) => {
-    assert.match(reason, /^self-review: worktree is not clean after the self-review dispatch: .*unreported\.txt/);
-    assert.ok(existsSync(join(worktreePath, "unreported.txt")), "the write is retained as evidence");
-  }));
-
-test("a failed self-review dispatch that also wrote into the tree blocks the run, not skips it", () =>
-  expectSelfReviewBlock("self-review-mutate-fail", ({ store, runId }, reason) => {
-    assert.match(reason, /^self-review: worktree is not clean after the self-review dispatch: .*unreported\.txt/);
-    assert.equal(auditSummaries(store, runId, "implementation.selfreview.skipped").length, 0);
+    assert.match(reason, new RegExp(String.raw`^self-review: the agent's changes were refused: outside the signed scope: unreported\.txt${KEPT}$`));
+    assert.ok(!existsSync(join(worktreePath, "unreported.txt")), "the worktree is reset to the last phase's commit");
   }));
 
 test("a change whose diff is over the prompt ceiling skips the self-review as a failed dispatch", async () => {
@@ -1645,7 +1532,7 @@ test("a change whose diff is over the prompt ceiling skips the self-review as a 
         const diff = git(join(root, ".governance", "worktrees", String(runId)), ["diff", "--no-color", gateHandoff(store, runId).base, phaseHead]);
         assert.ok(diff.stdout.length > PROMPT_MAX_BYTES, `the diff is ${diff.stdout.length} bytes`);
         assert.deepEqual(auditSummaries(store, runId, "implementation.selfreview.skipped"), [
-          `base=${phaseHead}; reason=self-review: dispatch failed: prompt exceeds ${PROMPT_MAX_BYTES} bytes`,
+          `base=${phaseHead}; discarded=none; reason=self-review: dispatch failed: prompt exceeds ${PROMPT_MAX_BYTES} bytes`,
         ]);
         assert.equal(agentRunCount(store, runId), 2, "the refused prompt never reached the executor");
         assert.equal(gateHandoff(store, runId).head, phaseHead);
@@ -1661,7 +1548,7 @@ test("a self-review dispatch that commits in the checkout blocks the run naming 
     assert.notEqual(moved, phaseHead);
     assert.equal(
       reason,
-      `self-review: the worktree head moved during the self-review dispatch: expected ${phaseHead}, found ${moved}`
+      `self-review: compute diff: the worktree head moved from ${phaseHead} to ${moved} while the agent ran; the worktree is kept as evidence`
     );
   }));
 
@@ -1694,7 +1581,7 @@ test("the self-review prompt the stage sent has the last phase's commit as its b
       diff.stdout,
       VERIFICATION
     );
-    assert.ok(prompt.includes(`baseCommit must be exactly: ${phaseHead}`));
+    assert.ok(prompt.includes(`The repository checkout is at commit ${phaseHead}, `));
     assert.equal(rows[1]!.input_hash, sha256Hex(prompt), "the stage sent the self-review built on the last phase's commit");
   });
 });
@@ -1724,7 +1611,7 @@ test("each phase is followed by a regeneration: the file is committed once, the 
         // Phase 1 creates the file; phase 2's command writes the same bytes.
         const applies = auditSummaries(store, runId, "implementation.phase.apply");
         assert.equal(applies.length, 2);
-        const phase1Head = /head=([0-9a-f]+)$/.exec(applies[0]!)![1]!;
+        const phase1Head = /head=([0-9a-f]+);/.exec(applies[0]!)![1]!;
         const commits = auditSummaries(store, runId, "implementation.derived.commit");
         assert.equal(commits.length, 1);
         const regenerated = /head=([0-9a-f]+);/.exec(commits[0]!)![1]!;
@@ -1785,7 +1672,7 @@ test("a self-review fix is followed by a regeneration, and the gate head is the 
         assert.ok(commits[0]!.includes(`; head=${selfReviewBase}; `), "the self-review proposed on the regenerated commit");
         assert.equal(
           auditSummaries(store, runId, "implementation.selfreview.pass")[0],
-          `critique=1; recorded=1; patches=1; dropped=none; base=${selfReviewBase}; head=${tip}`
+          `critique=1; recorded=1; changed=${SCOPE[0]}; base=${selfReviewBase}; head=${tip}`
         );
         assert.ok(commits[1]!.startsWith(`label=self-review; base=${selfReviewCommit}; `), commits[1]);
         assert.equal(gateHandoff(store, runId).head, tip);

@@ -1,6 +1,7 @@
 import { DEFAULT_SETTINGS } from "../src/policy.ts";
 import { freezeProfile } from "../src/profile.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
+import { standInSandbox } from "./fixtures/docker/stand-in.ts";
 
 /**
  * Freeze a profile in which every dispatch setting is the one model passed and
@@ -25,7 +26,7 @@ export function freezeUniformProfile(
   verification: VerificationConfig
 ): ReturnType<typeof freezeProfile> {
   const names = Object.keys(DEFAULT_SETTINGS);
-  return freezeProfile(rootDir, runId, startingCommit, model, verification, {}, {
+  return freezeProfile(rootDir, runId, startingCommit, model, verification, standInSandbox(), {}, {
     modelFor: Object.fromEntries(names.map((name) => [name, model])),
     effortFor: Object.fromEntries(names.map((name) => [name, "medium"])),
   });

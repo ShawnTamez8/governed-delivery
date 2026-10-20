@@ -5,9 +5,10 @@ import {
 } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import type { Writable } from "node:stream";
-import { parseGovernedConfig } from "./governed-config.ts";
+import { ContainerError, ensureImage, execTarget, runInSandbox, unquiescedReason, withSandbox } from "./container.ts";
+import { parseGovernedConfig, type VerifyCommand } from "./governed-config.ts";
 import { GOVERNANCE_DIR, GOVERNANCE_PREFIX } from "./paths.ts";
-import { VERIFY_ENV_PASSTHROUGH } from "./policy.ts";
+import { buildPolicy, SANDBOX_DOCKER_COMMAND, seededSandbox } from "./policy.ts";
 import { inspectBootstrapPrerequisites } from "./readiness.ts";
 import { resolveProjectTarget } from "./repo-root.ts";
 import { validateRunIdentity } from "./store.ts";
@@ -29,7 +30,6 @@ export interface PreparedProject {
 
 const BASELINE_MESSAGE = "Initialize BuildWorks static-web project";
 const DESIGN_MESSAGE_PREFIX = "Add BuildWorks design for ";
-const WINDOWS = process.platform === "win32";
 
 function git(rootDir: string, ...args: string[]) {
   return spawnSync("git", ["--no-optional-locks", ...args], {
@@ -49,18 +49,49 @@ function checked(result: ReturnType<typeof spawnSync>, operation: string): strin
   return typeof result.stdout === "string" ? result.stdout : "";
 }
 
-// The starter's own commands run under the environment the verification stage
-// will give them (named variables only), so this check and that one cannot
-// disagree. Passing the whole environment on carries whatever launched this
-// process: `npm run` exports each .npmrc setting as npm_config_*, and npm 11.18
-// refuses an exported allow-scripts in a project install (EALLOWSCRIPTS).
-function verificationEnvironment(): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const name of VERIFY_ENV_PASSTHROUGH) {
-    const value = process.env[name];
-    if (value !== undefined) env[name] = value;
+/**
+ * Run the starter's own verification commands the way the verification stage
+ * will: in one sandbox of the seeded image, under the seeded ceilings, with
+ * only the frozen `--env` list, so this check and that one cannot disagree.
+ * Passing the launcher's environment on would carry whatever launched this
+ * process: `npm run` exports each .npmrc setting as npm_config_*, and npm
+ * 11.18 refuses an exported allow-scripts in a project install
+ * (EALLOWSCRIPTS). Evidence goes under the target's ignored governance
+ * directory; no run exists yet, so the sandbox is labelled run 0.
+ */
+async function runStarterCommands(rootDir: string, commands: VerifyCommand[], stdout: Writable): Promise<void> {
+  const frozen = seededSandbox(ensureImage(SANDBOX_DOCKER_COMMAND).imageId);
+  const policy = buildPolicy();
+  const evidenceDir = join(rootDir, GOVERNANCE_DIR, "bootstrap");
+  const run = await withSandbox({ frozen, rootDir, runId: 0, label: "bootstrap", worktreePath: rootDir }, async (sandbox) => {
+    for (const command of commands) {
+      const evidencePath = join(evidenceDir, `${command.name}.log`);
+      let outcome;
+      try {
+        outcome = await runInSandbox(execTarget(sandbox), frozen.imageId, command, {
+          cwd: rootDir,
+          timeoutSeconds: policy.verifyCommandTimeoutSeconds,
+          maxBytes: policy.resultMaxBytes,
+          retentionMaxBytes: policy.verifyRetentionMaxBytes,
+          evidencePath,
+        });
+      } catch (err) {
+        if (!(err instanceof ContainerError)) throw err;
+        return `generated ${command.command.join(" ")} could not be run in sandbox ${sandbox.name}: ${err.message}`;
+      }
+      const because = outcome.timedOut ? `exceeded the ${policy.verifyCommandTimeoutSeconds}-second ceiling`
+        : outcome.outputOverflow ? `produced more than the ${policy.resultMaxBytes}-byte output budget`
+        : outcome.exitCode !== 0 ? `exited with code ${outcome.exitCode}` : null;
+      if (because !== null) return `generated ${command.command.join(" ")} failed: it ${because}; output retained at ${evidencePath}`;
+    }
+    return null;
+  });
+  if (!run.started) throw new Error(`cannot start the bootstrap sandbox: ${run.error.message}`);
+  if (!run.teardown.workContainerGone) throw new Error(unquiescedReason(run.sandbox, run.teardown, run.value));
+  if (run.teardown.failures.length > 0) {
+    stdout.write(`Sandbox ${run.sandbox.name} left objects behind: ${run.teardown.failures.join("; ")}\n`);
   }
-  return env;
+  if (run.value !== null) throw new Error(run.value);
 }
 
 function normalizeProjectName(name: string): string {
@@ -383,11 +414,7 @@ async function bootstrap(
   mkdirSync(join(rootDir, "docs", "features", slug), { recursive: true });
   const config = parseGovernedConfig(expected.get("governed.yaml")!);
   if (!config.ok) throw new Error(config.reason);
-  const env = verificationEnvironment();
-  checked(spawnSync("npm", ["ci"], { cwd: rootDir, encoding: "utf8", shell: WINDOWS, env }),
-    "generated npm ci failed");
-  checked(spawnSync("npm", ["test"], { cwd: rootDir, encoding: "utf8", shell: WINDOWS, env }),
-    "generated npm test failed");
+  await runStarterCommands(rootDir, config.config.commands, options.stdout);
   const owned = new Set(expected.keys());
   requireOnlyPaths(rootDir, owned, "the baseline commit");
   checked(git(rootDir, "add", "--", ...owned), "cannot stage the generated baseline");

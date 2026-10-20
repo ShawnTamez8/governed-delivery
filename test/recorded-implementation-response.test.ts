@@ -32,6 +32,11 @@ const embeddedFenceFixture = JSON.parse(
   )
 ) as { envelope: { result: string } };
 
+/** The files of a recorded response's first patch: these runs predate tool mode, when the reply carried patches. */
+function recordedPatchFiles(value: unknown): { path: string }[] {
+  return (value as { proposedPatches?: { files: { path: string }[] }[] }).proposedPatches?.[0]?.files ?? [];
+}
+
 test("the recorded Task 10 implementer response reproduces its exact JSON refusal", () => {
   const extracted = extractJsonBody(fixture.envelope.result);
 
@@ -63,7 +68,7 @@ test("only the two measured invalid escapes prevent AgentResult validation", () 
   const validated = validateAgentResult("implementer", extracted.value);
   assert.equal(validated.ok, true);
   if (!validated.ok) return;
-  assert.equal(validated.value.proposedPatches?.[0]?.files.length, 5);
+  assert.equal(recordedPatchFiles(validated.value).length, 5);
 });
 
 test("recorded implementer response with embedded markdown code fences in string values extracts and validates", () => {
@@ -74,7 +79,7 @@ test("recorded implementer response with embedded markdown code fences in string
   const validated = validateAgentResult("implementer", extracted.value);
   assert.equal(validated.ok, true);
   if (!validated.ok) return;
-  assert.equal(validated.value.proposedPatches?.[0]?.files.length, 18);
+  assert.equal(recordedPatchFiles(validated.value).length, 18);
 });
 
 const rawNewlineFixture = JSON.parse(
@@ -93,7 +98,7 @@ test("recorded run 9 phase-2 response, refused for one raw line break in a strin
   const validated = validateAgentResult("implementer", extracted.value);
   assert.equal(validated.ok, true, validated.ok ? "" : validated.reason);
   if (!validated.ok) return;
-  const files = validated.value.proposedPatches?.[0]?.files ?? [];
+  const files = recordedPatchFiles(validated.value);
   assert.equal(files.length, 11);
   assert.equal(files.at(-1)?.path, "src/server/routes/import.ts");
 });

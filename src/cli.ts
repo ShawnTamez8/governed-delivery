@@ -18,7 +18,7 @@ import { approvalPayload, validateExpiry } from "./approval.ts";
 import { approveRun, buildBinding } from "./approval-stage.ts";
 import { answerQuestion } from "./spec-decision-stage.ts";
 import { APPROVAL_DEFAULT_LIFETIME_SECONDS, APPROVAL_MAX_LIFETIME_SECONDS } from "./policy.ts";
-import { inspectReadiness } from "./readiness.ts";
+import { inspectFrozenSandboxImage, inspectReadiness } from "./readiness.ts";
 import { ACTION_REASON_ORDER, readRunSnapshot, RunMissingError, type ActionReason } from "./operator-state.ts";
 import { canonicalJson } from "./canonical.ts";
 import { advanceRun } from "./run-command.ts";
@@ -148,6 +148,9 @@ async function main(): Promise<void> {
             : sameExecutor ? currentProbe.evidence : probeReason,
           repair: profile !== null && sameExecutor ? currentProbe.repair : null });
         if (profile !== null && !sameExecutor) readiness.limitations.push(probeReason);
+        readiness.checks.push(profile === null
+          ? { name: "frozen_sandbox_image", status: "not_checked", evidence: "No verified frozen sandbox is available.", repair: null }
+          : inspectFrozenSandboxImage(profile.sandbox, selectedRun));
         reasons.push(...snapshot.workflowAction.reasons);
         for (const reason of reasons) readiness.checks.push({ name: `boundary_${reason.code}`, status: "fail",
           evidence: reason.reason, repair: `Inspect status --repo "${rootDir}" --run ${selectedRun}; do not replay or repair the recorded chain.` });
@@ -157,6 +160,11 @@ async function main(): Promise<void> {
         if (snapshot.workflowAction.group === "approval") requiredCurrent.add("approval_key");
         if (sameExecutor && snapshot.workflowAction.group !== null && snapshot.workflowAction.group !== "approval") {
           requiredCurrent.add("executor_probe");
+        }
+        // The groups that start sandboxes need the engine and the frozen image.
+        if (["implementation", "verification", "code_review"].includes(snapshot.workflowAction.group ?? "")) {
+          requiredCurrent.add("docker_engine");
+          requiredCurrent.add("frozen_sandbox_image");
         }
         for (const check of readiness.checks.filter((check) => requiredCurrent.has(check.name) && check.status === "fail")) {
           reasons.push({ code: "setup_required", reason: `${check.name}: ${check.evidence}` });

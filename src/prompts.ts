@@ -132,11 +132,12 @@ ${indent}  Record a question here instead of deciding it yourself or leaving it 
  * source line so the constraint scan in `test/prompts.test.ts` matches it
  * (hazard 3). The block's size is set by `governed.yaml` and has no bound of
  * its own: an oversize one is refused by the existing prompt ceiling in
- * `src/dispatch.ts`, never truncated.
+ * `src/dispatch.ts`, never truncated. `workspace` is the patch prompts' flag
+ * for the derived files (`derivedArtifactsLines`).
  */
-function verificationCommandsBlock(verification: VerificationConfig): string {
+function verificationCommandsBlock(verification: VerificationConfig, workspace = false): string {
   const commands = verification.commands.map((c) => `- ${c.name}: ${c.command.join(" ")}`).join("\n");
-  const derived = derivedArtifactsLines(verification);
+  const derived = derivedArtifactsLines(verification, workspace);
   return `After the implementation is committed, and again after each code-review remediation commit, the system runs these verification commands in this order in a checkout of the delivered code:
 
 ${commands}
@@ -152,14 +153,47 @@ The first command that fails blocks the run, and no repair round follows.${deriv
  * (`docs/features/derived-artifacts-and-dependency-policy/plan.md`). Empty when
  * none are declared, so a configuration without the block changes no prompt.
  * Each sentence is one source line so the constraint scan matches it.
+ *
+ * The three patch prompts (`workspace`) add one sentence: an agent that installs
+ * packages in the container rewrites a lockfile, and `commitWorkspace` returns
+ * every derived path to its base state before the commit
+ * (docs/features/sandboxed-implementer/plan.md, Task 9).
  */
-function derivedArtifactsLines(verification: VerificationConfig): string {
+function derivedArtifactsLines(verification: VerificationConfig, workspace = false): string {
   if (verification.derived.length === 0) return "";
   return [
     `After every implementation and remediation commit, the system regenerates these files itself by running their commands, and commits them:`,
     ...verification.derived.map((d) => `- ${d.path}: ${d.command.join(" ")}`),
-    `Never declare, propose or edit these files: the system refuses a specification that declares one and a patch that changes one.`,
+    `Never declare, propose or edit these files: the system refuses a specification that declares one.`,
+    ...(workspace ? [`Installing packages can rewrite the derived files listed above; the system discards your changes to them and regenerates them.`] : []),
   ].join("\n");
+}
+
+/**
+ * How the three patch dispatches change the code (docs/features/sandboxed-implementer/plan.md,
+ * Task 9): through BuildWorks' tool server in the run's container, never by
+ * returning file contents. The wording is the spike's measured preamble
+ * (`PREAMBLE` in `scripts/sandbox-spike/phase-replay.ts`, kept in
+ * `test/fixtures/recorded/sandbox-spike-crew-chatter-phase-2.json`), generalized
+ * per prompt; the last two lines state what `commitWorkspace` and
+ * `gatePatchPaths` refuse. Each line is one source line so the constraint scan
+ * in `test/prompts.test.ts` matches it (hazard 3).
+ */
+const WORKSPACE_TOOLS_RULES = [
+  `Change files only through the bw tools: list_files, read_file, write_file and run_command. Paths are relative to the checkout root.`,
+  `run_command runs a shell command in the checkout inside a Linux container with Node and npm; the package registry is the only network host it can reach.`,
+  `You have no other way to change files and no git: the system computes your changes from the checkout and commits them.`,
+  `Change only the approved scope paths listed below; any other change is refused, and so is deleting or renaming a file or making a symbolic link.`,
+  `A tasks.md path is prohibited because task execution and status belong in run-state database rows.`,
+].join("\n");
+
+/**
+ * The workspace reply each patch prompt advertises, valid against
+ * `WORKSPACE_REPLY_SCHEMA` (`src/agent-result.ts`); the self-review adds its
+ * critique through `extra`.
+ */
+function workspaceReplyShape(extra = ""): string {
+  return `{"status": "completed", "summary": "...", "incompleteTasks": []${extra}}`;
 }
 
 /**
@@ -1343,21 +1377,20 @@ ${renderFindingsBlock(findings)}`;
 }
 
 /**
- * The implementation author prompt: role, the approved plan and
- * specification verbatim, the signed scope as the only paths a patch may
- * touch, and the AgentResult contract with every constrained field stated.
- *
- * `baseCommit` is handed to the model rather than left to it to compute: it
- * is the branch head the system will verify every proposed patch against,
- * and a model recomputing it would be a second source of truth for the one
- * value that binds the patch to what was authorized — the same reason the
- * plan prompt hands `plan_for`.
+ * The implementation author prompt: role, the tool-mode contract
+ * (`WORKSPACE_TOOLS_RULES`), the approved plan and specification verbatim, the
+ * signed scope as the only paths a change may touch, and the workspace reply
+ * with every constrained field stated. The implementer changes the checkout
+ * through the tool server in the run's container; the system computes the diff
+ * from the worktree, gates it and commits it (`commitWorkspace`), so the reply
+ * carries a status and a summary, never file contents
+ * (docs/features/sandboxed-implementer/plan.md, Task 9).
  *
  * The scope block shape ("Patch only these paths:" followed by one `- <path>`
- * line per entry) is a contract: the fixture executor in Task 7 scrapes it
- * to build its patches, so changing the shape changes the fixture. So is the
- * sentence `This is phase K of N.`, which the same fixture scrapes to know which
- * phase it is answering.
+ * line per entry) is a contract: the fixture executor scrapes it to know which
+ * files to write, so changing the shape changes the fixture. So is the sentence
+ * `This is phase K of N.`, which the same fixture scrapes to know which phase it
+ * is answering. The heading is the one the spike's measured prompt carried.
  *
  * The implementation stage dispatches once per phase of the plan's tasks
  * (hazard 20), so every call carries one `PlanPhase`; a plan of at most one
@@ -1367,12 +1400,10 @@ ${renderFindingsBlock(findings)}`;
  * phases: what earlier phases built reaches it only through the checkout.
  *
  * `existingPaths` is the subset of `scope` that exists in the worktree at
- * `baseCommit`, computed by the stage with the same existence test the patch
- * applier uses, and the prompt splits the scope into the paths that take
- * `modify` and the paths that take `add`. Without it the model guesses which
- * scope paths an earlier phase created: team-notes run 7 proposed `modify` for
- * a file no phase had created, and phase 4 was refused after $2.37 of
- * implementation spend (hazard 20).
+ * `baseCommit`, and the prompt splits the scope into the paths that exist and
+ * the paths that do not, now as information: the model can list the checkout
+ * itself. Team-notes run 7 guessed which scope paths an earlier phase had
+ * created and was refused after $2.37 of implementation spend (hazard 20).
  *
  * The frozen verification commands follow the two lists and precede the phase's
  * tasks, so the scope block and both lists the fixture scrapes still end at their
@@ -1402,66 +1433,41 @@ export function buildImplementationAuthorPrompt(
     `This is phase ${phase.index} of ${phase.count}.`,
     `Implement only the tasks listed under "Tasks for this phase" below: tasks ${phase.firstTask} through ${lastTask} of the approved plan.`,
     ...(phase.index > 1
-      ? [`Earlier phases are already committed in this checkout, so the files they created exist: read them before patching and build on them.`]
+      ? [`Earlier phases are already committed in this checkout, so the files they created exist: read them before you change them and build on them.`]
       : []),
-    `A file that already exists in the checkout takes action modify with its complete new file content; use action add only for a file that does not exist yet.`,
-    `The two lists after the scope list name which scope paths exist in the checkout right now: take the action each list states, and never modify a path listed as not existing yet.`,
+    `The two lists after the scope list name which scope paths exist in the checkout right now.`,
     ...(phase.index < phase.count
       ? [`Later phases will implement the remaining tasks, so do not implement a task outside this phase.`]
       : []),
-    `Return at least one file: a phase that changes nothing blocks the run.`,
-    `Before you return, read back each task of this phase, and each acceptance criterion whose line in the plan's Coverage section names a file you return, against the files you return, and correct any file that leaves one unmet.`,
+    `Change at least one file: a phase that changes nothing blocks the run.`,
+    `Before you answer, read back each task of this phase, and each acceptance criterion whose line in the plan's Coverage section names a file you changed, against the files you changed, and correct any file that leaves one unmet.`,
   ].join("\n");
-  // The read-only sentence is UX, not a guard: enforcement is the
-  // invocation boundary (the read-only executor command) and the stage's
-  // clean-tree assertions. It must not tell the model about the backstop —
-  // that would invite "they'll discard it anyway" readings.
   return `${IMPLEMENTATION_PROMPT_PREFIX} ${agent.id}
 
-Propose the code changes that implement the approved plan below. Your
-working directory is the repository checkout those changes apply to — read
-it to see the code you are patching. Run no git commands: the system applies
-and commits the patches you propose. This checkout is read-only for you: do
-not create, modify, or delete any file. Only the patch content you return
-is considered.
+Implement the approved plan below by changing files in the repository checkout, which is at commit ${baseCommit}.
+${WORKSPACE_TOOLS_RULES}
 
 ${phaseRules}
 
-Return exactly a JSON AgentResult object with this shape:
-{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedPatches": [{"baseCommit": "...", "files": [{"path": "...", "action": "add", "content": "<complete new file content>"}]}]}
+When you finish, answer with your status, a summary of what you changed and why, and every task of this phase you could not complete, in exactly this shape:
+${workspaceReplyShape()}
 
-status must be one of proposed, blocked, failed.
+status must be one of completed, blocked: completed when every task of this phase is done, and blocked otherwise, with each task you could not complete listed in incompleteTasks.
 ${STRUCTURED_OUTPUT_RULE}
-Every JSON string, including file content, must use JSON-standard escaping.
-Use literal UTF-8 for non-ASCII characters or valid \`\\uXXXX\` escapes (two
-UTF-16 surrogate escapes for a character above U+FFFF). Never use Python's
-\`\\UXXXXXXXX\` escape syntax; it is not valid JSON.
-Write every line break inside a JSON string, including each line break of a file's content, as \`\\n\` and every tab as \`\\t\`; never put a raw line break or tab inside a string literal.
-
-Each patch has:
-- baseCommit must be exactly: ${baseCommit}
-- files: one entry per file the patch changes, each with path, action, and
-  content
-- path: a repo-relative path, one of the approved scope paths below.
-  A tasks.md path is prohibited because task execution and status belong in
-  run-state database rows
-- action one of add, modify — deletion is refused by the system and must not
-  be proposed
-- content is the complete new file content, not a diff
 
 Patch only these paths:
 
 ${scope.map((p) => `- ${p}`).join("\n")}
 
-Of those paths, these exist in the checkout now, so each takes action modify:
+Of those paths, these exist in the checkout now:
 
 ${renderPaths(scope.filter((p) => existing.has(p)))}
 
-Of those paths, these do not exist yet, so each takes action add:
+Of those paths, these do not exist yet:
 
 ${renderPaths(scope.filter((p) => !existing.has(p)))}
 
-${verificationCommandsBlock(verification)}
+${verificationCommandsBlock(verification, true)}
 These commands first run after the last phase, and again after any code-review remediation, so a phase that leaves one of them failing is not by itself a defect.
 Before you choose a file's content, read what each command runs (for an npm command, its entry under scripts in package.json) and write files that command will accept.
 ${DEPENDENCY_ADDITION_RULE}
@@ -1483,14 +1489,14 @@ ${specContent}`;
  * The implementation self-review prompt (`docs/features/implementation-self-review/plan.md`,
  * operator decisions 2026-10-13 and 2026-10-14): one dispatch after the last
  * phase, in which the implementer reads its own complete change against the
- * plan and specification and returns a critique and any fixes together, the
- * shape the spec and plan self-critique take.
+ * plan and specification, makes any fixes in the checkout through the tool
+ * server, and returns a critique with the workspace reply.
  *
  * It opens with the phase prompt's role line, so the stand-in executor routes it
  * to the implementation emitter, then a marker sentence the emitter checks before
- * it looks for a phase; the marker never contains `This is phase`. The patch
+ * it looks for a phase; the marker never contains `This is phase`. The tool-mode
  * contract, the scope block and the two existence lists are the phase prompt's,
- * in the shape the emitter scrapes, with the stage's last commit as the base.
+ * in the shape the emitter scrapes, at the stage's last commit.
  *
  * It is the author's own pass, not review (hazard 14): code review remains the
  * independent check. The frozen verification commands are stated because they
@@ -1515,11 +1521,8 @@ export function buildImplementationSelfReviewPrompt(
 
 This is your own self-review of the complete change, after the last phase.
 
-Your working directory is the repository checkout at commit ${head}, which holds
-the complete change — read it to see the code. Run no git commands: the system
-applies and commits the patches you propose.
-This checkout is read-only for you: do not create, modify, or delete any file.
-Only the patch content you return is considered.
+The repository checkout is at commit ${head}, which holds the complete change: read it to see the code.
+${WORKSPACE_TOOLS_RULES}
 
 Read back every task in the approved plan and every acceptance criterion in the approved specification against the code at this commit, and fix any that the code leaves unmet.
 Look for wrong results, unchecked input, races between requests, state left inconsistent after a failure, and errors that are caught and ignored, and fix each one you find.
@@ -1527,45 +1530,27 @@ When you fix a defect, look for the same defect in every other file of the appro
 A fix that breaks a task or an acceptance criterion is not a fix: find a change that keeps both.
 Fix only with behavior the approved specification already requires; never add an obligation the specification does not state, however reasonable it looks.
 
-Return exactly a JSON AgentResult object with this shape:
-{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"selfReview": {"critique": ["..."]}}, "proposedPatches": []}
+When you finish, answer in exactly this shape:
+${workspaceReplyShape(`, "critique": ["..."]`)}
 
 critique holds one entry per problem you found and what you did about it, or one entry saying what you checked when you found nothing.
-proposedPatches holds only the files whose content you change, each with its complete new content, and is [] when nothing needs fixing.
-Never return a file whose content you did not change.
-
-status must be one of proposed, blocked, failed.
+Change only the files that need a fix, and leave the checkout as it is when nothing needs fixing.
+status must be one of completed, blocked: completed when you finished this self-review, and blocked otherwise, with each task or acceptance criterion you could not fix listed in incompleteTasks.
 ${STRUCTURED_OUTPUT_RULE}
-Every JSON string, including file content, must use JSON-standard escaping.
-Use literal UTF-8 for non-ASCII characters or valid \`\\uXXXX\` escapes (two
-UTF-16 surrogate escapes for a character above U+FFFF). Never use Python's
-\`\\UXXXXXXXX\` escape syntax; it is not valid JSON.
-Write every line break inside a JSON string, including each line break of a file's content, as \`\\n\` and every tab as \`\\t\`; never put a raw line break or tab inside a string literal.
-
-Each patch has:
-- baseCommit must be exactly: ${head}
-- files: one entry per file the patch changes, each with path, action, and
-  content
-- path: a repo-relative path, one of the approved scope paths below.
-  A tasks.md path is prohibited because task execution and status belong in
-  run-state database rows
-- action one of add, modify — deletion is refused by the system and must not
-  be proposed
-- content is the complete new file content, not a diff
 
 Patch only these paths:
 
 ${scope.map((p) => `- ${p}`).join("\n")}
 
-Of those paths, these exist in the checkout now, so each takes action modify:
+Of those paths, these exist in the checkout now:
 
 ${renderPaths(scope.filter((p) => existing.has(p)))}
 
-Of those paths, these do not exist yet, so each takes action add:
+Of those paths, these do not exist yet:
 
 ${renderPaths(scope.filter((p) => !existing.has(p)))}
 
-${verificationCommandsBlock(verification)}
+${verificationCommandsBlock(verification, true)}
 These commands run right after this review, and the first that fails blocks the run.
 ${DEPENDENCY_ADDITION_RULE}
 
@@ -1626,9 +1611,9 @@ export function buildCodeReviewPrompt(
   ) {
     throw new Error(`code reviewer ${agent.id} carries no code-review instructions`);
   }
-  // The read-only sentence is UX, not a guard, exactly as it is in the
-  // implementation prompt: enforcement is the read-only executor command and
-  // the stage's clean-tree assertions before and after every dispatch.
+  // The read-only sentence is UX, not a guard: enforcement is the read-only
+  // executor command and the stage's clean-tree assertions before and after
+  // every dispatch.
   return `${CODE_REVIEW_PROMPT_PREFIX} ${agent.id} with specialty ${agent.specialty ?? "general review"}
 
 Specialist instructions: ${agent.codeReviewInstructions}
@@ -1720,7 +1705,7 @@ export function buildCodeReviewRemediationPrompt(
   findings: CodeReviewRemediationFindingInput[],
   verification: VerificationConfig
 ): string {
-  const derived = derivedArtifactsLines(verification);
+  const derived = derivedArtifactsLines(verification, true);
   const renderedFindings = findings
     .map((finding) => {
       const reports = finding.reports
@@ -1734,26 +1719,15 @@ export function buildCodeReviewRemediationPrompt(
     .join("\n");
   return `${CODE_REVIEW_REMEDIATION_PROMPT_PREFIX} ${agent.id}
 
-Fix every actionable finding below in the current code. Your working directory
-is the repository checkout at commit ${baseCommit}. Read the surrounding code,
-but run no git commands and do not create, modify, or delete files. The system
-applies and commits only the patches you return.
+Fix every actionable finding below in the current code. The repository checkout is at commit ${baseCommit}: read the surrounding code there.
+${WORKSPACE_TOOLS_RULES}
 
-Return exactly a JSON AgentResult object with this shape:
-{"status": "proposed", "agent": "${agent.id}", "role": "author", "executor": "claude-code", "summary": "...", "proposedPatches": [{"baseCommit": "${baseCommit}", "files": [{"path": "${scope[0] ?? "approved/path"}", "action": "modify", "content": "<complete new file content>"}]}]}
+Fix the code. Do not edit the approved specification, plan, governance policy, or agent definitions, and do not answer with finding dispositions, proposals, waivers or questions.
+When you finish, answer with your status, a summary of what you changed and why, and every finding you could not fix, in exactly this shape:
+${workspaceReplyShape()}
 
-Return one or more proposedPatches. baseCommit must be exactly ${baseCommit}.
-Each file path must be one approved scope path below; action is add or modify,
-never deletion; content is the complete new file content, not a diff. Fix the
-code. Do not return finding dispositions, proposals, waivers, questions, or
-edits to the approved specification, plan, governance policy, or agent
-definitions.
+status must be one of completed, blocked: completed when every finding below is fixed, and blocked otherwise, with each finding you could not fix listed in incompleteTasks.
 ${STRUCTURED_OUTPUT_RULE}
-Every JSON string, including file content, must use JSON-standard escaping.
-Use literal UTF-8 for non-ASCII characters or valid \`\\uXXXX\` escapes (two
-UTF-16 surrogate escapes for a character above U+FFFF).
-Never use Python's \`\\UXXXXXXXX\` escape syntax; it is not valid JSON.
-Write every line break inside a JSON string, including each line break of a file's content, as \`\\n\` and every tab as \`\\t\`; never put a raw line break or tab inside a string literal.
 Before you return, re-read every task in the approved plan and every acceptance criterion in the approved specification that governs the code you change: a fix that breaks one of them is not a fix, so find a change that keeps both.
 When you fix a defect, look for the same defect in every other file of the approved scope and fix it there too.
 ${DEPENDENCY_ADDITION_RULE}

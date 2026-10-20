@@ -25,7 +25,7 @@ import {
   RUN_DURATION_LIMIT_SECONDS,
   VERIFY_COMMAND_TIMEOUT_SECONDS,
   VERIFY_RETENTION_MAX_BYTES,
-  VERIFY_ENV_PASSTHROUGH,
+  SANDBOX_ENV,
   buildPolicy,
   invalidPolicyReason,
   policyHash,
@@ -66,15 +66,15 @@ test("every policy value is the one the enforcing module actually uses", () => {
   assert.equal(p.runDurationLimitSeconds, RUN_DURATION_LIMIT_SECONDS);
   assert.equal(p.verifyCommandTimeoutSeconds, VERIFY_COMMAND_TIMEOUT_SECONDS);
   assert.equal(p.verifyRetentionMaxBytes, VERIFY_RETENTION_MAX_BYTES);
-  assert.deepEqual(p.verifyEnvPassthrough, [...VERIFY_ENV_PASSTHROUGH]);
 });
 
-test("no verification passthrough name can carry governance material to a command", () => {
+test("no seeded sandbox assignment can carry governance material to a command", () => {
   // Modelled on the same assertion in `test/executor.test.ts`. A verification
-  // command is implementer-authored code; it must not be able to read
+  // command is implementer-authored code, and the container's environment is
+  // exactly the frozen --env list; it must not be able to read
   // BW_APPROVAL_PUBLIC_KEY, the key that binds the approval signer.
-  for (const name of VERIFY_ENV_PASSTHROUGH) {
-    assert.ok(!name.startsWith("BW_"), `${name} must not reach a verification command`);
+  for (const assignment of SANDBOX_ENV) {
+    assert.ok(!assignment.startsWith("BW_"), `${assignment} must not reach a verification command`);
   }
 });
 

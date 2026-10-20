@@ -1,15 +1,6 @@
+import { extractJsonBody } from "./parse-output.ts";
+
 export type AgentResultStatus = "proposed" | "blocked" | "failed";
-
-export interface ProposedPatchFile {
-  path: string;
-  action: "add" | "modify";
-  content?: string;
-}
-
-export interface ProposedPatch {
-  baseCommit: string;
-  files: ProposedPatchFile[];
-}
 
 export interface AgentResult {
   status: AgentResultStatus;
@@ -18,7 +9,6 @@ export interface AgentResult {
   executor: string;
   summary: string;
   proposedContentChanges?: unknown;
-  proposedPatches?: ProposedPatch[];
   diagnostics?: string[];
   questions?: string[];
   risk?: string;
@@ -27,58 +17,81 @@ export interface AgentResult {
 }
 
 export const STATUSES: readonly string[] = ["proposed", "blocked", "failed"];
-export const PATCH_ACTIONS: readonly string[] = ["add", "modify"];
+
+/** The two states a patch dispatch reports when it finishes changing the workspace. */
+export const WORKSPACE_STATUSES: readonly string[] = ["completed", "blocked"];
 
 /**
- * The JSON Schema the patch-producing dispatches (each implementation phase and
- * code-review remediation) send with `--json-schema`
- * (`docs/features/structured-patch-output/plan.md`). It is the schema the
- * 2026-10-14 probes sent: `provenance.schema` in
- * `test/fixtures/recorded/json-schema-probe-web-calculator-phase-2.json`, which
- * `test/fixtures/recorded/json-schema-probe-gate.json` reused. The enums come
- * from the validator's own constants, so the two cannot drift.
- *
- * It travels per invocation, like model and effort, and is not frozen into a
- * run's profile: it describes the reply this code reads, as the prompt text
- * does. The validator above stays the check; the schema holds the model to the
- * fields the prompt advertises before the reply reaches it.
+ * What a patch dispatch (each implementation phase, the self-review and
+ * code-review remediation) returns through `--json-schema` now that it
+ * changes files through the tool server
+ * (docs/features/sandboxed-implementer/plan.md): a summary, never file
+ * contents. The diff is computed from the worktree, not reported. The shape is
+ * the spike's (`provenance` and `resultLine` in
+ * `test/fixtures/recorded/sandbox-spike-crew-chatter-phase-2.json`).
  */
-export const PATCH_RESULT_SCHEMA = {
+export const WORKSPACE_REPLY_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["status", "agent", "role", "executor", "summary", "proposedPatches"],
+  required: ["status", "summary", "incompleteTasks"],
   properties: {
-    status: { type: "string", enum: [...STATUSES] },
-    agent: { type: "string" },
-    role: { type: "string", enum: ["author", "reviewer"] },
-    executor: { type: "string" },
+    status: { type: "string", enum: [...WORKSPACE_STATUSES] },
     summary: { type: "string" },
-    proposedPatches: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["baseCommit", "files"],
-        properties: {
-          baseCommit: { type: "string" },
-          files: {
-            type: "array",
-            items: {
-              type: "object",
-              additionalProperties: false,
-              required: ["path", "action", "content"],
-              properties: {
-                path: { type: "string" },
-                action: { type: "string", enum: [...PATCH_ACTIONS] },
-                content: { type: "string" },
-              },
-            },
-          },
-        },
-      },
-    },
+    incompleteTasks: { type: "array", items: { type: "string" } },
   },
 };
+
+export interface WorkspaceReply {
+  status: "completed" | "blocked";
+  summary: string;
+  incompleteTasks: string[];
+}
+
+/** The schema's rules, checked again at the boundary, every refusal named (hazard 1). */
+export function validateWorkspaceReply(raw: unknown): { ok: true; value: WorkspaceReply } | { ok: false; reason: string } {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return { ok: false, reason: "the reply must be an object" };
+  }
+  const r = raw as { [key: string]: unknown };
+  if (typeof r.status !== "string" || !WORKSPACE_STATUSES.includes(r.status)) {
+    return { ok: false, reason: `invalid reply status ${JSON.stringify(r.status)}: allowed values are ${WORKSPACE_STATUSES.join(", ")}` };
+  }
+  if (typeof r.summary !== "string" || r.summary.trim() === "") {
+    return { ok: false, reason: "the reply summary must be a non-empty string" };
+  }
+  if (!Array.isArray(r.incompleteTasks) || r.incompleteTasks.some((t) => typeof t !== "string")) {
+    return { ok: false, reason: "the reply incompleteTasks must be an array of strings" };
+  }
+  // Each prompt defines completed as nothing left undone, so a completed reply
+  // that lists something contradicts itself; accepting it would drop the list
+  // unrecorded.
+  if (r.status === "completed" && r.incompleteTasks.length > 0) {
+    return { ok: false, reason: `the reply says completed but lists incomplete tasks: ${(r.incompleteTasks as string[]).join("; ")}` };
+  }
+  return {
+    ok: true,
+    value: { status: r.status as WorkspaceReply["status"], summary: r.summary, incompleteTasks: r.incompleteTasks as string[] },
+  };
+}
+
+/**
+ * A patch dispatch's structured output, read and checked by `validate`
+ * (`validateWorkspaceReply`, or the self-review's validator), every refusal named.
+ */
+export function parseWorkspaceReply<T>(
+  resultText: string,
+  validate: (raw: unknown) => { ok: true; value: T } | { ok: false; reason: string }
+): { ok: true; value: T } | { ok: false; reason: string } {
+  const body = extractJsonBody(resultText);
+  if (body.kind === "refused") return { ok: false, reason: `implementer body refused: ${body.reason}` };
+  const reply = validate(body.value);
+  return reply.ok ? reply : { ok: false, reason: `implementer reply refused: ${reply.reason}` };
+}
+
+/** A reply that did not complete, quoted so the operator sees what the agent said it could not do. */
+export function describeIncompleteReply(reply: WorkspaceReply): string {
+  return `status ${reply.status}, not completed: ${reply.summary}; incomplete: ${reply.incompleteTasks.length > 0 ? reply.incompleteTasks.join("; ") : "none listed"}`;
+}
 
 type Record = { [key: string]: unknown };
 
@@ -115,33 +128,6 @@ export function validateAgentResult(
   }
   if (typeof r.summary !== "string" || r.summary === "") {
     return { ok: false, reason: "AgentResult summary must be a non-empty string" };
-  }
-  if (r.proposedPatches !== undefined) {
-    if (!Array.isArray(r.proposedPatches)) {
-      return { ok: false, reason: "proposedPatches must be an array" };
-    }
-    for (const patch of r.proposedPatches as Record[]) {
-      if (typeof patch.baseCommit !== "string" || patch.baseCommit === "") {
-        return { ok: false, reason: "proposed patch is missing baseCommit" };
-      }
-      if (!Array.isArray(patch.files)) {
-        return { ok: false, reason: "proposed patch files must be an array" };
-      }
-      for (const file of patch.files as Record[]) {
-        if (file.action === "delete") {
-          return { ok: false, reason: "deletion is schema-legal but refused" };
-        }
-        if (typeof file.action !== "string" || !PATCH_ACTIONS.includes(file.action)) {
-          return {
-            ok: false,
-            reason: `invalid patch action ${String(file.action)}: allowed values are ${PATCH_ACTIONS.join(", ")}`,
-          };
-        }
-        if (typeof file.path !== "string" || file.path === "") {
-          return { ok: false, reason: "proposed patch file path must be a non-empty string" };
-        }
-      }
-    }
   }
   return { ok: true, value: raw as AgentResult };
 }

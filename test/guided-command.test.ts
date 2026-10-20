@@ -15,8 +15,7 @@ import { runGuidedCommand } from "../src/guided-command.ts";
 import { approvalHandoffDir, profilePath, runDocumentDir } from "../src/paths.ts";
 import { createRunIntake } from "../src/run-intake.ts";
 import { openStore, type AgentRunRow, type RunRow } from "../src/store.ts";
-import { runVerifyCommand } from "../src/verify-command.ts";
-import { policyHash, VERIFY_ENV_PASSTHROUGH, VERIFY_RETENTION_MAX_BYTES } from "../src/policy.ts";
+import { policyHash } from "../src/policy.ts";
 import { validateSpecDoc } from "../src/spec-doc.ts";
 import { computeScope } from "../src/scope.ts";
 import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
@@ -24,6 +23,8 @@ import { loadProfile } from "../src/profile.ts";
 import { readRunSnapshot } from "../src/operator-state.ts";
 import { NARRATION_EXECUTOR } from "../src/narration-check.ts";
 import { ALWAYS_CRITERION, withStandIn } from "./systemone-stand-in.ts";
+// Guided intake and the runs it drives call the seeded `docker`; the stand-in answers.
+import "./fixtures/docker/redirect-docker.mjs";
 
 const JOURNEY_FIXTURE = resolve("test", "fixtures", "harness", "emit-cli-run.mjs");
 
@@ -333,18 +334,8 @@ test("guided approval exports canonical bytes, imports only a detached signature
         process.exit(error.code === "ENOENT" ? 0 : 8);
       }
     `);
-    const attempted = await runVerifyCommand(
-      { name: "former-default-absent", command: ["node", probe] },
-      {
-        cwd: root,
-        timeoutSeconds: 30,
-        maxBytes: 1024 * 1024,
-        retentionMaxBytes: VERIFY_RETENTION_MAX_BYTES,
-        envPassthrough: [...VERIFY_ENV_PASSTHROUGH],
-        evidencePath: join(root, ".governance", "verification-attempt.txt"),
-      },
-    );
-    assert.equal(attempted.exitCode, 0, attempted.stderr);
+    const attempted = spawnSync(process.execPath, [probe], { cwd: root, encoding: "utf8", timeout: 30_000 });
+    assert.equal(attempted.status, 0, attempted.stderr);
     assert.match(attempted.stdout, /ENOENT/);
     assert.equal(existsSync(join(home, ".buildworks", "approval.key")), false);
     t.diagnostic("The process-level check proves guided mode created no former default file; it does not discover authority material an operator placed elsewhere.");

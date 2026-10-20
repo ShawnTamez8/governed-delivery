@@ -1,6 +1,6 @@
 # Sandboxed Implementer Implementation Plan
 
-**Status:** Reconciled
+**Status:** Implemented
 
 **Goal:** The three patch-producing dispatches (each implementation phase, the implementation self-review and code-review remediation) change files through BuildWorks' own MCP tool server, whose tools act only inside a disposable Docker container. The harness computes the diff from the worktree and gates and commits it. Verification and derived-file regeneration run in the same kind of container. Section 17's "verification is not contained" limitation closes, and patch content no longer travels inside JSON. The build supports Node/npm targets only. Its image, network access and service network stay open to other stacks, and every failure names its cause rather than being swallowed.
 
@@ -537,6 +537,98 @@ Every failure in the new path reaches the operator with enough to act on, and no
 - **The record.** Write both into the implementation record, and set Status to `Implemented` only after the free validation passes. The paid runs are evidence, not the gate. Do not adjust any expectation after seeing a result.
 
 **Task completion evidence:** the fixtures, the cost lines and the record.
+
+## Implementation record (2026-10-20)
+
+Tasks 1 to 12 were built on branch `sandboxed-delivery` from `44a0d3a`, under the operator's `/implement-plan` invocation as the section 23 decision (Task 1). The build ran against Claude Code 2.1.304 (the Assumptions name 2.1.303), Docker engine 29.8.2 and Node v26.4.0. All three steps of Task 13 have run (below). The per-task record, with every break-test, is `.claude/sessions/2026-10-19-sandboxed-implementer-build.md`.
+
+**What shipped.** The four layers in the Approach (`src/container.ts`, `src/tool-server.ts`, `src/egress-proxy.ts` and `src/workspace-commit.ts`), `container/Dockerfile`, and the executor command without `--safe-mode`. Each patch dispatch runs in its own sandbox through `dispatchInSandbox` (`src/dispatch.ts`). Verification, derived regeneration and the bootstrap starter's commands run in containers. The frozen `sandbox` profile object, the program check, the `doctor` sandbox checks and LF run worktrees also shipped. The Docker stand-in under `test/fixtures/docker/` is held to `test/fixtures/recorded/docker-cli-outputs.json`. The old patch path is deleted: `src/patch-application.ts`, `PATCH_RESULT_SCHEMA`, the self-review patch schema, the validator's patch arm, `dropUnchangedFiles` and host command spawning. The Task 9 search found no document-stage reader of patches.
+
+**Validation.**
+- **Suite.** The full serial no-engine suite (Task 12) had 0 failures and 16 named skips. Twelve were `test/container.test.ts` tests ("no Docker engine answered"), three were native POSIX differentials and one was a Windows file-symlink privilege skip.
+- **Rerun after the review fixes.** 1739 tests, 1722 passing, 16 skipped. The one failure was an after-hook EPERM: something outside the process briefly held an emptied Git target directory in `test/doctor-diagnostics.test.ts`, and none of the test's assertions failed. Its cleanup now uses the bounded EPERM/EBUSY retry that `test/verify-command.test.ts` records. The three affected tests then passed ten consecutive runs, after failing two of seven before the change, and the whole file passed. The full suite was not rerun after that test-only change.
+- **Other checks.** `git log -1` was unchanged. `npm run typecheck` and `npm run check:docs` were clean. The smoke was 13/13. `test/container.test.ts` passed 12/12 against the real engine, including after the review fixes.
+
+**Independent review.** `2026-10-20-code-review.md` (reconciled) has 4 findings, all fixed:
+- F1, high: the system's host `git commit` ran the target's hooks on agent content. It now runs with hooks off.
+- F2, medium: the tool server's `docker` lacked the stage's `DOCKER_*` client variables. They now reach it as `--docker-env`.
+- F3, low: stage tests for a sandbox that cannot start were missing.
+- F4, low: a runbook row was misleading.
+
+Seven break-tests proved the fixes.
+
+**Second review.** `2026-10-20-code-review-2.md` (reconciled) is the operator's `/code-review high` run after this record was first written. It has 10 findings, reported unverified, and each was reproduced or disproved before any change:
+- Accepted and fixed:
+  - F1, high: a nested Git repository was committed as a gitlink, and the next host `git status` ran its agent-written `core.fsmonitor`. Now refused by mode `160000`.
+  - F3: a refused diff is kept under `refs/buildworks/refused/<sha>` before the reset.
+  - F4: the work container gets `NO_PROXY` for loopback.
+  - F5: a `completed` reply that lists incomplete tasks is refused.
+  - F6: `list_files` no longer mangles a path under a directory named `work`.
+  - F8: a phase's Git or Docker failure is `implementation.workspace.failed`, not a refusal.
+  - F10: the doctor test targets moved to the OS temp directory.
+- Rejected as unreachable:
+  - F2: Git does not list a path behind a symlinked parent.
+  - F7: the starter's `npm ci` creates no `node_modules`.
+- Declined: F9, a helper consolidation with no defect found.
+
+Seven more break-tests proved the fixes, two against the real engine. After these fixes the full serial no-engine suite ran 1746 tests: 1728 passed, 0 failed and 18 were skipped, all named. The skips were 14 `test/container.test.ts` tests (the review added two), three native POSIX differentials and the Windows file-symlink privilege skip. `test/container.test.ts` passed 14/14 against the real engine. `git log -1` stayed at `44a0d3a`.
+
+**Task 13, the `CLAUDE.md` regression probe (operator, 2026-10-20: "lets run the paid validation").** Three Haiku 5.5 `medium` calls against the built `CLAUDE_CODE` command cost $0.00432976 under Claude Code 2.1.304, with each call capped at $0.50. The fixture is `test/fixtures/recorded/sandboxed-implementer-claude-md-regression.json`. Each call ran in a fresh repository under the OS temp directory, holding a committed `CLAUDE.md` that tells the model to begin with a random token. The global `CLAUDE.md` is detected by quoting the sentence after its anchor.
+- **With the tool server** (`--json-schema`, `--mcp-config`, a real work container): neither file loaded. The `bw` server reported `connected`, the only tool used was the structured output, and the work container was proven removed.
+- **As a read-only dispatch:** neither file loaded, and no MCP server was present.
+- **Positive control,** with `--restricted` dropped: both signals fired. The answer began with the token, named both files and quoted the following sentence.
+
+**Task 13, the web-calculator chain (operator, 2026-10-20: "start step 2").** The run was `driver.mjs paid --yes --model claude-sonnet-5-5` on the committed 20-requirement design, under Claude Code 2.1.304 and Docker 29.8.2. All ten stages passed, the run completed, 4 of 4 declared artifacts were delivered, and the audit chain was valid; the driver reported 15/15 steps as expected. It took 21 dispatches and cost $1.53764 in total, against $1.39416 and $1.51048 for the two earlier runs under the same defaults (both of them also with one remediation). The target is kept at `C:\Users\tamezs\buildWorks_test_repos\sandboxed-web-calculator-2026-10-20\target`.
+
+| Patch dispatch | Cost | Dispatch time | Wall time, sandbox to commit | Tool calls |
+|---|---|---|---|---|
+| Phase 1 (tasks 1-10) | $0.09025 | 15.1 s | 24.7 s | 2 `write_file` |
+| Phase 2 (tasks 11-19) | $0.11389 | 28.8 s | 33.0 s | 2 `read_file`, 3 `write_file` |
+| Self-review (one fix, `js/calculator.js`) | $0.09214 | 12.6 s | 16.9 s | 1 `run_command` (`sed`) |
+| Remediation, round 1 (`js/app.js`) | $0.07896 | 13.2 s | not separated from verification | 1 `write_file` |
+
+The agent installed no packages. Each sandbox's proxy log holds only its start line, so no request left any work container. No `derived.discarded`, `workspace.refused` or `sandbox.*` failure event was recorded, and no `bw.run`-labelled container or network remained afterwards. The second panel was clean. This is one sample; it is not a cost range.
+
+**Task 13, crew-chatter feature 3 (operator, 2026-10-20: "Lets move on to step 3 crew chatter", "lets do both", "approved").** The design is split proposal 30's `## Problem` body, committed in crew-chatter as `e94a189` (`docs/features/crew-chatter-attachments-versions/design.md`). Run 8 used `--model claude-sonnet-5-5` with narration on, as runs 6 and 7 did.
+- **Created without `--after`.** `new-run --after 7` refused: run 7's profile predates `sandbox`, and the run snapshot reads profiles through the execution check, so run 7's delivered commit is null to `status`, the dashboard and `--after`. This plan's blast radius missed that read. The fix is planned in `docs/features/inspectable-frozen-profiles/plan.md`. The link was checked by hand: run 7's delivered commit `c5d2ff3` is an ancestor of `e94a189`. No stage reads the link.
+- **Outcome.** All ten stages passed and the run completed. Delivery passed with 14 artifacts over `c96d569..b8e6613`, and `verify-audit` reports the chain valid. The only intervention was the operator's approval signature. Spec decision asked nothing, because the spec added no package.
+- **Cost.** 23 Claude dispatches cost $6.34541, plus 16 Decision-1 requests (not costed). Runs 6 and 7 cost $4.91524 and $5.56758. The spec author cost $3.24830, against $1.81 and $1.76 in runs 6 and 7. The plan cost $1.58489 against $1.22 and $1.61. Implementation (three phases and the self-review) cost $1.16100 against $1.23 and $1.67.
+- **Verification.** It passed first time with all four frozen commands in a container: `npm ci` 32 s, typecheck 14 s, lint 40 s, build 11 s. The cleanup removed `backend/dist/`, `frontend/dist/` and `node_modules/` from inside a container.
+- **Code review.** Round 1 had three findings, two medium and one low. The reconciler rejected the low one with a spec excerpt. One remediation changed `backend/src/app.ts` and `frontend/src/App.tsx`, and its verification passed. Round 2 had three findings, one medium and two low, none blocking at `high`.
+
+| Patch dispatch | Cost | Dispatch time | Tool calls | Egress |
+|---|---|---|---|---|
+| Phase 1 (tasks 1-10, 4 paths) | $0.27817 | 134 s | 3 `read_file`, 3 `write_file`, 4 `run_command` | 16 registry requests allowed, 0 denied |
+| Phase 2 (tasks 11-20) | $0.46060 | 191 s | 8 `read_file`, 3 `write_file`, 9 `run_command` | 16 allowed, 0 denied |
+| Phase 3 (tasks 21-25, 1 path) | $0.19120 | 17 s | 4 `read_file`, 1 `run_command` | none |
+| Self-review (no change) | $0.23103 | 20 s | 1 `read_file` | none |
+| Remediation, round 1 | $0.22646 | 27 s | 3 `run_command` | 2 allowed, 0 denied |
+
+- **Did the agent install packages?** Phase 1's agent ran `npm ci` itself, and then the typecheck and lint, inside its container, through the proxy. No package was added: the lockfile regeneration after each phase and after the remediation reported it unchanged. Several agents edited files through `run_command` scripts (`cat > /tmp/... <<EOF`, `sed -i`, `node -`) rather than `write_file`. The boundary's computed diff covered them the same way, and no refusal or derived discard was recorded.
+- **Afterwards.** No `bw.run`-labelled container or network remained, and the crew-chatter tree was clean.
+
+**Deviations from the plan.**
+- Remediation commits against `currentCommit`, not `patchBase`. `patchBase` is the handoff base, so `commitWorkspace`'s HEAD check would always refuse it.
+- The event `implementation.phase.apply` is kept, now naming `paths=`, rather than renamed `workspace.commit`. The gate parsing and tests read it.
+- `VERIFY_ENV_PASSTHROUGH` and `policy.verifyEnvPassthrough` are deleted. The Task 8 search found that bootstrap runs the starter's commands, so they run in a run-0 `bootstrap` sandbox, and `inspectBootstrapPrerequisites` gained `docker_engine`.
+- The tool server also takes `--docker` (the frozen `sandbox.dockerCommand`) and `--docker-env` (review finding F2).
+- `src/container.ts` adds `NO_PROXY` for loopback beside `HTTPS_PROXY`/`HTTP_PROXY`, where Task 2 said it adds only those two (second review F4).
+- `commitWorkspace` also refuses a gitlink (mode `160000`) and keeps a refused diff as a commit outside every branch, beyond Task 5's steps (second review F1 and F3).
+- The hazard-19 ceiling-versus-idle check runs at freeze time, not on every profile load. A loaded profile is checked for shape only.
+- `list_files` no longer skips `node_modules`, because extension point 4 bans the literal.
+- Link-refusal cases left the stage suites with their emitter modes. Mode `120000` refusal is covered at the boundary (`test/workspace-commit.test.ts`).
+- An unusable self-review reply whose dispatch wrote files now skips and discards them, where it used to block.
+- The `test/prompts.test.ts` emitter-composition test moved from Task 9 to Task 10.
+
+**Deferred.**
+- The `--after` defect found in Task 13: `docs/features/inspectable-frozen-profiles/plan.md` (Proposed).
+- The Open decisions: dependency pre-install, `npm_config_yes`, and caps per dispatch kind.
+- Follow-ups, in no task:
+  - The bootstrap host `npm` check is now unused.
+  - The `governed-config.ts` command-token rule could be relaxed now that commands run as container argv.
+  - Verification's sandbox start failure is tested below the stage, not at it.
+  - F2 is proven with a probe and the one local engine, not against a second engine or context.
+  - Consolidating the per-module Git helpers (second review F9).
 
 ## Rollback
 

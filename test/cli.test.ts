@@ -11,14 +11,19 @@ import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { appendAudit } from "../src/audit.ts";
 import { formatCodeReviewGatePass } from "../src/code-review.ts";
 import { APPROVAL_DEFAULT_LIFETIME_SECONDS, buildPolicy, policyHash } from "../src/policy.ts";
+import { redirectNodeOptions } from "./fixtures/docker/stand-in.ts";
 
 // Absolute path: the CLI is spawned from temp directories, so relative
 // paths would resolve against the wrong cwd. Migrations anchor themselves
 // to the module location, which is what makes this safe.
 const CLI = resolve(process.cwd(), "src", "cli.ts");
 
+// Every `docker` spawn in the CLI runs the stand-in: `new-run` checks the
+// engine and freezes the image, and the suite needs no engine.
+const ENV = { ...process.env, NODE_OPTIONS: redirectNodeOptions(process.env.NODE_OPTIONS) };
+
 function runCli(cwd: string, ...argv: string[]) {
-  return spawnSync(process.execPath, [CLI, ...argv], { cwd, encoding: "utf8" });
+  return spawnSync(process.execPath, [CLI, ...argv], { cwd, encoding: "utf8", env: ENV });
 }
 
 /** The seeded verification configuration every temp root is created with. */
@@ -513,7 +518,7 @@ test("request, sign, and approve walk end to end through the CLI", () => {
       { cwd: process.cwd(), encoding: "utf8" }
     );
     assert.equal(keygen.status, 0, keygen.stderr);
-    const env = { ...process.env, BW_APPROVAL_PUBLIC_KEY: join(keyDir, "approval.pub") };
+    const env = { ...ENV, BW_APPROVAL_PUBLIC_KEY: join(keyDir, "approval.pub") };
     const cli = (...argv: string[]) =>
       spawnSync(process.execPath, [CLI, ...argv], { cwd, encoding: "utf8", env });
 

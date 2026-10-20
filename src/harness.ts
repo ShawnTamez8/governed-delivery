@@ -1,5 +1,6 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { isAbsolute, join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
 import type { ExecutorDefinition } from "./executor.ts";
 
 export interface InvocationInput {
@@ -21,6 +22,18 @@ export interface InvocationInput {
    * from the result line's `structured_output` (`parseEnvelope`).
    */
   jsonSchema?: object;
+  /**
+   * BuildWorks' tool server, set only by the three patch dispatches
+   * (docs/features/sandboxed-implementer/plan.md). `dispatchOnce` builds it,
+   * after it retains the prompt; stages never name a flag or a config format.
+   * `invokeHarness` writes the MCP config at `configPath`, beside the retained
+   * prompt, and appends `--mcp-config <configPath> --allowedTools mcp__bw__*`,
+   * per invocation like `--json-schema`, so the frozen executor command is the
+   * same for every dispatch.
+   */
+  toolServer?: { command: string; args: string[]; configPath: string };
+  /** The `--max-budget-usd` cap, appended when given; the patch dispatches pass the frozen value. */
+  budgetUsd?: string;
   /**
    * The working directory the harness process starts in. The implementation
    * stage runs the harness inside the run's worktree so the implementer
@@ -276,6 +289,28 @@ export function invokeHarness(executor: ExecutorDefinition, input: InvocationInp
   if (input.model !== undefined) argv.push("--model", input.model);
   if (input.effort !== undefined) argv.push("--effort", input.effort);
   if (input.jsonSchema !== undefined) argv.push("--json-schema", JSON.stringify(input.jsonSchema));
+  if (input.toolServer !== undefined) {
+    const config = {
+      mcpServers: { bw: { type: "stdio", command: input.toolServer.command, args: input.toolServer.args } },
+    };
+    try {
+      mkdirSync(dirname(input.toolServer.configPath), { recursive: true });
+      writeFileSync(input.toolServer.configPath, `${JSON.stringify(config, null, 2)}\n`);
+    } catch (err) {
+      return Promise.resolve({
+        raw: "",
+        stderr: "",
+        exitCode: null,
+        durationMs: Date.now() - started,
+        timedOut: false,
+        spawnError: `cannot write the MCP config at ${input.toolServer.configPath}: ${(err as Error).message}`,
+        killError: null,
+        resultOverflow: false,
+      });
+    }
+    argv.push("--mcp-config", input.toolServer.configPath, "--allowedTools", "mcp__bw__*");
+  }
+  if (input.budgetUsd !== undefined) argv.push("--max-budget-usd", input.budgetUsd);
   const child: ChildProcess = spawn(executor.command[0], argv, {
     // The installed Claude Code launcher is a native executable. Spawn it
     // directly, as PowerShell does, so argv has one parser and no cmd.exe

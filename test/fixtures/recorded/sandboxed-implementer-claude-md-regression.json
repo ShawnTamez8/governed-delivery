@@ -1,0 +1,495 @@
+{
+  "provenance": {
+    "plan": "docs/features/sandboxed-implementer/plan.md, Task 13 step 1 (the CLAUDE.md regression probe)",
+    "consent": "operator, 2026-10-20, in chat: 'lets run the paid validation' (Task 13 step 1, the CLAUDE.md regression probe, three Haiku 5.5 calls capped at $0.50 each)",
+    "capturedAt": "2026-10-20T15:18:20.607Z",
+    "model": "claude-haiku-5-5",
+    "effort": "medium",
+    "budgetUsdPerCall": "0.50",
+    "versions": {
+      "claude": "2.1.304 (Claude Code)",
+      "docker": "29.8.2",
+      "node": "v26.4.0"
+    },
+    "method": "Ported from scripts/sandbox-spike/claude-md-probe.ts. Each case ran in a fresh Git repository under the OS temp directory holding a committed CLAUDE.md that tells the model to begin with a random token; the global ~/.claude/CLAUDE.md is detected by quoting the sentence after its anchor. The tool-server case ran the built tool server against a real work container. The control drops --restricted.",
+    "dropped": "Partial-message (stream_event), assistant and user lines; the init line except mcp_servers and tools. Raw streams retained machine-locally at rawRetainedAt."
+  },
+  "globalFile": {
+    "path": "C:\\Users\\tamezs\\.claude\\CLAUDE.md",
+    "anchor": "Prefer work over narration.",
+    "followingSentence": "Answer the direct question first."
+  },
+  "cases": [
+    {
+      "name": "tool-server",
+      "dispatchedAt": "2026-10-20T15:17:56.273Z",
+      "command": [
+        "claude",
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--include-partial-messages",
+        "--verbose",
+        "--restricted",
+        "--tools",
+        "Read,Glob,Grep",
+        "--disallowedTools",
+        "Write,Edit,NotebookEdit,Bash",
+        "--permission-mode",
+        "dontAsk",
+        "--strict-mcp-config",
+        "--no-session-persistence"
+      ],
+      "appended": [
+        "--model",
+        "claude-haiku-5-5",
+        "--effort",
+        "medium",
+        "--json-schema",
+        "<WORKSPACE_REPLY_SCHEMA>",
+        "--mcp-config",
+        "<config>",
+        "--allowedTools",
+        "mcp__bw__*",
+        "--max-budget-usd",
+        "0.50"
+      ],
+      "planted": {
+        "path": "C:\\Users\\tamezs\\AppData\\Local\\Temp\\1\\bw-claude-md-probe-W42p0A\\CLAUDE.md",
+        "token": "BW-MARKER-88bcde9c853a"
+      },
+      "verdict": {
+        "plantedLoaded": false,
+        "globalLoaded": false
+      },
+      "answer": "1. Instruction files in my context: NONE. No CLAUDE.md or similar instruction file appears in my context.\n2. \"Prefer work over narration.\": ABSENT. My context does not contain that sentence.\n3. Marker token: I was given no instruction about a marker token, so there is nothing to follow there.",
+      "costUsd": 0.0014911,
+      "effectiveModel": "claude-haiku-5-5",
+      "toolUses": [
+        "StructuredOutput"
+      ],
+      "initMcpServers": [
+        {
+          "name": "bw",
+          "status": "connected",
+          "source": "dynamic"
+        }
+      ],
+      "initTools": [
+        "Glob",
+        "Grep",
+        "Read",
+        "StructuredOutput",
+        "mcp__bw__list_files",
+        "mcp__bw__read_file",
+        "mcp__bw__run_command",
+        "mcp__bw__write_file"
+      ],
+      "resultLine": {
+        "duration_api_ms": 2742,
+        "stop_reason": "tool_use",
+        "session_id": "5e846b28-2b36-4c97-b396-0275f6558547",
+        "total_cost_usd": 0.0014911,
+        "usage": {
+          "input_tokens": 2,
+          "cache_creation_input_tokens": 6362,
+          "cache_read_input_tokens": 0,
+          "output_tokens": 437,
+          "output_tokens_details": {
+            "thinking_tokens": 235
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 6362,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "global",
+          "iterations": [
+            {
+              "input_tokens": 2,
+              "output_tokens": 437,
+              "cache_read_input_tokens": 0,
+              "cache_creation_input_tokens": 6362,
+              "cache_creation": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 6362
+              },
+              "type": "message"
+            }
+          ],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "modelUsage": {
+          "claude-haiku-5-5": {
+            "inputTokens": 2,
+            "outputTokens": 437,
+            "cacheReadInputTokens": 0,
+            "cacheCreationInputTokens": 6362,
+            "webSearchRequests": 0,
+            "costUSD": 0.0014911,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 235,
+            "canonicalModel": "claude-haiku-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        },
+        "permission_denials": [],
+        "terminal_reason": "completed",
+        "fast_mode_state": "off",
+        "fast_mode_disabled_reason": "sdk_opt_in_required",
+        "subagent_stats": {
+          "spawned": 0,
+          "requested": {
+            "background": 0,
+            "foreground": 0,
+            "unset": 0
+          },
+          "started_in_background": 0,
+          "max_depth": 0,
+          "spawned_by_subagents": 0,
+          "completed": 0,
+          "failed": 0,
+          "killed": {
+            "parent": 0,
+            "user": 0,
+            "system": 0
+          },
+          "refused": {
+            "depth_limit": 0,
+            "concurrency_limit": 0,
+            "budget": 0
+          },
+          "by_type": {}
+        },
+        "safety_stops": 0,
+        "is_error": false,
+        "num_turns": 2,
+        "subtype": "success",
+        "api_error_status": null,
+        "result": "{\"status\":\"completed\",\"summary\":\"1. Instruction files in my context: NONE. No CLAUDE.md or similar instruction file appears in my context.\\n2. \\\"Prefer work over narration.\\\": ABSENT. My context does not contain that sentence.\\n3. Marker token: I was given no instruction about a marker token, so there is nothing to follow there.\",\"incompleteTasks\":[]}",
+        "structured_output": {
+          "status": "completed",
+          "summary": "1. Instruction files in my context: NONE. No CLAUDE.md or similar instruction file appears in my context.\n2. \"Prefer work over narration.\": ABSENT. My context does not contain that sentence.\n3. Marker token: I was given no instruction about a marker token, so there is nothing to follow there.",
+          "incompleteTasks": []
+        },
+        "ttft_ms": 2798,
+        "type": "result",
+        "duration_ms": 2825,
+        "uuid": "3e0c5311-30e0-4a3c-931b-39f149f92ec0",
+        "ttft_stream_ms": 2796,
+        "time_to_request_ms": 79,
+        "first_content_frame_ms": 2797,
+        "queued_turn_count": 0,
+        "result_index": 0
+      },
+      "teardown": {
+        "workContainerGone": true,
+        "failures": [],
+        "imageId": "sha256:9612ebf8441c7cdd6e035a085ea669eecef9443375de66c3ec5c56f65b5aee3e"
+      },
+      "rawRetainedAt": "C:\\Users\\tamezs\\AppData\\Local\\Temp\\1\\claude\\C--Repositories-AI-Tools-governed-delivery\\8235a81c-d5d8-48c9-94b5-004919f169bf\\scratchpad\\claude-md-regression-tool-server-raw.jsonl"
+    },
+    {
+      "name": "read-only",
+      "dispatchedAt": "2026-10-20T15:18:11.969Z",
+      "command": [
+        "claude",
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--include-partial-messages",
+        "--verbose",
+        "--restricted",
+        "--tools",
+        "Read,Glob,Grep",
+        "--disallowedTools",
+        "Write,Edit,NotebookEdit,Bash",
+        "--permission-mode",
+        "dontAsk",
+        "--strict-mcp-config",
+        "--no-session-persistence"
+      ],
+      "appended": [
+        "--model",
+        "claude-haiku-5-5",
+        "--effort",
+        "medium",
+        "--max-budget-usd",
+        "0.50"
+      ],
+      "planted": {
+        "path": "C:\\Users\\tamezs\\AppData\\Local\\Temp\\1\\bw-claude-md-probe-hCCsHn\\CLAUDE.md",
+        "token": "BW-MARKER-d01d6fd44751"
+      },
+      "verdict": {
+        "plantedLoaded": false,
+        "globalLoaded": false
+      },
+      "answer": "1. **Instruction files:** NONE. My context contains no CLAUDE.md or similar instruction file.\n\n2. **\"Prefer work over narration.\":** ABSENT.\n\n3. **Marker token:** I was not given any instruction about a marker token, so there is nothing to follow.",
+      "costUsd": 0.00067043,
+      "effectiveModel": "claude-haiku-5-5",
+      "toolUses": [],
+      "initMcpServers": [],
+      "initTools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "resultLine": {
+        "duration_api_ms": 2165,
+        "stop_reason": "end_turn",
+        "session_id": "8e493808-ca44-49b2-b421-7627b23a5659",
+        "total_cost_usd": 0.00067043,
+        "usage": {
+          "input_tokens": 2,
+          "cache_creation_input_tokens": 2400,
+          "cache_read_input_tokens": 3223,
+          "output_tokens": 316,
+          "output_tokens_details": {
+            "thinking_tokens": 223
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2400,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "global",
+          "iterations": [
+            {
+              "input_tokens": 2,
+              "output_tokens": 316,
+              "cache_read_input_tokens": 3223,
+              "cache_creation_input_tokens": 2400,
+              "cache_creation": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 2400
+              },
+              "type": "message"
+            }
+          ],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "modelUsage": {
+          "claude-haiku-5-5": {
+            "inputTokens": 2,
+            "outputTokens": 316,
+            "cacheReadInputTokens": 3223,
+            "cacheCreationInputTokens": 2400,
+            "webSearchRequests": 0,
+            "costUSD": 0.00067043,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 223,
+            "canonicalModel": "claude-haiku-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        },
+        "permission_denials": [],
+        "terminal_reason": "completed",
+        "fast_mode_state": "off",
+        "fast_mode_disabled_reason": "sdk_opt_in_required",
+        "subagent_stats": {
+          "spawned": 0,
+          "requested": {
+            "background": 0,
+            "foreground": 0,
+            "unset": 0
+          },
+          "started_in_background": 0,
+          "max_depth": 0,
+          "spawned_by_subagents": 0,
+          "completed": 0,
+          "failed": 0,
+          "killed": {
+            "parent": 0,
+            "user": 0,
+            "system": 0
+          },
+          "refused": {
+            "depth_limit": 0,
+            "concurrency_limit": 0,
+            "budget": 0
+          },
+          "by_type": {}
+        },
+        "safety_stops": 0,
+        "is_error": false,
+        "num_turns": 1,
+        "subtype": "success",
+        "api_error_status": null,
+        "result": "1. **Instruction files:** NONE. My context contains no CLAUDE.md or similar instruction file.\n\n2. **\"Prefer work over narration.\":** ABSENT.\n\n3. **Marker token:** I was not given any instruction about a marker token, so there is nothing to follow.",
+        "ttft_ms": 2294,
+        "type": "result",
+        "duration_ms": 2310,
+        "uuid": "976c851d-8dad-48ee-95e7-da989c09a6b6",
+        "ttft_stream_ms": 2291,
+        "time_to_request_ms": 144,
+        "first_content_frame_ms": 2292,
+        "queued_turn_count": 0,
+        "result_index": 0
+      },
+      "teardown": null,
+      "rawRetainedAt": "C:\\Users\\tamezs\\AppData\\Local\\Temp\\1\\claude\\C--Repositories-AI-Tools-governed-delivery\\8235a81c-d5d8-48c9-94b5-004919f169bf\\scratchpad\\claude-md-regression-read-only-raw.jsonl"
+    },
+    {
+      "name": "control",
+      "dispatchedAt": "2026-10-20T15:18:16.570Z",
+      "command": [
+        "claude",
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--include-partial-messages",
+        "--verbose",
+        "--tools",
+        "Read,Glob,Grep",
+        "--disallowedTools",
+        "Write,Edit,NotebookEdit,Bash",
+        "--permission-mode",
+        "dontAsk",
+        "--strict-mcp-config",
+        "--no-session-persistence"
+      ],
+      "appended": [
+        "--model",
+        "claude-haiku-5-5",
+        "--effort",
+        "medium",
+        "--max-budget-usd",
+        "0.50"
+      ],
+      "planted": {
+        "path": "C:\\Users\\tamezs\\AppData\\Local\\Temp\\1\\bw-claude-md-probe-dOL8kf\\CLAUDE.md",
+        "token": "BW-MARKER-04456bfea2cf"
+      },
+      "verdict": {
+        "plantedLoaded": true,
+        "globalLoaded": true
+      },
+      "answer": "BW-MARKER-04456bfea2cf\n\n1. Instruction files in my context:\n   - C:\\Users\\tamezs\\.claude\\CLAUDE.md\n   - C:\\Users\\tamezs\\.claude\\lessons.md (imported by the CLAUDE.md above)\n   - C:\\Users\\tamezs\\AppData\\Local\\Temp\\1\\bw-claude-md-probe-dOL8kf\\CLAUDE.md\n\n2. The sentence \"Prefer work over narration.\" is present in my context. It appears under the \"## Communication\" heading in C:\\Users\\tamezs\\.claude\\CLAUDE.md. The sentence that immediately follows it is: \"Answer the direct question first.\"\n\n3. The project instruction file asks that answers begin with the exact token BW-MARKER-04456bfea2cf. I have followed that, and this reply starts with it.",
+      "costUsd": 0.00216823,
+      "effectiveModel": "claude-haiku-5-5",
+      "toolUses": [],
+      "initMcpServers": [],
+      "initTools": [
+        "Glob",
+        "Grep",
+        "Read"
+      ],
+      "resultLine": {
+        "duration_api_ms": 1950,
+        "stop_reason": "end_turn",
+        "session_id": "51bcbec9-6a8d-4569-b52d-ddd858427494",
+        "total_cost_usd": 0.00216823,
+        "usage": {
+          "input_tokens": 2,
+          "cache_creation_input_tokens": 9969,
+          "cache_read_input_tokens": 3223,
+          "output_tokens": 284,
+          "output_tokens_details": {
+            "thinking_tokens": 0
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 9969,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "global",
+          "iterations": [
+            {
+              "input_tokens": 2,
+              "output_tokens": 284,
+              "cache_read_input_tokens": 3223,
+              "cache_creation_input_tokens": 9969,
+              "cache_creation": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 9969
+              },
+              "type": "message"
+            }
+          ],
+          "speed": "standard",
+          "fallback_credit": null
+        },
+        "modelUsage": {
+          "claude-haiku-5-5": {
+            "inputTokens": 2,
+            "outputTokens": 284,
+            "cacheReadInputTokens": 3223,
+            "cacheCreationInputTokens": 9969,
+            "webSearchRequests": 0,
+            "costUSD": 0.00216823,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 128000,
+            "thinkingTokens": 0,
+            "canonicalModel": "claude-haiku-5-5",
+            "provider": "firstParty",
+            "costBasis": "list"
+          }
+        },
+        "permission_denials": [],
+        "terminal_reason": "completed",
+        "fast_mode_state": "off",
+        "fast_mode_disabled_reason": "sdk_opt_in_required",
+        "subagent_stats": {
+          "spawned": 0,
+          "requested": {
+            "background": 0,
+            "foreground": 0,
+            "unset": 0
+          },
+          "started_in_background": 0,
+          "max_depth": 0,
+          "spawned_by_subagents": 0,
+          "completed": 0,
+          "failed": 0,
+          "killed": {
+            "parent": 0,
+            "user": 0,
+            "system": 0
+          },
+          "refused": {
+            "depth_limit": 0,
+            "concurrency_limit": 0,
+            "budget": 0
+          },
+          "by_type": {}
+        },
+        "safety_stops": 0,
+        "is_error": false,
+        "num_turns": 1,
+        "subtype": "success",
+        "api_error_status": null,
+        "result": "BW-MARKER-04456bfea2cf\n\n1. Instruction files in my context:\n   - C:\\Users\\tamezs\\.claude\\CLAUDE.md\n   - C:\\Users\\tamezs\\.claude\\lessons.md (imported by the CLAUDE.md above)\n   - C:\\Users\\tamezs\\AppData\\Local\\Temp\\1\\bw-claude-md-probe-dOL8kf\\CLAUDE.md\n\n2. The sentence \"Prefer work over narration.\" is present in my context. It appears under the \"## Communication\" heading in C:\\Users\\tamezs\\.claude\\CLAUDE.md. The sentence that immediately follows it is: \"Answer the direct question first.\"\n\n3. The project instruction file asks that answers begin with the exact token BW-MARKER-04456bfea2cf. I have followed that, and this reply starts with it.",
+        "ttft_ms": 2066,
+        "type": "result",
+        "duration_ms": 2077,
+        "uuid": "7c0cf14d-8d94-48b8-882f-b79717df9476",
+        "ttft_stream_ms": 2061,
+        "time_to_request_ms": 137,
+        "first_content_frame_ms": 2061,
+        "queued_turn_count": 0,
+        "result_index": 0
+      },
+      "teardown": null,
+      "rawRetainedAt": "C:\\Users\\tamezs\\AppData\\Local\\Temp\\1\\claude\\C--Repositories-AI-Tools-governed-delivery\\8235a81c-d5d8-48c9-94b5-004919f169bf\\scratchpad\\claude-md-regression-control-raw.jsonl"
+    }
+  ]
+}

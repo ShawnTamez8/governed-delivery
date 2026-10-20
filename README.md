@@ -47,12 +47,14 @@ the signed scope, and any signed scope path that no `## Tasks` line names,
 before a panel is convened); and the implementation stage
 (`bw implement` creates the run's worktree on branch `gov/<slug>/<run-id>`,
 commits the projections, dispatches the implementer once per phase of up to ten
-plan tasks and once more to self-review the whole change, and applies each proposed
-patch only when it binds to the recorded base commit and stays inside the
-signed scope — one commit per patch, the worktree retained when the gate
-blocks); and the verification stage (`bw verify` runs the commands frozen at
-run start from the committed `governed.yaml` inside that worktree, under a
-named environment passthrough and bounded per-command time and output limits,
+plan tasks and once more to self-review the whole change — each in its own
+Docker sandbox, changing files only through BuildWorks' tool server — then
+computes each dispatch's diff from the worktree and commits it only when it
+stays inside the signed scope and deletes and links nothing — one commit per
+dispatch, the worktree retained when the gate blocks); and the verification
+stage (`bw verify` runs the commands frozen at run start from the committed
+`governed.yaml` in a container over that worktree, with bounded per-command
+time and output limits,
 proving the worktree still holds the commit implementation left and is clean
 before and after every command, retaining each command's complete output, and
 handing the next stage a structured record naming the worktree and the
@@ -153,9 +155,29 @@ partial stages.
 
 ### Guided project bootstrap
 
-Use Node 24 or newer, npm, Git with a commit identity, and the native Claude
-Code executable on `PATH`. Install this checkout's development dependencies,
-then create checkout-linked global aliases:
+Use Node 24 or newer, npm, Git with a commit identity, the native Claude
+Code executable on `PATH`, and a running Docker engine (Docker Desktop on
+Windows).
+
+**Docker and the supported toolchain** (2026-10-19,
+`docs/features/sandboxed-implementer/plan.md`). Every run that reaches
+implementation needs Docker: the implementer's tools, the verification
+commands and the derived commands all run in a disposable container built from
+this checkout's `container/Dockerfile`. `new-run` builds the image when it is
+absent, freezes its image ID, and refuses without an engine before any spend.
+The image provides Node, npm and Git, and its only network host is the npm
+registry. `new-run` also refuses a target whose verification or derived
+command names a program the image lacks (`dotnet`, `cargo`). That check sees
+only the command's top-level program: a tool a script calls, a native compiler
+a package needs, a browser a test downloads, or a database the tests expect
+passes it and fails later, at a phase or at verification. Other stacks wait for
+`docs/proposals/target-declared-environments.md`. Do not run
+`docker image prune` while a run is open: a run whose frozen image is gone
+refuses at its next sandbox, `doctor` names the run, and the recovery is a
+fresh run, not a rebuild.
+
+Install this checkout's development dependencies, then create checkout-linked
+global aliases:
 
 ```powershell
 $BuildWorksCheckout = (Resolve-Path -LiteralPath (Read-Host 'Absolute path to the BuildWorks checkout')).Path
@@ -180,10 +202,10 @@ $env:BW_APPROVAL_PUBLIC_KEY = 'C:\Public Approval Material\approval.pub'
 ```
 
 The corresponding private key must remain outside the filesystem and process
-identity available to BuildWorks verification. Verification receives `HOME`
-and `USERPROFILE` and is not filesystem-sandboxed, so a key stored under the
-same host identity is not contained merely because its path is absent from the
-child environment. Guided mode creates no key, never asks for a private-key
+identity available to BuildWorks. Verification now runs in a container that
+mounts only the run's worktree, but the agent sessions run on the host as you,
+so a key stored under the same host identity is not contained merely because
+its path is absent from their environment. Guided mode creates no key, never asks for a private-key
 path, and never invokes `scripts\sign-approval.mjs`.
 
 Spec review asks the operator's Decision-1 deployment whether each acceptance
@@ -213,8 +235,9 @@ Create a project in an absent or empty directory:
 buildworks 'C:\Work\My Guided Project'
 ```
 
-The command preflights Node, npm, Git, Claude Code, and Git identity; offers the
-single `static-web` starter; runs its generated `npm ci` and `npm test`; shows
+The command preflights Node, npm, Git, Claude Code, a Docker engine, and Git
+identity; offers the single `static-web` starter; runs its generated `npm ci`
+and `npm test` in a container; shows
 and commits only the generated baseline; and prints the exact
 `docs\features\<slug>\design.md` path. It refuses a nonempty non-Git directory,
 mismatched starter bytes, unrelated working-tree changes, and a nested project
@@ -313,13 +336,14 @@ $Model = Read-Host 'Authorized Claude model name to freeze for this run'
 
 The signing authority supplies an existing PEM Ed25519 public key. Keep the
 private key outside the filesystem and process identity available to the
-BuildWorks host; verification is not filesystem-sandboxed. If the authority
+BuildWorks host; the agent sessions run on that host. If the authority
 uses `scripts\sign-approval.mjs`, it runs that tool on the separate authority
 host, not through BuildWorks. Never give the private key to the CLI or an
 agent. Configure the public key before intake to bind its fingerprint into the
 frozen profile; later setup does not retroactively strengthen that binding.
 
-The target must have a readable HEAD, a clean working tree, a committed
+Docker must be running, as "Guided project bootstrap" describes; `new-run`
+refuses without it. The target must have a readable HEAD, a clean working tree, a committed
 `.gitignore` rule for `.governance/`, and committed verification configuration
 named `governed.yaml` at its root. Author and commit the design at the path
 constructed by `Join-Path $Target "docs\features\$Slug\design.md"`.
@@ -1062,7 +1086,9 @@ retry. Preserve evidence and follow the specific diagnostic.
 
 The local workflow needs no GitHub credentials, `gh`, repository URL, or
 remote fetch/publication. The actual model provider still needs its own access,
-and frozen verification commands are not filesystem/network-sandboxed.
+and Docker must be running. Agent commands, frozen verification commands and
+derived commands run in containers that mount only the run's worktree and reach
+only the npm registry; the agent sessions themselves run on the host.
 
 ## The milestone that decides everything
 

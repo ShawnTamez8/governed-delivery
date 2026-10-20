@@ -515,3 +515,43 @@ test("a result line without a structured_output object is refused by name in str
     (err: Error) => err.message.endsWith("; the line reports no total_cost_usd")
   );
 });
+
+// --- the tool server (docs/features/sandboxed-implementer/plan.md, Task 6) ---
+
+test("a tool server writes the MCP config and appends --mcp-config, --allowedTools and the budget; without one the argv is unchanged", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bw-harness-mcp-"));
+  try {
+    const executor = testExecutor(["node", join(FIXTURES, "echo-json.mjs")]);
+    const configPath = join(root, "prompts", "abc-mcp.json");
+    const toolServer = { command: process.execPath, args: ["tool-server.ts", "--container", "c1"], configPath };
+    const sent = await invokeHarness(executor, { prompt: "", model: "m", effort: "medium", jsonSchema: { type: "object" }, toolServer, budgetUsd: "2.00" });
+    assert.deepEqual((JSON.parse(lastLine(sent.raw)) as { argv: string[] }).argv, [
+      "--model", "m", "--effort", "medium", "--json-schema", JSON.stringify({ type: "object" }),
+      "--mcp-config", configPath, "--allowedTools", "mcp__bw__*", "--max-budget-usd", "2.00",
+    ]);
+    assert.deepEqual(JSON.parse(readFileSync(configPath, "utf8")), {
+      mcpServers: { bw: { type: "stdio", command: process.execPath, args: ["tool-server.ts", "--container", "c1"] } },
+    });
+    const readOnly = await invokeHarness(executor, { prompt: "", model: "m", effort: "medium" });
+    assert.deepEqual((JSON.parse(lastLine(readOnly.raw)) as { argv: string[] }).argv, ["--model", "m", "--effort", "medium"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an MCP config that cannot be written is a spawn failure naming the path, and nothing is spawned", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bw-harness-mcp-"));
+  try {
+    const blocker = join(root, "file");
+    writeFileSync(blocker, "x");
+    const configPath = join(blocker, "nested", "mcp.json");
+    const outcome = await invokeHarness(testExecutor(["node", join(FIXTURES, "echo-json.mjs")]), {
+      prompt: "",
+      toolServer: { command: process.execPath, args: [], configPath },
+    });
+    assert.equal(outcome.raw, "");
+    assert.ok(outcome.spawnError?.startsWith(`cannot write the MCP config at ${configPath}: `), outcome.spawnError ?? "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -1,11 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { sandboxLeftovers } from "../src/container.ts";
 import { regenerateDerivedArtifacts, type RegenerationInput } from "../src/derived-artifacts.ts";
 import type { DerivedArtifact } from "../src/governed-config.ts";
+import {
+  markNoExitStatus,
+  markUnremovable,
+  markUnstartable,
+  sandboxPrefix,
+  STAND_IN_DOCKER_COMMAND,
+  standInSandbox,
+} from "./fixtures/docker/stand-in.ts";
 
 function git(cwd: string, args: string[]): string {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -30,6 +39,9 @@ async function withRepository(fn: (worktree: string, stateRoot: string, head: st
     git(worktree, ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "base"]);
     await fn(worktree, stateRoot, git(worktree, ["rev-parse", "HEAD"]));
   } finally {
+    const leftovers = sandboxLeftovers(STAND_IN_DOCKER_COMMAND, stateRoot);
+    for (const line of leftovers.containers) spawnSync(process.execPath, [...STAND_IN_DOCKER_COMMAND.slice(1), "rm", "-f", line.split(" ")[0]!]);
+    for (const line of leftovers.networks) spawnSync(process.execPath, [...STAND_IN_DOCKER_COMMAND.slice(1), "network", "rm", line.split(" ")[0]!]);
     rmSync(worktree, { recursive: true, force: true });
     rmSync(stateRoot, { recursive: true, force: true });
   }
@@ -56,11 +68,11 @@ function input(
     expectedHead: head,
     label: "phase-1",
     evidenceDir: join(stateRoot, ".governance", "derived", "7", "phase-1"),
+    sandbox: standInSandbox(),
     policy: {
       timeoutSeconds: 30,
       maxBytes: 1024 * 1024,
       retentionMaxBytes: 1024 * 1024,
-      envPassthrough: ["PATH", "SystemRoot", "TEMP", "TMP"],
     },
     audit: (action, summary) => audits.push(`${action}: ${summary}`),
   };
@@ -97,6 +109,27 @@ test("a command that changes its derived file produces one commit touching only 
       `derived.commit: label=phase-1; base=${head}; head=${result.head}; paths=package-lock.json; evidence=${join(".governance", "derived", "7", "phase-1")}`,
     ]);
     assert.ok(existsSync(join(stateRoot, ".governance", "derived", "7", "phase-1", "lockfile.log")));
+  });
+});
+
+test("the regeneration commit runs none of the target's hooks: an agent's change is already in HEAD", async () => {
+  await withRepository(async (worktree, stateRoot, head) => {
+    const marker = join(stateRoot, "hook-ran-on-host.txt");
+    const script = join(stateRoot, "hook.mjs");
+    writeFileSync(script, `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "ran");\n`);
+    mkdirSync(join(stateRoot, "hooks"));
+    for (const hook of ["pre-commit", "commit-msg", "post-commit", "reference-transaction"]) {
+      writeFileSync(join(stateRoot, "hooks", hook), `#!/bin/sh\nnode "${script.replace(/\\/g, "/")}"\n`, { mode: 0o755 });
+    }
+    git(worktree, ["config", "core.hooksPath", join(stateRoot, "hooks")]);
+    const audits: string[] = [];
+    const result = await regenerateDerivedArtifacts(input(worktree, stateRoot, head, [lockfile("v2")], audits));
+    assert.equal(result.ok, true, (result as { reason?: string }).reason);
+    assert.equal(git(worktree, ["rev-parse", `HEAD~1`]), head, "the regeneration committed");
+    assert.equal(existsSync(marker), false, "a hook ran on the host");
+    // Positive control: the same hooks fire for an ordinary commit.
+    git(worktree, ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "--allow-empty", "-m", "control"]);
+    assert.equal(existsSync(marker), true, "the hooks never fire, so this test proves nothing");
   });
 });
 
@@ -157,6 +190,54 @@ test("a failing command is refused naming the artifact", async () => {
     });
     assert.equal(git(worktree, ["rev-parse", "HEAD"]), head);
     assert.match(audits[0]!, /^derived\.fail: label=phase-1; lockfile: node /);
+  });
+});
+
+test("a sandbox that fails to start refuses regeneration and commits nothing", async () => {
+  await withRepository(async (worktree, stateRoot, head) => {
+    const audits: string[] = [];
+    const unmark = markUnstartable(sandboxPrefix(stateRoot, 7, "derived-phase-1"));
+    try {
+      const result = await regenerateDerivedArtifacts(input(worktree, stateRoot, head, [lockfile("v2")], audits));
+      assert.equal(result.ok, false);
+      assert.match((result as { reason: string }).reason, /^cannot start the derived-artifact sandbox: start proxy \S+ failed \(docker exit 125\): .*unstartable/);
+      assert.deepEqual(audits.map((a) => a.slice(0, a.indexOf(":"))), ["sandbox.failed"]);
+      assert.equal(git(worktree, ["rev-parse", "HEAD"]), head);
+    } finally {
+      unmark();
+    }
+  });
+});
+
+test("an absent exit-status file is a sandbox failure, not the derived command failing", async () => {
+  await withRepository(async (worktree, stateRoot, head) => {
+    const audits: string[] = [];
+    const unmark = markNoExitStatus(sandboxPrefix(stateRoot, 7, "derived-phase-1"));
+    try {
+      const result = await regenerateDerivedArtifacts(input(worktree, stateRoot, head, [lockfile("v2")], audits));
+      assert.equal(result.ok, false);
+      assert.match((result as { reason: string }).reason, /^derived artifact lockfile could not be run in sandbox \S+: read exit status in /);
+      assert.deepEqual(audits.map((a) => a.slice(0, a.indexOf(":"))), ["sandbox.failed"]);
+      assert.equal(git(worktree, ["rev-parse", "HEAD"]), head);
+    } finally {
+      unmark();
+    }
+  });
+});
+
+test("a work container not proven gone refuses regeneration before the tree is read", async () => {
+  await withRepository(async (worktree, stateRoot, head) => {
+    const audits: string[] = [];
+    const unmark = markUnremovable(sandboxPrefix(stateRoot, 7, "derived-phase-1"));
+    try {
+      const result = await regenerateDerivedArtifacts(input(worktree, stateRoot, head, [lockfile("v2")], audits));
+      assert.equal(result.ok, false);
+      assert.match((result as { reason: string }).reason, /^work container \S+-work \([0-9a-f]{64}\) could not be proven removed/);
+      assert.deepEqual(audits.map((a) => a.slice(0, a.indexOf(":"))), ["sandbox.quiescence.failed"]);
+      assert.equal(git(worktree, ["rev-parse", "HEAD"]), head, "nothing is committed");
+    } finally {
+      unmark();
+    }
   });
 });
 

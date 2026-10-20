@@ -1,4 +1,5 @@
 import { canonicalJson, sha256Hex } from "./canonical.ts";
+import { PROXY_ALIAS, PROXY_PORT, type FrozenSandbox, type SandboxLimits } from "./container.ts";
 import { SEVERITIES } from "./finding.ts";
 import { PROMPT_MAX_BYTES, RESULT_MAX_BYTES } from "./harness.ts";
 import { PROTECTED_PATH_PREFIXES } from "./scope.ts";
@@ -286,28 +287,51 @@ export const VERIFY_COMMAND_TIMEOUT_SECONDS = 900;
 export const VERIFY_RETENTION_MAX_BYTES = 64 * 1024 * 1024;
 
 /**
- * The environment a verification command receives. Section 17 forbids
- * inheriting the whole environment, and this stage runs code the implementer
- * wrote — full inheritance would put `BW_APPROVAL_PUBLIC_KEY`, the key that
- * binds the approval signer, inside that code's reach.
+ * The run's sandbox, seeded here and frozen into `profile.sandbox` at
+ * `new-run` with the image ID (docs/features/sandboxed-implementer/plan.md,
+ * hard rule 6). The stages and `src/container.ts` read the frozen values,
+ * never these constants.
  *
- * The list is stated here rather than imported from
- * `CLAUDE_CODE.sandbox.envPassthrough`. The two coincide today because both
- * need the same OS minimum to resolve `node` and `npm` on Windows, but they
- * are answers to different questions — what an agent session may read, and
- * what a verification command may read — and coupling them would make a
- * change to one silently move the other.
+ * - `SANDBOX_LIMITS`: each work container's CPU, memory (swap equal, so none)
+ *   and process ceiling, the spike's values.
+ * - `SANDBOX_COMMAND_TIMEOUT_SECONDS`: one tool-server command's ceiling. A
+ *   tool call emits nothing while its command runs, so it stays below the
+ *   1800-second idle budget (hazard 19).
+ * - `SANDBOX_EGRESS_ALLOWLIST`: the one host for the one ecosystem in use
+ *   (hard rule 4); a second feed is one more entry.
+ * - `PATCH_DISPATCH_BUDGET_USD`: `--max-budget-usd` on each patch dispatch
+ *   (operator, 2026-10-19).
+ * - `SANDBOX_DOCKER_COMMAND`: how Docker is run; tests freeze a stand-in.
+ * - `SANDBOX_USER`: the base image's non-root user.
+ * - `SANDBOX_ENV`: the npm proxy settings, pointing at the proxy's network
+ *   alias so a frozen value never embeds a run-specific name. They are
+ *   image- and npm-specific, which is why they are frozen values here and not
+ *   code in `src/container.ts` (extension points 1 and 4).
  */
-export const VERIFY_ENV_PASSTHROUGH = [
-  "PATH",
-  "HOME",
-  "USERPROFILE",
-  "APPDATA",
-  "LOCALAPPDATA",
-  "TEMP",
-  "TMP",
-  "SystemRoot",
+export const SANDBOX_LIMITS: SandboxLimits = { cpus: "2", memory: "4g", pidsLimit: 512 };
+export const SANDBOX_COMMAND_TIMEOUT_SECONDS = 300;
+export const SANDBOX_EGRESS_ALLOWLIST = ["registry.npmjs.org:443"];
+export const PATCH_DISPATCH_BUDGET_USD = "2.00";
+export const SANDBOX_DOCKER_COMMAND = ["docker"];
+export const SANDBOX_USER = "node";
+export const SANDBOX_ENV = [
+  `npm_config_proxy=http://${PROXY_ALIAS}:${PROXY_PORT}`,
+  `npm_config_https_proxy=http://${PROXY_ALIAS}:${PROXY_PORT}`,
 ];
+
+/** The seeded sandbox around one image ID, as `new-run` freezes it. */
+export function seededSandbox(imageId: string): FrozenSandbox {
+  return {
+    dockerCommand: [...SANDBOX_DOCKER_COMMAND],
+    imageId,
+    limits: { ...SANDBOX_LIMITS },
+    commandTimeoutSeconds: SANDBOX_COMMAND_TIMEOUT_SECONDS,
+    egressAllowlist: [...SANDBOX_EGRESS_ALLOWLIST],
+    user: SANDBOX_USER,
+    env: [...SANDBOX_ENV],
+    patchDispatchBudgetUsd: PATCH_DISPATCH_BUDGET_USD,
+  };
+}
 
 /**
  * The wall clock on one Microsoft-Decision-1 request (`src/systemone.ts`). The
@@ -351,7 +375,6 @@ export interface Policy {
   runDurationLimitSeconds: number;
   verifyCommandTimeoutSeconds: number;
   verifyRetentionMaxBytes: number;
-  verifyEnvPassthrough: string[];
 }
 
 /**
@@ -383,7 +406,6 @@ export function buildPolicy(): Policy {
     runDurationLimitSeconds: RUN_DURATION_LIMIT_SECONDS,
     verifyCommandTimeoutSeconds: VERIFY_COMMAND_TIMEOUT_SECONDS,
     verifyRetentionMaxBytes: VERIFY_RETENTION_MAX_BYTES,
-    verifyEnvPassthrough: [...VERIFY_ENV_PASSTHROUGH],
   };
 }
 
@@ -422,7 +444,6 @@ const STRING_ARRAY_FIELDS = [
   "severities",
   "requiredSpecialties",
   "protectedPathPrefixes",
-  "verifyEnvPassthrough",
 ];
 
 /**

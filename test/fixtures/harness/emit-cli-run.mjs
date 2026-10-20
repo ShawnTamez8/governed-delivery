@@ -34,24 +34,30 @@ export function selectPromptRoute(prompt) {
   return matches[0];
 }
 
-// The routes whose dispatches send --json-schema (docs/features/structured-patch-output/plan.md);
-// every other route must arrive without it.
+// The routes whose dispatches send --json-schema (docs/features/structured-patch-output/plan.md)
+// and the tool server's --mcp-config (docs/features/sandboxed-implementer/plan.md);
+// every other route must arrive without either.
 const SCHEMA_ROUTES = new Set(["IMPLEMENTATION_PROMPT_PREFIX", "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX"]);
 
+const FLAGS = [
+  "--implementation-mode", "--code-review-mode", "--delay-ms",
+  "--model", "--effort", "--json-schema", "--mcp-config", "--allowedTools", "--max-budget-usd",
+];
+
 function options(argv) {
-  const result = { implementationMode: "ok", codeReviewMode: "ok", delayMs: 0, jsonSchema: undefined };
+  const result = { implementationMode: "ok", codeReviewMode: "ok", delayMs: 0, jsonSchema: undefined, mcpConfig: undefined };
   const seen = new Set();
   for (let i = 0; i < argv.length; i += 2) {
     const name = argv[i];
     const value = argv[i + 1];
-    if (!["--implementation-mode", "--code-review-mode", "--delay-ms", "--model", "--effort", "--json-schema"].includes(name) ||
-        seen.has(name) || value === undefined || value === "" || value.startsWith("--")) {
-      throw new Error("emit-cli-run: expected unique --implementation-mode, --code-review-mode, --delay-ms, or harness --model, --effort or --json-schema value pairs");
+    if (!FLAGS.includes(name) || seen.has(name) || value === undefined || value === "" || value.startsWith("--")) {
+      throw new Error(`emit-cli-run: expected unique value pairs of ${FLAGS.join(", ")}`);
     }
     seen.add(name);
     if (name === "--implementation-mode") result.implementationMode = value;
     if (name === "--code-review-mode") result.codeReviewMode = value;
     if (name === "--json-schema") result.jsonSchema = value;
+    if (name === "--mcp-config") result.mcpConfig = value;
     if (name === "--delay-ms") {
       if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
         throw new Error("emit-cli-run: --delay-ms must be a non-negative safe integer");
@@ -71,14 +77,21 @@ async function main() {
   if (SCHEMA_ROUTES.has(route.name) !== (config.jsonSchema !== undefined)) {
     throw new Error(`emit-cli-run: a ${route.name} prompt arrived ${config.jsonSchema === undefined ? "without" : "with"} --json-schema`);
   }
+  if (SCHEMA_ROUTES.has(route.name) !== (config.mcpConfig !== undefined)) {
+    throw new Error(`emit-cli-run: a ${route.name} prompt arrived ${config.mcpConfig === undefined ? "without" : "with"} --mcp-config`);
+  }
   if (config.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, config.delayMs));
   const env = { ...process.env };
   delete env.EMIT_MODE;
   if (route.emitter === "emit-implementation-stage.mjs") env.EMIT_MODE = config.implementationMode;
   if (route.emitter === "emit-code-review.mjs") env.EMIT_MODE = config.codeReviewMode;
-  // The schema reaches the selected emitter as the real CLI receives it, so that
-  // emitter answers through the structured channel and checks the schema itself.
-  const schemaArgs = config.jsonSchema === undefined ? [] : ["--json-schema", config.jsonSchema];
+  // The schema and the tool server reach the selected emitter as the real CLI
+  // receives them, so that emitter answers through the structured channel and
+  // checks both itself.
+  const schemaArgs = [
+    ...(config.jsonSchema === undefined ? [] : ["--json-schema", config.jsonSchema]),
+    ...(config.mcpConfig === undefined ? [] : ["--mcp-config", config.mcpConfig]),
+  ];
   const child = spawnSync(process.execPath, [fileURLToPath(new URL(route.emitter, import.meta.url)), ...schemaArgs], {
     input,
     env,

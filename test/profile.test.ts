@@ -26,16 +26,20 @@ import {
   SYSTEMONE_REQUEST_TIMEOUT_MS,
   buildPolicy,
   policyHash,
+  seededSandbox,
 } from "../src/policy.ts";
 import { narrationQuestionHash } from "../src/narration-check.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
 import { canonicalJson, sha256Hex } from "../src/canonical.ts";
 import { freezeUniformProfile } from "./uniform-profile.ts";
+import { STAND_IN_IMAGE_ID, standInSandbox } from "./fixtures/docker/stand-in.ts";
 
 const COMMIT = "b".repeat(40);
 const MODEL = "test-model";
 /** One minimal frozen configuration, shared by every call site in this file. */
 const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }], derived: [] };
+/** The seeded sandbox, at the image ID recorded from a real build. */
+const SANDBOX = standInSandbox();
 
 function withRoot(fn: (root: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), "bw-profile-"));
@@ -48,7 +52,7 @@ function withRoot(fn: (root: string) => void): void {
 
 test("freezeProfile then loadProfile round-trips with an identical hash", () => {
   withRoot((root) => {
-    const frozen = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const frozen = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     const loaded = loadProfile(root, 1);
     assert.equal(loaded.hash, frozen.hash);
     assert.deepEqual(loaded.profile, frozen.profile);
@@ -61,16 +65,16 @@ test("freezeProfile refuses a model name the spawn cannot carry", () => {
   // invocation and the shell would run another.
   withRoot((root) => {
     assert.throws(
-      () => freezeProfile(root, 1, COMMIT, "gpt-4 mini", VERIFICATION),
+      () => freezeProfile(root, 1, COMMIT, "gpt-4 mini", VERIFICATION, SANDBOX),
       /invalid model name "gpt-4 mini": must be 1-64 characters of letters, digits, dot, underscore, or hyphen, starting with a letter or digit/
     );
-    assert.throws(() => freezeProfile(root, 1, COMMIT, " ", VERIFICATION), /invalid model name/);
+    assert.throws(() => freezeProfile(root, 1, COMMIT, " ", VERIFICATION, SANDBOX), /invalid model name/);
   });
 });
 
 test("altering the profile file changes its hash", () => {
   withRoot((root) => {
-    const frozen = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const frozen = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     appendFileSync(frozen.path, " ");
     assert.notEqual(loadProfile(root, 1).hash, frozen.hash);
   });
@@ -78,7 +82,7 @@ test("altering the profile file changes its hash", () => {
 
 test("the profile records every seeded agent and the executor", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     assert.deepEqual(
       profile.agents.map((a) => a.id).sort(),
       [...AGENTS].map((a) => a.id).sort()
@@ -91,7 +95,7 @@ test("the profile records every seeded agent and the executor", () => {
 
 test("the profile's policy hash is the live policy's hash", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     assert.equal(profile.policyHash, policyHash(buildPolicy()));
     assert.equal(profile.policyHash, policyHash(profile.policy));
   });
@@ -99,8 +103,8 @@ test("the profile's policy hash is the live policy's hash", () => {
 
 test("two freezes differ by their timestamp but agree on policy", () => {
   withRoot((root) => {
-    const a = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
-    const b = freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION);
+    const a = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
+    const b = freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION, SANDBOX);
     assert.notEqual(a.hash, b.hash);
     assert.equal(a.profile.policyHash, b.profile.policyHash);
   });
@@ -158,7 +162,7 @@ test("the profile freezes the approval key fingerprint, or null when none is con
       process.env.BW_APPROVAL_PUBLIC_KEY = join(keyDir, "no-such-key.pub");
       // No key at intake is the normal case on a fresh machine and must not
       // fail run creation — it records null and the gate says so in the audit.
-      assert.equal(freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION).profile.approvalSigner, null);
+      assert.equal(freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX).profile.approvalSigner, null);
 
       const { publicKey } = generateKeyPairSync("ed25519");
       const der = publicKey.export({ format: "der", type: "spki" });
@@ -168,7 +172,7 @@ test("the profile freezes the approval key fingerprint, or null when none is con
       // The expected value comes from the key's own DER encoding, not from
       // anything this test invented: it is the same identifier the gate
       // recomputes at approve time.
-      assert.equal(freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION).profile.approvalSigner, sha256Hex(der));
+      assert.equal(freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION, SANDBOX).profile.approvalSigner, sha256Hex(der));
     });
   } finally {
     if (before === undefined) delete process.env.BW_APPROVAL_PUBLIC_KEY;
@@ -207,7 +211,7 @@ function seededFor(runModel: string) {
 
 test("with no overrides the profile freezes all eleven settings at their seeded defaults", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, SANDBOX);
     assert.deepEqual(profile.dispatchSettings, seededFor("chosen-model"));
     assert.deepEqual(resolveSettings(profile, "plan-author"), {
       ok: true,
@@ -229,7 +233,7 @@ test("with no overrides the profile freezes all eleven settings at their seeded 
 
 test("modelFor and effortFor override only the named settings", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, {}, {
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, SANDBOX, {}, {
       modelFor: { "spec-reviewer-security": "other-model" },
       effortFor: { implementer: "low" },
     });
@@ -242,7 +246,7 @@ test("modelFor and effortFor override only the named settings", () => {
 
 test("the reconciler is set independently of the spec and plan authors", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, {}, {
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, SANDBOX, {}, {
       modelFor: { reconciler: "recon-model" },
       effortFor: { reconciler: "xhigh" },
     });
@@ -254,7 +258,7 @@ test("the reconciler is set independently of the spec and plan authors", () => {
 
 test("a run-wide effort reaches every non-reviewer setting, and a per-name value beats it", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, {}, {
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, SANDBOX, {}, {
       effort: "low",
       effortFor: { implementer: "max" },
     });
@@ -272,7 +276,7 @@ test("a run-wide effort never reaches a reviewer", () => {
   // Operator decision 2026-09-29: `--effort high` must not put a reviewer at
   // high. The six reviewers keep their seeded effort.
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, {}, {
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, SANDBOX, {}, {
       effort: "xhigh",
     });
     assert.equal(REVIEWER_IDS.length, 6);
@@ -289,7 +293,7 @@ test("a run-wide effort never reaches the code-review reconciler", () => {
   // It was measured only at its seeded medium (the run 6 replays), so like a
   // reviewer it moves only through its own --effort-for.
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, {}, {
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, SANDBOX, {}, {
       effort: "xhigh",
     });
     assert.deepEqual(profile.dispatchSettings["code-review-reconciler"], { model: HAIKU, effort: "medium" });
@@ -298,7 +302,7 @@ test("a run-wide effort never reaches the code-review reconciler", () => {
 
 test("the code-review reconciler's own model-for and effort-for reach it and nothing else", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, {}, {
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, SANDBOX, {}, {
       modelFor: { "code-review-reconciler": "recon-model" },
       effortFor: { "code-review-reconciler": "low" },
     });
@@ -310,7 +314,7 @@ test("the code-review reconciler's own model-for and effort-for reach it and not
 
 test("an explicit effortFor can raise one reviewer to max and leaves the other five alone", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, {}, {
+    const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, SANDBOX, {}, {
       effortFor: { "code-reviewer-security": "max" },
     });
     assert.equal(profile.dispatchSettings["code-reviewer-security"]!.effort, "max");
@@ -324,17 +328,17 @@ test("an invalid level, invalid model, unknown setting, or agent with no default
   withRoot((root) => {
     const extraAuthor = { ...AGENTS.find((a) => a.id === "spec-author")!, id: "extra-author" };
     const cases: Array<[string, () => unknown, RegExp]> = [
-      ["run-wide effort", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, {}, { effort: "ultracode" }),
+      ["run-wide effort", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX, {}, { effort: "ultracode" }),
         /invalid effort "ultracode": allowed values are low, medium, high, xhigh, max/],
-      ["per-name effort", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, {}, { effortFor: { implementer: "hi" } }),
+      ["per-name effort", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX, {}, { effortFor: { implementer: "hi" } }),
         /invalid effort "hi"/],
-      ["per-name model", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, {}, { modelFor: { implementer: "bad model" } }),
+      ["per-name model", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX, {}, { modelFor: { implementer: "bad model" } }),
         /invalid model name "bad model"/],
-      ["unknown model-for name", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, {}, { modelFor: { nobody: "m" } }),
+      ["unknown model-for name", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX, {}, { modelFor: { nobody: "m" } }),
         /--model-for names unknown setting nobody: known settings are .*reconciler/],
-      ["unknown effort-for name", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, {}, { effortFor: { nobody: "low" } }),
+      ["unknown effort-for name", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX, {}, { effortFor: { nobody: "low" } }),
         /--effort-for names unknown setting nobody/],
-      ["agent with no default", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, { agents: [...AGENTS, extraAuthor] }),
+      ["agent with no default", () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX, { agents: [...AGENTS, extraAuthor] }),
         /no default settings for extra-author/],
     ];
     for (const [label, run, message] of cases) {
@@ -359,7 +363,7 @@ test("staffing refusals come before any settings refusal", () => {
     const depleted = AGENTS.filter((a) => a.role !== "reviewer");
     assert.throws(
       () =>
-        freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, { agents: depleted }, {
+        freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX, { agents: depleted }, {
           effort: "ultracode",
           modelFor: { nobody: "m" },
         }),
@@ -370,7 +374,7 @@ test("staffing refusals come before any settings refusal", () => {
 
 test("resolveSettings refuses an unmapped setting naming the mapped ones", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     const result = resolveSettings(profile, "verification");
     assert.equal(result.ok, false);
     if (result.ok) return;
@@ -384,7 +388,7 @@ test("resolveSettings refuses an unmapped setting naming the mapped ones", () =>
 
 test("a profile with modelMap and no dispatchSettings is refused by name", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     const { dispatchSettings, ...rest } = profile;
     const superseded = { ...rest, modelMap: { spec: MODEL } };
     assert.match(
@@ -404,7 +408,7 @@ test("a profile with modelMap and no dispatchSettings is refused by name", () =>
 
 test("a profile whose dispatchSettings lacks an entry or holds a bad value is refused", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     const without = (name: string) => {
       const { [name]: _dropped, ...kept } = profile.dispatchSettings;
       return { ...profile, dispatchSettings: kept };
@@ -452,7 +456,7 @@ test("requiredCapability maps the six dispatchable stage kinds", () => {
 
 test("requireFrozenBinding accepts the frozen executor with the required capability", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     assert.deepEqual(requireFrozenBinding(profile, CLAUDE_CODE, "implementation"), { ok: true });
     assert.deepEqual(requireFrozenBinding(profile, CLAUDE_CODE, "spec_review"), { ok: true });
   });
@@ -460,7 +464,7 @@ test("requireFrozenBinding accepts the frozen executor with the required capabil
 
 test("requireFrozenBinding refuses an executor that differs from the frozen one, even with the same id", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     const different = {
       ...CLAUDE_CODE,
       sandbox: { ...CLAUDE_CODE.sandbox, idleTimeoutSeconds: 999 },
@@ -474,7 +478,7 @@ test("requireFrozenBinding refuses an executor that differs from the frozen one,
 
 test("requireFrozenBinding refuses a missing capability naming capability and kind", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     const without = {
       ...profile,
       executor: {
@@ -491,7 +495,7 @@ test("requireFrozenBinding refuses a missing capability naming capability and ki
 
 test("requireFrozenBinding refuses an unknown stage kind by name", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     const verdict = requireFrozenBinding(profile, CLAUDE_CODE, "delivery_check");
     assert.equal(verdict.ok, false);
     if (verdict.ok) return;
@@ -534,7 +538,7 @@ function preTask3Policy(): Record<string, unknown> {
  * still cannot be executed.
  */
 function writePreTask3Profile(root: string, runId: number): { hash: string } {
-  const { profile } = freezeProfile(root, runId, COMMIT, MODEL, VERIFICATION);
+  const { profile } = freezeProfile(root, runId, COMMIT, MODEL, VERIFICATION, SANDBOX);
   const policy = preTask3Policy();
   const stale = { ...profile, policy, policyHash: sha256Hex(canonicalJson(policy)) };
   const serialized = canonicalJson(stale);
@@ -544,14 +548,14 @@ function writePreTask3Profile(root: string, runId: number): { hash: string } {
 
 test("the profile this code freezes is one it accepts", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     assert.equal(invalidProfileReason(profile), null);
   });
 });
 
 test("a current profile loads and verifies", () => {
   withRoot((root) => {
-    const frozen = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const frozen = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     const verified = loadVerifiedProfile(root, { id: 1, profile_ref: frozen.hash });
     assert.equal(verified.ok, true, (verified as { reason?: string }).reason);
   });
@@ -590,7 +594,7 @@ test("the pre-Task-3 profile is refused for its shape, not for its hash", () => 
 
 test("a profile predating approvalSigner is refused, while a frozen null is honoured", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     // Null is a live, supported state: no key was configured at intake.
     assert.equal(invalidProfileReason({ ...profile, approvalSigner: null }), null);
     // Absent is an obsolete shape.
@@ -601,11 +605,11 @@ test("a profile predating approvalSigner is refused, while a frozen null is hono
 
 test("a profile predating after is refused, and after is null or exactly a run id and a full commit", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     assert.equal(profile.after, null, "a run that follows nothing freezes null");
     const { after, ...without } = profile;
     assert.match(String(invalidProfileReason(without)), /carries no after: it predates the field/);
-    const linked = freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION, {}, {}, { runId: 1, deliveredCommit: COMMIT }).profile;
+    const linked = freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION, SANDBOX, {}, {}, { runId: 1, deliveredCommit: COMMIT }).profile;
     assert.deepEqual(linked.after, { runId: 1, deliveredCommit: COMMIT });
     assert.equal(invalidProfileReason(linked), null);
     for (const bad of [
@@ -637,11 +641,11 @@ test("a profile predating narrationCheck is refused, and narrationCheck is null 
     questionHash: narrationQuestionHash(),
   };
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     assert.equal(profile.narrationCheck, null, "a run frozen with the check off freezes null");
     const { narrationCheck, ...without } = profile;
     assert.match(String(invalidProfileReason(without)), /carries no narrationCheck: it predates the field/);
-    const on = freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION, {}, {}, null, config).profile;
+    const on = freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION, SANDBOX, {}, {}, null, config).profile;
     assert.deepEqual(on.narrationCheck, config);
     assert.equal(invalidProfileReason(on), null);
     const { questionHash, ...missingHash } = config;
@@ -672,7 +676,7 @@ test("a profile predating narrationCheck is refused, and narrationCheck is null 
 
 test("a profile predating verification.derived is refused, while an empty derived list loads", () => {
   withRoot((root) => {
-    const frozen = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const frozen = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     assert.deepEqual(frozen.profile.verification.derived, []);
     const verified = loadVerifiedProfile(root, { id: 1, profile_ref: frozen.hash });
     assert.equal(verified.ok, true, (verified as { reason?: string }).reason);
@@ -684,9 +688,52 @@ test("a profile predating verification.derived is refused, while an empty derive
   });
 });
 
+test("the profile freezes the plan's seeded sandbox, and a profile without one, or with a bad one, is refused", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, seededSandbox(STAND_IN_IMAGE_ID));
+    // The values the plan states (docs/features/sandboxed-implementer/plan.md, Task 7).
+    assert.deepEqual(profile.sandbox, {
+      dockerCommand: ["docker"],
+      imageId: STAND_IN_IMAGE_ID,
+      limits: { cpus: "2", memory: "4g", pidsLimit: 512 },
+      commandTimeoutSeconds: 300,
+      egressAllowlist: ["registry.npmjs.org:443"],
+      user: "node",
+      env: ["npm_config_proxy=http://proxy:3128", "npm_config_https_proxy=http://proxy:3128"],
+      patchDispatchBudgetUsd: "2.00",
+    });
+    assert.equal(invalidProfileReason(profile), null);
+    const { sandbox, ...without } = profile;
+    assert.match(String(invalidProfileReason(without)), /carries no sandbox: it predates the sandboxed implementer/);
+    for (const [bad, message] of [
+      [{ ...sandbox, imageId: "bw-sandbox:latest" }, /imageId must be a full sha256 image ID/],
+      [{ ...sandbox, dockerCommand: [] }, /dockerCommand must be a non-empty array/],
+      [{ ...sandbox, limits: { ...sandbox.limits, memory: "4 GB" } }, /limits must be/],
+      [{ ...sandbox, commandTimeoutSeconds: 0 }, /commandTimeoutSeconds must be a positive integer/],
+      [{ ...sandbox, egressAllowlist: ["https://registry.npmjs.org"] }, /host:port entries/],
+      [{ ...sandbox, extra: 1 }, /must have exactly the keys/],
+    ] as const) {
+      assert.match(String(invalidProfileReason({ ...profile, sandbox: bad })), message, JSON.stringify(bad));
+    }
+    // And freezing refuses the same values before writing anything.
+    assert.throws(
+      () => freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION, { ...sandbox, imageId: "bw-sandbox:latest" }),
+      /cannot freeze a profile for run 2: the frozen profile sandbox imageId must be a full sha256 image ID/
+    );
+    assert.equal(existsSync(profilePathOf(root, 2)), false);
+    // Hazard 19: the ceiling plus the host grace must stay below the idle
+    // budget of the executor the run freezes; that check lives at freeze time.
+    assert.throws(
+      () => freezeProfile(root, 3, COMMIT, MODEL, VERIFICATION, { ...sandbox, commandTimeoutSeconds: CLAUDE_CODE.sandbox.idleTimeoutSeconds - 5 }),
+      /cannot freeze a profile for run 3: .*must stay below the executor's 1800-second idle budget \(hazard 19\)/
+    );
+    assert.equal(existsSync(profilePathOf(root, 3)), false);
+  });
+});
+
 test("a profile whose policyHash does not describe its own policy is refused", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     const lying = { ...profile, policyHash: "f".repeat(64) };
     assert.match(String(invalidProfileReason(lying)), /does not describe its own policy/);
   });
@@ -694,7 +741,7 @@ test("a profile whose policyHash does not describe its own policy is refused", (
 
 test("a profile with a policy value outside its bounds is refused", () => {
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     for (const patch of [
       { panelSizeMax: 6 },
       { panelSizeMin: 1 },
@@ -720,7 +767,7 @@ test("a profile frozen under a different but legal configuration still executes"
   // Hard rule 6: a run is governed by what it froze, not by what is configured
   // now. Only a value the code could not honour is refused.
   withRoot((root) => {
-    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION);
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
     const policy = {
       ...profile.policy,
       panelSizeMax: 5,
@@ -738,7 +785,7 @@ test("the default installation staffs the configured panel", () => {
   // Hazard 11: a default installation must be able to create a run. Asserted
   // rather than assumed — if it stopped being true, nothing could start.
   withRoot((root) => {
-    assert.doesNotThrow(() => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION));
+    assert.doesNotThrow(() => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX));
   });
   assert.ok(PANEL_SIZE_MAX >= REQUIRED_SPECIALTIES.length);
   assert.equal(CODE_REVIEW_PANEL_SIZE, 3);
@@ -752,7 +799,7 @@ test("a registry that cannot staff the configured panel refuses at freeze time",
   withRoot((root) => {
     const depleted = AGENTS.filter((a) => a.role !== "reviewer");
     assert.throws(
-      () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, { agents: depleted }),
+      () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX, { agents: depleted }),
       /cannot freeze a profile for run 1: the agent registry has no reviewer for required specialty requirements-traceability/
     );
     assert.equal(
@@ -769,7 +816,7 @@ test("a registry with reviewers but too few distinct lenses is refused, naming t
       a.role === "reviewer" ? { ...a, specialty: "requirements-traceability" } : a
     );
     assert.throws(
-      () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, { agents: oneLens }),
+      () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX, { agents: oneLens }),
       /seats 1 distinct reviewer specialty .* which cannot fill a panel of 2/
     );
   });
@@ -783,7 +830,7 @@ test("a registry that cannot staff the code-review panel refuses at freeze time"
   withRoot((root) => {
     const noCodeReviewers = AGENTS.filter((a) => !a.outputs.includes("code-findings"));
     assert.throws(
-      () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, { agents: noCodeReviewers }),
+      () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX, { agents: noCodeReviewers }),
       /cannot freeze a profile for run 1: the agent registry seats 0 code reviewers on executor claude-code \(none at all\), which cannot fill the configured code-review panel of 3/
     );
     assert.equal(
@@ -798,8 +845,8 @@ test("the seeded registry staffs both panels, so a default installation freezes"
   // Hazard 11 read forwards rather than backwards: the two staffing refusals
   // are only safe to add if the shipped registry satisfies both.
   withRoot((root) => {
-    assert.doesNotThrow(() => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION));
-    const { profile } = freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION);
+    assert.doesNotThrow(() => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX));
+    const { profile } = freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION, SANDBOX);
     assert.deepEqual(
       profile.agents.filter((a) => a.outputs.includes("code-findings")).map((a) => a.id),
       ["code-reviewer-correctness", "code-reviewer-security", "code-reviewer-state-integrity"]
@@ -815,7 +862,7 @@ test("a required reviewer bound to another executor is refused before the profil
         : agent
     );
     assert.throws(
-      () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, { agents: wrongExecutor }),
+      () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX, { agents: wrongExecutor }),
       /no reviewer for required specialty requirements-traceability/
     );
     assert.equal(existsSync(join(root, ".governance", "profiles", "1", "profile.json")), false);
@@ -827,7 +874,7 @@ test("duplicate eligible reviewer ids are refused before the profile is written"
     const reviewer = AGENTS.find((agent) => agent.role === "reviewer")!;
     const duplicateId = [...AGENTS, { ...reviewer, specialty: "database" }];
     assert.throws(
-      () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, { agents: duplicateId }),
+      () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX, { agents: duplicateId }),
       /duplicate agent ids/
     );
     assert.equal(existsSync(join(root, ".governance", "profiles", "1", "profile.json")), false);

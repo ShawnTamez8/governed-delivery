@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
-import { gatePatchPaths, movedPaths, pathFitsScope } from "../src/implementation-gate.ts";
+import { gatePatchPaths, pathFitsScope } from "../src/implementation-gate.ts";
 
 test("pathFitsScope accepts an exact signed entry", () => {
   assert.equal(pathFitsScope("src/index.ts", ["src/index.ts"]), true);
@@ -87,17 +87,4 @@ test("gatePatchPaths refuses an absolute path and names it", () => {
   if (result.ok) return;
   assert.deepEqual(result.refused, [abs]);
   assert.match(result.reason, /path escapes the repository/);
-});
-
-test("movedPaths returns the normalized intersection", () => {
-  // A git diff name and a patch path that name the same file differently
-  // ("./src/a.ts" vs "src/a.ts") must still intersect after normalization.
-  assert.deepEqual(
-    movedPaths(["./src/a.ts", "docs/readme.md"], ["src/a.ts", "test/a.test.ts"]),
-    ["src/a.ts"]
-  );
-});
-
-test("movedPaths returns an empty array when nothing intersects", () => {
-  assert.deepEqual(movedPaths(["docs/readme.md"], ["src/a.ts"]), []);
 });

@@ -35,6 +35,7 @@ import { policyHash } from "../src/policy.ts";
 import { codeReviewEvidenceRef } from "../src/paths.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
+import { markUnremovable, markUnstartable, sandboxPrefix } from "./fixtures/docker/stand-in.ts";
 
 /** A passing command whose fixture writes nothing, so the worktree stays clean. */
 const VERIFICATION: VerificationConfig = {
@@ -866,10 +867,12 @@ test("a frozen one-round profile blocks without dispatching remediation", async 
 
 test("invalid remediation outputs fail closed before a second panel", async () => {
   for (const [mode, message] of [
-    ["remediation-empty", /no proposed patches/],
-    ["remediation-wrong-base", /does not match the branch head/],
-    ["remediation-outside-scope", /outside the signed scope/],
-    ["remediation-mutate", /remediator-residue\.txt/],
+    ["remediation-empty", /^round 1: remediation produced no new commit from [0-9a-f]{40,64}$/],
+    ["remediation-blocked", /^round 1: implementer returned status blocked, not completed: fixture could not remediate; incomplete: finding 1$/],
+    // A refusal ends naming the commit outside the branch that keeps the refused change.
+    ["remediation-outside-scope", /^round 1, base [0-9a-f]{40,64}: the agent's changes were refused: outside the signed scope: outside\.txt; the refused change is kept as commit ([0-9a-f]{40,64}) \(refs\/buildworks\/refused\/\1\)$/],
+    // The fix and, beside it, a write outside the scope: the whole change is refused.
+    ["remediation-mutate", /^round 1, base [0-9a-f]{40,64}: the agent's changes were refused: outside the signed scope: remediator-residue\.txt; the refused change is kept as commit ([0-9a-f]{40,64}) \(refs\/buildworks\/refused\/\1\)$/],
   ] as const) {
     await withVerifiedRun(async (ctx) => {
       await withMode(async () => {
@@ -882,6 +885,9 @@ test("invalid remediation outputs fail closed before a second panel", async () =
         // Panel, one code-review reconciler call, remediation.
         assert.equal(agentRuns(ctx, stage.id).length, 5, `${mode} must stop before round 2`);
         assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+        // Nothing was committed, and a refused change is reset away.
+        assert.equal(git(ctx.worktreePath, ["rev-parse", "HEAD"]).stdout.trim(), ctx.verifiedCommit, `${mode} committed nothing`);
+        assert.equal(git(ctx.worktreePath, ["status", "--porcelain", "--untracked-files=all"]).stdout, "", `${mode} left the checkout clean`);
       }, mode);
     });
   }
@@ -897,7 +903,7 @@ test("a remediation reply that never reached the structured channel is a failed 
       if (result.ok) return;
       assert.match(
         result.reason,
-        /^round 1, commit [0-9a-f]{40,64}, implementer: dispatched agent implementer \(author\) on stage \d+: envelope parse failed: harness envelope for executor claude-code has a result line without a structured_output object although the dispatch requested --json-schema: line \d+; the line reports total_cost_usd 0 \(requested model m, effort medium; prompt \S+\.txt\)$/
+        /^round 1, commit [0-9a-f]{40,64}, implementer: dispatched agent implementer \(author\) on stage \d+: envelope parse failed: harness envelope for executor claude-code has a result line without a structured_output object although the dispatch requested --json-schema: line \d+; the line reports total_cost_usd 0 \(requested model m, effort medium; prompt \S+\.txt; tool log \S+\.jsonl; proxy log \S+-proxy\.log\)$/
       );
       assert.deepEqual(eventsOf(ctx, "code_review.remediation.failed").map((e) => e.summary), [result.reason]);
       // Panel and one code-review reconciler call; the refused remediation writes no row.
@@ -905,6 +911,49 @@ test("a remediation reply that never reached the structured channel is a failed 
       assert.equal(remediationRuns(ctx).length, 0);
       assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
     }, "remediation-prose");
+  });
+});
+
+test("a remediation whose sandbox cannot start blocks with code_review.sandbox.failed before its dispatch", async () => {
+  // docs/features/sandboxed-implementer/plan.md, Task 9: remediation, the same flow as a phase.
+  await withVerifiedRun(async (ctx) => {
+    await withMode(async () => {
+      const unmark = markUnstartable(sandboxPrefix(ctx.root, ctx.runId, "remediation-1"));
+      try {
+        const result = await review(ctx);
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+        assert.match(result.reason, /^round 1: cannot start the remediation sandbox: start proxy \S+ failed \(docker exit 125\): .*unstartable/);
+        assert.deepEqual(eventsOf(ctx, "code_review.sandbox.failed").map((e) => e.summary), [result.reason]);
+        assert.equal(remediationRuns(ctx).length, 0, "the remediation was never dispatched");
+        assert.equal(git(ctx.worktreePath, ["rev-parse", "HEAD"]).stdout.trim(), ctx.verifiedCommit);
+        assert.equal(stageOf(ctx)!.status, "blocked");
+        assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+      } finally {
+        unmark();
+      }
+    }, "high-then-clean");
+  });
+});
+
+test("a remediation whose work container cannot be removed blocks before anything reads the worktree", async () => {
+  await withVerifiedRun(async (ctx) => {
+    await withMode(async () => {
+      const unmark = markUnremovable(sandboxPrefix(ctx.root, ctx.runId, "remediation-1"));
+      try {
+        const result = await review(ctx);
+        assert.equal(result.ok, false);
+        if (result.ok) return;
+        assert.match(result.reason, /^round 1: work container \S+ \(\S+\) could not be proven removed, so a process left in it could still write the worktree: /);
+        assert.deepEqual(eventsOf(ctx, "code_review.sandbox.quiescence.failed").map((e) => e.summary), [result.reason]);
+        assert.equal(remediationRuns(ctx).length, 1, "the remediation was dispatched");
+        assert.equal(git(ctx.worktreePath, ["rev-parse", "HEAD"]).stdout.trim(), ctx.verifiedCommit, "nothing was committed");
+        assert.notEqual(git(ctx.worktreePath, ["status", "--porcelain"]).stdout, "", "the uncommitted fix is kept as evidence");
+        assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+      } finally {
+        unmark();
+      }
+    }, "high-then-clean");
   });
 });
 

@@ -23,6 +23,7 @@ import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { acquireLock, inspectLock } from "../src/lock.ts";
 import { freezeProfile } from "../src/profile.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
+import { redirectNodeOptions, standInSandbox } from "./fixtures/docker/stand-in.ts";
 
 const CLI = resolve("src", "cli.ts");
 
@@ -130,7 +131,7 @@ function approvalFixture(parent: string, name: string): ApprovalFixture {
     appendAudit(store, { runId: run.id, stageId: decision.id, actor: "system", actorType: "cli", action: "spec_decision.gate.pass",
       summary: `spec_decision gate passed; specHash=${sha256Hex(normalizeText(APPROVAL_SPEC))}; risk=low; answers=0; folded=0` });
     const verification: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }], derived: [] };
-    const frozen = freezeProfile(root, run.id, head, "test-model", verification);
+    const frozen = freezeProfile(root, run.id, head, "test-model", verification, standInSandbox());
     store.setProfileRef(run.id, frozen.hash);
     assert.ok(frozen.profile.approvalSigner, "the fixture must freeze a real fingerprint or this proves nothing");
     return { root, runId: run.id, specPath, privateKey: privateKey.export({ format: "pem", type: "pkcs8" }) as string };
@@ -325,7 +326,9 @@ test("the approval route refuses every transport shape but an authenticated same
 function decisionFixture(parent: string, name: string): { root: string; runId: number; findings: number[] } {
   const root = repository(parent, name);
   const created = spawnSync(process.execPath, [CLI, "new-run", "--no-narration-check", "--repo", root, "--project", "p", "--feature", "f-1",
-    "--slug", "s", "--change-kind", "feature", "--model", "test-model"], { cwd: parent, encoding: "utf8" });
+    "--slug", "s", "--change-kind", "feature", "--model", "test-model"], { cwd: parent, encoding: "utf8",
+    // `new-run` checks the engine and freezes the image; the stand-in answers.
+    env: { ...process.env, NODE_OPTIONS: redirectNodeOptions(process.env.NODE_OPTIONS) } });
   assert.equal(created.status, 0, created.stderr);
   const runId = Number(created.stdout.trim());
   const store = openStore(root);

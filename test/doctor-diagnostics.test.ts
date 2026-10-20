@@ -6,6 +6,7 @@ import fs, {
   symlinkSync, writeFileSync,
 } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
+import { tmpdir } from "node:os";
 import { delimiter, join, relative, resolve } from "node:path";
 import { CLAUDE_CODE, type ExecutorDefinition } from "../src/executor.ts";
 import { buildHarnessEnvironment, probeExecutor } from "../src/harness.ts";
@@ -14,6 +15,11 @@ import {
   collectAmbientProviderConfig, DOCTOR_CONFIG_MAX_BYTES, DOCTOR_OBSERVATION_NAMES,
   resolveDoctorExecutable, type AmbientProviderConfig, type DoctorExecutableLookup,
 } from "../src/doctor-diagnostics.ts";
+import { repositoryKey } from "../src/container.ts";
+import { inspectFrozenSandboxImage, inspectReadiness } from "../src/readiness.ts";
+import { STAND_IN_DOCKER_COMMAND, STAND_IN_IMAGE_ID, standInSandbox } from "./fixtures/docker/stand-in.ts";
+// Readiness runs the seeded `docker`; in this process the stand-in answers it.
+import "./fixtures/docker/redirect-docker.mjs";
 
 const WINDOWS = process.platform === "win32";
 const NAME = "bw-doctor-native-fixture";
@@ -894,4 +900,119 @@ test("collector opens read-only nonblocking descriptors and preserves owned home
     assert.equal(closed, 2);
   });
   assert.deepEqual(inventory(), before);
+});
+
+/**
+ * On Windows something outside the process tree can briefly hold a freshly
+ * emptied Git target's directory, and `rmSync` does not retry that EPERM
+ * despite `maxRetries` (the probe recorded in test/verify-command.test.ts).
+ * Retry only those codes, within a bounded budget, so a lasting hold still
+ * fails the test.
+ */
+async function removeTarget(root: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      rmSync(root, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if ((code !== "EPERM" && code !== "EBUSY") || attempt >= 20) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+}
+
+/** A committed target whose one verification command is `command`, outside the checkout so a failed cleanup leaves nothing in it. */
+function sandboxTarget(t: TestContext, command: string): string {
+  const root = mkdtempSync(join(tmpdir(), "bw-doctor-sandbox-"));
+  t.after(() => removeTarget(root));
+  const git = (...args: string[]) => {
+    const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  git("init", "-q");
+  writeFileSync(join(root, ".gitignore"), ".governance/\n");
+  writeFileSync(join(root, "governed.yaml"), `verify:\n  - name: unit\n    command: ${command}\n`);
+  git("add", "-A");
+  git("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base");
+  return root;
+}
+
+const sandboxCheck = (checks: { name: string; status: string; evidence: string; repair: string | null }[], name: string) =>
+  checks.find((check) => check.name === name)!;
+
+/** One Docker command run against the stand-in, as a test arranges its state. */
+function standIn(...args: string[]): string {
+  const result = spawnSync(STAND_IN_DOCKER_COMMAND[0]!, [...STAND_IN_DOCKER_COMMAND.slice(1), ...args], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}
+
+test("doctor reports the engine, the sandbox image, the program check and this repository's leftovers", (t) => {
+  // Expected values come from the recorded Docker outputs the stand-in replays.
+  const recorded = JSON.parse(readFileSync(resolve("test", "fixtures", "recorded", "docker-cli-outputs.json"), "utf8")) as {
+    forms: { label: string; stdout: string }[];
+  };
+  const version = recorded.forms.find((form) => form.label === "version")!.stdout.trim().split(" ")[1];
+  const root = sandboxTarget(t, '["npm", "ci"]');
+  const ready = inspectReadiness(root).checks;
+  assert.deepEqual(sandboxCheck(ready, "docker_engine"),
+    { name: "docker_engine", status: "pass", evidence: `Docker engine ${version} runs linux containers.`, repair: null });
+  const image = sandboxCheck(ready, "sandbox_image");
+  assert.equal(image.status, "pass");
+  assert.match(image.evidence, new RegExp(`^bw-sandbox:[0-9a-f]{12} is ${STAND_IN_IMAGE_ID}\\.$`));
+  assert.equal(sandboxCheck(ready, "sandbox_programs").status, "pass");
+  assert.deepEqual(sandboxCheck(ready, "sandbox_leftovers"), { name: "sandbox_leftovers", status: "pass",
+    evidence: "No sandbox containers or networks are left for this repository.", repair: null });
+
+  const key = repositoryKey(root);
+  const container = standIn("run", "-d", "--name", `bw-${key}-1-phase-1-abcd`, "--label", `bw.repo=${key}`, STAND_IN_IMAGE_ID, "sleep", "infinity");
+  const network = standIn("network", "create", "--internal", "--label", `bw.repo=${key}`, `bw-${key}-1-phase-1-abcd-net`);
+  t.after(() => {
+    standIn("rm", "-f", container);
+    standIn("network", "rm", network);
+  });
+  const left = sandboxCheck(inspectReadiness(root).checks, "sandbox_leftovers");
+  assert.equal(left.status, "pass", "a leftover is reported, not a readiness failure");
+  assert.equal(left.evidence, `containers ${container.slice(0, 12)} bw-${key}-1-phase-1-abcd; remove with: docker rm -f ${container.slice(0, 12)}; `
+    + `networks ${network.slice(0, 12)} bw-${key}-1-phase-1-abcd-net; remove with: docker network rm ${network.slice(0, 12)}`);
+});
+
+test("doctor names a frozen command's program the sandbox image lacks", (t) => {
+  const programs = sandboxCheck(inspectReadiness(sandboxTarget(t, '["dotnet", "build"]')).checks, "sandbox_programs");
+  assert.equal(programs.status, "fail");
+  // The message the plan states (docs/features/sandboxed-implementer/plan.md, Task 7).
+  assert.equal(programs.evidence, `the verification command "unit" needs "dotnet", which image ${STAND_IN_IMAGE_ID} does not provide; this BuildWorks build supports Node/npm targets (see docs/proposals/target-declared-environments.md)`);
+});
+
+test("doctor without an engine fails docker_engine with its cause and checks nothing that needs one", (t) => {
+  const root = sandboxTarget(t, '["npm", "ci"]');
+  const env: NodeJS.ProcessEnv = { ...process.env, DOCKER_HOST: "npipe:////./pipe/bw_no_such_engine" };
+  delete env.NODE_OPTIONS;
+  // A spawned CLI without the redirect runs the real `docker`; no engine answers that host.
+  const called = spawnSync(process.execPath, [resolve("src", "cli.ts"), "--repo", root, "doctor", "--json"],
+    { encoding: "utf8", env, timeout: 60_000 });
+  assert.equal(called.status, 1, called.stderr);
+  const body = JSON.parse(called.stdout) as { errorCode: string; reason: string;
+    result: { checks: { name: string; status: string; evidence: string; repair: string | null }[] } };
+  assert.equal(body.errorCode, "setup_required");
+  const engine = sandboxCheck(body.result.checks, "docker_engine");
+  assert.equal(engine.status, "fail");
+  assert.match(engine.evidence, /^query the Docker engine failed/);
+  assert.match(engine.repair!, /Start Docker Desktop/);
+  assert.ok(body.reason.includes(`docker_engine: ${engine.evidence}`));
+  for (const name of ["sandbox_image", "sandbox_programs", "sandbox_leftovers"]) {
+    assert.deepEqual(sandboxCheck(body.result.checks, name), { name, status: "not_checked", evidence: "No Docker engine answered.", repair: null });
+  }
+});
+
+test("frozen_sandbox_image passes with the prune warning naming the run, and fails toward a fresh run when absent", () => {
+  const present = inspectFrozenSandboxImage(standInSandbox(), 7);
+  assert.equal(present.status, "pass");
+  assert.equal(present.evidence, `Frozen image ${STAND_IN_IMAGE_ID} is present. docker image prune would remove it while no container uses it, and run 7 still needs it.`);
+  const gone = `sha256:${"a".repeat(64)}`;
+  const absent = inspectFrozenSandboxImage(standInSandbox({ imageId: gone }), 7);
+  assert.equal(absent.status, "fail");
+  assert.equal(absent.evidence, `Frozen image ${gone} for run 7 is not present locally.`);
+  assert.match(absent.repair!, /fresh run: a rebuild is not guaranteed to reproduce the frozen image ID/);
 });

@@ -13,6 +13,7 @@ import { policyHash } from "../src/policy.ts";
 import { freezeProfile } from "../src/profile.ts";
 import { openStore, type Store } from "../src/store.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
+import { standInSandbox } from "./fixtures/docker/stand-in.ts";
 
 /** One minimal frozen configuration; this stage does not read it. */
 const VERIFICATION: VerificationConfig = { commands: [{ name: "unit", command: ["node", "--version"] }], derived: [] };
@@ -161,7 +162,8 @@ function withFixture(fn: (f: Fixture) => void, opts: {
       run.id,
       opts.commit === undefined ? head : opts.commit,
       "test-model",
-      opts.verification ?? VERIFICATION
+      opts.verification ?? VERIFICATION,
+      standInSandbox()
     );
     store.setProfileRef(run.id, frozen.hash);
     // A bound-path fixture that froze null proves nothing about the trust

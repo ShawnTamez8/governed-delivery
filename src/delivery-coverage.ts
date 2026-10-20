@@ -10,13 +10,13 @@ import { normalizePath } from "./scope.ts";
  * delivery's correctness lives in them.** `runDeliveryStage` diffs
  * `git diff --name-only` over `patchBase..verifiedCommit`, and that net range
  * is what delivery matches against. It holds the paths whose content at the
- * head differs from the base, and that equals the union of the applied patch
+ * head differs from the base, and that equals the union of the committed
  * changes only while: (1) the base is the single anchor the implementation
- * stage read before its first apply — the post-projection commit the first
- * phase's patches bound to, recorded in the gate event (task 2); (2) within one
- * phase the apply-time overlap refusal (`patch-application.ts`) prevents a
- * later patch from touching a path an earlier patch of that phase moved; and
- * (3) nothing but the system's patch commits lands between base and head.
+ * stage read before its first phase — the post-projection commit the first
+ * phase started from, recorded in the gate event (task 2); (2) each phase is
+ * one diff the system computes from the worktree and commits
+ * (`commitWorkspace` in `workspace-commit.ts`), so nothing within a phase can
+ * overlap; and (3) nothing but the system's commits lands between base and head.
  * The system's derived-artifact regeneration commits (`governed.yaml`
  * `derived:`) land there too; delivery neither requires nor refuses their
  * paths, because a derived path is never declared.

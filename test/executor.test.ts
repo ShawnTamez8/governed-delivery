@@ -15,11 +15,10 @@ test("the command matches section 11's YAML", () => {
     "--include-partial-messages",
     "--verbose",
     "--restricted",
-    "--safe-mode",
     "--tools",
     "Read,Glob,Grep",
     "--disallowedTools",
-    "Write,Edit,NotebookEdit,Bash,mcp__*",
+    "Write,Edit,NotebookEdit,Bash",
     "--permission-mode",
     "dontAsk",
     "--strict-mcp-config",
@@ -27,22 +26,25 @@ test("the command matches section 11's YAML", () => {
   ]);
 });
 
-test("claude_executor_exposes_only_read_tools_in_restricted_safe_mode", () => {
+test("claude_executor_exposes_only_read_tools_in_restricted_mode", () => {
   // The exact array is the probe input Task 9 Step 1 runs against the real
   // binary — the unit pin and the real-harness evidence name one command.
   // Semantics from the installed CLI's help (verified at plan time):
   // `--restricted` removes the command/code tools and WebFetch unless
   // `--tools` names them, confines file tools to the working directories,
-  // and refuses bypassPermissions; `--safe-mode` disables customizations
-  // (CLAUDE.md, skills, hooks, MCP, plugins, custom agents) while auth,
-  // model selection, built-in tools, and permissions work normally;
+  // refuses bypassPermissions, and keeps every CLAUDE.md out (the
+  // sandboxed-implementer spike's positive-controlled probe);
   // `--tools Read,Glob,Grep` fixes the inventory; `--disallowedTools`
-  // denies Write, Edit, NotebookEdit, Bash, and mcp__*; `--permission-mode
-  // dontAsk` makes the session non-interactive; `--strict-mcp-config` with
-  // no `--mcp-config` means no MCP servers; `--no-session-persistence`
-  // works with `-p`. `--bare` is deliberately absent: the installed CLI
-  // makes it API-key-only, and a default OAuth installation must keep
-  // completing runs (hazard 11).
+  // denies Write, Edit, NotebookEdit and Bash; `--permission-mode dontAsk`
+  // makes the session non-interactive; `--strict-mcp-config` admits only the
+  // servers a `--mcp-config` names, so a dispatch without one has no MCP
+  // server; `--no-session-persistence` works with `-p`. `--safe-mode` is
+  // deliberately absent: it discards a `--mcp-config` server, and the patch
+  // dispatches reach their tool server only through one
+  // (docs/features/sandboxed-implementer/plan.md; operator, 2026-10-19).
+  // `mcp__*` left `--disallowedTools` for the same reason. `--bare` is
+  // deliberately absent: the installed CLI makes it API-key-only, and a
+  // default OAuth installation must keep completing runs (hazard 11).
   assert.deepEqual(CLAUDE_CODE.command, [
     "claude",
     "-p",
@@ -51,11 +53,10 @@ test("claude_executor_exposes_only_read_tools_in_restricted_safe_mode", () => {
     "--include-partial-messages",
     "--verbose",
     "--restricted",
-    "--safe-mode",
     "--tools",
     "Read,Glob,Grep",
     "--disallowedTools",
-    "Write,Edit,NotebookEdit,Bash,mcp__*",
+    "Write,Edit,NotebookEdit,Bash",
     "--permission-mode",
     "dontAsk",
     "--strict-mcp-config",

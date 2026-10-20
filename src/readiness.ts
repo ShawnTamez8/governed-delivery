@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENTS } from "./agents.ts";
 import { loadPublicKey } from "./approval.ts";
+import {
+  dockerReady, findSandboxImage, imagePresent, missingImagePrograms, sandboxLeftovers, type FrozenSandbox,
+} from "./container.ts";
 import { CLAUDE_CODE } from "./executor.ts";
 import {
   collectAmbientProviderConfig, DOCTOR_OBSERVATION_NAMES, resolveDoctorExecutable,
@@ -11,7 +14,9 @@ import {
 import { loadGovernedConfigAtCommit, type VerificationConfig } from "./governed-config.ts";
 import { buildHarnessEnvironment, probeExecutor } from "./harness.ts";
 import { GOVERNANCE_PREFIX } from "./paths.ts";
-import { buildPolicy, invalidPolicyReason, policyHash, SYSTEM_NAME, type Policy } from "./policy.ts";
+import {
+  buildPolicy, invalidPolicyReason, policyHash, SANDBOX_DOCKER_COMMAND, seededSandbox, SYSTEM_NAME, type Policy,
+} from "./policy.ts";
 import { requiredCapability, resolveStartingCommit } from "./profile.ts";
 import { codeReviewStaffingShortfall, staffingShortfall } from "./select.ts";
 import { validateRunIdentity } from "./store.ts";
@@ -35,6 +40,112 @@ function git(rootDir: string, ...args: string[]) {
   return spawnSync("git", ["--no-optional-locks", ...args], {
     cwd: rootDir, encoding: "utf8", shell: false,
   });
+}
+
+/**
+ * What every sandbox runs whatever the target: POSIX `sh` and `timeout` for
+ * the exit-status wrapper, `sleep` to hold the work container open, and `node`
+ * for the egress proxy (`src/egress-proxy.ts`).
+ */
+export const SANDBOX_INFRASTRUCTURE_PROGRAMS = ["sh", "timeout", "sleep", "node"];
+
+/**
+ * The refusal for each frozen verification and derived command whose
+ * top-level program the image lacks, and for each infrastructure program it
+ * lacks (docs/features/sandboxed-implementer/plan.md, Task 7). The check sees
+ * only the top-level program: a tool a script calls, a native compiler an
+ * install needs, a browser a test downloads or a running service passes it and
+ * fails later.
+ */
+export function sandboxProgramRefusals(frozen: FrozenSandbox, verification: VerificationConfig): string[] {
+  const needs = [
+    ...verification.commands.map((c) => ({ program: c.command[0]!, who: `the verification command "${c.name}"` })),
+    ...verification.derived.map((d) => ({ program: d.command[0]!, who: `the derived command "${d.name}"` })),
+    ...SANDBOX_INFRASTRUCTURE_PROGRAMS.map((program) => ({ program, who: "every sandbox" })),
+  ];
+  const missing = new Set(missingImagePrograms(frozen, needs.map((n) => n.program)));
+  return needs
+    .filter((n) => missing.has(n.program))
+    .map((n) => `${n.who} needs "${n.program}", which image ${frozen.imageId} does not provide; this BuildWorks build supports Node/npm targets (see docs/proposals/target-declared-environments.md)`);
+}
+
+/**
+ * The Docker checks doctor reports, from the seeded Docker command: the
+ * engine, the image (reported, not built, when absent; `new-run` builds it), the program check
+ * against the current `governed.yaml`, and the leftover sandbox objects
+ * labelled with this repository's key.
+ */
+function inspectSandbox(rootDir: string, verification: VerificationConfig | null): ReadinessCheck[] {
+  const checks: ReadinessCheck[] = [];
+  const engine = dockerReady(SANDBOX_DOCKER_COMMAND);
+  checks.push({ name: "docker_engine", status: engine.ok ? "pass" : "fail",
+    evidence: engine.ok ? `Docker engine ${engine.serverVersion} runs linux containers.` : engine.reason,
+    repair: engine.ok ? null : "Start Docker Desktop (or another engine running Linux containers) so `docker version` answers; every run that reaches implementation needs it." });
+  if (!engine.ok) {
+    for (const name of ["sandbox_image", "sandbox_programs", "sandbox_leftovers"]) {
+      checks.push({ name, status: "not_checked", evidence: "No Docker engine answered.", repair: null });
+    }
+    return checks;
+  }
+  let frozen: FrozenSandbox | null = null;
+  try {
+    const image = findSandboxImage(SANDBOX_DOCKER_COMMAND);
+    if (image.imageId !== null) frozen = seededSandbox(image.imageId);
+    checks.push({ name: "sandbox_image", status: "pass",
+      evidence: image.imageId === null
+        ? `${image.tag} is not built yet; new-run builds it from container/Dockerfile.`
+        : `${image.tag} is ${image.imageId}.`,
+      repair: null });
+  } catch (error) {
+    checks.push({ name: "sandbox_image", status: "fail", evidence: (error as Error).message,
+      repair: "Make `docker image inspect` answer; the error is named above." });
+  }
+  if (frozen === null || verification === null) {
+    checks.push({ name: "sandbox_programs", status: "not_checked",
+      evidence: frozen === null ? "No sandbox image is built yet." : "No readable governed.yaml verification configuration.", repair: null });
+  } else {
+    try {
+      const refusals = sandboxProgramRefusals(frozen, verification);
+      checks.push({ name: "sandbox_programs", status: refusals.length === 0 ? "pass" : "fail",
+        evidence: refusals.length === 0 ? `Image ${frozen.imageId} provides every frozen command's program.` : refusals.join("; "),
+        repair: refusals.length === 0 ? null : "Use verification and derived commands this image provides; other stacks wait for docs/proposals/target-declared-environments.md." });
+    } catch (error) {
+      checks.push({ name: "sandbox_programs", status: "fail", evidence: (error as Error).message, repair: null });
+    }
+  }
+  try {
+    const leftovers = sandboxLeftovers(SANDBOX_DOCKER_COMMAND, rootDir);
+    const none = leftovers.containers.length === 0 && leftovers.networks.length === 0;
+    const ids = (lines: string[]) => lines.map((line) => line.split(" ")[0]).join(" ");
+    checks.push({ name: "sandbox_leftovers", status: "pass",
+      evidence: none ? "No sandbox containers or networks are left for this repository."
+        : [
+          leftovers.containers.length > 0 ? `containers ${leftovers.containers.join(", ")}; remove with: docker rm -f ${ids(leftovers.containers)}` : "",
+          leftovers.networks.length > 0 ? `networks ${leftovers.networks.join(", ")}; remove with: docker network rm ${ids(leftovers.networks)}` : "",
+        ].filter(Boolean).join("; "),
+      repair: null });
+  } catch (error) {
+    checks.push({ name: "sandbox_leftovers", status: "not_checked", evidence: (error as Error).message, repair: null });
+  }
+  return checks;
+}
+
+/**
+ * Whether a run's frozen image is still present locally. `docker image prune`
+ * removes an image no container uses, which includes every image an open run
+ * needs between sandboxes.
+ */
+export function inspectFrozenSandboxImage(frozen: FrozenSandbox, runId: number): ReadinessCheck {
+  try {
+    const present = imagePresent(frozen.dockerCommand, frozen.imageId);
+    return { name: "frozen_sandbox_image", status: present ? "pass" : "fail",
+      evidence: present
+        ? `Frozen image ${frozen.imageId} is present. docker image prune would remove it while no container uses it, and run ${runId} still needs it.`
+        : `Frozen image ${frozen.imageId} for run ${runId} is not present locally.`,
+      repair: present ? null : "Start a fresh run: a rebuild is not guaranteed to reproduce the frozen image ID." };
+  } catch (error) {
+    return { name: "frozen_sandbox_image", status: "not_checked", evidence: (error as Error).message, repair: null };
+  }
 }
 
 export function inspectBootstrapPrerequisites(cwd: string): ReadinessCheck[] {
@@ -63,6 +174,11 @@ export function inspectBootstrapPrerequisites(cwd: string): ReadinessCheck[] {
   checks.push({ name: "git", status: version.status === 0 ? "pass" : "fail",
     evidence: version.status === 0 ? version.stdout.trim() : version.error?.message ?? version.stderr.trim(),
     repair: version.status === 0 ? null : "Install Git and make it resolvable in this invocation's PATH." });
+  // The starter's install and test run in a sandbox, not on the host.
+  const engine = dockerReady(SANDBOX_DOCKER_COMMAND);
+  checks.push({ name: "docker_engine", status: engine.ok ? "pass" : "fail",
+    evidence: engine.ok ? `Docker engine ${engine.serverVersion} runs linux containers.` : engine.reason,
+    repair: engine.ok ? null : "Start Docker Desktop (or another engine running Linux containers) so `docker version` answers; the starter's install and test run in a container." });
 
   const ambientSnapshot: NodeJS.ProcessEnv = {};
   for (const name of CLAUDE_CODE.sandbox.envPassthrough) ambientSnapshot[name] = process.env[name];
@@ -179,6 +295,7 @@ export function inspectReadiness(rootDir: string, options: { slug?: string } = {
     repair: gitVersion === null ? "Install Git and make it resolvable in this invocation's PATH." : null });
   const intake = checkIntakeRepository(rootDir);
   checks.push(...intake.checks);
+  checks.push(...inspectSandbox(rootDir, intake.verification));
   const ignored = git(rootDir, "check-ignore", "--no-index", "--quiet", "--", GOVERNANCE_PREFIX);
   checks.push({ name: "governance_ignore", status: ignored.status === 0 ? "pass" : "fail",
     evidence: ignored.status === 0 ? `${GOVERNANCE_PREFIX} is ignored by Git.`

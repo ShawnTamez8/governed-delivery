@@ -18,6 +18,8 @@ import {
   rawOutputRef,
   runDocumentDir,
   stateDbPath,
+  toolLogDir,
+  toolLogRef,
   verificationEvidenceDir,
   worktreePath,
 } from "../src/paths.ts";
@@ -111,6 +113,9 @@ test("every location is the one shipped before the module existed", () => {
   assert.equal(rawOutputRef(7, "a.json"), join(".governance", "raw", "7", "a.json"));
   // Added with the location itself (docs/features/run-documents-in-governance/plan.md).
   assert.equal(runDocumentDir(root, 7), p("documents", "7"));
+  // Added with the location itself (docs/features/sandboxed-implementer/plan.md).
+  assert.equal(toolLogDir(root, 7), p("tools", "7"));
+  assert.equal(toolLogRef(7, "a.jsonl"), join(".governance", "tools", "7", "a.jsonl"));
   assert.equal(profileDir(root, 7), p("profiles", "7"));
   assert.equal(profilePath(root, 7), p("profiles", "7", "profile.json"));
   assert.equal(verificationEvidenceDir(root, 7), p("verification", "7"));

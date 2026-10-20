@@ -39,8 +39,11 @@ import { readRunsResult, readStatusResult } from "../src/operator-read.ts";
 import { openStore } from "../src/store.ts";
 import type { OperatorResult } from "../src/operator-output.ts";
 import type { RunSnapshot } from "../src/operator-state.ts";
+import { redirectNodeOptions } from "./fixtures/docker/stand-in.ts";
 
 const CLI = resolve("src", "cli.ts");
+// `new-run` checks the seeded `docker`; the stand-in answers in the spawned CLI.
+const NEW_RUN_ENV = { ...process.env, NODE_OPTIONS: redirectNodeOptions(process.env.NODE_OPTIONS) };
 
 function workspace(): string {
   return mkdtempSync(join(tmpdir(), "bw-dashboard-ui-"));
@@ -68,7 +71,7 @@ function newRun(root: string, parent: string, slug: string): number {
   const created = spawnSync(process.execPath, [
     CLI, "new-run", "--no-narration-check", "--repo", root, "--project", "project", "--feature", "feature",
     "--slug", slug, "--change-kind", "feature", "--model", "test-model",
-  ], { cwd: parent, encoding: "utf8" });
+  ], { cwd: parent, encoding: "utf8", env: NEW_RUN_ENV });
   assert.equal(created.status, 0, created.stderr);
   return Number(created.stdout.trim());
 }
@@ -2406,7 +2409,7 @@ test("the run view shows each frozen setting's model and effort, and each stage'
       CLI, "new-run", "--no-narration-check", "--repo", root, "--project", "project", "--feature", "feature", "--slug", "settings",
       "--change-kind", "feature", "--model", "test-model",
       "--effort-for", "code-reviewer-security=max,implementer=low,code-review-reconciler=xhigh",
-    ], { cwd: parent, encoding: "utf8" });
+    ], { cwd: parent, encoding: "utf8", env: NEW_RUN_ENV });
     assert.equal(created.status, 0, created.stderr);
     const snapshot = readSnapshot(root, parent, Number(created.stdout.trim()));
     const settings = snapshotProjection(snapshot, "C:\\cli.ts").governance.configuration.dispatchSettings!;

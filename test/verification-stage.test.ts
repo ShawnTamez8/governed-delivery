@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -14,13 +15,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStore, type Store } from "../src/store.ts";
 import { runVerificationStage } from "../src/verification-stage.ts";
-import { checkWorktreeClean } from "../src/patch-application.ts";
+import { checkWorktreeClean } from "../src/workspace-commit.ts";
 import { freezeProfile, loadProfile } from "../src/profile.ts";
 import { appendAudit, verifyAuditChain } from "../src/audit.ts";
 import { canonicalJson, sha256Hex } from "../src/canonical.ts";
 import { policyHash } from "../src/policy.ts";
 import type { Profile } from "../src/profile.ts";
 import type { VerifyCommand } from "../src/governed-config.ts";
+import { sandboxLeftovers } from "../src/container.ts";
+import { verificationEvidenceDir } from "../src/paths.ts";
+import { markUnremovable, sandboxPrefix, STAND_IN_DOCKER_COMMAND, standInSandbox } from "./fixtures/docker/stand-in.ts";
 
 const FIXTURES = join(process.cwd(), "test", "fixtures", "verify");
 const MODEL = "m";
@@ -97,7 +101,7 @@ function withImplementedRun(fn: (ctx: Ctx) => Promise<void>, opts: Opts = {}): P
     const frozen = freezeProfile(root, run.id, head, MODEL, {
       commands: opts.commands ?? [OK],
       derived: [],
-    });
+    }, standInSandbox());
     store.setProfileRef(run.id, frozen.hash);
 
     const worktreePath = join(root, ".governance", "worktrees", String(run.id));
@@ -211,7 +215,11 @@ test("the commands run in the worktree, not in the repository root", async () =>
       const result = await runVerificationStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
       assert.ok(result.ok, result.ok ? "" : result.reason);
       const record = readRecord(ctx.root, result.resultRef);
-      const printed = readFileSync(join(ctx.root, record.commands[0].evidenceRef), "utf8").trim();
+      // The first line is the header naming the container; the stand-in runs
+      // the command where the worktree is mounted at /work.
+      const [header, ...output] = readFileSync(join(ctx.root, record.commands[0].evidenceRef), "utf8").split("\n");
+      assert.match(header!, /^# ran in container /);
+      const printed = output.join("\n").trim();
       assert.equal(
         statSync(printed).ino,
         statSync(ctx.worktreePath).ino,
@@ -220,6 +228,35 @@ test("the commands run in the worktree, not in the repository root", async () =>
     },
     { commands: [CWD] }
   );
+});
+
+test("a work container the stand-in cannot remove blocks verification with no verification result recorded", async () => {
+  await withImplementedRun(async (ctx) => {
+    const unmark = markUnremovable(sandboxPrefix(ctx.root, ctx.runId, "verification"));
+    try {
+      const result = await runVerificationStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+      assert.equal(result.ok, false);
+      assert.match((result as { reason: string }).reason, /^verification blocked: work container \S+ \([0-9a-f]{64}\) could not be proven removed/);
+      const actions = ctx.store.getAuditEvents(ctx.runId).map((e) => e.action);
+      assert.deepEqual(actions.filter((a) => a.startsWith("verification.")), [
+        "verification.stage.create",
+        "verification.command.pass",
+        "verification.sandbox.quiescence.failed",
+        "verification.gate.block",
+      ]);
+      const stage = ctx.store.getStageChain(ctx.runId).find((s) => s.kind === "verification")!;
+      assert.equal(stage.status, "blocked");
+      assert.equal(stage.output_ref, "");
+      assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+      assert.equal(existsSync(join(verificationEvidenceDir(ctx.root, ctx.runId), "result.json")), false);
+      assert.equal(verifyAuditChain(ctx.store), null);
+    } finally {
+      unmark();
+      const leftovers = sandboxLeftovers(STAND_IN_DOCKER_COMMAND, ctx.root);
+      for (const line of leftovers.containers) spawnSync(process.execPath, [...STAND_IN_DOCKER_COMMAND.slice(1), "rm", "-f", line.split(" ")[0]!]);
+      for (const line of leftovers.networks) spawnSync(process.execPath, [...STAND_IN_DOCKER_COMMAND.slice(1), "network", "rm", line.split(" ")[0]!]);
+    }
+  });
 });
 
 test("every configured command runs, in frozen order, when they all pass", async () => {

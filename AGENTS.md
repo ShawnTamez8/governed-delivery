@@ -64,7 +64,7 @@ evidence when another reviewer fails.
 
 Every non-empty panel before the final configured round sends every finding the
 code-review reconciler keeps, together, to the frozen implementer, commits the
-guarded patch, runs the frozen verification commands, and reviews that verified
+computed and gated diff, runs the frozen verification commands, and reviews that verified
 commit with the full panel. The code-review reconciler (operator decision
 2026-10-13, `docs/features/code-review-reconciler/plan.md`) runs first: a
 finding is withheld only when every one of the frozen calls rejects it with an
@@ -74,7 +74,7 @@ existing `finding_decision` table; a round whose every finding is rejected is
 decided by the severity gate as a final panel; and the calls run under their own
 setting `code-review-reconciler`, seeded at Haiku 5.5 `medium`. The final panel
 is never reconciled and applies the frozen severity threshold without an
-unreviewed patch; below-threshold findings remain recorded and non-blocking.
+unreviewed change; below-threshold findings remain recorded and non-blocking.
 Code reviewers may report only actionable defects in the current code. They do
 not create a human gate, waiver, proposal, spike, or upstream route. Do not
 change `spec_review` or `plan_review` while maintaining this loop.
@@ -113,14 +113,26 @@ the self-review changed anything. No code review runs between phases. After the
 last phase the implementer self-reviews the whole change once in its own
 dispatch and may return fixes, which commit before verification
 (`docs/features/implementation-self-review/plan.md`, hazard 23); an unusable
-reply skips the self-review and a guard failure blocks the run. The self-review
-is the author's own pass, not independent review. A phase drops a returned file
-unchanged at its base, records it as `implementation.phase.dropped`, and blocks
-only when nothing is left. Phases, the self-review and code-review remediation
-receive their answer through the `claude` CLI's `--json-schema` structured
-output, not reply text (`docs/features/structured-patch-output/plan.md`, hazard
-1, item 11); every other dispatch still returns free text. A completed paid run
-never authorizes another spend.
+reply skips the self-review, discarding whatever it changed, and a guard failure
+blocks the run. The self-review is the author's own pass, not independent
+review. Phases, the self-review and code-review remediation receive their answer
+through the `claude` CLI's `--json-schema` structured output, not reply text
+(`docs/features/structured-patch-output/plan.md`, hazard 1, item 11); every
+other dispatch still returns free text.
+
+Since 2026-10-19 (`docs/features/sandboxed-implementer/plan.md`, hazard 15)
+those three dispatches change files through BuildWorks' MCP tool server
+(`src/tool-server.ts`), whose tools act only inside a disposable Docker
+container holding the worktree with `.git` read-only; their reply is a status,
+a summary and what they could not complete. Once the work container is proven
+removed, `commitWorkspace` (`src/workspace-commit.ts`) computes the diff,
+refuses deletions, links and out-of-scope paths, and commits as the system;
+that diff is the only path from an agent to the branch. Verification and
+derived regeneration run in the same kind of container, so Docker is required
+for any run that reaches implementation and the build supports Node/npm targets
+only. Tests use the Docker stand-in under `test/fixtures/docker/`;
+`test/container.test.ts` needs a real engine and skips by name without one. A
+completed paid run never authorizes another spend.
 
 ## Windows harness launch
 
@@ -133,10 +145,12 @@ argument parser. Direct launch also avoids Node's shell-argument deprecation
 warning (`DEP0190`) and retains a typed `ENOENT` when the executable is missing.
 
 The wrapper did not create the recorded invalid `\U0001f319` JSON bytes; they
-were already in the provider result. BuildWorks therefore also added explicit
-JSON-standard escaping instructions to both patch-producing prompts and
+were already in the provider result. BuildWorks therefore added explicit
+JSON-standard escaping instructions to the patch-producing prompts, and
 regressions for direct launch, missing-executable reporting, and the prompt
-contract. The extractor still refuses an invalid escape such as `\UXXXXXXXX`. Its
+contract. Since 2026-10-19 file content no longer travels in a reply, so those
+escaping instructions are gone. `docker` is spawned the same way, directly with
+no shell. The extractor still refuses an invalid escape such as `\UXXXXXXXX`. Its
 one repair, added 2026-10-04, escapes a raw control character inside a JSON
 string literal and parses again (hazard 1, item 10).
 

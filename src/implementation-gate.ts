@@ -1,12 +1,10 @@
 /**
  * The deterministic patch gate (architecture section 8). What this checks:
- * apply-time scope and protected-path enforcement for a proposed patch, and
- * the moved-path intersection the head-moved re-validation needs. What it
- * does not check: the git diff itself (the caller spawns git), existence
- * semantics for `add`/`modify` (the stage checks those after the security
- * checks, so a symlinked target is refused for what it resolves to, never
- * for what happens to exist), and whether any declared artifact was
- * delivered at all — hazard 5's second half is step 8's delivery check.
+ * scope and protected-path enforcement for the paths of a computed diff. What
+ * it does not check: the git diff itself (`commitWorkspace` in
+ * `src/workspace-commit.ts` computes it and refuses deletions and symbolic
+ * links), and whether any declared artifact was delivered at all — hazard 5's
+ * second half is step 8's delivery check.
  */
 
 import { isAbsolute } from "node:path";
@@ -72,17 +70,4 @@ export function gatePatchPaths(
     }
   }
   return refused.length > 0 ? { ok: false, refused, reason: refusals.join("; ") } : { ok: true };
-}
-
-/**
- * The paths the branch has moved that a patch also touches, compared after
- * normalization — the head-moved re-validation's intersection (section 8:
- * refuse a patch when the branch has moved in any path it touches since
- * proposal).
- */
-export function movedPaths(diffNameOnly: string[], patchPaths: string[]): string[] {
-  const normalizedPatchPaths = new Set(patchPaths.map(normalizePath));
-  return [...new Set(diffNameOnly.map(normalizePath))].filter((moved) =>
-    normalizedPatchPaths.has(moved)
-  );
 }

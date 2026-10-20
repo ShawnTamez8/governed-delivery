@@ -31,6 +31,7 @@ import {
 } from "../src/operator-output.ts";
 import { freezeProfile, loadProfile, type Profile } from "../src/profile.ts";
 import { openStore, type AgentRunInput, type RunRow, type StageRow, type Store } from "../src/store.ts";
+import { standInSandbox } from "./fixtures/docker/stand-in.ts";
 
 // The one real claude-code stream, recorded once (streaming-harness-output Task 0).
 const recorded = (JSON.parse(readFileSync(
@@ -223,7 +224,7 @@ test("recorded remediation-chain presentation preserves partial telemetry, immut
     });
     const verificationCommands = chain.review.rounds.flatMap((r) => r.remediation?.verification.commands ?? []);
     const frozen = freezeProfile(root, run.id, null, captures[0]!.parsed.effectiveModel!,
-      { commands: verificationCommands.map((c) => ({ name: c.name, command: c.argv })), derived: [] });
+      { commands: verificationCommands.map((c) => ({ name: c.name, command: c.argv })), derived: [] }, standInSandbox());
     const profile = frozen.profile;
     profile.policy.codeReviewPanelSize = chain.review.panelSize;
     profile.policy.codeReviewMaxRounds = chain.review.maxRounds;
@@ -264,8 +265,12 @@ test("recorded remediation-chain presentation preserves partial telemetry, immut
       if (round.remediation !== null) {
         const author = captures.find((c) => c.row.agent === round.remediation!.author)!;
         assert.equal(author.result.role, "author");
-        assert.equal(author.result.proposedPatches![0]!.baseCommit, round.remediation.baseCommit);
-        assert.deepEqual(author.result.proposedPatches!.flatMap((p) => p.files.map((f) => f.path)),
+        // The recorded run predates tool mode: its remediation returned patches.
+        const recordedPatches = (author.result as unknown as {
+          proposedPatches: { baseCommit: string; files: { path: string }[] }[];
+        }).proposedPatches;
+        assert.equal(recordedPatches[0]!.baseCommit, round.remediation.baseCommit);
+        assert.deepEqual(recordedPatches.flatMap((p) => p.files.map((f) => f.path)),
           round.remediation.changedPaths);
         round.remediation.verification.commands.forEach((command, index) => {
           command.evidenceRef = join(fixture, `round-${round.round}-command-${index}.unavailable`);
@@ -437,7 +442,7 @@ test("profile and approval projections preserve original bindings while missing 
       commands: [{ name: "node", command: ["node", "--version"] }],
       derived: [{ name: "lockfile", path: "package-lock.json", command: ["npm", "install", "--package-lock-only", "--ignore-scripts"] }],
     };
-    const frozen = freezeProfile(root, run.id, null, envelope.effectiveModel!, configuration);
+    const frozen = freezeProfile(root, run.id, null, envelope.effectiveModel!, configuration, standInSandbox());
     store.setProfileRef(run.id, frozen.hash);
     const stage = store.insertStage(run.id, "spec", null);
     store.completeStage(stage.id, "absent-spec.md", "pass");
@@ -565,7 +570,7 @@ async function withBoundary(prefix: number, fn: (ctx: BoundaryContext) => void |
     const startingCommit = commitAll(root);
     const run = store.insertRun("operator", "demo", "demo", "feature");
     const frozen = freezeProfile(root, run.id, startingCommit, "fixture-model",
-      { commands: [{ name: "node", command: ["node", "--version"] }], derived: [] });
+      { commands: [{ name: "node", command: ["node", "--version"] }], derived: [] }, standInSandbox());
     const { profile } = loadProfile(root, run.id);
     profile.approvalSigner = null;
     profile.executor = { ...profile.executor,

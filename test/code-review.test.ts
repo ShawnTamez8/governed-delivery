@@ -16,6 +16,7 @@ import { extractJsonBody } from "../src/parse-output.ts";
 import { upstreamPrefixFor, validateReviewerReports } from "../src/reconciliation.ts";
 import { freezeProfile, type Profile } from "../src/profile.ts";
 import { policyHash } from "../src/policy.ts";
+import { standInSandbox } from "./fixtures/docker/stand-in.ts";
 
 const SEVERITIES = ["low", "medium", "high", "critical"];
 
@@ -158,7 +159,7 @@ function withRecordedReview(fn: (record: CodeReviewRecord, profile: Profile) => 
     const commands = record.rounds[0]!.remediation!.verification.commands.map((command) => ({
       name: command.name, command: command.argv,
     }));
-    const frozen = freezeProfile(root, record.runId, record.patchBase, "test-model", { commands, derived: [] });
+    const frozen = freezeProfile(root, record.runId, record.patchBase, "test-model", { commands, derived: [] }, standInSandbox());
     const policy = { ...frozen.profile.policy, codeReviewPanelSize: record.panelSize,
       codeReviewMaxRounds: record.maxRounds, codeReviewBlockingSeverity: record.blockingSeverity,
       severities: record.severities };
