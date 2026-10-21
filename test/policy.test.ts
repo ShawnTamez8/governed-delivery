@@ -27,6 +27,7 @@ import {
   VERIFY_RETENTION_MAX_BYTES,
   SANDBOX_ENV,
   buildPolicy,
+  invalidInspectablePolicyReason,
   invalidPolicyReason,
   policyHash,
 } from "../src/policy.ts";
@@ -162,6 +163,20 @@ test("a policy still carrying a superseded field is refused, naming it obsolete"
   const obsolete = { ...buildPolicy(), panelSizes: { low: 1, standard: 2, high: 3 }, remediationRounds: 3 };
   const reason = invalidPolicyReason(obsolete);
   assert.match(String(reason), /obsolete panelSizes, remediationRounds/);
+});
+
+test("inspection tolerates a field the policy no longer has, and still refuses a missing one by the same words", () => {
+  // The field change 1 removed (src/policy.ts at 44a0d3a), with the value every
+  // crew-chatter profile before it froze. No code reads it any more.
+  const before = { ...buildPolicy(), verifyEnvPassthrough: ["PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "SystemRoot"] };
+  assert.equal(invalidInspectablePolicyReason(before), null);
+  assert.match(String(invalidPolicyReason(before)), /carrying obsolete verifyEnvPassthrough$/);
+  // A missing field is still refused, and the obsolete one is still named.
+  const { panelSizeMax, ...missing } = before;
+  assert.equal(invalidInspectablePolicyReason(missing), invalidPolicyReason(missing));
+  assert.match(String(invalidInspectablePolicyReason(missing)), /missing panelSizeMax; carrying obsolete verifyEnvPassthrough$/);
+  // Every other check still applies.
+  assert.match(String(invalidInspectablePolicyReason({ ...before, codeReviewMaxRounds: 6 })), /codeReviewMaxRounds 6 is outside/);
 });
 
 test("a round count that is not a positive integer is refused", () => {

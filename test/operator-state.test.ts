@@ -14,7 +14,7 @@ import { DEPENDENCY_INTENT, DEPENDENCY_LOCATION, DEPENDENCY_OPTIONS, dependencyQ
 import { formatImplementationGate, parseImplementationGate, parseVerificationHandoff } from "../src/handoff.ts";
 import { acquireLock } from "../src/lock.ts";
 import { extractJsonBody } from "../src/parse-output.ts";
-import { worktreePath } from "../src/paths.ts";
+import { profilePath, worktreePath } from "../src/paths.ts";
 import { validatePlanDoc } from "../src/plan-doc.ts";
 import { policyHash } from "../src/policy.ts";
 import { upstreamPrefixFor, validateReviewerReports } from "../src/reconciliation.ts";
@@ -968,9 +968,56 @@ test("completed records remain terminal when present-day evidence is missing, wi
   }, { omitAudit: "delivery.gate.pass" });
 });
 
+/**
+ * Give a completed run the shape crew-chatter run 7 froze before change 1: no
+ * `sandbox`, and a policy still carrying `verifyEnvPassthrough` with the value
+ * it froze (src/policy.ts at 44a0d3a), its `policyHash` describing that policy.
+ * Then re-bind both hashes that name the profile (`profile_ref` and, unless
+ * `approval` is false, the approval's `profile_hash`). A temporary test store only.
+ */
+function asPreSandbox(ctx: BoundaryContext, approval = true): void {
+  const path = profilePath(ctx.root, ctx.runId);
+  const profile = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  delete profile.sandbox;
+  profile.policy = { ...(profile.policy as Record<string, unknown>),
+    verifyEnvPassthrough: ["PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "SystemRoot"] };
+  profile.policyHash = policyHash(profile.policy as never);
+  const serialized = canonicalJson(profile);
+  writeFileSync(path, serialized);
+  const hash = sha256Hex(serialized);
+  ctx.store.setProfileRef(ctx.runId, hash);
+  if (approval) ctx.store.exec("UPDATE approval SET profile_hash = ? WHERE run_id = ?", [hash, ctx.runId]);
+}
+
+test("a completed run frozen before sandbox existed keeps its delivery record and stays unexecutable", async () => {
+  // docs/features/inspectable-frozen-profiles/plan.md, Task 2.
+  await withBoundary(10, (ctx) => {
+    asPreSandbox(ctx);
+    const observed = readRunSnapshot(ctx.store, ctx.root, ctx.runId);
+    const head = git(ctx.worktree, "rev-parse", "HEAD");
+    assert.equal(observed.snapshot.delivery.deliveredCommit, head);
+    assert.equal(observed.snapshot.delivery.finalReviewedCommit, head);
+    assert.equal(observed.profile, null, "the returned profile is the executable one, and this run has none");
+    assert.match(observed.profileReason ?? "", new RegExp(`run ${ctx.runId} cannot be executed: the frozen profile carries no sandbox`));
+    assert.equal(observed.snapshot.workflowAction.eligible, false);
+    assert.deepEqual(observed.snapshot.workflowAction.reasons, [{ code: "evidence_invalid", reason: observed.profileReason }]);
+    assert.deepEqual(observed.snapshot.evidence.references.filter((r) => r.availability === "inconsistent"), []);
+  });
+});
+
+test("a pre-sandbox run's approval is still bound to its profile hash", async () => {
+  await withBoundary(10, (ctx) => {
+    asPreSandbox(ctx, false);
+    const { snapshot } = readRunSnapshot(ctx.store, ctx.root, ctx.runId);
+    assert.ok(snapshot.workflowAction.reasons.some((r) => r.code === "evidence_invalid" &&
+      r.reason === "the recorded approval does not match this run's feature, frozen profile, starting commit, or signer binding"),
+      JSON.stringify(snapshot.workflowAction.reasons));
+  });
+});
+
 test("a missing frozen dispatch setting makes the boundary ineligible by name and spends nothing", async (t) => {
-  // `loadVerifiedProfile` is the only door to a frozen profile, so a missing
-  // entry surfaces as the profile refusal (evidence_invalid), before any
+  // Both profile doors check the dispatch settings, so a missing entry
+  // surfaces as the profile refusal (evidence_invalid), before any
   // group-level readiness check could see it. Once for an agent, once for the
   // reconciler, at a document group and at a review group.
   const cases: [string, number, string][] = [

@@ -9,6 +9,7 @@ import { join } from "node:path";
 import {
   freezeProfile,
   invalidProfileReason,
+  loadInspectableProfile,
   loadVerifiedProfile,
   loadProfile,
   requireFrozenBinding,
@@ -686,6 +687,110 @@ test("a profile predating verification.derived is refused, while an empty derive
       "the frozen profile carries no verification.derived: it predates the field, and a run frozen without it cannot say which files the system regenerates"
     );
   });
+});
+
+// --- the read-only door (docs/features/inspectable-frozen-profiles/plan.md) ----
+
+/**
+ * Freeze run 1, change its profile with `edit`, and rewrite it canonically.
+ * The returned hash is the new bytes', so a caller that records it as the
+ * run's `profile_ref` tests the shape alone, never the tamper check.
+ */
+function rewriteFrozen(root: string, edit: (profile: Record<string, unknown>) => void): { path: string; hash: string } {
+  const frozen = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
+  const profile = JSON.parse(readFileSync(frozen.path, "utf8")) as Record<string, unknown>;
+  edit(profile);
+  const serialized = canonicalJson(profile);
+  writeFileSync(frozen.path, serialized);
+  return { path: frozen.path, hash: sha256Hex(serialized) };
+}
+
+test("a correctly hashed profile without sandbox is inspectable and still refused for execution", () => {
+  withRoot((root) => {
+    const { hash } = rewriteFrozen(root, (p) => { delete p.sandbox; });
+    const inspected = loadInspectableProfile(root, { id: 1, profile_ref: hash });
+    assert.equal(inspected.ok, true, (inspected as { reason?: string }).reason);
+    if (inspected.ok) assert.equal(inspected.hash, hash);
+    const verified = loadVerifiedProfile(root, { id: 1, profile_ref: hash });
+    assert.equal(verified.ok, false);
+    if (verified.ok) return;
+    assert.match(verified.reason, /run 1 cannot be executed: the frozen profile carries no sandbox/);
+  });
+});
+
+/**
+ * The policy field change 1 removed (src/policy.ts at 44a0d3a), with the value
+ * every crew-chatter profile frozen before it carries; its `policyHash`
+ * describes the policy with the field, as the stored profiles' do.
+ */
+function withObsoletePolicyField(p: Record<string, unknown>): void {
+  const policy = { ...(p.policy as Record<string, unknown>),
+    verifyEnvPassthrough: ["PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "SystemRoot"] };
+  p.policy = policy;
+  p.policyHash = policyHash(policy as never);
+}
+
+test("a profile frozen before change 1 is inspectable, and execution refuses each of its two differences", () => {
+  withRoot((root) => {
+    const { hash } = rewriteFrozen(root, (p) => { delete p.sandbox; withObsoletePolicyField(p); });
+    const inspected = loadInspectableProfile(root, { id: 1, profile_ref: hash });
+    assert.equal(inspected.ok, true, (inspected as { reason?: string }).reason);
+    const verified = loadVerifiedProfile(root, { id: 1, profile_ref: hash });
+    assert.equal(verified.ok, false);
+    if (verified.ok) return;
+    assert.match(verified.reason, /run 1 cannot be executed: the frozen profile carries no sandbox/);
+  });
+  withRoot((root) => {
+    // With its sandbox, the obsolete policy field alone still refuses execution.
+    const { hash } = rewriteFrozen(root, withObsoletePolicyField);
+    assert.equal(loadInspectableProfile(root, { id: 1, profile_ref: hash }).ok, true);
+    const verified = loadVerifiedProfile(root, { id: 1, profile_ref: hash });
+    assert.equal(verified.ok, false);
+    if (verified.ok) return;
+    assert.match(verified.reason, /run 1 cannot be executed: the frozen policy is not the shape this code enforces: carrying obsolete verifyEnvPassthrough/);
+  });
+});
+
+test("the read-only door keeps the tamper check", () => {
+  withRoot((root) => {
+    const { path, hash } = rewriteFrozen(root, (p) => { delete p.sandbox; });
+    appendFileSync(path, " ");
+    for (const load of [loadInspectableProfile, loadVerifiedProfile]) {
+      const result = load(root, { id: 1, profile_ref: hash });
+      assert.equal(result.ok, false, load.name);
+      if (result.ok) return;
+      assert.match(result.reason, /profile for run 1 has been modified since intake/, load.name);
+    }
+  });
+});
+
+test("a profile failing an inspectable field cannot be inspected, by name", () => {
+  withRoot((root) => {
+    const { hash } = rewriteFrozen(root, (p) => { delete p.policy; });
+    const inspected = loadInspectableProfile(root, { id: 1, profile_ref: hash });
+    assert.equal(inspected.ok, false);
+    if (inspected.ok) return;
+    assert.match(inspected.reason, /^run 1 cannot be inspected: the frozen profile carries no policy object$/);
+  });
+});
+
+test("a present but malformed projected field cannot be inspected", () => {
+  // `runConfiguration` copies both values into the snapshot, so a hash proves
+  // only that the bytes are the frozen ones, not that the projection is safe.
+  for (const [edit, message] of [
+    [(p: Record<string, unknown>) => { (p.verification as Record<string, unknown>).derived = {}; },
+      /^run 1 cannot be inspected: the frozen profile carries no verification\.derived/],
+    [(p: Record<string, unknown>) => { p.narrationCheck = {}; },
+      /^run 1 cannot be inspected: the frozen profile narrationCheck must be null or/],
+  ] as const) {
+    withRoot((root) => {
+      const { hash } = rewriteFrozen(root, edit);
+      const inspected = loadInspectableProfile(root, { id: 1, profile_ref: hash });
+      assert.equal(inspected.ok, false);
+      if (inspected.ok) return;
+      assert.match(inspected.reason, message);
+    });
+  }
 });
 
 test("the profile freezes the plan's seeded sandbox, and a profile without one, or with a bad one, is refused", () => {

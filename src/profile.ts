@@ -13,6 +13,7 @@ import {
   RECONCILER,
   SYSTEM_NAME,
   buildPolicy,
+  invalidInspectablePolicyReason,
   invalidPolicyReason,
   policyHash,
   type EffortLevel,
@@ -108,6 +109,15 @@ export interface Profile {
   policy: Policy;
   policyHash: string;
 }
+
+/**
+ * The read-only view of the one stored profile schema that a snapshot may
+ * verify evidence against: the profile without its execution-only fields
+ * (`invalidProfileReason`'s rule). It is a type over the same bytes, not a
+ * second schema, so `loadInspectableProfile`'s result can never reach a
+ * parameter that expects an executable `Profile`.
+ */
+export type InspectableProfile = Readonly<Omit<Profile, "after" | "sandbox">>;
 
 /**
  * What a run's narration check calls and how it judges the answer. The key is
@@ -449,8 +459,47 @@ function invalidDispatchSettingsReason(settings: Record<string, unknown>, agents
  * and supported state the approval gate records on the granted approval.
  * Absent means the profile predates the field, which is a shape this code no
  * longer executes.
+ *
+ * It is `invalidInspectableProfileReason` followed by the execution-only
+ * checks: `after`, `sandbox`, and the policy's exact shape (an obsolete policy
+ * field, which no code reads, refuses execution only). A new frozen field belongs to the inspectable
+ * predicate when anything on the snapshot path reads or projects it
+ * (`readRunSnapshot`, `runConfiguration`, `interpretBoundary` and the helpers
+ * they call), with its present-value validation as well as its presence check;
+ * otherwise it is execution-only and goes here
+ * (docs/features/inspectable-frozen-profiles/plan.md).
  */
 export function invalidProfileReason(profile: unknown): string | null {
+  const inspectable = invalidInspectableProfileReason(profile);
+  if (inspectable !== null) return inspectable;
+  const p = profile as Record<string, unknown>;
+  if (!("after" in p)) {
+    return "the frozen profile carries no after: it predates the field, and a run frozen without it cannot record which feature it follows";
+  }
+  if (p.after !== null && !isAfterLink(p.after)) {
+    return `the frozen profile after must be null or { runId, deliveredCommit }, found ${JSON.stringify(p.after)}`;
+  }
+  if (!("sandbox" in p)) {
+    return "the frozen profile carries no sandbox: it predates the sandboxed implementer, and a run frozen without one cannot say which image or limits its commands run under";
+  }
+  const sandboxReason = invalidSandboxReason(p.sandbox);
+  if (sandboxReason !== null) return sandboxReason;
+  // The inspectable predicate tolerates a policy field the current `Policy` no
+  // longer has; execution does not.
+  return invalidPolicyReason(p.policy);
+}
+
+/**
+ * Is this frozen profile one a read-only inspection can verify evidence
+ * against? Every check `invalidProfileReason` makes except the execution-only
+ * ones (`after`, `sandbox`, and a policy field the current `Policy` no longer
+ * has), in the same order and with the same messages.
+ * The same rule decides membership: a field anything on the snapshot path
+ * reads or projects is checked here, present value included, so a hash-matching
+ * profile cannot put a malformed value into `status` or the dashboard. One
+ * schema, two questions about it; no default, migration or version field.
+ */
+export function invalidInspectableProfileReason(profile: unknown): string | null {
   if (profile === null || typeof profile !== "object" || Array.isArray(profile)) {
     return "the frozen profile is not an object";
   }
@@ -470,23 +519,12 @@ export function invalidProfileReason(profile: unknown): string | null {
   if (typeof p.approvalSigner !== "string" && p.approvalSigner !== null) {
     return `the frozen profile approvalSigner must be a string or null, found ${JSON.stringify(p.approvalSigner)}`;
   }
-  if (!("after" in p)) {
-    return "the frozen profile carries no after: it predates the field, and a run frozen without it cannot record which feature it follows";
-  }
-  if (p.after !== null && !isAfterLink(p.after)) {
-    return `the frozen profile after must be null or { runId, deliveredCommit }, found ${JSON.stringify(p.after)}`;
-  }
   if (!("narrationCheck" in p)) {
     return "the frozen profile carries no narrationCheck: it predates the field, and a run frozen without it cannot say whether spec review asks Decision-1";
   }
   if (p.narrationCheck !== null && !isNarrationCheckConfig(p.narrationCheck)) {
     return `the frozen profile narrationCheck must be null or { endpoint, deployment, deploymentType, threshold, timeoutMs, questionHash }, found ${JSON.stringify(p.narrationCheck)}`;
   }
-  if (!("sandbox" in p)) {
-    return "the frozen profile carries no sandbox: it predates the sandboxed implementer, and a run frozen without one cannot say which image or limits its commands run under";
-  }
-  const sandboxReason = invalidSandboxReason(p.sandbox);
-  if (sandboxReason !== null) return sandboxReason;
   if (typeof p.frozenAt !== "string" || p.frozenAt === "") {
     return `the frozen profile frozenAt must be a non-empty string, found ${JSON.stringify(p.frozenAt)}`;
   }
@@ -526,7 +564,7 @@ export function invalidProfileReason(profile: unknown): string | null {
   if (!Array.isArray(verification.derived)) {
     return "the frozen profile carries no verification.derived: it predates the field, and a run frozen without it cannot say which files the system regenerates";
   }
-  const policyReason = invalidPolicyReason(p.policy);
+  const policyReason = invalidInspectablePolicyReason(p.policy);
   if (policyReason !== null) return policyReason;
   // The recorded hash must describe the policy actually present. A profile
   // whose bytes were never edited still fails this if it was written by code
@@ -627,10 +665,57 @@ function isAfterLink(v: unknown): boolean {
  * a caller that reads `.profile` and drops `.hash` gets a profile that is
  * enforced but not tamper-evident: editing `profile.json` on disk changes
  * which model a stage may use, or what policy a gate applies, and nothing
- * objects. Every consumer of the frozen profile goes through here so the
- * comparison cannot be forgotten at one site and remembered at another.
+ * objects. Every consumer of the frozen profile goes through here, or through
+ * `loadInspectableProfile` for a read-only inspection, and both share
+ * `loadHashVerifiedProfile`, so the comparison cannot be forgotten at one site
+ * and remembered at another.
  */
 export function loadVerifiedProfile(
+  rootDir: string,
+  run: { id: number; profile_ref: string | null }
+): { ok: true; profile: Profile; hash: string } | { ok: false; reason: string } {
+  const loaded = loadHashVerifiedProfile(rootDir, run);
+  if (!loaded.ok) return loaded;
+  // Shape after tamper-evidence, in that order. A profile that fails the hash
+  // has a different problem, and reporting the shape of bytes that are not the
+  // ones the run froze would name the wrong defect.
+  //
+  // This is the single door the step 5b Task 3 decision chose: every execution
+  // and resume path loads the frozen profile through here, so the refusal
+  // cannot be enforced at one stage and forgotten at another — the same reason
+  // the hash comparison lives in `loadHashVerifiedProfile`. A read-only
+  // inspection of the database, the retained evidence or the audit chain goes
+  // through `loadInspectableProfile` instead, so a run refused here for an
+  // execution-only field stays fully inspectable.
+  const invalid = invalidProfileReason(loaded.profile);
+  if (invalid !== null) {
+    return {
+      ok: false,
+      reason: `run ${run.id} cannot be executed: ${invalid}. It was frozen under a configuration this code no longer honours; its records and evidence remain readable, but the run cannot continue and must be replaced by a fresh one.`,
+    };
+  }
+  return { ok: true, profile: loaded.profile, hash: loaded.hash };
+}
+
+/**
+ * The read-only door: the same hash comparison as `loadVerifiedProfile`, then
+ * only the inspectable predicate. `readRunSnapshot` verifies evidence against
+ * this, so a completed run frozen before an execution-only field existed keeps
+ * its delivery record readable, while every execution path still refuses it.
+ */
+export function loadInspectableProfile(
+  rootDir: string,
+  run: { id: number; profile_ref: string | null }
+): { ok: true; profile: InspectableProfile; hash: string } | { ok: false; reason: string } {
+  const loaded = loadHashVerifiedProfile(rootDir, run);
+  if (!loaded.ok) return loaded;
+  const invalid = invalidInspectableProfileReason(loaded.profile);
+  if (invalid !== null) return { ok: false, reason: `run ${run.id} cannot be inspected: ${invalid}` };
+  return { ok: true, profile: loaded.profile, hash: loaded.hash };
+}
+
+/** The profile-ref check, the read and the hash comparison both doors share. */
+function loadHashVerifiedProfile(
   rootDir: string,
   run: { id: number; profile_ref: string | null }
 ): { ok: true; profile: Profile; hash: string } | { ok: false; reason: string } {
@@ -647,23 +732,6 @@ export function loadVerifiedProfile(
     return {
       ok: false,
       reason: `profile for run ${run.id} has been modified since intake: frozen ${run.profile_ref}, on disk ${loaded.hash}`,
-    };
-  }
-  // Shape after tamper-evidence, in that order. A profile that fails the hash
-  // has a different problem, and reporting the shape of bytes that are not the
-  // ones the run froze would name the wrong defect.
-  //
-  // This is the single door the step 5b Task 3 decision chose: every execution
-  // and resume path loads the frozen profile through here, so the refusal
-  // cannot be enforced at one stage and forgotten at another — the same reason
-  // the hash comparison above lives here. Nothing that only reads the database,
-  // the retained evidence, or the audit chain comes through this function, so
-  // a refused run stays fully inspectable.
-  const invalid = invalidProfileReason(loaded.profile);
-  if (invalid !== null) {
-    return {
-      ok: false,
-      reason: `run ${run.id} cannot be executed: ${invalid}. It was frozen under a configuration this code no longer honours; its records and evidence remain readable, but the run cannot continue and must be replaced by a fresh one.`,
     };
   }
   return { ok: true, profile: loaded.profile, hash: loaded.hash };
@@ -704,7 +772,7 @@ export function requiredCapability(stageKind: string): string | null {
  * never froze (the divergence the step-6 diagnosis's finding 4 names).
  */
 export function requireFrozenBinding(
-  profile: Profile,
+  profile: InspectableProfile,
   executor: ExecutorDefinition,
   stageKind: string
 ): { ok: true } | { ok: false; reason: string } {

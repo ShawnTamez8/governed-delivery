@@ -5,11 +5,11 @@ history and may name superseded state; Current state wins when they disagree. Th
 the system of record; machine-local memory is only a cache
 (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-10-20: change 1 built and paid-validated, uncommitted; crew-chatter run 8 completed, not merged; no spend authorized)
+## Current state (2026-10-20: change 1 committed `ff260eb`; inspectable-profiles fix built, uncommitted; crew-chatter run 8 completed, not merged; no spend authorized)
 
-**Resume point.** Branch `sandboxed-delivery` is at `44a0d3a`, 9 commits ahead of
-`origin/sandboxed-delivery` (`be6a88c`), none pushed. On top of it, **the whole change 1 build is
-uncommitted** (about 88 `git status` entries, including the deleted `src/patch-application.ts`):
+**Resume point.** Branch `sandboxed-delivery` is at `ff260eb` (operator: "commit change 1"), 10
+commits ahead of `origin/sandboxed-delivery` (`be6a88c`), none pushed. That commit holds the whole
+change 1 build (89 files, including the deleted `src/patch-application.ts`):
 - `docs/features/sandboxed-implementer/plan.md` is `Implemented`, Tasks 1-13 done. Two code reviews
   are `reconciled`: `2026-10-20-code-review.md` and `2026-10-20-code-review-2.md` (the second fixed a
   gitlink refusal, a refused diff kept under `refs/buildworks/refused/<sha>`, `NO_PROXY` loopback,
@@ -27,17 +27,24 @@ uncommitted** (about 88 `git status` entries, including the deleted `src/patch-a
     remediation, and delivered 4/4. The target is kept at
     `C:\Users\tamezs\buildWorks_test_repos\sandboxed-web-calculator-2026-10-20\target`.
   - Crew-chatter run 8 completed (below).
-- **New fix plan, not built:** `docs/features/inspectable-frozen-profiles/plan.md` (`Proposed`).
-  `new-run --after 7` refused because run 7's frozen profile has no `sandbox`. `readRunSnapshot`
-  loads profiles through `loadVerifiedProfile` (the execution door), so every pre-sandbox run shows
-  `deliveredCommit: null` in `status` and on the dashboard. The plan adds a hash-verified
-  `loadInspectableProfile` for evidence reads and keeps `loadVerifiedProfile` and its "cannot be
-  executed" wording for execution.
+- **Inspectable frozen profiles: built and uncommitted** (`docs/features/inspectable-frozen-profiles/plan.md`, `Implemented` 2026-10-20).
+  - `readRunSnapshot` verifies evidence through the new hash-verified `loadInspectableProfile`, and
+    it still returns only the executable profile, so a refused run shows `profile: null`.
+  - The execution-only fields are `after`, `sandbox` and a policy field the current `Policy` no
+    longer has. The policy part was the operator's choice, "Extend the rule to policy", made after
+    the first live read failed: runs 5-7 still carry `verifyEnvPassthrough`.
+  - Live: `status --run 7` now reports `deliveredCommit` `c5d2ff3`.
+  - Full suite: 1758 tests, 1740 pass, 0 fail, 18 skipped.
+  - The review had 1 medium (fixed) and 3 low findings (2 fixed, and 1 deferred: a duplicate reason
+    at the approval boundary).
+  - Files: `src/profile.ts`, `src/policy.ts`, `src/operator-state.ts`, `src/code-review.ts`, five
+    test files, both plans and this file.
 
 **Next action:** the operator decides:
-- whether to commit the change 1 build on `sandboxed-delivery`. `=` and
-  `docs/runbooks/workflow-explorer.html` stay out of it; they are the operator's.
-- whether to build `docs/features/inspectable-frozen-profiles/plan.md`.
+- whether to push `sandboxed-delivery`. `=` and `docs/runbooks/workflow-explorer.html` were left
+  out of `ff260eb`; they are the operator's.
+- whether to commit the inspectable-frozen-profiles fix (built, uncommitted). After the commit,
+  feature 4 can use `--after 8` once run 8 is merged.
 - whether to merge `gov/crew-chatter-attachments-versions/8` into crew-chatter `main`. It must be a
   merge, not a squash, before feature 4 can use `--after 8`. Move the untracked run documents aside
   first if any appear.
@@ -182,7 +189,7 @@ works in both.
   output (`94e3b98`), Decision-1 narration (`6cb2e3b`, `05803eb`), open decisions outside section
   (`561ce9e`) and declared artifacts in tasks (`dashboard-restyling`).
 - Changes 2 and 10 plus prompt retention (`1cda025`), run documents under `.governance/documents/`
-  (`5e3832b`), the change 1 spike (`28a5786`) and the change 1 plan (`44a0d3a`).
+  (`5e3832b`), the change 1 spike (`28a5786`), the change 1 plan (`44a0d3a`) and the change 1 build (`ff260eb`).
 - Seeded defaults in `src/policy.ts`: Opus 5.5 `high` authors; Haiku 5.5 `medium` spec and code
   reviewers and code-review reconciler; Sonnet 5.5 `medium` implementer. `--model` freezes only the
   spec/plan reconciler.
@@ -245,7 +252,7 @@ works in both.
 - A hot journal made read-only SQLite return 776; readers never repair. Read-only Git needs `--no-optional-locks` and `-c diff.autoRefreshIndex=false`.
 - `envPassthrough` freezes names, not values. A doctor pass is not auth proof.
 - Run documents live in the target's `.governance/documents/<run>/`; only the projections commit puts them under `docs/features/<slug>/`. Older runs left them untracked in the checkout, so move those aside before `new-run`, `doctor` or a merge.
-- Any change to the frozen profile's shape makes every earlier run unreadable through `loadVerifiedProfile`, including `status`, the dashboard and the `--after` check. Grep `readRunSnapshot`'s callers when a profile field becomes required.
+- Two doors read the frozen profile. `loadVerifiedProfile` (execution) refuses any shape change. `loadInspectableProfile` (snapshot, `status`, dashboard, `--after`) tolerates only the execution-only fields `after`, `sandbox` and a removed policy field. A new frozen field that anything on the snapshot path reads makes every earlier run uninspectable; check the stored runs with the predicate itself, not by comparing keys.
 - A full `npm test` can leave an empty "moved" commit (author `t`); check `git log -1` after full runs.
 - A dispatch exiting 1 within seconds is usually the session limit (`rate_limit_event` `rejected`); it is not always free.
 - Spec, plan, fold and split authors run in the target root, and reviewers do not. A target commit after `new-run` never reaches that run.
@@ -310,7 +317,7 @@ works in both.
 - Nothing was committed. The Snitch MCP server failed to connect, so the operator's chat approvals were used for the deletes.
 
 ### What failed
-- `new-run --after 7` refused with "run 7's delivery record does not verify: run 7 cannot be executed: the frozen profile carries no sandbox". The sandboxed plan's blast radius assumed no run was in flight and missed stored runs read later. It is still open; the fix is `docs/features/inspectable-frozen-profiles/plan.md`.
+- `new-run --after 7` refused with "run 7's delivery record does not verify: run 7 cannot be executed: the frozen profile carries no sandbox". The sandboxed plan's blast radius assumed no run was in flight and missed stored runs read later. It is fixed and uncommitted (`docs/features/inspectable-frozen-profiles/plan.md`). The plan's first build also failed live, because run 7's policy still carried the removed `verifyEnvPassthrough` and the "lacks only sandbox" claim had been checked by eye.
 - The dashboard link did not open for the operator. The likely cause is the `**bold**` around the URL corrupting the fragment token. Giving the URL in a code block worked around it.
 - I reported the `.doctor-sandbox-*` dirs as empty, but two held doctor test repos. I corrected this before deleting.
 - I estimated crew-chatter at $2-4, then $5-7, then $7-9 after the spec; it cost $6.35.
@@ -326,8 +333,8 @@ works in both.
 - Run 8: 10/10 stages, delivery 14/14, `verify-audit` chain valid, no leftover `bw-*` containers or networks.
 
 ### Deferred and open
-- Open: commit the change 1 build, build the inspectable-profiles fix, merge run 8. All three are the operator's call.
+- Open: commit the inspectable-profiles fix (now built), merge run 8, push. All three are the operator's call. The change 1 build was committed as `ff260eb` at the operator's word.
 - Deferred: `unverified` evidence availability on the dashboard. The raw-output hash could verify it.
 
 ### Next up
-- Ask the operator whether to commit the change 1 build on `sandboxed-delivery`. Then ask whether to build `docs/features/inspectable-frozen-profiles/plan.md` and merge crew-chatter run 8.
+- Ask the operator whether to commit the inspectable-profiles fix, merge crew-chatter run 8, and push `sandboxed-delivery`.

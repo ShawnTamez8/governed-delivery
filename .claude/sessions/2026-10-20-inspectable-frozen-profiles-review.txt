@@ -1,0 +1,12 @@
+Requested outcome: Review docs/features/inspectable-frozen-profiles/plan.md; do not implement or reconcile.
+Baseline: Plan Proposed; no prior review in the feature directory. Existing unrelated changes: .claude/sessions/project-learnings.md, untracked = and docs/runbooks/workflow-explorer.html.
+Success criterion: Persist a repository-grounded dated review beside the plan with verdict, counts and documentation checks.
+Approved approach: Direct review against architecture, hazards, selected project learnings, loaders, snapshot interpreter, consumers and integration helpers.
+Assumptions: No provider spend or external target mutation. Malformed-field demonstration is an in-memory projection probe, not a claim about run 7.
+Changes: Added the dated review and this task record only.
+Evidence: runConfiguration copies malformed derived/narration values; the dashboard's map expression throws on derived {}. Completed helper approvals bind the pre-transformation profile hash. advanceRun refuses ineligible boundaries before reading the returned profile.
+Result: Ready for planning after required changes; 0 critical, 2 high-risk, 2 medium.
+Validation: npm run check:docs passes with historical path warnings, none in the new review. npm run typecheck passes for core and dashboard. Source-reference search confirms the cited execution and approval checks. Working-tree inspection confirms only these two additions belong to this review.
+Remaining issues: Findings H1, H2, M1 and M2 remain open; no source or plan edits.
+User decisions: Review only. Reconciliation and implementation remain separate.
+Rollback: No runtime or stored-state changes; removing only these two new records undoes this task.

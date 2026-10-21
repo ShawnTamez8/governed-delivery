@@ -590,7 +590,7 @@ Seven more break-tests proved the fixes, two against the real engine. After thes
 The agent installed no packages. Each sandbox's proxy log holds only its start line, so no request left any work container. No `derived.discarded`, `workspace.refused` or `sandbox.*` failure event was recorded, and no `bw.run`-labelled container or network remained afterwards. The second panel was clean. This is one sample; it is not a cost range.
 
 **Task 13, crew-chatter feature 3 (operator, 2026-10-20: "Lets move on to step 3 crew chatter", "lets do both", "approved").** The design is split proposal 30's `## Problem` body, committed in crew-chatter as `e94a189` (`docs/features/crew-chatter-attachments-versions/design.md`). Run 8 used `--model claude-sonnet-5-5` with narration on, as runs 6 and 7 did.
-- **Created without `--after`.** `new-run --after 7` refused: run 7's profile predates `sandbox`, and the run snapshot reads profiles through the execution check, so run 7's delivered commit is null to `status`, the dashboard and `--after`. This plan's blast radius missed that read. The fix is planned in `docs/features/inspectable-frozen-profiles/plan.md`. The link was checked by hand: run 7's delivered commit `c5d2ff3` is an ancestor of `e94a189`. No stage reads the link.
+- **Created without `--after`.** `new-run --after 7` refused: run 7's profile predates `sandbox`, and the run snapshot reads profiles through the execution check, so run 7's delivered commit is null to `status`, the dashboard and `--after`. This plan's blast radius missed that read, and it missed that deleting `policy.verifyEnvPassthrough` (below) has the same effect. The fix was built on 2026-10-20 in `docs/features/inspectable-frozen-profiles/plan.md`, and `status --run 7` now reports delivered commit `c5d2ff3`. The link was checked by hand: run 7's delivered commit `c5d2ff3` is an ancestor of `e94a189`. No stage reads the link.
 - **Outcome.** All ten stages passed and the run completed. Delivery passed with 14 artifacts over `c96d569..b8e6613`, and `verify-audit` reports the chain valid. The only intervention was the operator's approval signature. Spec decision asked nothing, because the spec added no package.
 - **Cost.** 23 Claude dispatches cost $6.34541, plus 16 Decision-1 requests (not costed). Runs 6 and 7 cost $4.91524 and $5.56758. The spec author cost $3.24830, against $1.81 and $1.76 in runs 6 and 7. The plan cost $1.58489 against $1.22 and $1.61. Implementation (three phases and the self-review) cost $1.16100 against $1.23 and $1.67.
 - **Verification.** It passed first time with all four frozen commands in a container: `npm ci` 32 s, typecheck 14 s, lint 40 s, build 11 s. The cleanup removed `backend/dist/`, `frontend/dist/` and `node_modules/` from inside a container.
@@ -621,7 +621,7 @@ The agent installed no packages. Each sandbox's proxy log holds only its start l
 - The `test/prompts.test.ts` emitter-composition test moved from Task 9 to Task 10.
 
 **Deferred.**
-- The `--after` defect found in Task 13: `docs/features/inspectable-frozen-profiles/plan.md` (Proposed).
+- The `--after` defect found in Task 13 was fixed on 2026-10-20 by `docs/features/inspectable-frozen-profiles/plan.md` (Implemented). A run frozen before this change is readable again and still cannot be executed.
 - The Open decisions: dependency pre-install, `npm_config_yes`, and caps per dispatch kind.
 - Follow-ups, in no task:
   - The bootstrap host `npm` check is now unused.

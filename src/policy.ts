@@ -470,6 +470,23 @@ const STRING_ARRAY_FIELDS = [
  * clear a signal of a superseded shape as one missing `panelSizeMax`.
  */
 export function invalidPolicyReason(policy: unknown): string | null {
+  return policyReason(policy, false);
+}
+
+/**
+ * The same question for a read-only inspection
+ * (docs/features/inspectable-frozen-profiles/plan.md): every check above,
+ * except that a field the current `Policy` no longer has is not refused. No
+ * code reads such a field, so it cannot reach a snapshot; a missing field is
+ * still refused, because code may read it, and that refusal still names any
+ * obsolete field too. A policy with an obsolete field and another defect is
+ * refused here for the other defect, where execution names the obsolete field.
+ */
+export function invalidInspectablePolicyReason(policy: unknown): string | null {
+  return policyReason(policy, true);
+}
+
+function policyReason(policy: unknown, tolerateObsolete: boolean): string | null {
   if (policy === null || typeof policy !== "object" || Array.isArray(policy)) {
     return "the frozen profile carries no policy object";
   }
@@ -477,7 +494,7 @@ export function invalidPolicyReason(policy: unknown): string | null {
   const expected = Object.keys(buildPolicy());
   const missing = expected.filter((k) => !(k in p));
   const obsolete = Object.keys(p).filter((k) => !expected.includes(k));
-  if (missing.length > 0 || obsolete.length > 0) {
+  if (missing.length > 0 || (obsolete.length > 0 && !tolerateObsolete)) {
     const parts: string[] = [];
     if (missing.length > 0) parts.push(`missing ${missing.sort().join(", ")}`);
     if (obsolete.length > 0) parts.push(`carrying obsolete ${obsolete.sort().join(", ")}`);

@@ -15,7 +15,10 @@ import {
 import { readSplitApproval, readSplitRecord } from "./design-split.ts";
 import { readDependencyRecord } from "./dependency-policy.ts";
 import { APPROVAL_DEFAULT_LIFETIME_SECONDS, buildPolicy, policyHash } from "./policy.ts";
-import { loadVerifiedProfile, requireFrozenBinding, type NarrationCheckConfig, type Profile } from "./profile.ts";
+import {
+  loadInspectableProfile, loadVerifiedProfile, requireFrozenBinding,
+  type InspectableProfile, type NarrationCheckConfig, type Profile,
+} from "./profile.ts";
 import { computeScope } from "./scope.ts";
 import { codeReviewPanel, codeReviewStaffingShortfall, staffingShortfall } from "./select.ts";
 import { readSpecDeclaredArtifacts, validateSpecDoc } from "./spec-doc.ts";
@@ -284,7 +287,7 @@ function prefixAction(rows: Pick<RunRows, "run" | "stages" | "questions" | "answ
   return { phase, group: groups[stages.length]!, reasons: [] };
 }
 
-export function runConfiguration(profile: Profile | null, hash: string | null, createdAt: string): RunConfiguration {
+export function runConfiguration(profile: InspectableProfile | null, hash: string | null, createdAt: string): RunConfiguration {
   const p = profile?.policy;
   const deadline = p ? Date.parse(createdAt) + p.runDurationLimitSeconds * 1000 : NaN;
   return {
@@ -309,24 +312,31 @@ export function readRunSnapshot(store: Store, rootDir: string, runId: number,
   const fingerprint = boundaryFingerprint(run, stages, audit);
   const limitations = ["Known recorded costs are not a complete bill; missing telemetry and process loss can hide spend.",
     "Configured standalone reviewers and passed frozen commands do not prove product correctness."];
-  const loaded = loadVerifiedProfile(rootDir, run);
-  let profile = loaded.ok ? loaded.profile : null;
-  let profileReason = loaded.ok ? null : loaded.reason;
+  // Evidence is verified against the read-only door, so a completed run frozen
+  // before an execution-only field existed keeps its delivery record readable.
+  // The returned profile, which `run-command` executes and `doctor` reports,
+  // comes only through the execution door, and its refusal is the reason.
+  const inspected = loadInspectableProfile(rootDir, run);
+  const executable = loadVerifiedProfile(rootDir, run);
+  let evidenceProfile = inspected.ok ? inspected.profile : null;
+  let profile = executable.ok ? executable.profile : null;
+  let profileReason = executable.ok ? null : executable.reason;
   let configuration = runConfiguration(null, null, run.created_at);
-  if (profile !== null) {
+  if (evidenceProfile !== null) {
     try {
-      if (profile.runId !== runId) throw new Error(`the frozen profile identifies run ${profile.runId}, not run ${runId}`);
-      if (!Object.values(profile.dispatchSettings).every((entry) =>
+      if (evidenceProfile.runId !== runId) throw new Error(`the frozen profile identifies run ${evidenceProfile.runId}, not run ${runId}`);
+      if (!Object.values(evidenceProfile.dispatchSettings).every((entry) =>
           object(entry) && typeof entry.model === "string" && typeof entry.effort === "string")) {
         throw new Error("the frozen dispatch settings contain an entry without a string model and effort");
       }
-      if (!profile.verification.commands.every((command) => object(command) &&
+      if (!evidenceProfile.verification.commands.every((command) => object(command) &&
           typeof command.name === "string" && strings(command.command))) {
         throw new Error("the frozen verification commands cannot be projected as named argv arrays");
       }
-      configuration = runConfiguration(profile, loaded.ok ? loaded.hash : null, run.created_at);
+      configuration = runConfiguration(evidenceProfile, inspected.ok ? inspected.hash : null, run.created_at);
     } catch (error) {
       profileReason = `cannot inspect the frozen profile for run ${runId}: ${message(error)}`;
+      evidenceProfile = null;
       profile = null;
     }
   }
@@ -463,8 +473,16 @@ export function readRunSnapshot(store: Store, rootDir: string, runId: number,
     }) },
     limitations,
   };
-  if (profileReason !== null) snapshot.workflowAction.reasons.push({ code: "evidence_invalid", reason: profileReason });
-  interpretBoundary(store, rootDir, rows, profile, snapshot, reference, options);
+  // A profile nothing can verify evidence against is the first cause of every
+  // evidence failure that follows, so it leads. A run refused only for
+  // execution was inspected in full, and an evidence failure there is its own
+  // cause, so the execution refusal follows it (`checkAfter` names reasons[0]).
+  const executionOnly = profileReason !== null && evidenceProfile !== null;
+  if (profileReason !== null && !executionOnly) snapshot.workflowAction.reasons.push({ code: "evidence_invalid", reason: profileReason });
+  interpretBoundary(store, rootDir, rows, evidenceProfile, snapshot, reference, options);
+  if (executionOnly && !snapshot.workflowAction.reasons.some((r) => r.code === "evidence_invalid" && r.reason === profileReason)) {
+    snapshot.workflowAction.reasons.push({ code: "evidence_invalid", reason: profileReason! });
+  }
   const rechecked = store.readSnapshot(() => boundaryFingerprint(store.getRun(runId),
     store.query<StageRow>("SELECT * FROM stage WHERE run_id = ? ORDER BY ordinal, id", [runId]), store.getAuditEvents(runId)));
   if (rechecked !== fingerprint) {
@@ -527,12 +545,12 @@ function inspectGit(cwd: string, ...args: string[]) {
   });
 }
 
-function frozenGroupReasons(profile: Profile, group: ExecutionGroup): ActionReason[] {
+function frozenGroupReasons(profile: InspectableProfile, group: ExecutionGroup): ActionReason[] {
   const reasons: ActionReason[] = [];
   const fail = (reason: string) => reasons.push({ code: "setup_required", reason });
   // The decision fold is one spec-author dispatch. Every dispatch setting the
   // group reads (each agent and the reconciler) is already guaranteed present
-  // by `loadVerifiedProfile`, the only door to a `profile` here, so a missing
+  // by `loadInspectableProfile`, the only door to a `profile` here, so a missing
   // entry never reaches this function; it surfaces as the profile reason.
   const kinds = group === "spec" || group === "plan" ? [group, `${group}_review`]
     : group === "decision" ? ["spec"]
@@ -567,7 +585,7 @@ function frozenGroupReasons(profile: Profile, group: ExecutionGroup): ActionReas
 }
 
 function interpretBoundary(
-  store: Store, root: string, rows: RunRows, profile: Profile | null, snapshot: RunSnapshot,
+  store: Store, root: string, rows: RunRows, profile: InspectableProfile | null, snapshot: RunSnapshot,
   reference: (kind: EvidenceReference["kind"], ref: string, stageId: number | null,
     agentRunId?: number | null, auditId?: number | null) => EvidenceReference,
   options: { ownedWriter?: boolean },

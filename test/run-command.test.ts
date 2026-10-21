@@ -14,6 +14,7 @@ import { canonicalJson, sha256Hex } from "../src/canonical.ts";
 import type { CodeReviewRecord } from "../src/code-review.ts";
 import { acquireLock, inspectLock } from "../src/lock.ts";
 import { profilePath, stateDbPath } from "../src/paths.ts";
+import { policyHash } from "../src/policy.ts";
 import { freezeProfile, loadProfile, type Profile } from "../src/profile.ts";
 import { openStore, type AgentRunRow, type Store } from "../src/store.ts";
 import { advanceRun } from "../src/run-command.ts";
@@ -375,6 +376,28 @@ test("yielding async execution emits the 15-second elapsed observation and clear
   assert.ok(output.text().indexOf("group spec elapsed") < output.text().indexOf("group spec end"));
   assert.equal(inspectLock(root).status, "absent");
 }, [process.execPath, "-e", "setTimeout(() => process.exit(23), 16_100)", "--"]));
+
+test("a run frozen before sandbox existed is refused by name and dispatches nothing", () => withRun(async ({ root, store, runId, profile }) => {
+  // docs/features/inspectable-frozen-profiles/plan.md, Task 2: the snapshot now
+  // reads this profile for evidence, and execution still refuses it.
+  // The shape crew-chatter run 7 froze: no sandbox, and the policy field change
+  // 1 removed (src/policy.ts at 44a0d3a), its policyHash describing that policy.
+  const { sandbox: _sandbox, ...rest } = profile;
+  const policy = { ...rest.policy,
+    verifyEnvPassthrough: ["PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "SystemRoot"] };
+  const preSandbox = { ...rest, policy, policyHash: policyHash(policy) };
+  const bytes = canonicalJson(preSandbox);
+  writeFileSync(profilePath(root, runId), bytes);
+  store.setProfileRef(runId, sha256Hex(bytes));
+  const before = durable(store, runId);
+  const result = await advanceRun(root, runId, { yes: true, json: true, stderr: capture().stderr });
+  assert.equal(result.outcome, "refused");
+  assert.equal(result.errorCode, "evidence_invalid");
+  assert.match(result.reason!, new RegExp(`run ${runId} cannot be executed: the frozen profile carries no sandbox`));
+  assert.deepEqual(data(result).execution.groupsAttempted, []);
+  assert.deepEqual(durable(store, runId), before, "no stage, dispatch or audit row");
+  assert.equal(inspectLock(root).status, "absent");
+}));
 
 test("unknown and missing run state remain named refusals with a null snapshot", async () => {
   const root = mkdtempSync(join(tmpdir(), "bw-guided-absent-"));

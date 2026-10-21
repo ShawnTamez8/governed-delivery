@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
@@ -10,6 +10,7 @@ import { canonicalJson, normalizeText, sha256Hex } from "../src/canonical.ts";
 import { runCodeReviewStage } from "../src/code-review-stage.ts";
 import { runDeliveryStage } from "../src/delivery-stage.ts";
 import { formatImplementationGate } from "../src/handoff.ts";
+import { readRunSnapshot } from "../src/operator-state.ts";
 import { profilePath, worktreePath } from "../src/paths.ts";
 import { validatePlanDoc } from "../src/plan-doc.ts";
 import { policyHash } from "../src/policy.ts";
@@ -560,6 +561,70 @@ test("--after refuses a completed run whose delivery record no longer verifies",
     rmSync(resolve(ctx.root, delivery.output_ref!));
     refusesAfter(ctx, ctx.runId,
       new RegExp(`--after: run ${ctx.runId}'s delivery record does not verify: cannot (read delivery_check evidence at|inspect) `));
+  });
+});
+
+/**
+ * Make a completed run look frozen before change 1, as crew-chatter run 7 is
+ * (docs/features/inspectable-frozen-profiles/plan.md): no `sandbox`, and a
+ * policy still carrying `verifyEnvPassthrough` with the value it froze
+ * (src/policy.ts at 44a0d3a), its `policyHash` describing that policy. Rewrite
+ * the profile canonically and re-bind both hashes that name it — the run's
+ * `profile_ref` and its approval's `profile_hash` — so the approval binds
+ * exactly the bytes under inspection. A temporary test store only.
+ */
+function asPreSandbox(store: Store, root: string, runId: number): void {
+  const path = profilePath(root, runId);
+  const profile = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  delete profile.sandbox;
+  profile.policy = { ...(profile.policy as Record<string, unknown>),
+    verifyEnvPassthrough: ["PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "SystemRoot"] };
+  profile.policyHash = policyHash(profile.policy as never);
+  const serialized = canonicalJson(profile);
+  writeFileSync(path, serialized);
+  const hash = sha256Hex(serialized);
+  store.setProfileRef(runId, hash);
+  store.exec("UPDATE approval SET profile_hash = ? WHERE run_id = ?", [hash, runId]);
+}
+
+test("--after accepts a completed run frozen before sandbox existed", async () => {
+  await withDeliveredRun(({ root, store, runId, worktree }) => {
+    git(root, ...COMMITTER, "merge", "--no-ff", "-q", "-m", "merge feature 1", `gov/demo/${runId}`);
+    asPreSandbox(store, root, runId);
+    // The only thing wrong with the predecessor is that it cannot execute:
+    // no approval, handoff or delivery mismatch rides along.
+    const { snapshot } = readRunSnapshot(store, root, runId);
+    assert.equal(snapshot.workflowAction.reasons.length, 1, JSON.stringify(snapshot.workflowAction.reasons));
+    assert.equal(snapshot.workflowAction.reasons[0]!.code, "evidence_invalid");
+    assert.match(snapshot.workflowAction.reasons[0]!.reason, new RegExp(`run ${runId} cannot be executed: the frozen profile carries no sandbox`));
+    assert.deepEqual(snapshot.evidence.references.filter((r) => r.availability === "inconsistent"), []);
+    const delivered = git(worktree, "rev-parse", "HEAD");
+    const created = createRunIntake(store, root, { ...NEXT_FEATURE, after: runId });
+    const profile = JSON.parse(readFileSync(profilePath(root, created.run.id), "utf8"));
+    assert.deepEqual(profile.after, { runId, deliveredCommit: delivered });
+  });
+});
+
+test("--after still refuses a pre-sandbox predecessor whose profile changed since intake", async () => {
+  await withDeliveredRun((ctx) => {
+    git(ctx.root, ...COMMITTER, "merge", "--no-ff", "-q", "-m", "merge feature 1", `gov/demo/${ctx.runId}`);
+    asPreSandbox(ctx.store, ctx.root, ctx.runId);
+    appendFileSync(profilePath(ctx.root, ctx.runId), " ");
+    refusesAfter(ctx, ctx.runId,
+      /--after: run \d+'s delivery record does not verify: profile for run \d+ has been modified since intake/);
+  });
+});
+
+test("--after names a pre-sandbox predecessor's broken record, not its execution refusal", async () => {
+  await withDeliveredRun((ctx) => {
+    git(ctx.root, ...COMMITTER, "merge", "--no-ff", "-q", "-m", "merge feature 1", `gov/demo/${ctx.runId}`);
+    asPreSandbox(ctx.store, ctx.root, ctx.runId);
+    // Its evidence was inspected in full, so the missing record is the cause;
+    // the execution refusal says nothing about why delivery does not verify.
+    const verification = ctx.store.getStageChain(ctx.runId).find((s) => s.kind === "verification")!;
+    rmSync(resolve(ctx.root, verification.output_ref!));
+    refusesAfter(ctx, ctx.runId,
+      new RegExp(`--after: run ${ctx.runId}'s delivery record does not verify: cannot read verification evidence at `));
   });
 });
 

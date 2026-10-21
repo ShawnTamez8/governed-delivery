@@ -1,7 +1,7 @@
 import { normalizeLocation } from "./finding.ts";
 import type { ReviewerReport } from "./reconciliation.ts";
 import type { CommitVerificationRecord } from "./commit-verification.ts";
-import type { Profile } from "./profile.ts";
+import type { InspectableProfile } from "./profile.ts";
 import { codeReviewPanel } from "./select.ts";
 
 const LINE_SUFFIX = /^[1-9][0-9]*$/;
@@ -125,7 +125,7 @@ export function parsePassedCodeReviewRecord(
   value: unknown,
   runId: number,
   stageId: number,
-  profile: Profile
+  profile: InspectableProfile
 ): { ok: true; value: PassedCodeReviewRecord } | { ok: false; reason: string } {
   const invalidRecord = "the record does not describe this run's passed code review";
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
