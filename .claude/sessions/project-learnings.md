@@ -5,11 +5,16 @@ history and may name superseded state; Current state wins when they disagree. Th
 the system of record; machine-local memory is only a cache
 (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-10-20: change 1 committed `ff260eb`; inspectable-profiles fix built, uncommitted; crew-chatter run 8 completed, not merged; no spend authorized)
+## Current state (2026-10-20: change 1 committed `ff260eb`; inspectable-profiles fix committed `7a725e3`; crew-chatter run 8 completed, not merged; a second web-calculator run blocked at code review and its evidence is committed; rework changes 4 and 7 revised; no spend authorized)
 
-**Resume point.** Branch `sandboxed-delivery` is at `ff260eb` (operator: "commit change 1"), 10
-commits ahead of `origin/sandboxed-delivery` (`be6a88c`), none pushed. That commit holds the whole
-change 1 build (89 files, including the deleted `src/patch-application.ts`):
+**Resume point.** Branch `sandboxed-delivery` is past `7a725e3`, none of it pushed
+(`origin/sandboxed-delivery` is `be6a88c`). The operator asked for three commits on 2026-10-20:
+- change 1 (`ff260eb`, "commit change 1");
+- the inspectable-profiles fix (`7a725e3`);
+- the blocked web-calculator run's evidence, which is the commit carrying this line.
+
+`ff260eb` holds the whole change 1 build (89 files, including the deleted
+`src/patch-application.ts`):
 - `docs/features/sandboxed-implementer/plan.md` is `Implemented`, Tasks 1-13 done. Two code reviews
   are `reconciled`: `2026-10-20-code-review.md` and `2026-10-20-code-review-2.md` (the second fixed a
   gitlink refusal, a refused diff kept under `refs/buildworks/refused/<sha>`, `NO_PROXY` loopback,
@@ -27,7 +32,7 @@ change 1 build (89 files, including the deleted `src/patch-application.ts`):
     remediation, and delivered 4/4. The target is kept at
     `C:\Users\tamezs\buildWorks_test_repos\sandboxed-web-calculator-2026-10-20\target`.
   - Crew-chatter run 8 completed (below).
-- **Inspectable frozen profiles: built and uncommitted** (`docs/features/inspectable-frozen-profiles/plan.md`, `Implemented` 2026-10-20).
+- **Inspectable frozen profiles: committed `7a725e3`** (`docs/features/inspectable-frozen-profiles/plan.md`, `Implemented` 2026-10-20). The five touched test files passed 228/228 again just before the commit.
   - `readRunSnapshot` verifies evidence through the new hash-verified `loadInspectableProfile`, and
     it still returns only the executable profile, so a refused run shows `profile: null`.
   - The execution-only fields are `after`, `sandbox` and a policy field the current `Policy` no
@@ -42,14 +47,19 @@ change 1 build (89 files, including the deleted `src/patch-application.ts`):
 
 **Next action:** the operator decides:
 - whether to push `sandboxed-delivery`. `=` and `docs/runbooks/workflow-explorer.html` were left
-  out of `ff260eb`; they are the operator's.
-- whether to commit the inspectable-frozen-profiles fix (built, uncommitted). After the commit,
-  feature 4 can use `--after 8` once run 8 is merged.
+  out of every commit; they are the operator's.
+- Feature 4 can use `--after 8` once run 8 is merged, now that `7a725e3` is in.
 - whether to merge `gov/crew-chatter-attachments-versions/8` into crew-chatter `main`. It must be a
   merge, not a squash, before feature 4 can use `--after 8`. Move the untracked run documents aside
   first if any appear.
 - the next rework change after change 1. `sandboxed-delivery` is not merged to `master` until the
-  rework is complete, and there is no PR to `master` (operator, 2026-10-17/19).
+  rework is complete, and there is no PR to `master` (operator, 2026-10-17/19). The 2026-10-20
+  revision of changes 4 and 7 (below) bears on that choice.
+- The blocked run's evidence is committed with this record:
+  - the fixture `test/fixtures/recorded/code-review-web-calculator-remediation-regression.json`,
+    which carries the delivered files at both reviewed commits;
+  - the proposal revision;
+  - `.claude/sessions/2026-10-20-debug-web-calculator-remediation-regression.md`.
 - Deferred by the operator (2026-10-20, "we wont worry about it now"): the dashboard shows
   availability `unverified` for every evidence reference. That is by design for stat-only checks, but
   `agent_run.output_hash` (sha256 of the raw file) would allow verifying it.
@@ -105,6 +115,16 @@ Changes 2, 10 and 1 are built; no other change is authorized.
   a second agent is added (MHA-03).
 - Change 9 (whole-run replay) waits until changes 2, 10 and 1 are built, which is now satisfied. Its
   design is `docs/proposals/whole-run-replay.md`.
+- Since 2026-10-20 the proposal carries a status table and a status line on each change: 1, 2 and 10
+  are Implemented, 9 is designed only, and the rest are not built.
+- Changes 4 and 7 were revised on 2026-10-20 from the blocked web-calculator run, at the operator's
+  request.
+  - Change 4 needs a real browser with trusted input for interaction criteria, which means a
+    browser-capable image and is part of change 4's decision. It also needs tests over each
+    criterion-convention variant, plus a route for plan-only behaviour rules.
+  - Change 7's repro must become a protected regression test for every later commit. "No repro, so
+    advisory" must never by itself deliver a real high.
+  - Neither change, as first written, would have caught that run's defect except by chance.
 - The multi-stack model is recorded unbuilt in `docs/proposals/target-declared-environments.md`.
 - Open: whether per-seat use is "ordinary use" under Claude Code's legal terms.
 
@@ -129,6 +149,16 @@ works in both.
 - 2026-10-17, narration on: $1.51048 in 22.
 - 2026-10-20, sandboxed: $1.53764 in 21. Patch dispatches cost $0.08-0.11 each and took 13-29 s.
 - Each had one remediation. Verification commands check only `node --version` and `npm --version`.
+- 2026-10-20, second sandboxed run: $1.32615 in 21. It **blocked at code_review**, 10/15 driver steps.
+  - Round 1 kept finding 9: Enter on the focused theme toggle does equals, because the plan made Enter
+    equals everywhere.
+  - The remediation exempted every focused button, so after a click on `+`, Enter re-runs `+`.
+  - Round 2 blocked on that as a high (finding 10). The audit chain is valid.
+  - No BuildWorks code defect was found. The remediation prompt already says to keep every plan task,
+    and the agent made one `run_command`, read nothing and ran nothing.
+  - Evidence: `test/fixtures/recorded/code-review-web-calculator-remediation-regression.json`.
+    Analysis: `.claude/sessions/2026-10-20-debug-web-calculator-remediation-regression.md`.
+  - The target `%TEMP%\bw-run-skill\1792540205762\target` is not durable.
 - Structured-output open decisions 1 (remediation drops unchanged files) and 3 (other dispatches to a
   schema) remain undecided.
 
@@ -142,7 +172,8 @@ works in both.
   `implementation-segments-and-pause` (`Shelved`), `usage-limit-refusal-summary` and
   `code-review-contract-drift-issue` (`Proposed`). `dashboard-pwa-redesign` is `Reconciled` with
   Task 7 next.
-- No run is in flight. The 2026-10-20 dashboard on port 60834 ends with that session.
+- No run is in flight. A dashboard over the second web-calculator target runs on port 53494 (background
+  task `b3y0jq24h`) and ends with its session.
 
 **Open work list (operator asked for one list, 2026-10-13):**
 1. **Code-review reconciler** (`6282a6f`): live rejections happened in run 6 (finding 113) and in run
@@ -239,7 +270,8 @@ works in both.
 ### Code review stage
 - A code_review block is a result, not a driver fault; a pass can retain findings, and a final panel gets no further patch.
 - Finding IDs are system-assigned; `intentKey` dedup works within a round only.
-- Remediation is where out-of-spec obligations enter (run 6; run 7 findings 138/139 came from the remediation's double-submit guard).
+- Remediation is where out-of-spec obligations enter (run 6; run 7 findings 138/139 came from the remediation's double-submit guard). It also breaks plan rules its prompt told it to keep (web calculator 2026-10-20). Only an executed check holds such a rule, not prompt text or a self-reported field.
+- An interaction defect that involves a focused button's native Enter activation needs trusted input (a real browser). jsdom and `dispatchEvent` never trigger activation, so a test of the correct behaviour fails there.
 - Concurrent panels consume `Promise.allSettled` results in frozen panel order.
 - `insertFindingDecision` requires grounding exactly for `rejected_with_rationale` and normative changes exactly for `addressed`.
 - Code review's clean guard counts ignored entries; `verifyCommit` removes ignored output after the checks pass (hazard 22).
@@ -338,3 +370,29 @@ works in both.
 
 ### Next up
 - Ask the operator whether to commit the inspectable-profiles fix, merge crew-chatter run 8, and push `sandboxed-delivery`.
+
+## 2026-10-20 (later) — second web-calculator paid run, rework changes 4 and 7 revised
+
+### Decisions and assumptions
+- Operator: "lets run the web-calculator paid run". The run blocked at code review, and no rerun was
+  authorized.
+- Operator asked whether the target's verification could gain browser regression tests in place of a
+  prompt or schema fix, keeping the bounded loop with no retries or extra rounds. Assessed: yes in
+  direction, but the tests must sit outside the implementer's scope. A real browser is also needed,
+  which the image and the npm-only egress cannot provide.
+- Operator: update the proposal with the evidence, mark the implemented changes, and update this
+  file.
+- Then: commit the evidence set together, and the inspectable-profiles fix separately, with this
+  file staged selectively. The fix went first, as `7a725e3`. Its learnings hunks were staged as a
+  blob built from this file without the evidence hunks, so neither commit carries the other's
+  record.
+- The fixture now also carries the delivered files at both reviewed commits (`trees`), because the
+  change 4 benchmark depends on them and the scratch target is under `%TEMP%`.
+
+### What failed
+- The run itself; see "Web-calculator paid runs" above. My first offer of a "re-checked criteria"
+  reply field was a claim, not evidence, and the operator rightly preferred executed tests.
+
+### Verification
+- `npm run check:docs`: clean after the proposal edit. The first pass refused a backticked
+  target-only path (the calculator's app script) in the proposal, so the proposal names the target's handler in prose.

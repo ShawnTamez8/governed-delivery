@@ -6,6 +6,22 @@
 the operator decision it needs, and several reverse binding text in
 `ARCHITECTURE.md`.
 
+**Implementation status (2026-10-20):** three of the ten changes are built, each
+under its own plan and operator decision. Each change heading below carries its
+own status line.
+
+| Change | Status |
+|---|---|
+| 1 Sandboxed implementer | Implemented, commit `ff260eb` (unpushed), `docs/features/sandboxed-implementer/plan.md` |
+| 2 Derived artifacts | Implemented, commit `1cda025`, `docs/features/derived-artifacts-and-dependency-policy/plan.md` |
+| 10 Dependency policy | Implemented with change 2, same commit and plan |
+| 9 Replay | Designed only (`docs/proposals/whole-run-replay.md`); not built |
+| 3, 4, 5, 6, 7, 8 | Not built |
+
+Changes 4 and 7 carry a 2026-10-20 revision drawn from a web-calculator run whose
+remediation introduced the defect that blocked it
+(`test/fixtures/recorded/code-review-web-calculator-remediation-regression.json`).
+
 **Hazards considered:** all twenty-four entries in `docs/hazards.md` were weighed;
 the mapping is in "Hazard coverage" below. The entries that most constrain the
 proposal: 1 (patch content escaped inside JSON is a recurring failure class that
@@ -270,6 +286,12 @@ authorizes another.
 
 ### 1. A sandboxed implementer, governed at the boundary
 
+**Status (2026-10-20): Implemented.** Commit `ff260eb`, unpushed;
+`docs/features/sandboxed-implementer/plan.md`. Verification and derived
+regeneration run in the same container, which closes section 17's uncontained
+verification. Paid-validated on the web calculator ($1.53764, 21 dispatches,
+delivered 4/4) and crew-chatter run 8 (completed).
+
 **What.** Implementation phases, the self-review and code-review remediation
 keep running the `claude` command-line interface on the host, under the
 operator's own sign-in, exactly as today. They gain one MCP server, BuildWorks'
@@ -377,6 +399,11 @@ boundary rewrite.
 
 ### 2. Derived artifacts belong to the harness
 
+**Status (2026-10-20): Implemented.** Commit `1cda025`, with change 10;
+`docs/features/derived-artifacts-and-dependency-policy/plan.md`. Proven through
+delivery by crew-chatter run 6. Under change 1 the regeneration runs in the
+container.
+
 **What.** The operator declares derived files and the command that produces them
 in `governed.yaml`, for example the lockfile and an
 `npm install --package-lock-only --ignore-scripts` command. Models never author
@@ -405,6 +432,8 @@ in section 7.
 
 ### 3. A capability manifest, declared and probed at run start
 
+**Status (2026-10-20): Not built.**
+
 **What.** `new-run` freezes a statement of what the run's environment can do:
 whether the implementer can execute commands, whether package installation and
 network are available, the toolchain versions, and the derived-file rules from
@@ -428,6 +457,9 @@ is refused by field, not by prose matching.
 toolchain-probe proposal, plus the capability fields.
 
 ### 4. Acceptance criteria become executable before implementation
+
+**Status (2026-10-20): Not built.** Revised 2026-10-20; see "Revision
+(2026-10-20)" at the end of this change.
 
 **What.** After approval, a test-authoring step writes one or more tests per
 acceptance criterion. The harness commits them to the run branch, runs them at
@@ -460,7 +492,62 @@ criteria lose their test visibly (hazard 17).
 whether the test author is a distinct agent with its own frozen setting (it
 should be, for independence from the implementer).
 
+**Revision (2026-10-20).** A web-calculator paid run under change 1 blocked at
+code review on a defect its own remediation introduced. The evidence is in
+`test/fixtures/recorded/code-review-web-calculator-remediation-regression.json`,
+and the analysis is in
+`.claude/sessions/2026-10-20-debug-web-calculator-remediation-regression.md`.
+What happened:
+
+- The plan told the target's keydown handler to make `Enter` do equals everywhere and to call
+  preventDefault "so that `Enter` does not also activate a focused button".
+- Round 1 found that Enter on the focused theme control therefore never switches
+  the theme (finding 9, medium). The reconciler kept it on AC-018 ("After it is
+  activated once ...").
+- The remediation exempted every focused button from the Enter handler. After a
+  mouse click on `+` the button keeps focus, so `2 + 3` then Enter re-runs `+`
+  and shows 3.
+- Round 2 blocked on that regression (finding 10, high).
+- The frozen commands were `node --version` and `npm --version`, so verification
+  passed after both commits.
+
+Change 4 is the right mechanism for this gap, but as written it would catch
+these defects only by chance. Two amendments:
+
+- **Interaction criteria need a real browser with trusted input.** A button's
+  native activation on Enter happens only for trusted input events. A DOM test
+  such as jsdom, or any `dispatchEvent`, sends untrusted events, so a test of
+  "Enter on the focused theme control switches the theme" fails even against a
+  correct fix. The toolchain must drive a real browser through trusted input, for
+  example Playwright over the Chrome DevTools Protocol.
+  - The change 1 image (Node, npm and Git) has no browser and none of its system
+    libraries.
+  - The egress allowlist is `registry.npmjs.org:443` only, so a browser download
+    at run time is refused.
+  - So this amendment changes the one image and its frozen identity, and that is
+    part of change 4's decision, not a target setting.
+- **Tests must cover each acceptance-criterion convention's variants, and the
+  plan's behaviour rules need a route to a test.**
+  - The test author works from the specification, because approval precedes
+    `plan`. This conflict came from a plan task, which no criterion stated.
+  - The specification's convention "With focus on the page document" covers "any
+    element of the calculator page". A test of AC-014 from the body alone does
+    not exercise a focused calculator button.
+  - The test author should therefore exercise each defined variant of a
+    criterion's conditions.
+  - A behaviour rule that only the plan introduces is outside change 4's reach.
+    Either the specification states it as a criterion, or a plan-time test step
+    is needed, which is a larger decision.
+
+With both amendments, the run would have failed at the first verification on the
+theme-control test, and would have failed again on the AC-014 focus variant after
+the remediation, before a second review panel was paid for. The protected-path
+rule is what keeps either test out of the remediating implementer's reach.
+Hazards weighed for this revision: 18, 21, 23.
+
 ### 5. Typed documents, rendered to markdown
+
+**Status (2026-10-20): Not built.**
 
 **What.** Spec and plan authors return JSON under a schema through
 `--json-schema`, as the patch dispatches already do
@@ -488,6 +575,8 @@ markdown parsers are deleted, not kept beside the new shape.
 
 ### 6. Models classify; a frozen policy decides the route
 
+**Status (2026-10-20): Not built.**
+
 **What.** The spec and plan reconcilers stop choosing between
 `upstream_follow_up` and `upstream_blocking`. They emit structural features for
 each finding: severity, whether it is a disclosed open decision, whether it
@@ -510,6 +599,9 @@ route to a feature. That is narrower and easier to measure with change 9.
 **Decision needed.** A section 12 entry naming the policy and its values.
 
 ### 7. A blocking finding carries evidence the harness checks
+
+**Status (2026-10-20): Not built.** Revised 2026-10-20; see "Revision
+(2026-10-20)" at the end of this change.
 
 **What.** A code reviewer that wants a finding to block must attach a repro: a
 test file and command, or a command alone. The harness applies the repro in a
@@ -537,7 +629,35 @@ it with change 9 against the recorded run-6 findings before adopting.
 `CLAUDE.md` and section 12; the code-review authorization of 2026-09-04 covers
 the stage, not this evidence rule.
 
+**Revision (2026-10-20).** The run recorded under change 4's revision
+(`test/fixtures/recorded/code-review-web-calculator-remediation-regression.json`)
+shows two gaps in change 7 as written:
+
+- **A repro confirms a finding but never guards against a regression.** The
+  repro runs once, against the reviewed commit. In that run, finding 9's repro
+  would have confirmed it and driven remediation. Nothing executable would then
+  have guarded the click-then-Enter behaviour the fix broke, and the defect
+  surfaced again only because a round-2 reviewer happened to spot it.
+  **Amendment:** a confirmed repro becomes a protected regression test, added to
+  the verification commands for every later commit in the run. Remediation must
+  make it pass and keep every earlier test passing.
+- **"No repro, so advisory" can deliver a real high.** Finding 10, the high that
+  correctly blocked the run, needs a trusted-input browser repro (see change 4's
+  revision).
+  - In a container without a browser the reviewer cannot produce one.
+  - As written, the finding is then recorded as advisory, nothing reaches the
+    blocking threshold, and the run completes with the regression delivered.
+  - That is the recall risk named above, now with a concrete instance.
+  - **Amendment:** state what an advisory finding means at the final panel, so
+    that an inability to build a repro never by itself turns a real high into a
+    delivery. Build change 7 only after the image can run the repro classes its
+    reviewers will need.
+
+Hazards weighed for this revision: 14, 18, 23.
+
 ### 8. Fail early, and resume from the last good state
+
+**Status (2026-10-20): Not built**, in any of its three parts.
 
 **What, in three parts that can be decided separately.**
 
@@ -569,6 +689,10 @@ section 20's "a failed phase blocks the run and is not retried", which is
 decision 1 of the shelved plan.
 
 ### 9. Whole-run replay and a benchmark suite
+
+**Status (2026-10-20): Designed, not built.** The replay design is
+`docs/proposals/whole-run-replay.md`. The operator's 2026-10-18 decision
+reassesses change 9 after changes 2, 10 and 1 are built, and all three now are.
 
 **What, in two parts.**
 
@@ -609,6 +733,9 @@ Section 15 and the "recorded evidence" rule in `CLAUDE.md` already require that.
 5). The benchmark needs a standing budget decision.
 
 ### 10. Dependency policy as code
+
+**Status (2026-10-20): Implemented.** Commit `1cda025`, with change 2;
+`docs/features/derived-artifacts-and-dependency-policy/plan.md`.
 
 **What.** The harness compares dependency manifests between the starting commit
 and the spec's declared intent, and after implementation against the actual
@@ -717,7 +844,7 @@ blocks are already fixed:
 | Run 3: declared files that no task changes | Fixed by `7446cd0` |
 | Run 3 (earlier): malformed JSON in phase 2 | Fixed by structured patch output (2026-10-14) |
 | Run 6: round 2 blocked on obligations remediation introduced | Partly addressed by the code-review reconciler (2026-10-13) |
-| Run 4: the spec adds TipTap and needs a lockfile the implementer cannot produce | Open |
+| Run 4: the spec adds TipTap and needs a lockfile the implementer cannot produce | Fixed by changes 2 and 10 (`1cda025`); crew-chatter runs 6-8 completed |
 
 Run 3 also showed that this feature can pass implementation and verification
 when it adds no dependency. Only change 2 is therefore strictly required to take
