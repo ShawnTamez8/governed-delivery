@@ -50,8 +50,9 @@ export function formatRunPreview(rootDir: string, snapshot: RunSnapshot, groups:
     // At most one dispatch per phase, and the frozen ceiling caps the phases.
     // The plan may not exist when the preview prints (run 6's did not), so its
     // task count cannot be the ceiling. Plus one for the self-review after the
-    // last phase, which spends its dispatch even when it is skipped.
-    implementation: policy.implementationMaxPhases + 1,
+    // last phase, which spends its dispatch even when it is skipped. Plus one
+    // more on a run with an acceptance suite: its test author, before phase 1.
+    implementation: policy.implementationMaxPhases + (profile.acceptance === null ? 1 : 2),
     verification: 0,
     // Before each remediation, up to the frozen number of reconciler calls.
     code_review: policy.codeReviewPanelSize * policy.codeReviewMaxRounds +
@@ -67,7 +68,7 @@ export function formatRunPreview(rootDir: string, snapshot: RunSnapshot, groups:
     `Frozen derived artifacts: ${JSON.stringify(snapshot.configuration.derivedArtifacts)}`,
     `Document review: panel up to ${policy.panelSizeMax}; spec ${policy.specReviewRounds} round(s), plan ${policy.planReviewRounds} round(s). Each document group permits 1 author + 1 self-critique + rounds * (panel + 1 reconciler) dispatches. The spec group adds 1 split-proposal dispatch when the reviewed spec declares more than ${policy.designSplitPathThreshold} files.`,
     `Code review: ${policy.codeReviewPanelSize} reviewers * ${policy.codeReviewMaxRounds} panel(s), plus before each of at most ${policy.codeReviewMaxRounds - 1} remediation implementer dispatch(es) up to ${policy.codeReviewReconcilerCalls} code-review reconciler dispatches; each remediation is followed by frozen verification; blocking severity ${policy.codeReviewBlockingSeverity}.`,
-    `Implementation: one implementer dispatch per ${policy.implementationPhaseTasks} plan tasks, at most ${policy.implementationMaxPhases} phases, then one implementer self-review dispatch; the phase count is known once the plan exists.`,
+    `Implementation: ${profile.acceptance === null ? "one" : `one acceptance-test-author dispatch writes the acceptance suite under ${profile.acceptance.dir}, then one`} implementer dispatch per ${policy.implementationPhaseTasks} plan tasks, at most ${policy.implementationMaxPhases} phases, then one implementer self-review dispatch; the phase count is known once the plan exists.`,
     profile.narrationCheck === null
       ? "Narration check: off (new-run --no-narration-check)."
       : `Narration check: one Decision-1 request per acceptance criterion per spec-review round to ${profile.narrationCheck.deployment} at ${profile.narrationCheck.endpoint}, flagged at P >= ${profile.narrationCheck.threshold}; not counted in the dispatch ceilings; any failed request blocks the run.`,

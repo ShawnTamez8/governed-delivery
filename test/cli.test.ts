@@ -1046,6 +1046,8 @@ const SEEDED_WITH_MODEL_FLAG = (model: string): Record<string, { model: string; 
   "spec-author": { model: "claude-opus-5-5", effort: "high" },
   "plan-author": { model: "claude-opus-5-5", effort: "high" },
   "implementer": { model: "claude-sonnet-5-5", effort: "medium" },
+  // The operator's choice from the protected-acceptance-tests plan's Task 4 evaluation (2026-10-21).
+  "acceptance-test-author": { model: "claude-sonnet-5-5", effort: "medium" },
   "reconciler": { model, effort: "medium" },
   "code-review-reconciler": { model: "claude-haiku-5-5", effort: "medium" },
   "spec-reviewer-traceability": { model: "claude-haiku-5-5", effort: "medium" },
@@ -1078,13 +1080,13 @@ test("new-run freezes the seeded model and effort for every setting, and --model
   }
 });
 
-test("new-run --effort sets the four non-reviewer settings and never a reviewer", () => {
+test("new-run --effort sets the five non-reviewer settings and never a reviewer", () => {
   const cwd = tempCwd();
   try {
     const r = runCli(cwd, ...NEW_RUN_ARGS, "--effort", "xhigh");
     assert.equal(r.status, 0, r.stderr);
     const expected = SEEDED_WITH_MODEL_FLAG("test-model");
-    for (const name of ["spec-author", "plan-author", "implementer", "reconciler"]) expected[name]!.effort = "xhigh";
+    for (const name of ["spec-author", "plan-author", "implementer", "acceptance-test-author", "reconciler"]) expected[name]!.effort = "xhigh";
     assert.deepEqual(frozenSettings(cwd, r.stdout.trim()), expected);
     for (const name of REVIEWERS) assert.equal(frozenSettings(cwd, r.stdout.trim())[name]!.effort, "medium", name);
   } finally {
@@ -1098,7 +1100,7 @@ test("new-run --effort-for beats --effort, and may raise one reviewer to max", (
     const r = runCli(cwd, ...NEW_RUN_ARGS, "--effort", "xhigh", "--effort-for", "implementer=low,code-reviewer-security=max");
     assert.equal(r.status, 0, r.stderr);
     const expected = SEEDED_WITH_MODEL_FLAG("test-model");
-    for (const name of ["spec-author", "plan-author", "reconciler"]) expected[name]!.effort = "xhigh";
+    for (const name of ["spec-author", "plan-author", "acceptance-test-author", "reconciler"]) expected[name]!.effort = "xhigh";
     expected["implementer"]!.effort = "low";
     expected["code-reviewer-security"]!.effort = "max";
     assert.deepEqual(frozenSettings(cwd, r.stdout.trim()), expected);
@@ -1176,6 +1178,28 @@ test("help new-run lists the three setting flags and what --model and --effort r
     assert.match(r.stdout, /--model-for and --effort-for take <setting>=<value>/);
     assert.match(r.stdout, /\[--no-narration-check\]/);
     assert.match(r.stdout, /SYSTEMONE_API_KEY\nmust be set, and the first three are frozen; --no-narration-check creates the run\nwithout the check/);
+    assert.match(r.stdout, /\[--no-narration-check\] \[--acceptance-tests\]/);
+    assert.match(r.stdout, /--acceptance-tests freezes an acceptance suite under acceptance\/<slug>\//);
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
+
+test("new-run --acceptance-tests freezes the run's suite directory and two repeats, and without it acceptance is null", () => {
+  const cwd = tempCwd();
+  try {
+    const profileOf = (runId: string) =>
+      JSON.parse(readFileSync(join(cwd, ".governance", "profiles", runId, "profile.json"), "utf8"));
+    const off = runCli(cwd, ...NEW_RUN_ARGS);
+    assert.equal(off.status, 0, off.stderr);
+    assert.equal(profileOf(off.stdout.trim()).acceptance, null);
+    // The plan's frozen block: `acceptance/<slug>/` for NEW_RUN_ARGS' slug `s`, and `repeatEach: 2`.
+    const on = runCli(cwd, ...NEW_RUN_ARGS, "--acceptance-tests");
+    assert.equal(on.status, 0, on.stderr);
+    assert.deepEqual(profileOf(on.stdout.trim()).acceptance, { dir: "acceptance/s/", repeatEach: 2 });
+    const valued = runCli(cwd, ...NEW_RUN_ARGS, "--acceptance-tests=yes");
+    assert.equal(valued.status, 2);
+    assert.match(valued.stderr, /--acceptance-tests must be a bare flag/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

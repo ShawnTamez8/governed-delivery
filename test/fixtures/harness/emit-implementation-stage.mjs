@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 // One fixture serves every implementation dispatch (one per phase of the plan's
@@ -22,12 +22,17 @@ const stdin = readFileSync(0, "utf8");
 // the phase: the self-review prompt carries no phase.
 const isSelfReview = stdin.includes("This is your own self-review of the complete change");
 
+// The role line buildAcceptanceTestAuthorPrompt opens with
+// (docs/features/protected-acceptance-tests/plan.md): the one dispatch before
+// phase 1, which carries no phase either.
+const isTestAuthor = stdin.startsWith("you are the acceptance test author");
+
 // `This is phase K of N.` — stated by buildImplementationAuthorPrompt.
-const phaseMatch = isSelfReview ? null : /This is phase (\d+) of (\d+)\./.exec(stdin);
-if (!isSelfReview && !phaseMatch) {
+const phaseMatch = isSelfReview || isTestAuthor ? null : /This is phase (\d+) of (\d+)\./.exec(stdin);
+if (!isSelfReview && !isTestAuthor && !phaseMatch) {
   throw new Error("emit-implementation-stage: no phase found in the prompt");
 }
-const phaseIndex = isSelfReview ? 0 : Number(phaseMatch[1]);
+const phaseIndex = isSelfReview || isTestAuthor ? 0 : Number(phaseMatch[1]);
 
 // Every dispatch this fixture serves sends `--json-schema <schema>` (the
 // workspace reply for a phase, the self-review reply, which requires a critique,
@@ -40,7 +45,7 @@ function flag(name) {
   return at < 0 ? undefined : process.argv[at + 1];
 }
 const schemaArg = flag("--json-schema");
-const promptKind = isSelfReview ? "self-review" : "phase";
+const promptKind = isSelfReview ? "self-review" : isTestAuthor ? "test-author" : "phase";
 if (schemaArg === undefined) {
   throw new Error(`emit-implementation-stage: a ${promptKind} prompt arrived without --json-schema`);
 }
@@ -84,9 +89,10 @@ function listAfter(heading) {
 }
 
 const emitMode = process.env.EMIT_MODE ?? "ok";
-// In the self-review modes every phase answers as ok does, so those modes run
-// against a one-phase plan; the self-review itself answers by emitMode below.
-const mode = emitMode.startsWith("self-review-") ? "ok" : emitMode;
+// In the self-review and test-author modes every phase answers as ok does, so
+// those modes run against a one-phase plan; the self-review and the test author
+// answer by emitMode themselves.
+const mode = emitMode.startsWith("self-review-") || emitMode.startsWith("test-author-") ? "ok" : emitMode;
 const paths = scopePaths();
 
 // The content embeds a committed project file read from the process working
@@ -118,6 +124,19 @@ function phasePath() {
     throw new Error(`emit-implementation-stage: scope has ${paths.length} paths, phase ${phaseIndex} has none`);
   }
   return path;
+}
+
+// The first test title of the run's committed acceptance suite, read from the
+// suite directory the prompt names (docs/features/protected-acceptance-tests/plan.md,
+// Task 9), never from a literal: the dispute modes name it as the prompt asks.
+function suiteTitle() {
+  const dir = /the acceptance suite under (\S+) from the approved specification's/.exec(stdin)?.[1];
+  if (dir === undefined) throw new Error("emit-implementation-stage: no acceptance suite named in the prompt");
+  const file = readdirSync(dir).filter((f) => f.endsWith(".mjs")).sort()[0];
+  if (file === undefined) throw new Error(`emit-implementation-stage: no suite file under ${dir}`);
+  const literal = /test\(("(?:[^"\\]|\\.)*")/.exec(readFileSync(`${dir}${file}`, "utf8"))?.[1];
+  if (literal === undefined) throw new Error(`emit-implementation-stage: no test title in ${dir}${file}`);
+  return JSON.parse(literal);
 }
 
 /** The workspace reply (WORKSPACE_REPLY_SCHEMA in src/agent-result.ts). */
@@ -193,6 +212,8 @@ function selfReviewResult() {
       return "I reviewed the change and everything looks fine.";
     case "self-review-blocked":
       return selfReview(["fixture self-review: could not finish"], "blocked");
+    case "self-review-dispute":
+      return { ...reply("blocked", "fixture self-review", [`${suiteTitle()}: the test contradicts the approved specification`]), critique: ["fixture self-review: a test contradicts the specification"] };
     case "self-review-long-critique":
       return selfReview(["x".repeat(2001), ...Array.from({ length: 50 }, (_, index) => `fixture entry ${index + 2}`)]);
     case "self-review-out-of-scope":
@@ -221,9 +242,33 @@ function selfReviewResult() {
   }
 }
 
+// The test author's suite: one file in the suite directory the prompt's scope
+// block names, opening with the import line the prompt states, and one test per
+// acceptance criterion of the specification the prompt carries, titled by its
+// ID and words. Every value is read out of the prompt.
+function testAuthorResult() {
+  const importLine = /loads the system's own runner: (.+)$/m.exec(stdin)?.[1];
+  if (importLine === undefined) throw new Error("emit-implementation-stage: no import line found in the test-author prompt");
+  const spec = stdin.slice(stdin.indexOf("Approved specification:"), stdin.indexOf("Approved plan:"));
+  const tests = [...spec.matchAll(/^- (AC-\d+): (.+)$/gm)].map(([, id, words]) =>
+    [
+      `test(${JSON.stringify(`${id} ${words}`)}, async ({ page }) => {`,
+      '  await page.goto("index.html");',
+      '  await expect(page.locator("body")).toBeVisible();',
+      "});",
+    ].join("\n")
+  );
+  write(`${paths[0]}acceptance.spec.mjs`, `${importLine}\n\n${tests.join("\n\n")}\n`);
+  // test-author-outside also writes beside the suite, outside its directory.
+  if (emitMode === "test-author-outside") write("src/never-approved.ts");
+  return reply("completed", "fixture acceptance tests");
+}
+
 let answer;
 if (isSelfReview) {
   answer = selfReviewResult();
+} else if (isTestAuthor) {
+  answer = testAuthorResult();
 } else if (mode === "ok") {
   for (const p of paths) write(p);
   answer = reply();
@@ -252,6 +297,12 @@ if (isSelfReview) {
   answer = reply();
 } else if (mode === "non-proposed") {
   answer = reply("blocked", "fixture implementation refused", ["Build the thing"]);
+} else if (mode === "dispute") {
+  // A test that contradicts the specification, returned blocked naming its title.
+  answer = reply("blocked", "fixture disputes a test", [`${suiteTitle()}: the test contradicts the approved specification`]);
+} else if (mode === "dispute-id-only") {
+  // A criterion that could not be built, named only by its ID: not a dispute.
+  answer = reply("blocked", "fixture could not finish", [`${suiteTitle().split(" ")[0]}: could not be implemented`]);
 } else if (mode === "completed-with-incomplete") {
   // A reply that says completed and still lists a task it did not do.
   for (const p of paths) write(p);

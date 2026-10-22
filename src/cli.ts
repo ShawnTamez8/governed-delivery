@@ -205,6 +205,7 @@ async function main(): Promise<void> {
             },
             after: args.has("after") ? Number(args.get("after")) : undefined,
             narrationCheck: parsed.flags.has("no-narration-check") ? "off" : "on",
+            acceptanceTests: parsed.flags.has("acceptance-tests"),
           });
           console.log(String(created.run.id));
         } catch (error) {

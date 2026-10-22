@@ -1,5 +1,6 @@
+import { ACCEPTANCE_IMPORT_LINE, ACCEPTANCE_STUB_PAGE } from "./acceptance.ts";
 import type { AgentDefinition } from "./agents.ts";
-import type { VerificationConfig } from "./governed-config.ts";
+import type { VerificationConfig, VerifyCommand } from "./governed-config.ts";
 import type { PlanPhase } from "./plan-doc.ts";
 
 export const SPEC_AUTHOR_PROMPT_PREFIX = "you are the spec author";
@@ -10,6 +11,7 @@ export const IMPLEMENTATION_PROMPT_PREFIX = "you are the implementer";
 export const CODE_REVIEW_PROMPT_PREFIX = "you are the code reviewer";
 export const CODE_REVIEW_REMEDIATION_PROMPT_PREFIX = "you are the code-review remediator";
 export const CODE_REVIEW_RECONCILER_PROMPT_PREFIX = "you are the code-review reconciler";
+export const ACCEPTANCE_TEST_AUTHOR_PROMPT_PREFIX = "you are the acceptance test author";
 // "Reviewed", not "approved": the split is proposed after spec review and
 // before the operator signs anything.
 export const DESIGN_SPLIT_PROMPT_PREFIX = "you are dividing a reviewed specification into separately built features";
@@ -202,6 +204,56 @@ function workspaceReplyShape(extra = ""): string {
  * compares every changed package.json with the signed specification's list.
  */
 const DEPENDENCY_ADDITION_RULE = `Add a package to a package.json only if the specification's ## Dependencies added section lists it for that file: the system refuses a commit that adds any other.`;
+
+/** A run's acceptance suite, as the three patch prompts state it: its directory and the system's command. */
+export interface AcceptanceSuitePrompt {
+  dir: string;
+  command: VerifyCommand;
+}
+
+/**
+ * What the three patch prompts say about a run's acceptance suite
+ * (docs/features/protected-acceptance-tests/plan.md, Task 9): where it is and who
+ * wrote it, that it runs with every verification and blocks, the command, and the
+ * abort rule. A test that contradicts the specification is returned as blocked,
+ * naming the test's title, which the implementation stage records as
+ * `implementation.acceptance.disputed`. Empty for a run without a suite, so its
+ * prompts are byte-identical to the prompts before the suite existed. Each rule
+ * is one source line so the constraint scan in `test/prompts.test.ts` matches it.
+ */
+function acceptanceSuiteRules(suite: AcceptanceSuitePrompt | null): string {
+  if (suite === null) return "";
+  return `\n${[
+    `An independent test author wrote the acceptance suite under ${suite.dir} from the approved specification's acceptance criteria before the implementation began; it is read-only to you, and the system refuses any change to it.`,
+    `The system runs the suite after the verification commands every time they run, and a failing test, or a test whose repeats disagree, blocks the run.`,
+    `Run the suite yourself through run_command with this command: ${suite.command.command.join(" ")}`,
+    `If a test contradicts the approved specification, never special-case it, match its inputs or detect the test environment: return blocked, and list the test's exact title in incompleteTasks.`,
+  ].join("\n")}`;
+}
+
+/** A run's acceptance suite, as the code reviewer prompt states it: its directory and the criteria the validity gate recorded as already satisfied. */
+export interface AcceptanceReviewPrompt {
+  dir: string;
+  alreadySatisfied: string[];
+}
+
+/**
+ * The reviewers' added lens on a run with a suite (the same plan, Task 9): where
+ * the suite is, that test-environment detection and special-cased test inputs
+ * are a high-severity defect, and each criterion the author claimed was already
+ * met, so a reviewer can check the claim. Like the rest of the prompt it states
+ * no consequence. Empty for a run without a suite.
+ */
+function acceptanceReviewRules(suite: AcceptanceReviewPrompt | null): string {
+  if (suite === null) return "";
+  return `\n\n${[
+    `An independent test author wrote the acceptance suite under ${suite.dir} from the acceptance criteria before the implementation began, and the system runs it at every verification point; read it there to see what each criterion's tests check.`,
+    `Code that detects the test environment, such as by reading navigator.webdriver, or that special-cases a test's inputs instead of implementing the behavior is a high-severity defect.`,
+    ...(suite.alreadySatisfied.length === 0
+      ? []
+      : [`The test author claimed the code already met these criteria before the implementation began, so their tests were kept as regression guards; check each claim against the code: ${suite.alreadySatisfied.join(", ")}`]),
+  ].join("\n")}`;
+}
 
 /**
  * The fold's limit on that list: the operator answered the reviewed list, so
@@ -1424,7 +1476,8 @@ export function buildImplementationAuthorPrompt(
   baseCommit: string,
   phase: PlanPhase,
   existingPaths: readonly string[],
-  verification: VerificationConfig
+  verification: VerificationConfig,
+  acceptance: AcceptanceSuitePrompt | null = null
 ): string {
   const lastTask = phase.firstTask + phase.tasks.length - 1;
   const existing = new Set(existingPaths);
@@ -1470,7 +1523,7 @@ ${renderPaths(scope.filter((p) => !existing.has(p)))}
 ${verificationCommandsBlock(verification, true)}
 These commands first run after the last phase, and again after any code-review remediation, so a phase that leaves one of them failing is not by itself a defect.
 Before you choose a file's content, read what each command runs (for an npm command, its entry under scripts in package.json) and write files that command will accept.
-${DEPENDENCY_ADDITION_RULE}
+${DEPENDENCY_ADDITION_RULE}${acceptanceSuiteRules(acceptance)}
 
 Tasks for this phase (tasks ${phase.firstTask} through ${lastTask} of the approved plan):
 
@@ -1513,7 +1566,8 @@ export function buildImplementationSelfReviewPrompt(
   existingPaths: readonly string[],
   changedPaths: string[],
   diff: string,
-  verification: VerificationConfig
+  verification: VerificationConfig,
+  acceptance: AcceptanceSuitePrompt | null = null
 ): string {
   const existing = new Set(existingPaths);
   const renderPaths = (paths: string[]): string => (paths.length > 0 ? paths.map((p) => `- ${p}`).join("\n") : "none.");
@@ -1552,7 +1606,7 @@ ${renderPaths(scope.filter((p) => !existing.has(p)))}
 
 ${verificationCommandsBlock(verification, true)}
 These commands run right after this review, and the first that fails blocks the run.
-${DEPENDENCY_ADDITION_RULE}
+${DEPENDENCY_ADDITION_RULE}${acceptanceSuiteRules(acceptance)}
 
 Changed paths:
 
@@ -1569,6 +1623,76 @@ ${specContent}
 Complete diff of the change through ${head}:
 
 ${diff}`;
+}
+
+/**
+ * The acceptance test author prompt (docs/features/protected-acceptance-tests/plan.md,
+ * Task 4): one dispatch, before the first implementation phase, that turns
+ * every acceptance criterion of the approved specification into browser tests
+ * under `dir`, through the tool server. The system then checks the suite by
+ * the validity gate (`validateAcceptanceSuite`) and holds it read-only for
+ * every later agent, so each rule the gate checks is stated here (hazard 3),
+ * and the reply is the patch dispatches' workspace status (hazard 1).
+ *
+ * It never names an example from a recorded run: the evaluation that decides
+ * whether the author is good enough runs on the web calculator, and an example
+ * drawn from it would teach the answer. The plan is offered for names only,
+ * because the criteria are the source of truth. Each rule is one source line
+ * so the constraint scan in `test/prompts.test.ts` matches it.
+ */
+export function buildAcceptanceTestAuthorPrompt(
+  agent: AgentDefinition,
+  specContent: string,
+  planContent: string,
+  dir: string,
+  command: VerifyCommand
+): string {
+  return `${ACCEPTANCE_TEST_AUTHOR_PROMPT_PREFIX} ${agent.id}
+
+Write browser acceptance tests, as Playwright test files under ${dir}, for every acceptance criterion of the approved specification below.
+An independent implementer builds the change after you; the system runs your tests at every verification point, and nobody may change them after you.
+${WORKSPACE_TOOLS_RULES}
+
+The acceptance criteria in the approved specification are the source of truth; read the approved plan only for the names of files, elements and interfaces it chooses.
+Write one or more tests for every acceptance criterion, each titled with the criterion's ID, a space and the criterion's words, such as \`AC-001 <the criterion's words>\`: a criterion with no test, or a test whose title begins with no criterion ID of the specification, refuses the whole suite.
+Where the specification defines the conditions a criterion holds under, such as a phrase whose meaning it defines once for several criteria, write a test for every condition that definition covers, not only the plainest one.
+Where a condition covers a set, such as keyboard focus on any element of the page, test its plainest member and each member that could behave differently: the document body, and each kind of focusable element the page has.
+Where a criterion names an action without saying how the user performs it, such as activating a control, test each way a user performs it: a click, and each key that activates that kind of element while it has keyboard focus.
+Where two criteria apply to the same input, such as a key with a page-wide meaning pressed while an element that also reacts to that key has focus, write a test that checks both criteria hold together.
+Begin every file with exactly this line, which loads the system's own runner: ${ACCEPTANCE_IMPORT_LINE}
+Open the page in every test with \`await page.goto("index.html")\`: the page under test is index.html at the repository root, opened from the checkout.
+Write no hooks (beforeEach, beforeAll, afterEach, afterAll): each test opens its own page and does its own setup.
+Find elements by role and accessible name wherever the page gives them one.
+Every assertion is \`await expect(<locator>)\`, optionally followed by \`.not\`, and then one of Playwright's auto-retrying matchers, such as toHaveText, toHaveAttribute, toBeVisible or toHaveCSS; never \`expect(await …)\`, expect.soft, expect.poll, or a value matcher such as toBe.
+Every test asserts on the page at least once, in its own body or in a helper function of the same file that it calls.
+Await every Playwright call that returns a promise, and every expect, or return it from a helper that is awaited; loop over awaited steps with for…of, never forEach.
+Set no timeout, delay or wait: no timeout or delay option, waitForTimeout, setTimeout, setInterval, test.setTimeout or test.slow, and no networkidle.
+Use only trusted input, through page.keyboard and locator actions such as click, press and fill; never dispatchEvent or a constructed keyboard, mouse or input event.
+A test for behaviour that does not exist yet must fail on an assertion or on a locator action that finds no element, never on navigation or on an error in its own code; a test for behaviour that already exists may pass, and is kept as a regression guard.
+When index.html does not exist yet, the system checks your tests against a blank index.html whose whole content is ${ACCEPTANCE_STUB_PAGE}
+You may create that blank index.html yourself to run your tests the way the system will, and you must delete it again before you answer.
+Write files only under ${dir}: the system commits that directory and nothing else, and refuses any other change.
+Run your tests with this command through run_command before you answer, and read the JSON report it prints: ${command.command.join(" ")}
+Each failing test waits several seconds, and one command may run for at most a few minutes, so run one file at a time by replacing the last argument with that file's path.
+If an acceptance criterion cannot be tested in a browser, return blocked and name it in incompleteTasks.
+
+When you finish, answer with your status, a summary of what you wrote, and every acceptance criterion you could not test, in exactly this shape:
+${workspaceReplyShape()}
+
+status must be one of completed, blocked: completed when every acceptance criterion has a test, and blocked otherwise, with each criterion you could not test listed in incompleteTasks.
+${STRUCTURED_OUTPUT_RULE}
+
+Patch only these paths:
+
+- ${dir}
+
+Approved specification:
+
+${specContent}
+
+Approved plan:
+
+${planContent}`;
 }
 
 /**
@@ -1602,7 +1726,8 @@ export function buildCodeReviewPrompt(
   planContent: string,
   changedPaths: string[],
   diff: string,
-  verifiedCommit: string
+  verifiedCommit: string,
+  acceptance: AcceptanceReviewPrompt | null = null
 ): string {
   if (
     !agent.outputs.includes("code-findings") ||
@@ -1624,7 +1749,7 @@ Your working directory is the repository checkout at commit ${verifiedCommit}.
 Read it to see the code surrounding the change. Run no git commands: the
 diff below is the complete statement of what changed, and no git tool is
 available to you. This checkout is read-only for you: do not create, modify,
-or delete any file. Only the findings you return are considered.
+or delete any file. Only the findings you return are considered.${acceptanceReviewRules(acceptance)}
 
 Return exactly a JSON AgentResult object with this shape; your findings
 travel in the AgentResult's proposedContentChanges.findings:
@@ -1703,7 +1828,8 @@ export function buildCodeReviewRemediationPrompt(
   changedPaths: string[],
   diff: string,
   findings: CodeReviewRemediationFindingInput[],
-  verification: VerificationConfig
+  verification: VerificationConfig,
+  acceptance: AcceptanceSuitePrompt | null = null
 ): string {
   const derived = derivedArtifactsLines(verification, true);
   const renderedFindings = findings
@@ -1730,7 +1856,7 @@ status must be one of completed, blocked: completed when every finding below is 
 ${STRUCTURED_OUTPUT_RULE}
 Before you return, re-read every task in the approved plan and every acceptance criterion in the approved specification that governs the code you change: a fix that breaks one of them is not a fix, so find a change that keeps both.
 When you fix a defect, look for the same defect in every other file of the approved scope and fix it there too.
-${DEPENDENCY_ADDITION_RULE}
+${DEPENDENCY_ADDITION_RULE}${acceptanceSuiteRules(acceptance)}
 ${derived === "" ? "" : `\n${derived}\n`}
 Approved scope:
 

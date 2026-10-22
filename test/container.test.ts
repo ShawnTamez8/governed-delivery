@@ -187,8 +187,11 @@ test("criterion 2: only the worktree and a read-only .git are mounted, and host 
     const system = (p: string) =>
       p === "/" || p === "/etc/resolv.conf" || p === "/etc/hostname" || p === "/etc/hosts" ||
       p.startsWith("/proc") || p.startsWith("/dev") || p.startsWith("/sys");
-    assert.deepEqual(points.filter((m) => !system(m.point) && m.point !== "/work" && m.point !== "/work/.git"), []);
+    // `--init` mounts the engine's own init binary as PID 1.
+    const init = "/usr/sbin/docker-init";
+    assert.deepEqual(points.filter((m) => !system(m.point) && m.point !== "/work" && m.point !== "/work/.git" && m.point !== init), []);
     assert.ok(points.find((m) => m.point === "/work/.git")?.options.split(",").includes("ro"), "the .git mount is read-only");
+    assert.ok(points.find((m) => m.point === init)?.options.split(",").includes("ro"), "the init binary is mounted read-only");
 
     const token = randomBytes(8).toString("hex");
     const canary = join(root, ".governance", `canary-${token}.txt`);
@@ -322,6 +325,37 @@ test("criterion 6: runaway commands die at the ceiling, and memory is bounded", 
     assert.equal(memory.isError, true);
     assert.ok(memory.text.startsWith("exit code 137"), memory.text.slice(0, 300));
   });
+});
+
+test("an orphan a command leaves is reaped, so zombies never accumulate against the pids limit", { skip }, async () => {
+  // Chromium leaves such orphans on every test; under a PID 1 that never reaps
+  // them they filled the 512-pid limit (protected-acceptance-tests, Task 4 round 1).
+  const target = makeTarget();
+  try {
+    const sandbox = createSandbox({ frozen: frozen(), rootDir: target.root, runId: 1, label: "test", worktreePath: target.worktree });
+    try {
+      const options = { cwd: target.worktree, timeoutSeconds: 30, maxBytes: 65536, retentionMaxBytes: 65536, evidencePath: join(target.root, "orphans.log") };
+      const orphans = await runInSandbox(execTarget(sandbox), sandbox.frozen.imageId,
+        { name: "orphans", command: ["sh", "-c", 'for i in 1 2 3 4 5; do (sh -c "sleep 0.2; echo \\$\\$ >> /work/orphans.txt" &); done'] }, options);
+      assert.equal(orphans.exitCode, 0);
+      const file = join(target.worktree, "orphans.txt");
+      const deadline = Date.now() + 10_000;
+      while ((existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").length : 0) < 5 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200));
+      assert.equal(readFileSync(file, "utf8").trim().split("\n").length, 5, "positive control: five orphans ran to their end");
+      await new Promise((r) => setTimeout(r, 1000));
+      const count = await runInSandbox(execTarget(sandbox), sandbox.frozen.imageId,
+        { name: "zombies", command: ["sh", "-c", 'for s in /proc/[0-9]*/status; do grep -q "^State:.Z" "$s" 2>/dev/null && echo zombie; done; echo END'] },
+        { ...options, evidencePath: join(target.root, "zombies.log") });
+      assert.equal(count.exitCode, 0);
+      const log = readFileSync(join(target.root, "zombies.log"), "utf8");
+      assert.ok(log.includes("END"), log);
+      assert.equal(log.split("\n").filter((l) => l === "zombie").length, 0, log);
+    } finally {
+      destroySandbox(sandbox);
+    }
+  } finally {
+    target.cleanup();
+  }
 });
 
 test("criterion 8: the worktree's .git file is refused by the tool and read-only to commands", { skip }, async () => {

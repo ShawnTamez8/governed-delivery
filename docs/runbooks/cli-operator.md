@@ -62,7 +62,8 @@ Code executable on `PATH`, and a running Docker engine (Docker Desktop on
 Windows). Every run that reaches implementation runs the implementer's tools,
 the verification commands and the derived commands in a container built from
 the checkout's `container/Dockerfile`; `new-run` refuses without an engine
-before any spend. The image provides Node, npm and Git and reaches only the npm
+before any spend. The image provides Node, npm and Git, plus the Playwright
+browser that only the system's acceptance runner uses, and reaches only the npm
 registry, so this build supports Node/npm targets; the README's "Docker and the
 supported toolchain" states what the program check cannot see. Arrange
 authorized Claude provider access and model entitlement separately. Obtain the BuildWorks repository through your normal
@@ -418,7 +419,11 @@ Author the following inputs in the target using your editor:
 
 The design should explicitly require any tests or documentation you expect in
 the delivery. There is no separate implemented test-authoring or documentation
-stage that will fill those gaps later. You do not hand-author generated `spec.md`
+stage that will fill those gaps later. For a static page that opens from the
+worktree, `new-run --acceptance-tests` adds an independently written browser
+suite for the acceptance criteria; see the
+[README](../../README.md#opt-in-to-acceptance-tests). It does not replace the
+tests the design asks for. You do not hand-author generated `spec.md`
 or `plan.md` for this workflow.
 
 #### Choose meaningful verification before intake
@@ -630,7 +635,7 @@ Add `--no-narration-check` to create the run without the check; the profile
 records that choice, and the `run` execution preview shows it.
 
 `--model` names the model for `reconciler` only. The other
-settings (`spec-author`, `plan-author`, `implementer`, `code-review-reconciler`, the three
+settings (`spec-author`, `plan-author`, `implementer`, `acceptance-test-author`, `code-review-reconciler`, the three
 spec reviewers and the three code reviewers) take the seeded models and efforts in `DEFAULT_SETTINGS` in
 [the policy source](../../src/policy.ts); the table in the
 [README](../../README.md#create-an-explicit-run-and-consent-to-execution) lists
@@ -643,7 +648,7 @@ them. Add any of these to `new-run` to change one run's settings:
     --effort-for implementer=medium,code-reviewer-security=high
 ```
 
-`--effort` sets the four non-reviewer settings and never reaches a reviewer or
+`--effort` sets the five non-reviewer settings and never reaches a reviewer or
 the code-review reconciler.
 `--model-for` and `--effort-for` take `<setting>=<value>` pairs separated by
 commas, and `--effort-for` beats `--effort`. It is the only way to change a

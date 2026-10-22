@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { ACCEPTANCE_COMMAND_NAME } from "./acceptance.ts";
 import { AGENTS, type AgentDefinition } from "./agents.ts";
 import { loadPublicKey } from "./approval.ts";
 import { canonicalJson, sha256Hex } from "./canonical.ts";
@@ -103,6 +104,14 @@ export interface Profile {
    * recovery, because a rebuild is not guaranteed to reproduce the ID.
    */
   sandbox: FrozenSandbox;
+  /**
+   * The executable acceptance suite this run opted into with `new-run
+   * --acceptance-tests` (docs/features/protected-acceptance-tests/plan.md), or
+   * null when it did not: the directory the test author writes and everyone
+   * after it holds read-only, and the repeat count. Execution-only, because
+   * nothing on the snapshot path reads it.
+   */
+  acceptance: AcceptanceConfig | null;
   frozenAt: string;
   agents: AgentDefinition[];
   executor: ExecutorDefinition;
@@ -117,7 +126,13 @@ export interface Profile {
  * second schema, so `loadInspectableProfile`'s result can never reach a
  * parameter that expects an executable `Profile`.
  */
-export type InspectableProfile = Readonly<Omit<Profile, "after" | "sandbox">>;
+export type InspectableProfile = Readonly<Omit<Profile, "after" | "sandbox" | "acceptance">>;
+
+/** What `new-run --acceptance-tests` freezes: `acceptance/<slug>/` and the repeat count. */
+export interface AcceptanceConfig {
+  dir: string;
+  repeatEach: number;
+}
 
 /**
  * What a run's narration check calls and how it judges the answer. The key is
@@ -290,7 +305,8 @@ export function freezeProfile(
   after: AfterLink | null = null,
   // `createRunIntake` always passes this explicitly, from `new-run`'s switch;
   // the default serves only the tests that freeze profiles directly.
-  narrationCheck: NarrationCheckConfig | null = null
+  narrationCheck: NarrationCheckConfig | null = null,
+  acceptance: AcceptanceConfig | null = null
 ): { path: string; hash: string; profile: Profile } {
   const agents = deps.agents ?? AGENTS;
   const modelError = validateModelName(model);
@@ -300,6 +316,14 @@ export function freezeProfile(
   const sandboxError = invalidSandboxReason(sandbox);
   if (sandboxError !== null) {
     throw new Error(`cannot freeze a profile for run ${runId}: ${sandboxError}`);
+  }
+  if (acceptance !== null && !isAcceptanceConfig(acceptance)) {
+    throw new Error(`cannot freeze a profile for run ${runId}: ${ACCEPTANCE_SHAPE}, found ${JSON.stringify(acceptance)}`);
+  }
+  // The acceptance command runs after the frozen ones and its log is named for
+  // it, so a frozen command of the same name would share that log.
+  if (acceptance !== null && verification.commands.some((c) => c.name === ACCEPTANCE_COMMAND_NAME)) {
+    throw new Error(`cannot freeze a profile for run ${runId}: a run with an acceptance suite reserves the verify command name ${ACCEPTANCE_COMMAND_NAME}, which governed.yaml already uses`);
   }
   // Hazard 19: a tool call emits nothing while its command runs, and the host
   // kills the client `HOST_KILL_GRACE_SECONDS` after the ceiling, so the
@@ -360,6 +384,7 @@ export function freezeProfile(
     after,
     narrationCheck,
     sandbox,
+    acceptance,
     frozenAt: new Date().toISOString(),
     agents: [...agents].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
     executor: CLAUDE_CODE,
@@ -461,7 +486,7 @@ function invalidDispatchSettingsReason(settings: Record<string, unknown>, agents
  * longer executes.
  *
  * It is `invalidInspectableProfileReason` followed by the execution-only
- * checks: `after`, `sandbox`, and the policy's exact shape (an obsolete policy
+ * checks: `after`, `sandbox`, `acceptance`, and the policy's exact shape (an obsolete policy
  * field, which no code reads, refuses execution only). A new frozen field belongs to the inspectable
  * predicate when anything on the snapshot path reads or projects it
  * (`readRunSnapshot`, `runConfiguration`, `interpretBoundary` and the helpers
@@ -484,6 +509,12 @@ export function invalidProfileReason(profile: unknown): string | null {
   }
   const sandboxReason = invalidSandboxReason(p.sandbox);
   if (sandboxReason !== null) return sandboxReason;
+  if (!("acceptance" in p)) {
+    return "the frozen profile carries no acceptance: it predates executable acceptance tests, and a run frozen without it cannot say whether an acceptance suite guards it";
+  }
+  if (p.acceptance !== null && !isAcceptanceConfig(p.acceptance)) {
+    return `${ACCEPTANCE_SHAPE}, found ${JSON.stringify(p.acceptance)}`;
+  }
   // The inspectable predicate tolerates a policy field the current `Policy` no
   // longer has; execution does not.
   return invalidPolicyReason(p.policy);
@@ -492,8 +523,8 @@ export function invalidProfileReason(profile: unknown): string | null {
 /**
  * Is this frozen profile one a read-only inspection can verify evidence
  * against? Every check `invalidProfileReason` makes except the execution-only
- * ones (`after`, `sandbox`, and a policy field the current `Policy` no longer
- * has), in the same order and with the same messages.
+ * ones (`after`, `sandbox`, `acceptance`, and a policy field the current
+ * `Policy` no longer has), in the same order and with the same messages.
  * The same rule decides membership: a field anything on the snapshot path
  * reads or projects is checked here, present value included, so a hash-matching
  * profile cannot put a malformed value into `status` or the dashboard. One
@@ -643,6 +674,24 @@ function isNarrationCheckConfig(v: unknown): boolean {
     isPositiveInt(c.timeoutMs) &&
     typeof c.questionHash === "string" &&
     /^[0-9a-f]{64}$/.test(c.questionHash)
+  );
+}
+
+const ACCEPTANCE_SHAPE = "the frozen profile acceptance must be null or { dir: \"acceptance/<slug>/\", repeatEach } with repeatEach at least 2";
+
+/**
+ * Exactly `{ dir, repeatEach }`: `acceptance/` plus one kebab-case slug and a
+ * slash, and at least two repeats, since one repeat cannot show a test is flaky.
+ */
+function isAcceptanceConfig(v: unknown): boolean {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+  const c = v as Record<string, unknown>;
+  return (
+    Object.keys(c).sort().join(",") === "dir,repeatEach" &&
+    typeof c.dir === "string" &&
+    /^acceptance\/[a-z0-9]+(-[a-z0-9]+)*\/$/.test(c.dir) &&
+    isPositiveInt(c.repeatEach) &&
+    (c.repeatEach as number) >= 2
   );
 }
 

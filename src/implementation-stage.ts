@@ -1,9 +1,19 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
+import {
+  ACCEPTANCE_STUB_PAGE,
+  acceptanceCommand,
+  disputedTests,
+  readAcceptanceReport,
+  validateAcceptanceSuite,
+  type AcceptanceFile,
+} from "./acceptance.ts";
+import type { AgentDefinition } from "./agents.ts";
+import { verifyCommit } from "./commit-verification.ts";
 import { type ExecutorDefinition } from "./executor.ts";
 import { requireRunInProgress, type Store } from "./store.ts";
-import { loadVerifiedProfile, requireFrozenBinding, resolveSettings } from "./profile.ts";
+import { loadVerifiedProfile, requireFrozenBinding, resolveSettings, type AcceptanceConfig } from "./profile.ts";
 import { dispatchInSandbox, type DispatchInput, type DispatchResult } from "./dispatch.ts";
 import {
   describeIncompleteReply,
@@ -12,11 +22,11 @@ import {
   WORKSPACE_REPLY_SCHEMA,
 } from "./agent-result.ts";
 import { unquiescedReason } from "./container.ts";
-import { derivedEvidenceDir, worktreePath as governanceWorktreePath } from "./paths.ts";
+import { acceptanceEvidenceDir, derivedEvidenceDir, worktreePath as governanceWorktreePath } from "./paths.ts";
 import { derivedPathExclusion, regenerateDerivedArtifacts } from "./derived-artifacts.ts";
 import { unapprovedDependencyAdditions } from "./dependency-policy.ts";
 import { validateSpecDoc } from "./spec-doc.ts";
-import { buildImplementationAuthorPrompt, buildImplementationSelfReviewPrompt } from "./prompts.ts";
+import { buildAcceptanceTestAuthorPrompt, buildImplementationAuthorPrompt, buildImplementationSelfReviewPrompt } from "./prompts.ts";
 import {
   critiqueAuditEntries,
   SELF_REVIEW_REPLY_SCHEMA,
@@ -25,13 +35,21 @@ import {
 import { formatImplementationGate } from "./handoff.ts";
 import { appendAudit } from "./audit.ts";
 import { normalizeText, sha256Hex } from "./canonical.ts";
-import { SYSTEM_NAME } from "./policy.ts";
-import { checkWorktreeClean, commitWorkspace, discardWorkspace } from "./workspace-commit.ts";
+import { SYSTEM_NAME, type EffortLevel } from "./policy.ts";
+import { checkWorktreeClean, commitWorkspace, discardWorkspace, NO_HOOKS } from "./workspace-commit.ts";
 import { planPhases, validatePlanDoc } from "./plan-doc.ts";
 
 export type ImplementationStageResult =
   | { ok: true; stageId: number; worktreePath: string }
   | { ok: false; reason: string };
+
+/** The acceptance test author a run with a suite dispatches, with its frozen setting and suite. */
+interface TestAuthor {
+  agent: AgentDefinition;
+  model: string;
+  effort: EffortLevel;
+  config: AcceptanceConfig;
+}
 
 /**
  * The implementation stage (build order step 6), one row continuing section
@@ -151,6 +169,23 @@ export async function runImplementationStage(
   const frozenImplementer = profile.agents.find((a) => a.id === "implementer");
   if (frozenImplementer && !frozenImplementer.outputs.includes("implementation-self-review")) {
     return { ok: false, reason: "configured agent implementer does not allow implementation-self-review output" };
+  }
+  // A run that opted into an acceptance suite dispatches its test author before
+  // phase 1 (docs/features/protected-acceptance-tests/plan.md), so the author's
+  // frozen setting and definition are refused here, like the implementer's.
+  let testAuthor: TestAuthor | null = null;
+  if (profile.acceptance !== null) {
+    const settings = resolveSettings(profile, "acceptance-test-author");
+    if (!settings.ok) return { ok: false, reason: settings.reason };
+    const agent = profile.agents.find((a) => a.id === "acceptance-test-author");
+    if (!agent) return { ok: false, reason: "configured agent acceptance-test-author is not in the frozen profile" };
+    if (agent.executor !== executor.id) {
+      return { ok: false, reason: `agent ${agent.id} is bound to executor ${agent.executor}, not the frozen executor ${executor.id}` };
+    }
+    if (!agent.outputs.includes("acceptance-tests")) {
+      return { ok: false, reason: `configured agent ${agent.id} does not allow acceptance-tests output` };
+    }
+    testAuthor = { agent, model: settings.model, effort: settings.effort, config: profile.acceptance };
   }
 
   const approval = store.getApproval(runId);
@@ -455,16 +490,21 @@ export async function runImplementationStage(
       return abort(stage.id, "implementation.author.failed", `configured agent ${author.id} does not allow patches output`);
     }
     // `headAtProposal` is the head in effect when the first phase starts —
-    // after the projections commit — and the handoff base. The harness runs
-    // with its working directory set to the worktree root so the implementer
-    // reads the repository it changes; raw output retention and the audit stay
-    // in the main repository.
+    // after the projections commit and, on a run with an acceptance suite, the
+    // suite commit — and the handoff base. The harness runs with its working
+    // directory set to the worktree root so the implementer reads the
+    // repository it changes; raw output retention and the audit stay in the
+    // main repository.
     const headResult = runGit(["rev-parse", "HEAD"], worktreePath);
     if (!headResult.ok) {
       return abort(stage.id, "implementation.author.failed", `cannot read the worktree head: ${headResult.detail}`);
     }
-    const headAtProposal = headResult.stdout.trim();
+    const headAfterProjections = headResult.stdout.trim();
     const derivedPaths = profile.verification.derived.map((d) => d.path);
+    // After its author, the acceptance suite is mounted read-only into every
+    // container and refused at the boundary (docs/features/protected-acceptance-tests/plan.md,
+    // Task 7). Only the test author's own dispatch writes it.
+    const suiteDirs = profile.acceptance === null ? undefined : [profile.acceptance.dir];
 
     // One patch dispatch in its own sandbox. A sandbox that does not start
     // blocks before the dispatch; a work container not proven gone blocks
@@ -474,9 +514,10 @@ export async function runImplementationStage(
     const sandboxedDispatch = async (
       label: string,
       where: string,
-      dispatch: Omit<DispatchInput, "toolServer">
+      dispatch: Omit<DispatchInput, "toolServer">,
+      readOnlyPaths: string[] | undefined
     ): Promise<{ ok: true; dispatch: DispatchResult } | { ok: false; result: ImplementationStageResult }> => {
-      const run = await dispatchInSandbox(store, executor, dispatch, { frozen: profile.sandbox, runId, label, worktreePath }, rootDir);
+      const run = await dispatchInSandbox(store, executor, dispatch, { frozen: profile.sandbox, runId, label, worktreePath, readOnlyPaths }, rootDir);
       if (!run.started) {
         return { ok: false, result: abort(stage.id, "implementation.sandbox.failed", `${where}cannot start the implementation sandbox: ${run.reason}`) };
       }
@@ -489,6 +530,195 @@ export async function runImplementationStage(
         audit(stage.id, "implementation.sandbox.teardown.failed", `${where}sandbox ${run.sandbox.name}: ${failures.join("; ")}`);
       }
       return { ok: true, dispatch: run.dispatch };
+    };
+
+    type SuiteResult = { ok: true; head: string; titles: string[] } | { ok: false; result: ImplementationStageResult };
+
+    /**
+     * The validity gate over a baseline run of the system's own command
+     * (gates 1 to 5 of docs/features/protected-acceptance-tests/plan.md). When
+     * the suite commit holds no `index.html`, as a greenfield target's does not,
+     * the run is in a throwaway checkout of it where the system has committed
+     * the blank stub page, so the run worktree never holds the stub. A failing
+     * command is the expected red here: only a sandbox failure, a run that
+     * ended for another reason than its exit code, or an unreadable report
+     * blocks on its own, and otherwise the gate alone decides. Its record is
+     * kept at `gate.json` beside the run's logs.
+     */
+    const gateSuite = async (config: AcceptanceConfig, head: string, paths: string[]): Promise<SuiteResult> => {
+      const block = (reason: string): SuiteResult => ({
+        ok: false,
+        result: abort(stage.id, "implementation.acceptance.gate.block", `acceptance: ${reason}`),
+      });
+      const evidence = acceptanceEvidenceDir(rootDir, runId);
+      let files: AcceptanceFile[];
+      try {
+        mkdirSync(evidence, { recursive: true });
+        files = paths.map((path) => ({ path, content: readFileSync(join(worktreePath, path), "utf8") }));
+      } catch (err) {
+        return block(`cannot read the committed suite: ${(err as Error).message}`);
+      }
+      const page = runGit(["ls-tree", "--name-only", head, "--", "index.html"], worktreePath);
+      if (!page.ok) return block(`cannot read whether ${head} holds index.html: ${page.detail}`);
+      const stubbed = page.stdout.trim() === "";
+      const baseline = join(evidence, "baseline");
+      let gateTree = worktreePath;
+      let gateCommit = head;
+      if (stubbed) {
+        if (existsSync(baseline)) return block(`the baseline checkout ${baseline} already exists`);
+        const added = runGit([...NO_HOOKS, "-c", "core.autocrlf=false", "-c", "core.eol=lf", "worktree", "add", "--detach", baseline, head], rootDir);
+        if (!added.ok) return block(`cannot create the baseline checkout at ${baseline}: ${added.detail}`);
+      }
+      try {
+        if (stubbed) {
+          try {
+            writeFileSync(join(baseline, "index.html"), ACCEPTANCE_STUB_PAGE);
+          } catch (err) {
+            return block(`cannot write the stub page into the baseline checkout: ${(err as Error).message}`);
+          }
+          for (const args of [
+            ["add", "--", "index.html"],
+            [...NO_HOOKS, "-c", `user.name=${SYSTEM_NAME}`, "-c", "user.email=buildworks@buildworks.invalid", "commit", "-q", "-m", `bw run ${runId}: acceptance baseline stub page`],
+          ]) {
+            const step = runGit(args, baseline);
+            if (!step.ok) return block(`cannot commit the stub page in the baseline checkout: ${step.detail}`);
+          }
+          const stubHead = runGit(["rev-parse", "HEAD"], baseline);
+          if (!stubHead.ok) return block(`cannot read the baseline checkout's head: ${stubHead.detail}`);
+          gateTree = baseline;
+          gateCommit = stubHead.stdout.trim();
+        }
+        const verified = await verifyCommit({
+          rootDir,
+          worktreePath: gateTree,
+          expectedCommit: gateCommit,
+          commands: [acceptanceCommand(config.dir, config.repeatEach)],
+          timeoutSeconds: profile.policy.verifyCommandTimeoutSeconds,
+          // The report is read from the retained log, never from memory, so its
+          // only output ceiling is the retention one: a 122-test baseline report
+          // was 0.97 of the 1 MiB result budget (plan, Task 6 record).
+          maxBytes: profile.policy.verifyRetentionMaxBytes,
+          retentionMaxBytes: profile.policy.verifyRetentionMaxBytes,
+          sandbox: profile.sandbox,
+          runId,
+          label: "acceptance-gate",
+          readOnlyPaths: [config.dir],
+          evidenceDir: join(evidence, "gate-run"),
+          audit: (action, summary) => audit(stage.id, `implementation.acceptance.${action}`, summary),
+        });
+        if (verified.record === null) return block(verified.reason ?? "the gate run's sandbox failed");
+        const ran = verified.record.commands[0];
+        if (ran === undefined || (verified.reason !== null && verified.reason !== `the command exited with code ${ran.exitCode}`)) {
+          return block(`the gate run left no report to judge: ${verified.reason}`);
+        }
+        let log: string;
+        try {
+          log = readFileSync(join(rootDir, ran.evidenceRef), "utf8");
+        } catch (err) {
+          return block(`cannot read the gate run's log ${ran.evidenceRef}: ${(err as Error).message}`);
+        }
+        const report = readAcceptanceReport(log);
+        if (!report.ok) return block(`${report.reason} (${ran.evidenceRef})`);
+        const gate = validateAcceptanceSuite({ report: report.report, files, criteria: signedSpec.value.acceptanceCriteria.map((c) => c.id) });
+        const recordPath = join(evidence, "gate.json");
+        writeFileSync(recordPath, `${JSON.stringify({
+          runId,
+          suiteCommit: head,
+          baseline: stubbed ? "the suite commit with the blank stub page" : "the suite commit",
+          log: ran.evidenceRef,
+          ok: gate.ok,
+          refusals: gate.refusals,
+          alreadySatisfied: gate.alreadySatisfied,
+          tests: gate.tests.map((t) => ({ title: t.title, criterion: t.criterion, outcome: t.outcome, failureClass: t.failureClass, role: t.role })),
+        }, null, 2)}\n`);
+        if (!gate.ok) return block(`the suite fails the validity gate: ${gate.refusals.join("; ")}`);
+        audit(
+          stage.id,
+          "implementation.acceptance.gate.pass",
+          `suite=${head}; tests=${gate.tests.length}; red=${gate.tests.filter((t) => t.role === "red").length}; guards=${gate.tests.filter((t) => t.role === "guard").length}; alreadySatisfied=${gate.alreadySatisfied.length > 0 ? gate.alreadySatisfied.join(",") : "none"}; record=${relative(rootDir, recordPath)}`
+        );
+        return { ok: true, head, titles: gate.tests.map((t) => t.title) };
+      } finally {
+        if (stubbed) {
+          const removed = runGit(["worktree", "remove", "--force", baseline], rootDir);
+          if (!removed.ok) audit(stage.id, "implementation.acceptance.baseline.cleanup.failed", `cannot remove the baseline checkout ${baseline}: ${removed.detail}`);
+        }
+      }
+    };
+
+    /**
+     * The acceptance suite (docs/features/protected-acceptance-tests/plan.md,
+     * Task 6): one test-author dispatch in its own sandbox, the system's commit
+     * of exactly the suite directory, then the validity gate. The suite commit
+     * becomes phase 1's base, so the implementation diff the reviewers judge
+     * never holds it, and a run blocked here has spent one dispatch, not the
+     * implementation. There is no retry.
+     */
+    const authorSuite = async (author: TestAuthor, base: string): Promise<SuiteResult> => {
+      const { dir, repeatEach } = author.config;
+      const refuse = (reason: string): SuiteResult => ({
+        ok: false,
+        result: abort(stage.id, "implementation.acceptance.refused", `acceptance: ${reason}`),
+      });
+      const cleanBefore = checkWorktreeClean(worktreePath);
+      if (!cleanBefore.ok) return { ok: false, result: refuseDirty(stage.id, "before dispatch", cleanBefore, "acceptance: ") };
+      const sandboxed = await sandboxedDispatch("test-author", "acceptance: ", {
+        stageId: stage.id,
+        agent: author.agent.id,
+        role: "author",
+        requestedModel: author.model,
+        requestedEffort: author.effort,
+        setting: author.agent.id,
+        prompt: buildAcceptanceTestAuthorPrompt(author.agent, specContent, planContent, dir, acceptanceCommand(dir, repeatEach)),
+        invocation: { cwd: worktreePath, jsonSchema: WORKSPACE_REPLY_SCHEMA },
+      }, undefined);
+      if (!sandboxed.ok) return sandboxed;
+      if (!sandboxed.dispatch.ok) return refuse(sandboxed.dispatch.reason);
+      const reply = parseWorkspaceReply(sandboxed.dispatch.envelope.resultText, validateWorkspaceReply);
+      if (!reply.ok) return refuse(reply.reason);
+      if (reply.value.status !== "completed") return refuse(`the test author returned ${describeIncompleteReply(reply.value)}`);
+      const committed = commitWorkspace({
+        worktreePath,
+        base,
+        scope: [dir],
+        slug: run.slug,
+        derivedPaths,
+        sandbox: profile.sandbox,
+        message: `bw run ${runId}: acceptance suite (base ${base.slice(0, 8)})`,
+        onAudit: (action, summary) => {
+          if (action === "derived.discarded") audit(stage.id, "implementation.acceptance.derived.discarded", summary);
+        },
+      });
+      if (!committed.ok) {
+        if (committed.kind === "failed") {
+          return { ok: false, result: abort(stage.id, "implementation.workspace.failed", `acceptance: ${committed.reason}`) };
+        }
+        return refuse(committed.kind === "empty" ? `the test author wrote nothing under ${dir}` : committed.reason);
+      }
+      audit(stage.id, "implementation.acceptance.authored", `base=${base}; head=${committed.head}; paths=${committed.paths.join(",")}`);
+      return gateSuite(author.config, committed.head, committed.paths);
+    };
+
+    let headAtProposal = headAfterProjections;
+    let suiteTitles: string[] = [];
+    if (testAuthor !== null) {
+      const suite = await authorSuite(testAuthor, headAfterProjections);
+      if (!suite.ok) return suite.result;
+      headAtProposal = suite.head;
+      suiteTitles = suite.titles;
+    }
+    // What the phase and self-review prompts say about the suite (Task 9).
+    const suitePrompt = profile.acceptance === null
+      ? null
+      : { dir: profile.acceptance.dir, command: acceptanceCommand(profile.acceptance.dir, profile.acceptance.repeatEach) };
+    // A blocked reply naming a suite test's title disputes that test: the
+    // prompts tell the agent to return blocked rather than special-case a test
+    // that contradicts the specification, and the operator should see a
+    // test-author error as one. The block itself is unchanged. The titles go
+    // last because they are free text.
+    const recordDisputes = (where: string, incompleteTasks: string[]): void => {
+      const disputed = disputedTests(incompleteTasks, suiteTitles);
+      if (disputed.length > 0) audit(stage.id, "implementation.acceptance.disputed", `${where}tests=${disputed.join(" | ")}`);
     };
 
     // One dispatch per phase, in plan order, each committed before the next
@@ -534,12 +764,13 @@ export async function runImplementationStage(
           phaseBase,
           phase,
           existingPaths,
-          profile.verification
+          profile.verification,
+          suitePrompt
         ),
         // The answer comes back as structured output, never free text
         // (docs/features/structured-patch-output/plan.md).
         invocation: { cwd: worktreePath, jsonSchema: WORKSPACE_REPLY_SCHEMA },
-      });
+      }, suiteDirs);
       if (!sandboxed.ok) return sandboxed.result;
       const authorDispatch = sandboxed.dispatch;
       if (!authorDispatch.ok) {
@@ -550,6 +781,7 @@ export async function runImplementationStage(
         return abort(stage.id, "implementation.content.invalid", `${where}${reply.reason}`);
       }
       if (reply.value.status !== "completed") {
+        recordDisputes(where, reply.value.incompleteTasks);
         return abort(stage.id, "implementation.author.failed", `${where}implementer returned ${describeIncompleteReply(reply.value)}`);
       }
 
@@ -562,6 +794,7 @@ export async function runImplementationStage(
         scope,
         slug: run.slug,
         derivedPaths,
+        protectedPaths: suiteDirs,
         sandbox: profile.sandbox,
         message:
           phase.count > 1
@@ -638,11 +871,12 @@ export async function runImplementationStage(
         scope.filter((p) => existsSync(join(worktreePath, p))),
         changedNames.stdout.split("\0").filter((p) => p !== ""),
         changedDiff.stdout,
-        profile.verification
+        profile.verification,
+        suitePrompt
       ),
       // Structured output, as the phases (docs/features/structured-patch-output/plan.md).
       invocation: { cwd: worktreePath, jsonSchema: SELF_REVIEW_REPLY_SCHEMA },
-    });
+    }, suiteDirs);
     if (!sandboxedReview.ok) return sandboxedReview.result;
     const reviewDispatch = sandboxedReview.dispatch;
     const reply = reviewDispatch.ok
@@ -653,6 +887,7 @@ export async function runImplementationStage(
       // discarded, so the stage passes on the last phase's commit. A discard
       // that cannot run, or a moved head, is a guard failure and blocks.
       const reason = reply.ok ? `implementer returned ${describeIncompleteReply(reply.value)}` : reply.reason;
+      if (reply.ok) recordDisputes("self-review: ", reply.value.incompleteTasks);
       const discarded = discardWorkspace({ worktreePath, base, sandbox: profile.sandbox });
       if (!discarded.ok) return selfReviewFailed(`${reason}; and its changes could not be discarded: ${discarded.reason}`);
       // The reason goes last because it is free text.
@@ -668,6 +903,7 @@ export async function runImplementationStage(
         scope,
         slug: run.slug,
         derivedPaths,
+        protectedPaths: suiteDirs,
         sandbox: profile.sandbox,
         message: `bw run ${runId}: self-review (base ${base.slice(0, 8)})`,
         onAudit: (action, summary) => {

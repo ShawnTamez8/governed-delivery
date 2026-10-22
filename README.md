@@ -663,7 +663,7 @@ Use `defect_fix` instead of `feature` for a defect run. A freeze failure can
 leave a blocked run; its diagnostic names the ID. Inspect it rather than
 assuming no state was created.
 
-Model and effort are frozen per setting: each of the nine agents, the
+Model and effort are frozen per setting: each of the ten agents, the
 reconciler (the reconciliation dispatches of spec review, plan review and the
 decision fold), and the code-review reconciler (the calls that judge code-review
 findings before a remediation). `--model` is required and names the model for
@@ -675,13 +675,14 @@ findings before a remediation). `--model` is required and names the model for
 | `spec-author` | `claude-opus-5-5` | `high` |
 | `plan-author` | `claude-opus-5-5` | `high` |
 | `implementer` | `claude-sonnet-5-5` | `medium` |
+| `acceptance-test-author` | `claude-sonnet-5-5` | `medium` |
 | `reconciler` | `--model` | `medium` |
 | `code-review-reconciler` | `claude-haiku-5-5` | `medium` |
 | the three spec reviewers | `claude-haiku-5-5` | `medium` |
 | the three code reviewers | `claude-haiku-5-5` | `medium` |
 
 Three optional flags change one run's settings:
-- `--effort <level>` sets the four non-reviewer settings and never reaches a
+- `--effort <level>` sets the five non-reviewer settings and never reaches a
   reviewer or the code-review reconciler, which was measured only at its
   seeded level.
 - `--model-for <setting>=<model>[,...]` sets the model of the named settings.
@@ -726,6 +727,45 @@ The first invocation runs spec and spec review, then returns control at
 `awaiting_approval` with exit 3 and no held writer lock. No pending approval
 row is required for this pause. The persisted run can still be `in_progress`;
 the derived phase is not another stored lifecycle.
+
+### Opt in to acceptance tests
+
+`new-run --acceptance-tests` freezes an executable acceptance suite into the
+run (`docs/features/protected-acceptance-tests/plan.md`). The suite applies
+only to static pages that open from the worktree, with `index.html` at the
+repository root as the entry page. A target that must start a server first is
+not supported. Guided mode does not offer the option.
+
+- **Before the first phase,** one dispatch of the `acceptance-test-author`
+  agent writes browser tests from the approved acceptance criteria under
+  `acceptance/<slug>/`, each titled with its criterion's ID, and the system
+  commits them.
+- **A validity gate** then runs the suite against the code as it stands. When
+  there is no `index.html` yet, the gate runs in a throwaway checkout with a
+  blank stub page. It requires every criterion to be covered, each test to load
+  and to agree with itself across two repeats, and each criterion to have a test
+  that fails for the right reason or only tests that already pass. Its lint
+  refuses untrusted input events, fixed waits, timeouts, `networkidle`, hooks
+  and non-retrying assertions. A refusal blocks the run with every reason named,
+  before any phase is paid for. The record is
+  `.governance/acceptance/<run-id>/gate.json`.
+- **After that,** the suite is read-only to every agent and to verification. A
+  change under it is refused.
+- **It runs after the frozen verification commands** at verification and after
+  every code-review remediation. A failing test blocks as `acceptance failed`,
+  and a test whose two repeats disagree blocks as `acceptance flaky`. Each
+  test's outcome is recorded in the verification record.
+- **The prompts.** The implementer, self-review and remediation prompts say
+  where the suite is and how to run it. They tell the implementer to return
+  `blocked`, naming the test, rather than special-case a test that contradicts
+  the specification; such a reply is recorded as
+  `implementation.acceptance.disputed`. Code reviewers are told to treat code
+  that detects the test environment as a high-severity defect.
+
+The preview counts the extra dispatch: the implementation ceiling is the phase
+ceiling plus two. A frozen verification command may not be named `acceptance`
+on such a run. The suite needs the browser in the sandbox image, so the first
+`new-run` after this change builds a larger image (about 2 GB).
 
 ### Answer spec-review questions
 

@@ -14,6 +14,8 @@ import { loadVerifiedProfile } from "./profile.ts";
 import { artifactDirectoryRefusals, computeScope, touchesProtected } from "./scope.ts";
 import { computeRisk } from "./select.ts";
 import {
+  acceptanceArtifactRefusalReason,
+  acceptanceArtifactRefusals,
   derivedArtifactRefusalReason,
   derivedArtifactRefusals,
   runDocumentRefusals,
@@ -145,6 +147,11 @@ export function buildBinding(
   );
   if (derived.length > 0) {
     return no(derivedArtifactRefusalReason(derived));
+  }
+  // The acceptance-suite rule, re-run where the signature binds, as above.
+  const suite = acceptanceArtifactRefusals(doc.value.declaredArtifacts);
+  if (suite.length > 0) {
+    return no(acceptanceArtifactRefusalReason(suite));
   }
   const specHash = sha256Hex(normalizeText(content));
   const risk = computeRisk(

@@ -60,6 +60,65 @@ export function markUnstartable(prefix: string): () => void {
   return () => rmSync(path, { force: true });
 }
 
+/**
+ * Answer the acceptance command, in every container whose name starts with
+ * `prefix`, from `test/fixtures/recorded/acceptance-report-<report>.json`.
+ */
+export function serveAcceptanceReport(prefix: string, report: string): () => void {
+  const dir = join(STAND_IN_STATE, "marks");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `acceptance-${Buffer.from(prefix).toString("hex").slice(0, 120)}`);
+  writeFileSync(path, JSON.stringify({ prefix, report }));
+  return () => rmSync(path, { force: true });
+}
+
+/** Every acceptance run the stand-in answered for a container whose name starts with `prefix`. */
+export function acceptanceRuns(prefix: string): { container: string; cwd: string; indexHtml: string | null }[] {
+  let lines: string[];
+  try {
+    lines = readFileSync(join(STAND_IN_STATE, "acceptance-runs.jsonl"), "utf8").split("\n");
+  } catch {
+    return [];
+  }
+  return lines.filter((l) => l !== "").map((l) => JSON.parse(l)).filter((r) => r.container.startsWith(prefix));
+}
+
+/**
+ * A Docker command that runs the stand-in after appending each call's argv,
+ * one JSON array per line, to a log in `dir`, and a reader for that log.
+ */
+export function recordingDockerCommand(dir: string): { dockerCommand: string[]; calls: () => string[][] } {
+  const log = join(dir, "docker-argv.log");
+  const recorder = join(dir, "record-docker.mjs");
+  writeFileSync(
+    recorder,
+    [
+      'import { appendFileSync } from "node:fs";',
+      `appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + "\\n");`,
+      `await import(${JSON.stringify(pathToFileURL(STAND_IN).href)});`,
+      "",
+    ].join("\n")
+  );
+  const calls = (): string[][] => {
+    let text: string;
+    try {
+      text = readFileSync(log, "utf8");
+    } catch {
+      return [];
+    }
+    return text.split("\n").filter((l) => l !== "").map((l) => JSON.parse(l) as string[]);
+  };
+  return { dockerCommand: [process.execPath, recorder], calls };
+}
+
+/** Each work container a `run -d` call started, by name, with its `-v` values in argv order. */
+export function workContainerMounts(calls: string[][]): { name: string; mounts: string[] }[] {
+  return calls
+    .filter((c) => c[0] === "run" && c.includes("-d"))
+    .map((c) => ({ name: c[c.indexOf("--name") + 1]!, mounts: c.flatMap((a, i) => (a === "-v" ? [c[i + 1]!] : [])) }))
+    .filter((r) => r.name.endsWith("-work"));
+}
+
 /** The name every sandbox of `runId` and `label` in `rootDir` starts with (`createSandbox`). */
 export function sandboxPrefix(rootDir: string, runId: number, label: string): string {
   return `bw-${repositoryKey(rootDir)}-${runId}-${label}-`;

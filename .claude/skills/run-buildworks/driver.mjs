@@ -10,7 +10,10 @@
 // written to (lowercase kebab-case), --model <id>, --dir <path>. Runs are created
 // with new-run --no-narration-check unless --narration-check is given, which
 // sends each spec-review criterion to the Decision-1 deployment the SYSTEMONE_*
-// variables name.
+// variables name. --acceptance-tests passes new-run --acceptance-tests, so an
+// independent test author writes the browser suite before the first phase
+// (docs/features/protected-acceptance-tests/plan.md); without it the chain is
+// unchanged.
 //
 // bw governs the repository it is run *in*, so every invocation here sets cwd
 // to a scratch repository built by prepareTarget() — never this one. The
@@ -177,7 +180,8 @@ function prepareTarget(root) {
 function newRunArgs(slug = SLUG) {
   return ["new-run", "--project", "smoke", "--feature", slug, "--slug", slug,
           "--change-kind", "feature", "--model", value("model", "claude-sonnet-5"),
-          ...(flag("narration-check") ? [] : ["--no-narration-check"])];
+          ...(flag("narration-check") ? [] : ["--no-narration-check"]),
+          ...(flag("acceptance-tests") ? ["--acceptance-tests"] : [])];
 }
 
 /** The whole surface that refuses, passes, or reports without dispatching. */

@@ -134,6 +134,20 @@ only. Tests use the Docker stand-in under `test/fixtures/docker/`;
 `test/container.test.ts` needs a real engine and skips by name without one. A
 completed paid run never authorizes another spend.
 
+Since 2026-10-21 (`docs/features/protected-acceptance-tests/plan.md`, hazards 18
+and 23) a run created with `new-run --acceptance-tests` adds a fourth sandboxed
+dispatch: before phase one, the `acceptance-test-author` writes a Playwright
+suite under `acceptance/<slug>/` from the approved acceptance criteria, and the
+system commits it. A deterministic validity gate (`src/acceptance.ts`) then runs
+it in the image and writes `.governance/acceptance/<run>/gate.json`, whether it
+passes or blocks; a refusal blocks the run before any phase is paid for. From
+then on the suite is a protected path. It runs after the frozen verification
+commands at every verification point, and a failing or flaky test blocks. The
+suite applies only to static pages opening from a root `index.html`. Guided mode
+does not offer it, and no paid run has exercised it yet.
+`test/acceptance-engine.test.ts` needs a real engine, as `test/container.test.ts`
+does.
+
 ## Windows harness launch
 
 The 2026-09-07 correction removed BuildWorks' obsolete *shim assumption*, not
@@ -349,7 +363,9 @@ target with `--repo`; see the PowerShell operator guide in `README.md`.
   `SYSTEMONE_ENDPOINT`, `SYSTEMONE_DEPLOYMENT` and `SYSTEMONE_DEPLOYMENT_TYPE` name
   and refuses when they or `SYSTEMONE_API_KEY` are unset, unless
   `--no-narration-check` freezes the check off; guided mode always freezes it on
-  (`docs/features/narration-check-spec-review/plan.md`). Each agent's, and both reconcilers', model and effort are frozen at
+  (`docs/features/narration-check-spec-review/plan.md`). Optional
+  `--acceptance-tests` freezes the acceptance suite into the profile (see
+  Phased implementation). Each agent's, and both reconcilers', model and effort are frozen at
   `new-run`: `--model` is required and covers only `reconciler`,
   the other settings take the seeded defaults in `src/policy.ts`, and optional
   `--effort` (never reaches a reviewer), `--model-for` and `--effort-for` override

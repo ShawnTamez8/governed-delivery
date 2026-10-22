@@ -6,7 +6,8 @@ import type { VerificationConfig } from "./governed-config.ts";
 import { checkIntakeRepository, sandboxProgramRefusals, type IntakeRepositoryResult } from "./readiness.ts";
 import { freezeProfile, type AfterLink, type NarrationCheckConfig, type SettingsInput } from "./profile.ts";
 import { narrationQuestionHash } from "./narration-check.ts";
-import { NARRATION_THRESHOLD, SANDBOX_DOCKER_COMMAND, SYSTEMONE_REQUEST_TIMEOUT_MS, seededSandbox } from "./policy.ts";
+import { ACCEPTANCE_REPEAT_EACH, NARRATION_THRESHOLD, SANDBOX_DOCKER_COMMAND, SYSTEMONE_REQUEST_TIMEOUT_MS, seededSandbox } from "./policy.ts";
+import { acceptanceDir } from "./acceptance.ts";
 import { readSystemOneConfig, readSystemOneKey } from "./systemone.ts";
 import { readRunSnapshot, RunMissingError } from "./operator-state.ts";
 import type { ChangeKind, RunRow, Store } from "./store.ts";
@@ -27,6 +28,12 @@ export interface RunIntakeInput {
    * passes "on" (`docs/features/narration-check-spec-review/plan.md`).
    */
   narrationCheck: "on" | "off";
+  /**
+   * `new-run --acceptance-tests`: freeze an executable acceptance suite under
+   * `acceptance/<slug>/` (docs/features/protected-acceptance-tests/plan.md).
+   * Guided mode passes none until the paid benchmark has run.
+   */
+  acceptanceTests?: boolean;
 }
 
 export interface RunIntakeResult {
@@ -177,6 +184,7 @@ export function createRunIntake(
       input.settings,
       after,
       narrationCheck,
+      input.acceptanceTests === true ? { dir: acceptanceDir(input.slug), repeatEach: ACCEPTANCE_REPEAT_EACH } : null,
     );
     if (options.requireApprovalSigner && frozen.profile.approvalSigner === null) {
       throw new Error("guided run creation requires a configured external approval public key");

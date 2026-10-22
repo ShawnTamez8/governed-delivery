@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { ACCEPTANCE_COMMAND_NAME, acceptanceCommand, applyAcceptanceVerdict } from "./acceptance.ts";
 import type { AgentDefinition } from "./agents.ts";
 import {
   describeIncompleteReply,
@@ -37,6 +38,7 @@ import { extractJsonBody } from "./parse-output.ts";
 import { parseVerificationHandoff } from "./handoff.ts";
 import { checkWorktreeClean, commitWorkspace } from "./workspace-commit.ts";
 import {
+  acceptanceEvidenceDir,
   codeReviewEvidenceDir,
   codeReviewEvidenceRef,
   codeReviewVerificationDir,
@@ -48,6 +50,7 @@ import {
   buildCodeReviewPrompt,
   buildCodeReviewReconcilerPrompt,
   buildCodeReviewRemediationPrompt,
+  type AcceptanceReviewPrompt,
   type CodeReviewRemediationFindingInput,
 } from "./prompts.ts";
 import {
@@ -142,6 +145,30 @@ export async function runCodeReviewStage(
   const verified = loadVerifiedProfile(rootDir, run);
   if (!verified.ok) return { ok: false, reason: verified.reason };
   const profile = verified.profile;
+  // The acceptance suite is read-only to remediation and its verification, and
+  // refused at the boundary (docs/features/protected-acceptance-tests/plan.md, Task 7).
+  const suiteDirs = profile.acceptance === null ? undefined : [profile.acceptance.dir];
+  // What the reviewer and remediation prompts say about the suite (Task 9). The
+  // criteria the author claimed were already met come from the validity gate's
+  // record, so a reviewer can check the claim; a run with a suite that has no
+  // readable record is refused here, before the stage row or any dispatch.
+  let reviewPrompt: AcceptanceReviewPrompt | null = null;
+  if (profile.acceptance !== null) {
+    const gatePath = join(acceptanceEvidenceDir(rootDir, runId), "gate.json");
+    let alreadySatisfied: unknown;
+    try {
+      alreadySatisfied = (JSON.parse(readFileSync(gatePath, "utf8")) as { alreadySatisfied?: unknown }).alreadySatisfied;
+    } catch (err) {
+      return { ok: false, reason: `run ${runId}'s acceptance gate record ${gatePath} is unreadable: ${(err as Error).message}` };
+    }
+    if (!Array.isArray(alreadySatisfied) || alreadySatisfied.some((id) => typeof id !== "string")) {
+      return { ok: false, reason: `run ${runId}'s acceptance gate record ${gatePath} carries no alreadySatisfied list of criterion IDs` };
+    }
+    reviewPrompt = { dir: profile.acceptance.dir, alreadySatisfied: alreadySatisfied as string[] };
+  }
+  const suitePrompt = profile.acceptance === null
+    ? null
+    : { dir: profile.acceptance.dir, command: acceptanceCommand(profile.acceptance.dir, profile.acceptance.repeatEach) };
   // Remediation runs the `implementer`; each reviewer seat resolves its own
   // setting once the panel is chosen, below, before the stage row exists.
   const implementerSettings = resolveSettings(profile, "implementer");
@@ -474,7 +501,7 @@ export async function runCodeReviewStage(
             requestedModel: seat.model,
             requestedEffort: seat.effort,
             setting: reviewer.id,
-            prompt: buildCodeReviewPrompt(reviewer, specContent, planContent, changedPaths, diff, currentCommit),
+            prompt: buildCodeReviewPrompt(reviewer, specContent, planContent, changedPaths, diff, currentCommit, reviewPrompt),
             invocation: { cwd: worktreePath },
           },
           rootDir
@@ -853,13 +880,14 @@ export async function runCodeReviewStage(
             changedPaths,
             diff,
             remediationFindings.map(toRemediationInput),
-            profile.verification
+            profile.verification,
+            suitePrompt
           ),
           // The answer comes back as structured output, never free text
           // (docs/features/structured-patch-output/plan.md).
           invocation: { cwd: worktreePath, jsonSchema: WORKSPACE_REPLY_SCHEMA },
         },
-        { frozen: profile.sandbox, runId, label: `remediation-${roundNumber}`, worktreePath },
+        { frozen: profile.sandbox, runId, label: `remediation-${roundNumber}`, worktreePath, readOnlyPaths: suiteDirs },
         rootDir
       );
       if (!sandboxed.started) {
@@ -896,6 +924,7 @@ export async function runCodeReviewStage(
         scope,
         slug: run.slug,
         derivedPaths: profile.verification.derived.map((d) => d.path),
+        protectedPaths: suiteDirs,
         sandbox: profile.sandbox,
         message: `bw run ${runId}: code review remediation round ${roundNumber} (base ${currentCommit.slice(0, 8)})`,
         // The refusal is the abort's own record, below.
@@ -943,17 +972,24 @@ export async function runCodeReviewStage(
       }
       const remediatedCommit = regenerated.head;
 
-      const verification = await verifyCommit({
+      // The suite runs last and decides the block, as at the verification
+      // stage (docs/features/protected-acceptance-tests/plan.md, Task 8).
+      const suite = profile.acceptance;
+      const ran = await verifyCommit({
         rootDir,
         worktreePath,
         expectedCommit: remediatedCommit,
-        commands: profile.verification.commands,
+        commands: suite === null
+          ? profile.verification.commands
+          : [...profile.verification.commands, acceptanceCommand(suite.dir, suite.repeatEach)],
         timeoutSeconds: profile.policy.verifyCommandTimeoutSeconds,
         maxBytes: profile.policy.resultMaxBytes,
+        ...(suite === null ? {} : { maxBytesFor: { [ACCEPTANCE_COMMAND_NAME]: profile.policy.verifyRetentionMaxBytes } }),
         retentionMaxBytes: profile.policy.verifyRetentionMaxBytes,
         sandbox: profile.sandbox,
         runId,
         label: `remediation-${roundNumber}-verify`,
+        readOnlyPaths: suiteDirs,
         evidenceDir: codeReviewVerificationDir(rootDir, runId, roundNumber),
         audit: (action, summary) => audit(stage.id, sandboxAction(action, "code_review.verification."), `round=${roundNumber}; commit=${remediatedCommit}; ${summary}`),
         progress: (command, because, durationMs) => {
@@ -962,6 +998,7 @@ export async function runCodeReviewStage(
           );
         },
       });
+      const verification = suite === null ? ran : applyAcceptanceVerdict(rootDir, worktreePath, suite.dir, ran);
       if (verification.record === null) {
         // The sandbox failed, not a command: there is no verification result
         // to record for the round.

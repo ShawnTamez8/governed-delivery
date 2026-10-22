@@ -15,8 +15,10 @@
     "test": "node --test test/*.test.ts",
     "check:docs": "node scripts/doc-check.mjs"
   },
+  "dependencies": {
+    "typescript": "^5.8"
+  },
   "devDependencies": {
-    "typescript": "^5.8",
     "@types/node": "^24"
   }
 }

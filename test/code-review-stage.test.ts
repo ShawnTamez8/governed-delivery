@@ -35,7 +35,16 @@ import { policyHash } from "../src/policy.ts";
 import { codeReviewEvidenceRef } from "../src/paths.ts";
 import type { ExecutorDefinition } from "../src/executor.ts";
 import type { VerificationConfig } from "../src/governed-config.ts";
-import { markUnremovable, markUnstartable, sandboxPrefix } from "./fixtures/docker/stand-in.ts";
+import { readAcceptanceReport, type AcceptanceReport } from "../src/acceptance.ts";
+import {
+  acceptanceRuns,
+  markUnremovable,
+  markUnstartable,
+  recordingDockerCommand,
+  sandboxPrefix,
+  serveAcceptanceReport,
+  workContainerMounts,
+} from "./fixtures/docker/stand-in.ts";
 
 /** A passing command whose fixture writes nothing, so the worktree stays clean. */
 const VERIFICATION: VerificationConfig = {
@@ -198,6 +207,8 @@ interface Opts {
   verification?: VerificationConfig;
   /** The declared artifacts, and so the signed scope; [ARTIFACT] when absent. */
   scope?: string[];
+  /** Further files committed at the base, by repository path. */
+  baseFiles?: Record<string, string>;
 }
 
 /**
@@ -223,6 +234,10 @@ async function withVerifiedRun(fn: (ctx: Ctx) => Promise<void>, opts: Opts = {})
     writeFileSync(join(root, ".gitignore"), ".governance/\n");
     writeFileSync(join(root, "base.txt"), `${WORKTREE_MARKER}\n`);
     writeFileSync(join(root, "README.md"), "# demo\n");
+    for (const [path, content] of Object.entries(opts.baseFiles ?? {})) {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), content);
+    }
     const addBase = git(root, ["add", "-A"]);
     assert.equal(addBase.status, 0, `git add failed: ${addBase.stderr}`);
     commitIn(root, "base");
@@ -985,6 +1000,217 @@ test("failed remediation verification retains its round record and stops", async
       assert.equal(stage.output_ref, codeReviewEvidenceRef(ctx.runId, "result.json"));
     }, "high-then-clean");
   });
+});
+
+// --- the acceptance suite (docs/features/protected-acceptance-tests/plan.md, Tasks 7 and 8) ---
+
+const ACCEPTANCE = { dir: `acceptance/${SLUG}/`, repeatEach: 2 };
+const SUITE_FILE = `${ACCEPTANCE.dir}acceptance.spec.mjs`;
+
+/** A recorded acceptance report's one suite file and its parsed report. */
+function recordedReport(report: string): { content: string; report: AcceptanceReport } {
+  const fixture = JSON.parse(
+    readFileSync(join(process.cwd(), "test", "fixtures", "recorded", `acceptance-report-${report}.json`), "utf8")
+  ) as { files: { content: string }[]; log: string };
+  const read = readAcceptanceReport(fixture.log);
+  assert.ok(read.ok, read.ok ? "" : read.reason);
+  return { content: fixture.files[0]!.content, report: read.report };
+}
+
+/**
+ * The validity gate's record, which a run with a suite reaches code review
+ * holding; the stage reads only its `alreadySatisfied` list (Task 9).
+ */
+function writeGateRecord(ctx: Ctx, alreadySatisfied: unknown): void {
+  const dir = join(ctx.root, ".governance", "acceptance", String(ctx.runId));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "gate.json"), `${JSON.stringify({ alreadySatisfied }, null, 2)}\n`);
+}
+
+/**
+ * A verified run whose suite, the recorded file of `report`, is committed at
+ * the base; the suite is frozen on after the verification stage has run, so
+ * only remediation verification runs it, and the stand-in answers that run
+ * with `report`.
+ */
+async function withRemediationSuite(report: string, fn: (ctx: Ctx) => Promise<void>, opts: Opts = {}): Promise<void> {
+  await withVerifiedRun(async (ctx) => {
+    refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
+      p.acceptance = ACCEPTANCE;
+    });
+    writeGateRecord(ctx, []);
+    const unserve = serveAcceptanceReport(sandboxPrefix(ctx.root, ctx.runId, "remediation-1-verify"), report);
+    try {
+      await fn(ctx);
+    } finally {
+      unserve();
+    }
+  }, { ...opts, baseFiles: { [SUITE_FILE]: recordedReport(report).content } });
+}
+
+test("with an acceptance suite, the remediation and its verification see the suite read-only; without one, neither does", async () => {
+  // Task 7.
+  for (const acceptance of [ACCEPTANCE, null]) {
+    await withVerifiedRun(async (ctx) => {
+      const dir = mkdtempSync(join(tmpdir(), "bw-docker-argv-"));
+      const unserve = serveAcceptanceReport(sandboxPrefix(ctx.root, ctx.runId, "remediation-1-verify"), "pass");
+      try {
+        const recording = recordingDockerCommand(dir);
+        refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
+          p.acceptance = acceptance;
+          p.sandbox.dockerCommand = recording.dockerCommand;
+        });
+        if (acceptance !== null) writeGateRecord(ctx, []);
+        await withMode(async () => {
+          const result = await review(ctx);
+          assert.equal(result.ok, true, result.ok ? "" : result.reason);
+        }, "high-then-clean");
+        const base = [`${ctx.worktreePath}:/work`, `${join(ctx.worktreePath, ".git")}:/work/.git:ro`];
+        const expected = acceptance === null ? base : [...base, `${join(ctx.worktreePath, "acceptance", SLUG)}:/work/acceptance/${SLUG}:ro`];
+        const started = workContainerMounts(recording.calls());
+        for (const label of ["remediation-1", "remediation-1-verify"]) {
+          assert.deepEqual(
+            // The whole name: `remediation-1-` is also a prefix of the verify sandbox's.
+            started.filter((s) => new RegExp(`^${sandboxPrefix(ctx.root, ctx.runId, label)}[0-9a-f]{6}-work$`).test(s.name)).map((s) => s.mounts),
+            [expected],
+            `${label} with acceptance ${JSON.stringify(acceptance)}`
+          );
+        }
+        assert.equal(started.length, 2, started.map((s) => s.name).join(", "));
+      } finally {
+        unserve();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, { baseFiles: { [SUITE_FILE]: recordedReport("pass").content } });
+  }
+});
+
+test("a passing suite at remediation verification is recorded in the round, and the passed record still parses for delivery", async () => {
+  // Task 8.
+  await withRemediationSuite("pass", async (ctx) => {
+    await withMode(async () => {
+      const result = await review(ctx);
+      assert.equal(result.ok, true, result.ok ? "" : result.reason);
+      const record = readRecord(ctx.root, ctx.runId);
+      const verification = record.rounds[0]!.remediation!.verification;
+      assert.equal(verification.outcome, "pass");
+      assert.deepEqual(verification.commands.map((c) => c.name), ["ok", "acceptance"]);
+      const titles = [...new Set(recordedReport("pass").report.tests.map((t) => t.title))];
+      assert.deepEqual(verification.acceptance, {
+        tests: titles.map((title) => ({ title, outcome: "pass", failureClass: null, message: null })),
+      });
+      assert.equal(acceptanceRuns(sandboxPrefix(ctx.root, ctx.runId, "remediation-1-verify")).length, 1);
+      const { profile } = loadProfile(ctx.root, ctx.runId);
+      const parsed = parsePassedCodeReviewRecord(record, ctx.runId, stageOf(ctx)!.id, profile);
+      assert.equal(parsed.ok, true, parsed.ok ? "" : parsed.reason);
+      assert.equal(verifyAuditChain(ctx.store), null);
+    }, "high-then-clean");
+  });
+});
+
+test("a failing suite at remediation verification blocks the stage, naming the failing test", async () => {
+  await withRemediationSuite("valid-red-matcher", async (ctx) => {
+    await withMode(async () => {
+      const title = recordedReport("valid-red-matcher").report.tests[0]!.title;
+      const result = await review(ctx);
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.equal(result.reason, `code_review remediation verification blocked after round 1: acceptance failed: ${title}`);
+      const record = readRecord(ctx.root, ctx.runId);
+      assert.equal(record.rounds.length, 1, "no second panel reviews a commit whose suite fails");
+      const verification = record.rounds[0]!.remediation!.verification;
+      assert.equal(verification.outcome, "block");
+      assert.equal(verification.blockingCommand, "acceptance");
+      assert.deepEqual(verification.acceptance!.tests.map((t) => [t.title, t.outcome, t.failureClass]), [[title, "fail", "valid_red"]]);
+      assert.equal(record.finalVerifiedCommit, ctx.verifiedCommit);
+      assert.match(eventsOf(ctx, "code_review.verification.block")[0]!.summary, new RegExp(`; acceptance failed: `));
+      assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
+    }, "high-then-clean");
+  });
+});
+
+test("a flaky suite at remediation verification blocks as flaky", async () => {
+  await withRemediationSuite("flaky", async (ctx) => {
+    await withMode(async () => {
+      const title = recordedReport("flaky").report.tests[0]!.title;
+      const result = await review(ctx);
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.equal(result.reason, `code_review remediation verification blocked after round 1: acceptance flaky: ${title}`);
+      assert.deepEqual(
+        readRecord(ctx.root, ctx.runId).rounds[0]!.remediation!.verification.acceptance!.tests.map((t) => [t.title, t.outcome]),
+        [[title, "flaky"]]
+      );
+    }, "high-then-clean");
+  });
+});
+
+/** The retained prompt of every reviewer dispatch in the run. */
+function reviewerPrompts(ctx: Ctx): string[] {
+  return ctx.store
+    .query<{ input_hash: string }>(
+      "SELECT ar.input_hash FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? AND ar.role = 'reviewer' ORDER BY ar.id",
+      [ctx.runId]
+    )
+    .map((r) => readFileSync(join(ctx.root, ".governance", "prompts", String(ctx.runId), `${r.input_hash}.txt`), "utf8"));
+}
+
+test("with a suite, every reviewer is told where it is and to treat test detection as high severity, and the claimed criteria are named", async () => {
+  // Task 9.
+  for (const [alreadySatisfied, named] of [
+    [["AC-001"], true],
+    [[], false],
+  ] as const) {
+    await withVerifiedRun(async (ctx) => {
+      refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
+        p.acceptance = ACCEPTANCE;
+      });
+      writeGateRecord(ctx, alreadySatisfied);
+      await withMode(async () => {
+        const result = await review(ctx);
+        assert.equal(result.ok, true, result.ok ? "" : result.reason);
+      }, "ok");
+      const prompts = reviewerPrompts(ctx);
+      assert.equal(prompts.length, 3);
+      for (const prompt of prompts) {
+        assert.ok(prompt.includes(`wrote the acceptance suite under ${ACCEPTANCE.dir} from the acceptance criteria`), "the suite's directory");
+        assert.ok(prompt.includes("reading navigator.webdriver"), "the test-detection lens");
+        assert.equal(prompt.includes("check each claim against the code: AC-001"), named, `already satisfied ${JSON.stringify(alreadySatisfied)}`);
+      }
+    }, { baseFiles: { [SUITE_FILE]: recordedReport("pass").content } });
+  }
+});
+
+test("a run without a suite sends reviewers no word of one", async () => {
+  await withVerifiedRun(async (ctx) => {
+    await withMode(async () => {
+      const result = await review(ctx);
+      assert.equal(result.ok, true, result.ok ? "" : result.reason);
+    }, "ok");
+    for (const prompt of reviewerPrompts(ctx)) assert.ok(!prompt.includes("acceptance suite"), prompt.slice(0, 200));
+  });
+});
+
+test("a run with a suite whose gate record is missing or carries no claimed list is refused before the stage row", async () => {
+  for (const record of [undefined, { alreadySatisfied: "AC-001" }, { alreadySatisfied: [1] }]) {
+    await withVerifiedRun(async (ctx) => {
+      refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
+        p.acceptance = ACCEPTANCE;
+      });
+      if (record !== undefined) writeGateRecord(ctx, record.alreadySatisfied);
+      const result = await review(ctx);
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      const gatePath = join(ctx.root, ".governance", "acceptance", String(ctx.runId), "gate.json");
+      assert.ok(
+        result.reason.startsWith(`run ${ctx.runId}'s acceptance gate record ${gatePath} `),
+        result.reason
+      );
+      assert.match(result.reason, record === undefined ? / is unreadable: / : / carries no alreadySatisfied list of criterion IDs$/);
+      assertNoStage(ctx);
+      assert.equal(ctx.store.query("SELECT id FROM agent_run").length, 0, "nothing was dispatched");
+    });
+  }
 });
 
 // --- derived artifacts (docs/features/derived-artifacts-and-dependency-policy/plan.md) ---

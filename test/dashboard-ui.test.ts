@@ -2414,6 +2414,7 @@ test("the run view shows each frozen setting's model and effort, and each stage'
     const snapshot = readSnapshot(root, parent, Number(created.stdout.trim()));
     const settings = snapshotProjection(snapshot, "C:\\cli.ts").governance.configuration.dispatchSettings!;
     assert.deepEqual(Object.keys(settings).sort(), [
+      "acceptance-test-author",
       "code-review-reconciler", "code-reviewer-correctness", "code-reviewer-security", "code-reviewer-state-integrity",
       "implementer", "plan-author",
       "reconciler", "spec-author", "spec-reviewer-consistency", "spec-reviewer-security", "spec-reviewer-traceability",

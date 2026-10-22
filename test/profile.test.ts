@@ -187,7 +187,7 @@ test("the profile freezes the approval key fingerprint, or null when none is con
 const HAIKU = "claude-haiku-5-5";
 const SONNET = "claude-sonnet-5-5";
 const REVIEWER_IDS = AGENTS.filter((a) => a.role === "reviewer").map((a) => a.id);
-const NON_REVIEWER_SETTINGS = ["spec-author", "plan-author", "implementer", "reconciler"];
+const NON_REVIEWER_SETTINGS = ["spec-author", "plan-author", "implementer", "acceptance-test-author", "reconciler"];
 
 function profilePathOf(root: string, runId: number): string {
   return join(root, ".governance", "profiles", String(runId), "profile.json");
@@ -199,6 +199,8 @@ function seededFor(runModel: string) {
     "spec-author": { model: "claude-opus-5-5", effort: "high" },
     "plan-author": { model: "claude-opus-5-5", effort: "high" },
     implementer: { model: SONNET, effort: "medium" },
+    // The operator's choice from the protected-acceptance-tests plan's Task 4 evaluation (2026-10-21).
+    "acceptance-test-author": { model: SONNET, effort: "medium" },
     reconciler: { model: runModel, effort: "medium" },
     "code-review-reconciler": { model: HAIKU, effort: "medium" },
     "spec-reviewer-traceability": { model: HAIKU, effort: "medium" },
@@ -210,7 +212,7 @@ function seededFor(runModel: string) {
   };
 }
 
-test("with no overrides the profile freezes all eleven settings at their seeded defaults", () => {
+test("with no overrides the profile freezes all twelve settings at their seeded defaults", () => {
   withRoot((root) => {
     const { profile } = freezeProfile(root, 1, COMMIT, "chosen-model", VERIFICATION, SANDBOX);
     assert.deepEqual(profile.dispatchSettings, seededFor("chosen-model"));
@@ -349,10 +351,10 @@ test("an invalid level, invalid model, unknown setting, or agent with no default
   });
 });
 
-test("the shared stage-test helper freezes all eleven settings at the model passed and medium", () => {
+test("the shared stage-test helper freezes all twelve settings at the model passed and medium", () => {
   withRoot((root) => {
     const { profile } = freezeUniformProfile(root, 1, COMMIT, "m", VERIFICATION);
-    assert.equal(Object.keys(profile.dispatchSettings).length, 11);
+    assert.equal(Object.keys(profile.dispatchSettings).length, 12);
     for (const [name, setting] of Object.entries(profile.dispatchSettings)) {
       assert.deepEqual(setting, { model: "m", effort: "medium" }, name);
     }
@@ -704,6 +706,85 @@ function rewriteFrozen(root: string, edit: (profile: Record<string, unknown>) =>
   writeFileSync(frozen.path, serialized);
   return { path: frozen.path, hash: sha256Hex(serialized) };
 }
+
+test("a correctly hashed profile without acceptance is inspectable, and its execution is refused by name", () => {
+  // Every profile frozen before change 4 lacks the field (crew-chatter runs 5 to 8).
+  withRoot((root) => {
+    const { hash } = rewriteFrozen(root, (p) => { delete p.acceptance; });
+    const inspected = loadInspectableProfile(root, { id: 1, profile_ref: hash });
+    assert.equal(inspected.ok, true, (inspected as { reason?: string }).reason);
+    const verified = loadVerifiedProfile(root, { id: 1, profile_ref: hash });
+    assert.equal(verified.ok, false);
+    if (verified.ok) return;
+    assert.match(verified.reason, /run 1 cannot be executed: the frozen profile carries no acceptance: it predates executable acceptance tests/);
+  });
+});
+
+test("acceptance freezes null or exactly an acceptance/<slug>/ directory with at least two repeats", () => {
+  withRoot((root) => {
+    const { profile } = freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX);
+    assert.equal(profile.acceptance, null, "a run that did not opt in freezes null");
+    // The plan's frozen block (docs/features/protected-acceptance-tests/plan.md, "Opt-in at new-run").
+    const block = { dir: "acceptance/web-calculator/", repeatEach: 2 };
+    const on = freezeProfile(root, 2, COMMIT, MODEL, VERIFICATION, SANDBOX, {}, {}, null, null, block).profile;
+    assert.deepEqual(on.acceptance, block);
+    assert.equal(invalidProfileReason(on), null);
+    for (const bad of [
+      { dir: "acceptance/web-calculator", repeatEach: 2 },
+      { dir: "tests/web-calculator/", repeatEach: 2 },
+      { dir: "acceptance/../src/", repeatEach: 2 },
+      { dir: "acceptance/Web/", repeatEach: 2 },
+      { dir: "acceptance/web-calculator/", repeatEach: 1 },
+      { dir: "acceptance/web-calculator/", repeatEach: 2.5 },
+      { dir: "acceptance/web-calculator/" },
+      { ...block, extra: true },
+      "acceptance/web-calculator/",
+    ]) {
+      assert.match(
+        String(invalidProfileReason({ ...profile, acceptance: bad })),
+        /the frozen profile acceptance must be null or \{ dir: "acceptance\/<slug>\/", repeatEach \} with repeatEach at least 2/,
+        JSON.stringify(bad)
+      );
+    }
+    assert.throws(
+      () => freezeProfile(root, 3, COMMIT, MODEL, VERIFICATION, SANDBOX, {}, {}, null, null, { dir: "src/", repeatEach: 2 }),
+      /cannot freeze a profile for run 3: the frozen profile acceptance must be null or/
+    );
+    assert.equal(existsSync(profilePathOf(root, 3)), false);
+  });
+});
+
+test("a run with a suite refuses a frozen verify command named acceptance, whose log the suite's would share", () => {
+  // docs/features/protected-acceptance-tests/plan.md, Task 8.
+  withRoot((root) => {
+    const block = { dir: "acceptance/web-calculator/", repeatEach: 2 };
+    const named: VerificationConfig = { commands: [{ name: "acceptance", command: ["node", "--version"] }], derived: [] };
+    assert.throws(
+      () => freezeProfile(root, 1, COMMIT, MODEL, named, SANDBOX, {}, {}, null, null, block),
+      /^Error: cannot freeze a profile for run 1: a run with an acceptance suite reserves the verify command name acceptance, which governed\.yaml already uses$/
+    );
+    assert.equal(existsSync(profilePathOf(root, 1)), false);
+    // Without a suite the name is the repository's to use.
+    assert.equal(freezeProfile(root, 2, COMMIT, MODEL, named, SANDBOX).profile.verification.commands[0]!.name, "acceptance");
+  });
+});
+
+test("the acceptance test author is an author, so neither panel's staffing counts it", () => {
+  const author = AGENTS.find((a) => a.id === "acceptance-test-author");
+  assert.ok(author, "the agent is registered");
+  assert.equal(author.role, "author");
+  assert.ok(!author.outputs.includes("code-findings") && !author.outputs.includes("findings"));
+  // With one code reviewer removed, the author present still leaves two seats
+  // for a panel of three: it never fills a code-review seat.
+  withRoot((root) => {
+    const short = AGENTS.filter((a) => a.id !== "code-reviewer-state-integrity");
+    assert.ok(short.some((a) => a.id === "acceptance-test-author"));
+    assert.throws(
+      () => freezeProfile(root, 1, COMMIT, MODEL, VERIFICATION, SANDBOX, { agents: short }),
+      /seats 2 code reviewers .*which cannot fill the configured code-review panel of 3/
+    );
+  });
+});
 
 test("a correctly hashed profile without sandbox is inspectable and still refused for execution", () => {
   withRoot((root) => {

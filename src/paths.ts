@@ -174,6 +174,16 @@ export function derivedEvidenceDir(rootDir: string, runId: number, label: string
   return join(rootDir, GOVERNANCE_DIR, "derived", String(runId), label);
 }
 
+/**
+ * One run's acceptance-suite evidence (docs/features/protected-acceptance-tests/plan.md):
+ * the validity gate's record (`gate.json`), its run's logs (`gate-run/`), and
+ * the throwaway checkout the gate runs in when the suite commit has no page
+ * (`baseline/`, removed afterwards).
+ */
+export function acceptanceEvidenceDir(rootDir: string, runId: number): string {
+  return join(rootDir, GOVERNANCE_DIR, "acceptance", String(runId));
+}
+
 /** The root-relative form stored inside retained command records. */
 export function codeReviewVerificationRef(runId: number, round: number, name: string): string {
   return join(

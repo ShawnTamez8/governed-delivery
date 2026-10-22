@@ -11,6 +11,7 @@ import {
   type FrozenSandbox,
   type Sandbox,
 } from "./container.ts";
+import type { RecordedAcceptanceTest } from "./acceptance.ts";
 import type { VerifyCommand } from "./governed-config.ts";
 import type { CommandOutcome } from "./verify-command.ts";
 
@@ -32,6 +33,8 @@ export interface CommitVerificationRecord {
   outcome: "pass" | "block";
   blockingCommand: string | null;
   commands: RecordedVerificationCommand[];
+  /** Each acceptance test's outcome, when a run's suite ran and its report was read (`applyAcceptanceVerdict`). */
+  acceptance?: { tests: RecordedAcceptanceTest[] };
 }
 
 /** The audit actions verification records; the caller adds its stage prefix. */
@@ -50,12 +53,16 @@ export interface CommitVerificationInput {
   commands: VerifyCommand[];
   timeoutSeconds: number;
   maxBytes: number;
+  /** A command's own output budget by name, in place of `maxBytes`: the acceptance report's. */
+  maxBytesFor?: Record<string, number>;
   retentionMaxBytes: number;
   /** The run's frozen sandbox; every command runs in one container of it. */
   sandbox: FrozenSandbox;
   runId: number;
   /** Names the sandbox: `verification`, `remediation-1-verify`. */
   label: string;
+  /** Worktree-relative paths every command sees read-only: the acceptance suite (`createSandbox`). */
+  readOnlyPaths?: string[];
   evidenceDir: string;
   audit: (action: VerificationAuditAction, summary: string) => void;
   progress?: (command: VerifyCommand, blockedBecause: string | null, durationMs: number) => void;
@@ -174,12 +181,13 @@ async function runCommands(input: CommitVerificationInput, sandbox: Sandbox): Pr
   const recorded: RecordedVerificationCommand[] = [];
   for (const command of input.commands) {
     const evidencePath = join(input.evidenceDir, `${command.name}.log`);
+    const maxBytes = input.maxBytesFor?.[command.name] ?? input.maxBytes;
     let outcome: CommandOutcome;
     try {
       outcome = await runInSandbox(execTarget(sandbox), sandbox.frozen.imageId, command, {
         cwd: input.worktreePath,
         timeoutSeconds: input.timeoutSeconds,
-        maxBytes: input.maxBytes,
+        maxBytes,
         retentionMaxBytes: input.retentionMaxBytes,
         evidencePath,
       });
@@ -195,7 +203,7 @@ async function runCommands(input: CommitVerificationInput, sandbox: Sandbox): Pr
     if (outcome.timedOut) {
       because = `the command exceeded the ${input.timeoutSeconds}-second ceiling and its process tree was killed${outcome.killError !== null ? ` (the kill failed: ${outcome.killError})` : ""}`;
     } else if (outcome.outputOverflow) {
-      because = `the command produced more than the ${input.maxBytes}-byte output budget; the complete output is retained at ${relative(input.rootDir, evidencePath)}`;
+      because = `the command produced more than the ${maxBytes}-byte output budget; the complete output is retained at ${relative(input.rootDir, evidencePath)}`;
     } else if (outcome.exitCode !== 0) {
       because = `the command exited with code ${outcome.exitCode}`;
     }
@@ -251,7 +259,7 @@ export async function verifyCommit(input: CommitVerificationInput): Promise<Comm
   }
   mkdirSync(input.evidenceDir, { recursive: true });
   const run = await withSandbox(
-    { frozen: input.sandbox, rootDir: input.rootDir, runId: input.runId, label: input.label, worktreePath: input.worktreePath },
+    { frozen: input.sandbox, rootDir: input.rootDir, runId: input.runId, label: input.label, worktreePath: input.worktreePath, readOnlyPaths: input.readOnlyPaths },
     (sandbox) => runCommands(input, sandbox)
   );
   if (!run.started) {

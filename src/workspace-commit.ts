@@ -28,8 +28,9 @@ import { normalizePath } from "./scope.ts";
  * 4. `git add -A`.
  * 5. The staged diff against `base`, NUL-delimited and with rename detection
  *    off, so a rename arrives as an add and a deletion. A deletion, a symlink
- *    (mode 120000), a nested repository (gitlink, mode 160000) and any path
- *    `gatePatchPaths` refuses are refused by name.
+ *    (mode 120000), a nested repository (gitlink, mode 160000), a path under a
+ *    protected directory and any path `gatePatchPaths` refuses are refused by
+ *    name.
  * 6. An empty diff is "changed nothing".
  * 7. The system commits, then checks that the committed set equals the staged
  *    set.
@@ -48,6 +49,11 @@ export interface WorkspaceCommitInput {
   slug: string;
   /** The run's frozen `verification.derived` paths. */
   derivedPaths: string[];
+  /**
+   * Directories (ending in `/`) no change may touch: the acceptance suite after
+   * its author (docs/features/protected-acceptance-tests/plan.md, Task 7).
+   */
+  protectedPaths?: string[];
   sandbox: FrozenSandbox;
   message: string;
   onAudit: (action: "derived.discarded" | "workspace.refused", summary: string) => void;
@@ -275,6 +281,10 @@ export function commitWorkspace(input: WorkspaceCommitInput): WorkspaceCommitRes
   if (typeof records === "string") return stop("failed", `compute diff: ${records}`);
   const causes: string[] = [];
   for (const record of records) {
+    if ((input.protectedPaths ?? []).some((dir) => normalizePath(record.path).startsWith(dir))) {
+      causes.push(`changes ${record.path} in the acceptance suite: the system refuses agent edits to it`);
+      continue;
+    }
     if (record.status === "D") {
       causes.push(`deletes ${record.path}: the system refuses deletions, and a rename is a deletion`);
       continue;

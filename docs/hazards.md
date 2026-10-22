@@ -670,6 +670,33 @@ threshold of declared files (entry 20), and each feature is reviewed whole by
 the unchanged panel. Nothing reviews less. Whether a real feature's diff stays
 under the ceiling is unmeasured.
 
+**2026-10-21: an executed check of the criteria, on a run that opts in**
+(`docs/features/protected-acceptance-tests/plan.md`). The second sandboxed
+web-calculator run delivered a remediation that broke a behaviour the
+specification required, and no executed check held that behaviour
+(`test/fixtures/recorded/code-review-web-calculator-remediation-regression.json`).
+On a run frozen with `new-run --acceptance-tests`, an independent test author
+writes browser tests from the acceptance criteria before the first phase. A
+deterministic gate requires every criterion to be covered, each by a test that
+fails for the right reason before the implementation exists or by a regression
+guard that already passes. The suite is then read-only to every later container
+and refused at the commit boundary. It runs at verification and after every
+remediation, and a failing or flaky test blocks (`ARCHITECTURE.md` section 12).
+Evaluated on that recorded run before it was wired in, three suites per setting
+under Sonnet 5.5 `medium` and Opus 5.5 `high` each caught both recorded findings
+with no failure on a specification-faithful control. That took a rebuilt lint
+and a rebuilt control, and cost $9.73 in all (the plan's Task 4 record).
+
+What this does not show. The suite is the test author's reading of the criteria,
+not the specification itself: a criterion it tests too weakly passes weak code,
+and the gate checks coverage by ID, not the strength of each test. An
+`already_satisfied` criterion is the author's claim, shown to the reviewers but
+not checked by the system. Only static pages are supported. No paid run has used
+the suite end to end (Task 11), so its cost, its time against the verification
+ceiling on a real build, and whether an implementer special-cases a test are
+unmeasured. A run without the flag is unchanged, and `node --version` against a
+calculator is still accepted there.
+
 ## 19. An inactivity budget over non-streaming output is a wall clock
 
 An idle timer that resets "on any output" measures inactivity only if the
@@ -1063,6 +1090,24 @@ anything, is unmeasured. Hazard 21's prompt rule did not stop crew-chatter run
 recall: #209 was missed by the panel, not by the rule. The self-review costs one
 implementer dispatch per run, roughly a remediation dispatch on a change of this
 size [Inference], and saves money only when it prevents a remediation round.
+
+**2026-10-21: the decisions held as executed tests, on a run that opts in**
+(`docs/features/protected-acceptance-tests/plan.md`). The second sandboxed
+web-calculator run is this entry's shape: a remediation for finding 9 broke the
+specification's rule that Enter does equals with focus anywhere on the page,
+which became finding 10 on the final panel. On a run with an acceptance suite,
+each criterion's defined conditions are tests the system runs after every
+remediation, before the next panel. A fix that breaks one blocks at that
+remediation's verification, naming the test. The remediation prompt says where
+the read-only suite is and how to run it, so the implementer can check its own
+fix first. In the Task 4 evaluation, every gate-passing suite failed finding
+10's tree on the keyboard-equals tests, in their focused-button variants.
+
+What this does not show. A suite holds only what the criteria state; a decision
+recorded only in plan review, such as #187 above, is still unseen unless a
+criterion carries it. A remediation that breaks a test blocks the run; it does
+not get another remediation round (the plan's "Not in this plan"). No live run
+has exercised the path.
 
 ## 24. A declared artifact nothing will change
 

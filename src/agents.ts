@@ -1,3 +1,4 @@
+import { ACCEPTANCE_TEST_AUTHOR } from "./agents/acceptance-test-author.ts";
 import { CODE_REVIEWER_CORRECTNESS } from "./agents/code-reviewer-correctness.ts";
 import { CODE_REVIEWER_SECURITY } from "./agents/code-reviewer-security.ts";
 import { CODE_REVIEWER_STATE_INTEGRITY } from "./agents/code-reviewer-state-integrity.ts";
@@ -35,6 +36,7 @@ export const AGENTS: readonly AgentDefinition[] = [
   SPEC_AUTHOR,
   PLAN_AUTHOR,
   IMPLEMENTER,
+  ACCEPTANCE_TEST_AUTHOR,
   SPEC_REVIEWER_TRACEABILITY,
   SPEC_REVIEWER_SECURITY,
   SPEC_REVIEWER_CONSISTENCY,

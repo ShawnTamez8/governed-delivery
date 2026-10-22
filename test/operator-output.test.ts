@@ -13,13 +13,14 @@ function preview(
   policy: ReturnType<typeof buildPolicy>,
   groups: ExecutionGroup[],
   narrationCheck: NarrationCheckConfig | null = null,
-  derivedArtifacts: RunSnapshot["configuration"]["derivedArtifacts"] = []
+  derivedArtifacts: RunSnapshot["configuration"]["derivedArtifacts"] = [],
+  acceptance: Profile["acceptance"] = null
 ): string {
   const snapshot = {
     run: { id: 6, slug: "team-notes" },
     configuration: { dispatchSettings: {}, verificationCommands: [], derivedArtifacts },
   } as unknown as RunSnapshot;
-  const profile = { systemName: "BuildWorks", policy, narrationCheck } as unknown as Profile;
+  const profile = { systemName: "BuildWorks", policy, narrationCheck, acceptance } as unknown as Profile;
   return formatRunPreview("/target", snapshot, groups, profile);
 }
 
@@ -38,6 +39,47 @@ test("the implementation ceiling is the frozen phase ceiling plus the self-revie
       "Implementation: one implementer dispatch per 7 plan tasks, at most 4 phases, then one implementer self-review dispatch; the phase count is known once the plan exists."
     ),
     text
+  );
+});
+
+test("a run with an acceptance suite previews one more implementation dispatch, its test author, before the phases", () => {
+  // The plan's opted-in preview (docs/features/protected-acceptance-tests/plan.md,
+  // "The consent preview names the extra dispatch"): the ceiling becomes the
+  // phases plus two. The off text is the test above, unchanged.
+  const policy = { ...buildPolicy(), implementationPhaseTasks: 7, implementationMaxPhases: 4 };
+  const text = preview(policy, RUN_6_GROUPS, null, [], { dir: "acceptance/team-notes/", repeatEach: 2 });
+  assert.match(text, /Dispatch ceilings for this range: .*implementation=6,/);
+  assert.ok(
+    text.includes(
+      "Implementation: one acceptance-test-author dispatch writes the acceptance suite under acceptance/team-notes/, then one implementer dispatch per 7 plan tasks, at most 4 phases, then one implementer self-review dispatch; the phase count is known once the plan exists."
+    ),
+    text
+  );
+});
+
+test("a run without an acceptance suite previews byte for byte what it did before the suite existed", () => {
+  // The whole text formatRunPreview printed for these inputs at commit 4be6b2a,
+  // before docs/features/protected-acceptance-tests/plan.md Task 6 (2026-10-21).
+  const policy = { ...buildPolicy(), implementationPhaseTasks: 7, implementationMaxPhases: 4 };
+  assert.equal(
+    preview(policy, RUN_6_GROUPS),
+    [
+      "BuildWorks: execution preview for run 6 (team-notes)",
+      "Canonical target: /target",
+      "Frozen settings: {}",
+      "Remaining groups: plan -> implementation -> verification -> code_review -> delivery_check",
+      "Frozen verification commands: []",
+      "Frozen derived artifacts: []",
+      "Document review: panel up to 2; spec 1 round(s), plan 1 round(s). Each document group permits 1 author + 1 self-critique + rounds * (panel + 1 reconciler) dispatches. The spec group adds 1 split-proposal dispatch when the reviewed spec declares more than 30 files.",
+      "Code review: 3 reviewers * 2 panel(s), plus before each of at most 1 remediation implementer dispatch(es) up to 2 code-review reconciler dispatches; each remediation is followed by frozen verification; blocking severity high.",
+      "Implementation: one implementer dispatch per 7 plan tasks, at most 4 phases, then one implementer self-review dispatch; the phase count is known once the plan exists.",
+      "Narration check: off (new-run --no-narration-check).",
+      "Dispatch ceilings for this range: plan=5, implementation=5, verification=0, code_review=9, delivery_check=0; total 19.",
+      "Consent covers EVERY listed group through approval or terminalization, including bounded internal remediation, not only the next group.",
+      "There is no intermediate voluntary stop control or hard monetary cap. Dispatch ceilings are not an invoice or a dollar guarantee.",
+      "Consent does not sign approval, export proposals, publish, or authorize a later invocation.",
+      "",
+    ].join("\n")
   );
 });
 

@@ -24,7 +24,18 @@ import type { Profile } from "../src/profile.ts";
 import type { VerifyCommand } from "../src/governed-config.ts";
 import { sandboxLeftovers } from "../src/container.ts";
 import { verificationEvidenceDir } from "../src/paths.ts";
-import { markUnremovable, sandboxPrefix, STAND_IN_DOCKER_COMMAND, standInSandbox } from "./fixtures/docker/stand-in.ts";
+import { readAcceptanceReport, type AcceptanceReport } from "../src/acceptance.ts";
+import { parseVerificationHandoff } from "../src/handoff.ts";
+import {
+  acceptanceRuns,
+  markUnremovable,
+  recordingDockerCommand,
+  sandboxPrefix,
+  serveAcceptanceReport,
+  STAND_IN_DOCKER_COMMAND,
+  standInSandbox,
+  workContainerMounts,
+} from "./fixtures/docker/stand-in.ts";
 
 const FIXTURES = join(process.cwd(), "test", "fixtures", "verify");
 const MODEL = "m";
@@ -66,6 +77,8 @@ interface Opts {
   worktree?: false;
   /** Extra `.gitignore` lines after `.governance/`. */
   ignore?: string[];
+  /** Further files committed beside `base.txt`, by repository path. */
+  files?: Record<string, string>;
 }
 
 /**
@@ -82,6 +95,10 @@ function withImplementedRun(fn: (ctx: Ctx) => Promise<void>, opts: Opts = {}): P
     assert.equal(git(root, ["init", "-q"]).status, 0);
     writeFileSync(join(root, ".gitignore"), [".governance/", ...(opts.ignore ?? [])].join("\n") + "\n");
     writeFileSync(join(root, "base.txt"), "base\n");
+    for (const [path, content] of Object.entries(opts.files ?? {})) {
+      mkdirSync(join(root, path, ".."), { recursive: true });
+      writeFileSync(join(root, path), content);
+    }
     assert.equal(git(root, ["add", "-A"]).status, 0);
     const commit = git(root, [
       "-c",
@@ -293,6 +310,160 @@ test("ignored output the passing commands left is removed, so code review's clea
     { commands: [WRITE_IGNORED], ignore: ["node_modules/", "dist/"] }
   );
 });
+
+// --- the acceptance suite (docs/features/protected-acceptance-tests/plan.md, Tasks 7 and 8) ---
+
+const ACCEPTANCE = { dir: `acceptance/${SLUG}/`, repeatEach: 2 };
+const SUITE_FILE = `${ACCEPTANCE.dir}acceptance.spec.mjs`;
+
+/** A recorded acceptance report's one suite file and its parsed report. */
+function recordedReport(report: string): { content: string; report: AcceptanceReport } {
+  const fixture = JSON.parse(
+    readFileSync(join(process.cwd(), "test", "fixtures", "recorded", `acceptance-report-${report}.json`), "utf8")
+  ) as { files: { content: string }[]; log: string };
+  const read = readAcceptanceReport(fixture.log);
+  assert.ok(read.ok, read.ok ? "" : read.reason);
+  return { content: fixture.files[0]!.content, report: read.report };
+}
+
+/**
+ * A run with the suite frozen on and its recorded file committed, whose
+ * verification sandbox the stand-in answers with `report`: the stand-in runs no
+ * browser.
+ */
+function withSuiteRun(report: string, fn: (ctx: Ctx) => Promise<void>, opts: Opts = {}): Promise<void> {
+  return withImplementedRun(
+    async (ctx) => {
+      refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
+        p.acceptance = ACCEPTANCE;
+      });
+      const unserve = serveAcceptanceReport(sandboxPrefix(ctx.root, ctx.runId, "verification"), report);
+      try {
+        await fn(ctx);
+      } finally {
+        unserve();
+      }
+    },
+    { ...opts, files: { [SUITE_FILE]: recordedReport(report).content } }
+  );
+}
+
+function readAcceptance(root: string, resultRef: string): { tests: { title: string; outcome: string; failureClass: string | null; message: string | null }[] } | undefined {
+  return (JSON.parse(readFileSync(join(root, resultRef), "utf8")) as { acceptance?: never }).acceptance;
+}
+
+test("a run with an acceptance suite verifies with the suite mounted read-only, and a run without one mounts only the worktree", async () => {
+  // Task 7.
+  for (const acceptance of [ACCEPTANCE, null]) {
+    await withImplementedRun(async (ctx) => {
+      const dir = mkdtempSync(join(tmpdir(), "bw-docker-argv-"));
+      const unserve = serveAcceptanceReport(sandboxPrefix(ctx.root, ctx.runId, "verification"), "pass");
+      try {
+        const recording = recordingDockerCommand(dir);
+        refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
+          p.acceptance = acceptance;
+          p.sandbox.dockerCommand = recording.dockerCommand;
+        });
+        const result = await runVerificationStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+        assert.ok(result.ok, result.ok ? "" : result.reason);
+        const base = [`${ctx.worktreePath}:/work`, `${join(ctx.worktreePath, ".git")}:/work/.git:ro`];
+        const overlay = `${join(ctx.worktreePath, "acceptance", SLUG)}:/work/acceptance/${SLUG}:ro`;
+        assert.deepEqual(
+          workContainerMounts(recording.calls()).map((s) => s.mounts),
+          [acceptance === null ? base : [...base, overlay]]
+        );
+      } finally {
+        unserve();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, { files: { [SUITE_FILE]: recordedReport("pass").content } });
+  }
+});
+
+test("a passing suite runs after the frozen commands, passes verification, and records each test", async () => {
+  // Task 8.
+  await withSuiteRun("pass", async (ctx) => {
+    const result = await runVerificationStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+    assert.ok(result.ok, result.ok ? "" : result.reason);
+    const record = readRecord(ctx.root, result.resultRef);
+    assert.deepEqual(record.commands.map((c) => c.name), ["ok", "acceptance"]);
+    const titles = [...new Set(recordedReport("pass").report.tests.map((t) => t.title))];
+    assert.deepEqual(readAcceptance(ctx.root, result.resultRef), {
+      tests: titles.map((title) => ({ title, outcome: "pass", failureClass: null, message: null })),
+    });
+    // The runner ran on the committed suite, once.
+    assert.equal(acceptanceRuns(sandboxPrefix(ctx.root, ctx.runId, "verification")).length, 1);
+    // The handoff code review and delivery read still parses the record that carries the suite.
+    const handoff = parseVerificationHandoff(JSON.parse(readFileSync(join(ctx.root, result.resultRef), "utf8")), ctx.runId, result.stageId);
+    assert.equal(handoff.ok, true, handoff.ok ? "" : handoff.reason);
+    assert.equal(verifyAuditChain(ctx.store), null);
+  });
+});
+
+test("a failing suite blocks verification on the acceptance command, naming the failing test", async () => {
+  await withSuiteRun("valid-red-matcher", async (ctx) => {
+    const { report } = recordedReport("valid-red-matcher");
+    const title = report.tests[0]!.title;
+    await assertBlocked(ctx, new RegExp(`^verification blocked on acceptance: acceptance failed: ${escapeRegExp(title)}$`), "acceptance");
+    const stage = ctx.store.getStageChain(ctx.runId).find((s) => s.kind === "verification")!;
+    // The stand-in serves the recorded log with its suite path rewritten to the committed one.
+    const firstError = report.tests[0]!.results.find((r) => r.status !== "passed")!.errors[0]!.message
+      .split(report.tests[0]!.file).join(SUITE_FILE);
+    assert.deepEqual(readAcceptance(ctx.root, stage.output_ref!), {
+      tests: [{ title, outcome: "fail", failureClass: "valid_red", message: firstError }],
+    });
+    assert.equal(readRecord(ctx.root, stage.output_ref!).commands.at(-1)!.blockedBecause, `acceptance failed: ${title}`);
+  });
+});
+
+test("a test whose repeats differ blocks verification as flaky, naming the test rather than the code", async () => {
+  await withSuiteRun("flaky", async (ctx) => {
+    const title = recordedReport("flaky").report.tests[0]!.title;
+    await assertBlocked(ctx, new RegExp(`^verification blocked on acceptance: acceptance flaky: ${escapeRegExp(title)}$`), "acceptance");
+    const stage = ctx.store.getStageChain(ctx.runId).find((s) => s.kind === "verification")!;
+    assert.deepEqual(readAcceptance(ctx.root, stage.output_ref!)!.tests.map((t) => [t.title, t.outcome]), [[title, "flaky"]]);
+  });
+});
+
+test("a suite that does not load blocks verification by name", async () => {
+  await withSuiteRun("load-error", async (ctx) => {
+    await assertBlocked(ctx, /^verification blocked on acceptance: acceptance failed: the suite does not load: /, "acceptance");
+  });
+});
+
+test("the suite's report is held to the retention ceiling, not the frozen commands' output budget", async () => {
+  // The recorded pass report's log is larger than this budget; the frozen command's output is not.
+  const budget = 4096;
+  assert.ok(Buffer.byteLength(JSON.parse(readFileSync(join(process.cwd(), "test", "fixtures", "recorded", "acceptance-report-pass.json"), "utf8")).log) > budget);
+  await withSuiteRun("pass", async (ctx) => {
+    refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
+      p.policy.resultMaxBytes = budget;
+    });
+    const result = await runVerificationStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
+    assert.ok(result.ok, result.ok ? "" : result.reason);
+    const acceptance = readRecord(ctx.root, result.resultRef).commands.at(-1)!;
+    assert.equal(acceptance.name, "acceptance");
+    assert.ok(statSync(join(ctx.root, acceptance.evidenceRef)).size > budget, "the retained report exceeds the frozen commands' budget");
+  });
+});
+
+test("an earlier frozen command's block stands, and the suite never runs", async () => {
+  await withSuiteRun(
+    "pass",
+    async (ctx) => {
+      await assertBlocked(ctx, /exited with code 2/, "failing");
+      const stage = ctx.store.getStageChain(ctx.runId).find((s) => s.kind === "verification")!;
+      assert.deepEqual(readRecord(ctx.root, stage.output_ref!).commands.map((c) => c.name), ["failing"]);
+      assert.equal(readAcceptance(ctx.root, stage.output_ref!), undefined);
+      assert.equal(acceptanceRuns(sandboxPrefix(ctx.root, ctx.runId, "verification")).length, 0);
+    },
+    { commands: [FAILING] }
+  );
+});
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 // --- the six block paths ---
 

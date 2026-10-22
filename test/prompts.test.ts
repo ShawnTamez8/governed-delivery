@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import * as promptBuilders from "../src/prompts.ts";
 import {
+  buildAcceptanceTestAuthorPrompt,
   buildCodeReviewPrompt,
   buildCodeReviewReconcilerPrompt,
   buildCodeReviewRemediationPrompt,
@@ -21,11 +22,15 @@ import {
   buildSpecReconcilePrompt,
   buildSpecReviewPrompt,
   buildSpecSelfCritiquePrompt,
+  type AcceptanceReviewPrompt,
+  type AcceptanceSuitePrompt,
   type FoldQuestionInput,
   type PanelPromptBounds,
   type ReconciliationFindingInput,
 } from "../src/prompts.ts";
 import { IMPLEMENTER } from "../src/agents/implementer.ts";
+import { ACCEPTANCE_TEST_AUTHOR } from "../src/agents/acceptance-test-author.ts";
+import { acceptanceCommand } from "../src/acceptance.ts";
 import { PLAN_AUTHOR } from "../src/agents/plan-author.ts";
 import { CODE_REVIEWER_CORRECTNESS } from "../src/agents/code-reviewer-correctness.ts";
 import { CODE_REVIEWER_SECURITY } from "../src/agents/code-reviewer-security.ts";
@@ -295,6 +300,28 @@ const DEPENDENCY_ADDITION_RULE =
   "Add a package to a package.json only if the specification's ## Dependencies added section lists it for that file: the system refuses a commit that adds any other.";
 const FOLD_KEEPS_DEPENDENCIES_RULE =
   "Keep the ## Dependencies added section exactly as it is: the operator answered that list, and a revision that changes it blocks the run.";
+
+/**
+ * The acceptance suite's lines (docs/features/protected-acceptance-tests/plan.md,
+ * Task 9), as the plan states them: in the three patch prompts, who wrote the
+ * suite and where, that it runs and blocks, the command, and the abort rule; in
+ * the reviewer prompt, where it is, the test-detection lens, and the claimed
+ * criteria. Each entry is the fixed text of one source line; the directory, the
+ * command and the IDs are data, asserted against the built prompts.
+ */
+const SUITE_AUTHOR_OPENING = "An independent test author wrote the acceptance suite under";
+const ACCEPTANCE_SUITE_SENTENCES = [
+  SUITE_AUTHOR_OPENING,
+  "from the approved specification's acceptance criteria before the implementation began; it is read-only to you, and the system refuses any change to it.",
+  "The system runs the suite after the verification commands every time they run, and a failing test, or a test whose repeats disagree, blocks the run.",
+  "Run the suite yourself through run_command with this command:",
+  "If a test contradicts the approved specification, never special-case it, match its inputs or detect the test environment: return blocked, and list the test's exact title in incompleteTasks.",
+];
+const ACCEPTANCE_REVIEW_SENTENCES = [
+  "from the acceptance criteria before the implementation began, and the system runs it at every verification point; read it there to see what each criterion's tests check.",
+  "Code that detects the test environment, such as by reading navigator.webdriver, or that special-cases a test's inputs instead of implementing the behavior is a high-severity defect.",
+  "The test author claimed the code already met these criteria before the implementation began, so their tests were kept as regression guards; check each claim against the code:",
+];
 
 /** The three builders whose dispatches send --json-schema, with the reply rule they carry. */
 function structuredPatchPrompts(verification: VerificationConfig = VERIFICATION): Array<{ name: string; prompt: string }> {
@@ -595,6 +622,11 @@ const CONSTRAINT_STRINGS = [
   ...DEPENDENCIES_SCHEMA_SENTENCES,
   DEPENDENCY_ADDITION_RULE,
   FOLD_KEEPS_DEPENDENCIES_RULE,
+  // The acceptance suite (docs/features/protected-acceptance-tests/plan.md, Task 9):
+  // the patch prompts' four lines and the reviewers' lens, each source line's
+  // fixed text. Also kept above the criterion-quality block.
+  ...ACCEPTANCE_SUITE_SENTENCES,
+  ...ACCEPTANCE_REVIEW_SENTENCES,
   // What a criterion may say (docs/features/spec-criterion-testability/plan.md).
   // Measured 2026-09-27, $1.6186: team-notes run 3 copied the design's
   // "meaningful content change" into AC-041, and its tone guidance reached
@@ -2044,6 +2076,133 @@ test("the remediation prompt carries every report and states the tool-mode contr
   }
 });
 
+// --- the acceptance suite (docs/features/protected-acceptance-tests/plan.md, Task 9) ---
+
+/**
+ * The SHA-256 of each prompt below, built by the builders at commit 4be6b2a,
+ * before Task 9 (2026-10-21), from the same inputs. The inputs follow the tests
+ * above: the phase and self-review of the frozen-commands tests, the remediation
+ * of the tool-mode test, and the three seated reviewers of the field test.
+ */
+const PRE_SUITE_PROMPT_HASHES = {
+  phase: "adf2cded0882bbe326ca398206d0590042ac89b362ac4dcfa21a8ae083040176",
+  selfReview: "e626690e0437d39c115377bbea68489db35c52243dc3aee3c7c6569bac710151",
+  remediation: "82a226b2552725166a964094dc8d422e5ecb9fb04dba21446b4a4a835be2b9b7",
+  codeReviewCorrectness: "2b8775033b42d079e1ae13467b7cc7f66a4cd63ee35ecdcd9547cdd629e1aff4",
+  codeReviewSecurity: "564f477fd57f098e7a88881883d3ef31a0bd025078a6e62da0351a803093ed55",
+  codeReviewStateIntegrity: "7c2428707384b38700e944fd8fa242c78378300ccf1f6c81e697128b43579a60",
+};
+
+/** The six prompts the suite changes; `undefined` leaves the builder's default. */
+function suiteAwarePrompts(
+  suite: AcceptanceSuitePrompt | null | undefined,
+  review: AcceptanceReviewPrompt | null | undefined
+): Record<keyof typeof PRE_SUITE_PROMPT_HASHES, string> {
+  const base = "b".repeat(40);
+  const scope = ["src/a.ts", "src/b.ts", "src/c.ts"];
+  const phase: PlanPhase = { index: 2, count: 3, firstTask: 11, tasks: ["src/c.ts: implement it."] };
+  const finding = [{
+    findingId: 7,
+    location: "src/a.ts:3",
+    intentKey: "wrong-result",
+    reports: [{ reviewerId: "code-reviewer-correctness", severity: "high", classification: "current_artifact" as const, subject: "The calculation returns the wrong result for ordinary input." }],
+  }];
+  const reviewer = (agent: typeof CODE_REVIEWER_CORRECTNESS) =>
+    buildCodeReviewPrompt(agent, "SPEC-TEXT", "PLAN-TEXT", ["js/a.js", "css/b.css"], "DIFF-TEXT", "c".repeat(40), review);
+  return {
+    phase: buildImplementationAuthorPrompt(IMPLEMENTER, "PLAN-TEXT", "SPEC-TEXT", scope, base, phase, ["src/a.ts"], VERIFICATION, suite),
+    selfReview: buildImplementationSelfReviewPrompt(IMPLEMENTER, "PLAN-TEXT", "SPEC-TEXT", scope, "d".repeat(40), ["src/a.ts", "src/c.ts"], ["src/a.ts", "src/c.ts"], "DIFF-TEXT", VERIFICATION, suite),
+    remediation: buildCodeReviewRemediationPrompt(IMPLEMENTER, "SPEC-TEXT", "PLAN-TEXT", ["src/a.ts"], base, ["src/a.ts"], "DIFF-TEXT", finding, VERIFICATION, suite),
+    codeReviewCorrectness: reviewer(CODE_REVIEWER_CORRECTNESS),
+    codeReviewSecurity: reviewer(CODE_REVIEWER_SECURITY),
+    codeReviewStateIntegrity: reviewer(CODE_REVIEWER_STATE_INTEGRITY),
+  };
+}
+
+const SUITE_DIR = "acceptance/demo/";
+const SUITE: AcceptanceSuitePrompt = { dir: SUITE_DIR, command: acceptanceCommand(SUITE_DIR, 2) };
+const PATCH_PROMPTS = ["phase", "selfReview", "remediation"] as const;
+const REVIEW_PROMPTS = ["codeReviewCorrectness", "codeReviewSecurity", "codeReviewStateIntegrity"] as const;
+
+/** The four lines a patch prompt carries with SUITE, assembled from the fixed text and the data. */
+const SUITE_LINES = [
+  `${SUITE_AUTHOR_OPENING} ${SUITE_DIR} ${ACCEPTANCE_SUITE_SENTENCES[1]}`,
+  ACCEPTANCE_SUITE_SENTENCES[2]!,
+  `${ACCEPTANCE_SUITE_SENTENCES[3]} ${SUITE.command.command.join(" ")}`,
+  ACCEPTANCE_SUITE_SENTENCES[4]!,
+].join("\n");
+
+/** The reviewer lens with the given claimed criteria. */
+function reviewLines(alreadySatisfied: string[]): string {
+  return [
+    `${SUITE_AUTHOR_OPENING} ${SUITE_DIR} ${ACCEPTANCE_REVIEW_SENTENCES[0]}`,
+    ACCEPTANCE_REVIEW_SENTENCES[1]!,
+    ...(alreadySatisfied.length === 0 ? [] : [`${ACCEPTANCE_REVIEW_SENTENCES[2]} ${alreadySatisfied.join(", ")}`]),
+  ].join("\n");
+}
+
+test("without a suite, the patch and reviewer prompts are byte for byte the prompts built at 4be6b2a, before the suite existed", () => {
+  for (const absent of [undefined, null]) {
+    const built = suiteAwarePrompts(absent, absent);
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(built).map(([name, prompt]) => [name, sha256Hex(prompt)])),
+      PRE_SUITE_PROMPT_HASHES,
+      `suite ${String(absent)}`
+    );
+    for (const prompt of Object.values(built)) assert.ok(!prompt.includes("acceptance suite"));
+  }
+});
+
+test("with a suite, each patch prompt carries the four lines after the dependency rule, and they are its only difference", () => {
+  const without = suiteAwarePrompts(null, null);
+  const withSuite = suiteAwarePrompts(SUITE, null);
+  for (const name of PATCH_PROMPTS) {
+    const prompt = withSuite[name];
+    assert.ok(prompt.includes(`${DEPENDENCY_ADDITION_RULE}\n${SUITE_LINES}\n\n`), `${name} lacks the suite paragraph`);
+    assert.equal(prompt.split(SUITE_LINES).length, 2, `${name} states the suite once`);
+    assert.equal(prompt.replace(`\n${SUITE_LINES}`, ""), without[name], `${name}: the suite lines are the only difference`);
+    // The emitter reads the suite directory from the first line.
+    assert.equal(/the acceptance suite under (\S+) from the approved specification's/.exec(prompt)?.[1], SUITE_DIR, name);
+  }
+  // The phase keeps its scraped blocks and its one phase sentence; the self-review stays the author's own pass.
+  const phase = withSuite.phase;
+  assert.deepEqual(/Patch only these paths:\n\n([\s\S]*?)\n\n/.exec(phase)![1]!.split("\n"), ["- src/a.ts", "- src/b.ts", "- src/c.ts"]);
+  assert.equal([...phase.matchAll(/This is phase (\d+) of (\d+)\./g)].length, 1);
+  assert.ok(phase.indexOf(SUITE_LINES) < phase.indexOf("Tasks for this phase (tasks"));
+  for (const word of ["reviewer", "finding", "This is phase"]) assert.ok(!withSuite.selfReview.includes(word), `self-review prompt says ${word}`);
+  // The remediation keeps its one finding, and the suite precedes the scope.
+  assert.deepEqual([...withSuite.remediation.matchAll(/finding (\d+)/g)].map((m) => Number(m[1])), [7]);
+  assert.ok(withSuite.remediation.indexOf(SUITE_LINES) < withSuite.remediation.indexOf("Approved scope:"));
+  // The reviewer prompts take nothing from the patch prompts' suite.
+  for (const name of REVIEW_PROMPTS) assert.equal(withSuite[name], without[name]);
+});
+
+test("with a suite, each reviewer prompt carries the lens after its closing rule, naming the claimed criteria only when there are some", () => {
+  const without = suiteAwarePrompts(null, null);
+  for (const alreadySatisfied of [[], ["AC-002", "AC-005"]]) {
+    const built = suiteAwarePrompts(null, { dir: SUITE_DIR, alreadySatisfied });
+    const lines = reviewLines(alreadySatisfied);
+    for (const name of REVIEW_PROMPTS) {
+      const prompt = built[name];
+      assert.ok(prompt.includes(`Only the findings you return are considered.\n\n${lines}\n\n`), `${name} lacks the lens`);
+      assert.equal(prompt.replace(`\n\n${lines}`, ""), without[name], `${name}: the lens is the only difference`);
+      assert.equal(prompt.includes(ACCEPTANCE_REVIEW_SENTENCES[2]!), alreadySatisfied.length > 0, `${name} claimed line`);
+      // Still no consequence a reviewer could write to, and no patch-prompt line the emitter would read.
+      for (const word of ["threshold", "blocks the run", "from the approved specification's"]) assert.ok(!prompt.includes(word), `${name} says ${word}`);
+      assert.deepEqual(/Changed paths:\n\n([\s\S]*?)\n\n/.exec(prompt)![1]!.split("\n"), ["- js/a.js", "- css/b.css"]);
+    }
+    for (const name of PATCH_PROMPTS) assert.equal(built[name], without[name]);
+  }
+});
+
+test("the suite lines carry no word a stage emitter routes on", () => {
+  for (const text of [SUITE_LINES, reviewLines(["AC-001"])]) {
+    for (const marker of ["self-critique", "spec reviewer", "plan reviewer", "reconcile", "spec author", "plan author", "This is phase", SELF_REVIEW_MARKER]) {
+      assert.ok(!text.includes(marker), `the suite lines carry ${marker}`);
+    }
+  }
+});
+
 // --- derived artifacts and the dependency policy ------------------------------
 // (docs/features/derived-artifacts-and-dependency-policy/plan.md, Tasks 4 and 7)
 
@@ -2345,6 +2504,7 @@ const ROUTE_PREFIXES = {
   CODE_REVIEW_REMEDIATION_PROMPT_PREFIX: promptBuilders.CODE_REVIEW_REMEDIATION_PROMPT_PREFIX,
   CODE_REVIEW_RECONCILER_PROMPT_PREFIX: promptBuilders.CODE_REVIEW_RECONCILER_PROMPT_PREFIX,
   DESIGN_SPLIT_PROMPT_PREFIX: promptBuilders.DESIGN_SPLIT_PROMPT_PREFIX,
+  ACCEPTANCE_TEST_AUTHOR_PROMPT_PREFIX: promptBuilders.ACCEPTANCE_TEST_AUTHOR_PROMPT_PREFIX,
 };
 interface PromptRoute {
   name: string;
@@ -2379,6 +2539,7 @@ function routingPrompts(document: string) {
     { builder: "buildCodeReviewRemediationPrompt", prefix: "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, document, document, scope, base, scope, document, [], VERIFICATION), schema: WORKSPACE_REPLY_SCHEMA },
     { builder: "buildCodeReviewReconcilerPrompt", prefix: "CODE_REVIEW_RECONCILER_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewReconcilerPrompt([], document, document, document, base) },
     { builder: "buildDesignSplitPrompt", prefix: "DESIGN_SPLIT_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildDesignSplitPrompt(SPEC_AUTHOR, document, document, SPLIT_CONTEXT) },
+    { builder: "buildAcceptanceTestAuthorPrompt", prefix: "ACCEPTANCE_TEST_AUTHOR_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildAcceptanceTestAuthorPrompt(ACCEPTANCE_TEST_AUTHOR, document, document, "acceptance/a/", acceptanceCommand("acceptance/a/", 2)), schema: WORKSPACE_REPLY_SCHEMA },
   ];
 }
 
@@ -2442,6 +2603,7 @@ test("CLI fixture directly forwards exact stdin bytes to every selected emitter 
     mkdirSync(harness, { recursive: true });
     mkdirSync(join(mirror, "src"));
     copyFileSync(resolve("src", "prompts.ts"), join(mirror, "src", "prompts.ts"));
+    copyFileSync(resolve("src", "acceptance.ts"), join(mirror, "src", "acceptance.ts"));
     const fixture = join(harness, "emit-cli-run.mjs");
     copyFileSync(CLI_ROUTER, fixture);
     for (const emitter of new Set(router.PROMPT_ROUTES.map((route) => route.emitter))) {

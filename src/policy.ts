@@ -200,11 +200,17 @@ const CODE_REVIEWER: SettingDefault = { model: "claude-haiku-5-5", effort: "medi
  * No reviewer is seeded at `high` or above, and a run-wide `--effort` never
  * reaches a reviewer or the code-review reconciler; only its own
  * `--effort-for` moves it.
+ *
+ * The acceptance test author's setting is the operator's choice from the
+ * plan's Task 4 evaluation (2026-10-21,
+ * `docs/features/protected-acceptance-tests/plan.md`): Sonnet 5.5 `medium`
+ * passed every threshold on 3 of 3 samples at less than a third of Opus's cost.
  */
 export const DEFAULT_SETTINGS: Readonly<Record<string, SettingDefault>> = {
   "spec-author": { model: "claude-opus-5-5", effort: "high" },
   "plan-author": { model: "claude-opus-5-5", effort: "high" },
   "implementer": { model: "claude-sonnet-5-5", effort: "medium" },
+  "acceptance-test-author": { model: "claude-sonnet-5-5", effort: "medium" },
   [RECONCILER]: { model: null, effort: "medium" },
   [CODE_REVIEW_RECONCILER]: { model: "claude-haiku-5-5", effort: "medium" },
   "spec-reviewer-traceability": SPEC_REVIEWER,
@@ -318,6 +324,16 @@ export const SANDBOX_ENV = [
   `npm_config_proxy=http://${PROXY_ALIAS}:${PROXY_PORT}`,
   `npm_config_https_proxy=http://${PROXY_ALIAS}:${PROXY_PORT}`,
 ];
+
+/**
+ * How many times the acceptance command runs each test, frozen into
+ * `profile.acceptance.repeatEach` by `new-run --acceptance-tests`
+ * (docs/features/protected-acceptance-tests/plan.md). Two is the least that
+ * measures determinism: a test whose two results differ is flaky, never passed
+ * (hazard 7). Not a `Policy` field, because a stored run without a policy field
+ * cannot be inspected.
+ */
+export const ACCEPTANCE_REPEAT_EACH = 2;
 
 /** The seeded sandbox around one image ID, as `new-run` freezes it. */
 export function seededSandbox(imageId: string): FrozenSandbox {

@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  ACCEPTANCE_TEST_AUTHOR_PROMPT_PREFIX,
   CODE_REVIEW_PROMPT_PREFIX,
   CODE_REVIEW_RECONCILER_PROMPT_PREFIX,
   CODE_REVIEW_REMEDIATION_PROMPT_PREFIX,
@@ -23,6 +24,7 @@ export const PROMPT_ROUTES = [
   { name: "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", prefix: CODE_REVIEW_REMEDIATION_PROMPT_PREFIX, emitter: "emit-code-review.mjs" },
   { name: "CODE_REVIEW_RECONCILER_PROMPT_PREFIX", prefix: CODE_REVIEW_RECONCILER_PROMPT_PREFIX, emitter: "emit-code-review.mjs" },
   { name: "DESIGN_SPLIT_PROMPT_PREFIX", prefix: DESIGN_SPLIT_PROMPT_PREFIX, emitter: "emit-spec-stage.mjs" },
+  { name: "ACCEPTANCE_TEST_AUTHOR_PROMPT_PREFIX", prefix: ACCEPTANCE_TEST_AUTHOR_PROMPT_PREFIX, emitter: "emit-implementation-stage.mjs" },
 ];
 
 export function selectPromptRoute(prompt) {
@@ -37,7 +39,7 @@ export function selectPromptRoute(prompt) {
 // The routes whose dispatches send --json-schema (docs/features/structured-patch-output/plan.md)
 // and the tool server's --mcp-config (docs/features/sandboxed-implementer/plan.md);
 // every other route must arrive without either.
-const SCHEMA_ROUTES = new Set(["IMPLEMENTATION_PROMPT_PREFIX", "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX"]);
+const SCHEMA_ROUTES = new Set(["IMPLEMENTATION_PROMPT_PREFIX", "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", "ACCEPTANCE_TEST_AUTHOR_PROMPT_PREFIX"]);
 
 const FLAGS = [
   "--implementation-mode", "--code-review-mode", "--delay-ms",

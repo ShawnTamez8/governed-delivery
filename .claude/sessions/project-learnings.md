@@ -125,6 +125,34 @@ Changes 2, 10 and 1 are built; no other change is authorized.
   - Change 7's repro must become a protected regression test for every later commit. "No repro, so
     advisory" must never by itself deliver a real high.
   - Neither change, as first written, would have caught that run's defect except by chance.
+- Two plans were written on 2026-10-20, both `Proposed`, uncommitted and not authorized.
+  - `docs/features/protected-acceptance-tests/plan.md` is change 4, rewritten the same day. The
+    operator: tests are not written beforehand; go deeper, not wider. The first version, with
+    operator-authored tests in `governed.yaml`, is superseded.
+    - With `new-run --acceptance-tests`, an independent `acceptance-test-author` writes Playwright
+      tests from the criteria, as a step before phase 1 rather than a new stage.
+    - A deterministic validity gate checks the suite: it loads, every criterion is covered by ID,
+      each criterion has a red test, results are stable under `--repeat-each 2`, and no
+      `dispatchEvent` or fixed waits are used.
+    - The suite is read-only to every later agent, by an overlay mount and a boundary refusal.
+    - A system-owned runner config means no model or target file takes part in the invocation.
+    - The implementer gets an abort path for a test that contradicts the specification, and the
+      reviewers gain a special-casing lens.
+    - Before wiring anything in, Task 4 evaluates the test author on the recorded calculator against
+      pre-registered thresholds. It needs a small paid consent of under $5.
+    - The research grounding is ImpossibleBench: read-only tests keep performance, an abort path
+      cuts cheating, and prompt wording matters. Also OpenAI's verify-returns-true example and
+      SWE-bench's FAIL_TO_PASS/PASS_TO_PASS split.
+    - The fixture now also carries the approved spec and plan in full (`specFull`, `planFull`).
+      That change is uncommitted.
+  - `docs/features/reproduced-review-findings/plan.md` is change 7. It needs the first plan built.
+    - Reviewers move to `--json-schema` and may attach one `node:test` reproduction per finding.
+    - The system runs it against the reviewed commit.
+    - Confirmed reproductions of kept findings are re-run after every later remediation. They block
+      only at or above the blocking severity.
+    - No outcome changes the reconciler's input or the final gate.
+  - Each plan lists its operator decisions. Neither adds a policy field, because a new policy field
+    would make every stored run uninspectable.
 - The multi-stack model is recorded unbuilt in `docs/proposals/target-declared-environments.md`.
 - Open: whether per-seat use is "ordinary use" under Claude Code's legal terms.
 

@@ -250,7 +250,7 @@ export async function dispatchInSandbox(
   store: Store,
   executor: ExecutorDefinition,
   input: Omit<DispatchInput, "toolServer">,
-  sandbox: { frozen: FrozenSandbox; runId: number; label: string; worktreePath: string },
+  sandbox: { frozen: FrozenSandbox; runId: number; label: string; worktreePath: string; readOnlyPaths?: string[] },
   rootDir: string
 ): Promise<SandboxedDispatch> {
   const run = await withSandbox({ ...sandbox, rootDir }, async (started) => {

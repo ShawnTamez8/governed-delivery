@@ -906,3 +906,25 @@ test("a spec edited to declare a derived artifact refuses at the gate, before th
     }
   );
 });
+
+test("a spec edited to declare a file under acceptance/ refuses at the gate, before the signature binds it", () => {
+  // The spec stage refuses the path at write time; a spec edited afterwards can
+  // declare a file in the suite directory, which only the test author writes
+  // (docs/features/protected-acceptance-tests/plan.md, Task 7).
+  withFixture(
+    (f) => {
+      const r = approveRun(f.store, f.root, {
+        runId: f.runId,
+        expiresAt: f.expiresAt,
+        signature: Buffer.alloc(64).toString("base64"),
+      });
+      assert.equal(r.ok, false);
+      assert.equal(
+        (r as { reason: string }).reason,
+        "declared artifact is under acceptance/, where the system's test author writes the acceptance suite: acceptance/x.spec.mjs; no other agent may change it, so it is never declared"
+      );
+      assertNothingWritten(f);
+    },
+    { spec: SPEC.replace("src/thing.ts", "acceptance/x.spec.mjs") }
+  );
+});

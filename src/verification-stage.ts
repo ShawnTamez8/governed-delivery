@@ -1,5 +1,11 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import {
+  ACCEPTANCE_COMMAND_NAME,
+  acceptanceCommand,
+  applyAcceptanceVerdict,
+  type RecordedAcceptanceTest,
+} from "./acceptance.ts";
 import { appendAudit } from "./audit.ts";
 import { parseImplementationGate } from "./handoff.ts";
 import { verificationEvidenceDir } from "./paths.ts";
@@ -42,6 +48,8 @@ interface VerificationRecord {
   outcome: "pass" | "block";
   blockingCommand: string | null;
   commands: RecordedVerificationCommand[];
+  /** Each acceptance test's outcome, in a run with a suite whose report was read. */
+  acceptance?: { tests: RecordedAcceptanceTest[] };
 }
 
 /**
@@ -171,17 +179,27 @@ export async function runVerificationStage(
       `created verification stage ${stage.id} for worktree ${worktreePath} at ${verifiedCommit}`
     );
 
-    const verifiedResult = await verifyCommit({
+    // A run with a suite runs it last, read-only to every command, under the
+    // retention ceiling as its budget so the report is never cut short; its
+    // classified outcome decides the block (docs/features/protected-acceptance-tests/plan.md,
+    // Tasks 7 and 8).
+    const suite = profile.acceptance;
+    const ran = await verifyCommit({
       rootDir,
       worktreePath,
       expectedCommit: verifiedCommit,
-      commands: profile.verification.commands,
+      commands: suite === null
+        ? profile.verification.commands
+        : [...profile.verification.commands, acceptanceCommand(suite.dir, suite.repeatEach)],
       timeoutSeconds: profile.policy.verifyCommandTimeoutSeconds,
       maxBytes: profile.policy.resultMaxBytes,
       retentionMaxBytes: profile.policy.verifyRetentionMaxBytes,
       sandbox: profile.sandbox,
       runId,
       label: "verification",
+      ...(suite === null
+        ? {}
+        : { readOnlyPaths: [suite.dir], maxBytesFor: { [ACCEPTANCE_COMMAND_NAME]: profile.policy.verifyRetentionMaxBytes } }),
       evidenceDir,
       audit: (action, summary) => audit(stage.id, `verification.${action}`, summary),
       progress: (command, because, durationMs) => {
@@ -190,6 +208,7 @@ export async function runVerificationStage(
         );
       },
     });
+    const verifiedResult = suite === null ? ran : applyAcceptanceVerdict(rootDir, worktreePath, suite.dir, ran);
     if (verifiedResult.record === null) {
       // The sandbox failed, not a command: no verification result exists, so
       // none is written for delivery to read.
@@ -199,7 +218,7 @@ export async function runVerificationStage(
       audit(stage.id, "verification.gate.block", reason);
       return { ok: false, reason };
     }
-    const { outcome, blockingCommand, commands } = verifiedResult.record;
+    const { outcome, blockingCommand, commands, acceptance } = verifiedResult.record;
     const blockReason = verifiedResult.reason;
     const record: VerificationRecord = {
       runId,
@@ -210,6 +229,7 @@ export async function runVerificationStage(
       outcome,
       blockingCommand,
       commands,
+      ...(acceptance === undefined ? {} : { acceptance }),
     };
     const recordPath = join(evidenceDir, "result.json");
     writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`);

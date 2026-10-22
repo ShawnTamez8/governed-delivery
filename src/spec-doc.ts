@@ -413,6 +413,22 @@ export function derivedArtifactRefusalReason(paths: readonly string[]): string {
   return `declared artifact names a file the system regenerates (governed.yaml derived:): ${paths.join(", ")}; the system writes it after every patch commit, so it is never declared`;
 }
 
+/**
+ * A declared artifact under `acceptance/`, where the test author writes a
+ * run's acceptance suite (`acceptanceDir`). The suite is read-only to every
+ * other agent and refused at the boundary, so a declaration there could never
+ * be delivered (docs/features/protected-acceptance-tests/plan.md, Task 7).
+ * Compared without case, because a case-insensitive host checkout holds one
+ * directory under both spellings.
+ */
+export function acceptanceArtifactRefusals(artifacts: readonly string[]): string[] {
+  return artifacts.filter((path) => normalizePath(path).toLowerCase().startsWith("acceptance/"));
+}
+
+export function acceptanceArtifactRefusalReason(paths: readonly string[]): string {
+  return `declared artifact is under acceptance/, where the system's test author writes the acceptance suite: ${paths.join(", ")}; no other agent may change it, so it is never declared`;
+}
+
 function section(content: string, title: string): string | null {
   const re = new RegExp(`^## ${title}\\s*\\n`, "m");
   const m = re.exec(content);
@@ -479,6 +495,10 @@ export function writeSpecDoc(
   const derived = derivedArtifactRefusals(derivedPaths, result.value.declaredArtifacts);
   if (derived.length > 0) {
     throw new Error(derivedArtifactRefusalReason(derived));
+  }
+  const suite = acceptanceArtifactRefusals(result.value.declaredArtifacts);
+  if (suite.length > 0) {
+    throw new Error(acceptanceArtifactRefusalReason(suite));
   }
   const dir = runDocumentDir(rootDir, runId);
   mkdirSync(dir, { recursive: true });

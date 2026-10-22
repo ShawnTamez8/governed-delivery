@@ -527,6 +527,28 @@ test("writeSpecDoc refuses run 4's specification when its lockfile is a derived 
   }
 });
 
+test("writeSpecDoc refuses a declared artifact under acceptance/, in any case, and writes a sibling", () => {
+  // The test author writes a run's suite under acceptance/<slug>/, read-only to
+  // every other agent (docs/features/protected-acceptance-tests/plan.md, Task 7).
+  const root = mkdtempSync(join(tmpdir(), "bw-specdoc-acceptance-"));
+  try {
+    for (const path of ["acceptance/x.spec.mjs", "acceptance/my-feature/a.spec.mjs", "Acceptance/x.spec.mjs"]) {
+      assert.throws(
+        () => writeSpecDoc(root, 1, "my-feature", validSpec().replace("src/parser.ts", path)),
+        (err: unknown) =>
+          (err as Error).message ===
+          `declared artifact is under acceptance/, where the system's test author writes the acceptance suite: ${path}; no other agent may change it, so it is never declared`,
+        path
+      );
+    }
+    assert.equal(existsSync(join(runDocumentDir(root, 1), "spec.md")), false);
+    // A path that only begins with the word is an ordinary file.
+    writeSpecDoc(root, 1, "my-feature", validSpec().replace("src/parser.ts", "acceptance-notes.md"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 /** Run 4's spec with a `## Dependencies added` section of the given lines, appended last. */
 function run4WithDependencies(...lines: string[]): string {
   return `${RUN_4.spec.trimEnd()}\n\n## Dependencies added\n\n${lines.join("\n")}\n`;

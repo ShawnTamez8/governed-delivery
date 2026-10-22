@@ -74,7 +74,7 @@ export const COMMANDS: Readonly<Record<string, CommandDefinition>> = {
   migrate: { description: "apply pending migrations", options: [] },
   "new-run": {
     description: "create a run and freeze its configuration",
-    notes: "Model and effort are frozen per setting: each of the nine agents, the reconciler and\n"
+    notes: "Model and effort are frozen per setting: each of the ten agents, the reconciler and\n"
       + "the code-review reconciler.\n"
       + "--model is required and covers only the reconciler; every other setting\n"
       + "takes its seeded model unless --model-for names it.\n"
@@ -88,7 +88,10 @@ export const COMMANDS: Readonly<Record<string, CommandDefinition>> = {
       + "Spec review asks Decision-1 whether each acceptance criterion carries an author's remark.\n"
       + "SYSTEMONE_ENDPOINT, SYSTEMONE_DEPLOYMENT, SYSTEMONE_DEPLOYMENT_TYPE and SYSTEMONE_API_KEY\n"
       + "must be set, and the first three are frozen; --no-narration-check creates the run\n"
-      + "without the check, and the profile records that choice.\n",
+      + "without the check, and the profile records that choice.\n"
+      + "--acceptance-tests freezes an acceptance suite under acceptance/<slug>/: one test-author\n"
+      + "dispatch writes browser tests from the acceptance criteria before the first phase, and\n"
+      + "every verification runs them. Static pages opened from the worktree only.\n",
     options: [
       { name: "project", value: "p", required: true },
       { name: "feature", value: "f", required: true, validate: (value) => validateRunIdentity({ featureId: value }) },
@@ -103,6 +106,7 @@ export const COMMANDS: Readonly<Record<string, CommandDefinition>> = {
         validate: (value, name) => validateNumber(value, name) ?? (Number(value) === 0 ? `--${name} must be a positive run id, got ${value}` : null),
       },
       { name: "no-narration-check" },
+      { name: "acceptance-tests" },
     ],
   },
   "stage-add": {

@@ -17,11 +17,19 @@
 // temp directory. A test marks a container prefix `unremovable` (rm -f fails
 // and inspect still finds it), `noexit` (the wrapper writes no exit status) or
 // `unstartable` (`run -d` fails, as the daemon's 125 does).
+//
+// The image's acceptance runner (docs/features/protected-acceptance-tests/plan.md)
+// is not on the host, so the system's acceptance command is answered from a
+// recorded real report, `test/fixtures/recorded/acceptance-report-<case>.json`,
+// that a test serves for a container prefix: its log after the header line and
+// its exit code, with only the suite's path substituted by the one suite file
+// the command's directory holds. Each run appends its container, working
+// directory and `index.html` (or null) to `acceptance-runs.jsonl` in the state.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 const RECORDED = JSON.parse(
   readFileSync(new URL("../recorded/docker-cli-outputs.json", import.meta.url), "utf8")
@@ -88,7 +96,7 @@ function imageKnown(ref) {
 
 const VALUE_FLAGS = new Set(["--name", "--label", "--network", "--cpus", "--memory", "--memory-swap", "--pids-limit",
   "--cap-drop", "--security-opt", "--user", "-v", "-w", "--env", "-e", "--alias", "--format", "--filter", "-t"]);
-const BOOL_FLAGS = new Set(["-d", "--rm", "-i", "-a", "--internal", "-f"]);
+const BOOL_FLAGS = new Set(["-d", "--rm", "-i", "-a", "--internal", "-f", "--init"]);
 
 /** Split `args` into flags (name -> values) and positionals, stopping flag parsing at the first positional. */
 function parse(args) {
@@ -123,7 +131,41 @@ function labels(flags) {
   return Object.fromEntries((flags.get("--label") ?? []).map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
 }
 
+const ACCEPTANCE_RUNNER = "/opt/bw-browser/node_modules/@playwright/test/cli.js";
+
+/** Answer the acceptance command from the recorded report served for this container's prefix. */
+function serveAcceptanceReport(container, argv, token) {
+  const cwd = container.mounts["/work"];
+  const exit = (status) => {
+    if (!marked("noexit", container.name)) writeFileSync(join(STATE, "exits", `${container.id}-${token}`), `${status}\n`);
+  };
+  const served = readdirSync(join(STATE, "marks"))
+    .filter((f) => f.startsWith("acceptance-"))
+    .map((f) => JSON.parse(readFileSync(join(STATE, "marks", f), "utf8")))
+    .find((m) => container.name.startsWith(m.prefix));
+  if (served === undefined) {
+    process.stderr.write(`docker stand-in: no recorded acceptance report is served for ${container.name}\n`);
+    return exit(127);
+  }
+  const recorded = JSON.parse(readFileSync(new URL(`../recorded/acceptance-report-${served.report}.json`, import.meta.url), "utf8"));
+  const dir = argv[argv.length - 1];
+  const suite = readdirSync(join(cwd, dir), { recursive: true, withFileTypes: true }).filter((e) => e.isFile());
+  if (recorded.files.length !== 1 || suite.length !== 1) {
+    throw new Error(`docker stand-in: a served report substitutes one suite file, found ${suite.length} under ${dir}`);
+  }
+  const actual = relative(cwd, join(suite[0].parentPath, suite[0].name)).split("\\").join("/").replace(/^acceptance\//, "");
+  const log = recorded.log.slice(recorded.log.indexOf("\n") + 1).split(recorded.files[0].path.replace(/^acceptance\//, "")).join(actual);
+  appendFileSync(join(STATE, "acceptance-runs.jsonl"), `${JSON.stringify({
+    container: container.name,
+    cwd,
+    indexHtml: existsSync(join(cwd, "index.html")) ? readFileSync(join(cwd, "index.html"), "utf8") : null,
+  })}\n`);
+  process.stdout.write(log);
+  exit(recorded.provenance.exitCode);
+}
+
 function runCommandOnHost(container, argv, seconds, token) {
+  if (argv[0] === "node" && argv[1] === ACCEPTANCE_RUNNER) return serveAcceptanceReport(container, argv, token);
   const cwd = container.mounts["/work"];
   const env = {};
   for (const assignment of container.env) env[assignment.slice(0, assignment.indexOf("="))] = assignment.slice(assignment.indexOf("=") + 1);

@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, type Dirent } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import type { VerifyCommand } from "./governed-config.ts";
 import { killTree } from "./harness.ts";
 import { runVerifyCommand, type CommandOutcome } from "./verify-command.ts";
@@ -251,11 +251,11 @@ export function dockerReady(dockerCommand: string[]): { ok: true; serverVersion:
 }
 
 /**
- * The image's ID, building it from the committed `container/Dockerfile` when
- * no image with this Dockerfile's tag is present. The tag names the
- * Dockerfile's hash, so an edited Dockerfile builds a new image rather than
- * reusing an old one. This is the only code that knows where the image comes
- * from (extension point 1).
+ * The image's ID, building it from the committed `container/` directory when
+ * no image with that directory's tag is present. The tag names a hash over
+ * every file the build can copy (`sandboxImageTag`), so an edited Dockerfile
+ * or runner config builds a new image rather than reusing an old one. This is
+ * the only code that knows where the image comes from (extension point 1).
  */
 export function ensureImage(dockerCommand: string[]): { imageId: string; tag: string; built: boolean } {
   const found = findSandboxImage(dockerCommand);
@@ -270,9 +270,28 @@ export function ensureImage(dockerCommand: string[]): { imageId: string; tag: st
 
 const DOCKERFILE_DIR = join(import.meta.dirname, "..", "container");
 
-/** The committed Dockerfile's tag and the ID of the image under it, or null when it is not built; builds nothing. */
+/**
+ * `bw-sandbox:` and the first 12 hex digits of a SHA-256 over every file under
+ * `dir`, in sorted relative-path order, each fed as its `/`-separated path, a
+ * NUL, its bytes and a NUL. Every file counts, not only the Dockerfile,
+ * because the build copies others into the image
+ * (docs/features/protected-acceptance-tests/plan.md).
+ */
+export function sandboxImageTag(dir: string): string {
+  const files = (readdirSync(dir, { recursive: true, withFileTypes: true }) as Dirent[])
+    .filter((entry) => entry.isFile())
+    .map((entry) => relative(dir, join(entry.parentPath, entry.name)).split(sep).join("/"))
+    .sort();
+  const hash = createHash("sha256");
+  for (const path of files) {
+    hash.update(path).update("\0").update(readFileSync(join(dir, path))).update("\0");
+  }
+  return `bw-sandbox:${hash.digest("hex").slice(0, 12)}`;
+}
+
+/** The committed image directory's tag and the ID of the image under it, or null when it is not built; builds nothing. */
 export function findSandboxImage(dockerCommand: string[]): { tag: string; imageId: string | null } {
-  const tag = `bw-sandbox:${createHash("sha256").update(readFileSync(join(DOCKERFILE_DIR, "Dockerfile"))).digest("hex").slice(0, 12)}`;
+  const tag = sandboxImageTag(DOCKERFILE_DIR);
   try {
     return { tag, imageId: control(dockerCommand, "inspect image", tag, ["image", "inspect", "--format", "{{.Id}}", tag]).trim() };
   } catch (err) {
@@ -336,9 +355,20 @@ export function createSandbox(input: {
   runId: number;
   label: string;
   worktreePath: string;
+  /**
+   * Worktree-relative paths mounted read-only over `/work`, after the `.git`
+   * overlay: the acceptance suite (docs/features/protected-acceptance-tests/plan.md,
+   * Task 7). Absent, the argv is unchanged.
+   */
+  readOnlyPaths?: string[];
 }): Sandbox {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(input.label)) {
     throw new Error(`sandbox label ${JSON.stringify(input.label)} must be lowercase letters, digits and hyphens`);
+  }
+  for (const path of input.readOnlyPaths ?? []) {
+    if (!/^[A-Za-z0-9_][A-Za-z0-9._-]*(\/[A-Za-z0-9_][A-Za-z0-9._-]*)*\/?$/.test(path)) {
+      throw new Error(`read-only path ${JSON.stringify(path)} must be worktree-relative, with no empty, dot or dot-dot segment`);
+    }
   }
   const { frozen } = input;
   requireImage(frozen);
@@ -375,6 +405,10 @@ export function createSandbox(input: {
     ]);
     sandbox.ids.work = control(dc, "start work container", sandbox.work, [
       "run", "-d", "--name", sandbox.work, ...labels,
+      // An init process as PID 1 reaps the orphans a command leaves; `sleep`
+      // never does, and their zombies count against the pids limit until
+      // Chromium cannot start (protected-acceptance-tests, Task 4 round 1).
+      "--init",
       "--network", sandbox.ids.network,
       "--cpus", frozen.limits.cpus,
       "--memory", frozen.limits.memory, "--memory-swap", frozen.limits.memory,
@@ -382,6 +416,10 @@ export function createSandbox(input: {
       "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--user", frozen.user,
       "-v", `${input.worktreePath}:/work`,
       "-v", `${join(input.worktreePath, ".git")}:/work/.git:ro`,
+      ...(input.readOnlyPaths ?? []).flatMap((path) => {
+        const trimmed = path.replace(/\/$/, "");
+        return ["-v", `${join(input.worktreePath, trimmed)}:/work/${trimmed}:ro`];
+      }),
       "-w", "/work",
       ...sandbox.env.flatMap((assignment) => ["--env", assignment]),
       frozen.imageId, "sleep", "infinity",

@@ -6,7 +6,7 @@
 the operator decision it needs, and several reverse binding text in
 `ARCHITECTURE.md`.
 
-**Implementation status (2026-10-20):** three of the ten changes are built, each
+**Implementation status (2026-10-21):** four of the ten changes are built, each
 under its own plan and operator decision. Each change heading below carries its
 own status line.
 
@@ -14,9 +14,10 @@ own status line.
 |---|---|
 | 1 Sandboxed implementer | Implemented, commit `ff260eb` (unpushed), `docs/features/sandboxed-implementer/plan.md` |
 | 2 Derived artifacts | Implemented, commit `1cda025`, `docs/features/derived-artifacts-and-dependency-policy/plan.md` |
+| 4 Executable acceptance criteria | Built, uncommitted, not paid-validated, `docs/features/protected-acceptance-tests/plan.md` |
 | 10 Dependency policy | Implemented with change 2, same commit and plan |
 | 9 Replay | Designed only (`docs/proposals/whole-run-replay.md`); not built |
-| 3, 4, 5, 6, 7, 8 | Not built |
+| 3, 5, 6, 7, 8 | Not built |
 
 Changes 4 and 7 carry a 2026-10-20 revision drawn from a web-calculator run whose
 remediation introduced the defect that blocked it
@@ -458,8 +459,17 @@ toolchain-probe proposal, plus the capability fields.
 
 ### 4. Acceptance criteria become executable before implementation
 
-**Status (2026-10-20): Not built.** Revised 2026-10-20; see "Revision
-(2026-10-20)" at the end of this change.
+**Status (2026-10-21): Built, uncommitted, not paid-validated.**
+`docs/features/protected-acceptance-tests/plan.md` builds it as an opt-in
+(`new-run --acceptance-tests`) for static pages. It answers the 2026-10-20
+revision below with a trusted-input browser in the image, enforced by the gate's
+lint, and with the variants rule, which is stated in the test author's prompt
+but not enforced. Test authoring is a step inside `implementation`,
+not the deferred stage, and the test author has its own frozen setting. A
+criterion whose code already meets it keeps a passing test as a regression
+guard instead of a failing one. The plan's paid benchmark, Task 11, needs its
+own authorization. Revised 2026-10-20; see "Revision (2026-10-20)" at the end
+of this change.
 
 **What.** After approval, a test-authoring step writes one or more tests per
 acceptance criterion. The harness commits them to the run branch, runs them at

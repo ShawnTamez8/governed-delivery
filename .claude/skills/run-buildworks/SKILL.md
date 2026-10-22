@@ -32,7 +32,8 @@ Node v24.14.0, npm 11.18.0, git-bash and PowerShell, 2026-08-31.
   one, and builds the sandbox image from `container/Dockerfile` the first time
   (2026-10-19, `docs/features/sandboxed-implementer/plan.md`). The implementer's
   tools, verification and derived commands all run in that image, which
-  provides Node, npm and Git and reaches only the npm registry, so a target's
+  provides Node, npm and Git, plus the Playwright browser for the acceptance
+  runner (about 2 GB in all), and reaches only the npm registry, so a target's
   `governed.yaml` commands must be Node/npm commands. The unit suite does not
   need an engine: stage tests use the Docker stand-in, and
   `test/container.test.ts` skips by name without one.
@@ -127,6 +128,17 @@ operator's `SYSTEMONE_ENDPOINT`, `SYSTEMONE_DEPLOYMENT` and
 criterion per review round with `SYSTEMONE_API_KEY`
 (`docs/features/narration-check-spec-review/plan.md`). Those requests are not
 in the reported cost and are not counted in the dispatch ceilings.
+
+`--acceptance-tests` passes `new-run --acceptance-tests`
+(`docs/features/protected-acceptance-tests/plan.md`). On a paid chain,
+`implement` then dispatches the `acceptance-test-author` once before the first
+phase. It writes a browser suite under `acceptance/<slug>/`, and the validity
+gate runs that suite before any phase is paid for. `verify` and every
+remediation run it after the frozen commands. On `smoke`, the flag changes only
+what `new-run` freezes, because the smoke reaches no dispatch. Without the flag
+the chain is unchanged. The web calculator opens from `index.html` at the
+repository root, which is the only page shape the suite supports. No paid chain
+has run with this flag yet.
 
 ## Run: the paid chain (spends real money)
 

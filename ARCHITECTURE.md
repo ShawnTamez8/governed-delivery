@@ -141,6 +141,12 @@ approves or denies the split. The split is a step inside spec review (section
 12), not a stage, so the sequence above is unchanged. It does not lift the task
 decomposition deferral: tasks as run rows stay unbuilt.
 
+On 2026-10-20 the operator authorized acceptance tests written before the
+implementation, by an independent author, on a run that opts in (section 23).
+Writing them is a step inside the implementation stage, before its first phase,
+not a stage (section 12), so the sequence above is unchanged and test authoring
+stays deferred as a stage.
+
 ## 6. Trust boundaries
 
 Enumerate them; each is testable. Agents may not:
@@ -211,6 +217,15 @@ at its next sandbox, and the recovery is a fresh run, not a rebuild, because the
 Dockerfile does not pin everything it installs. Other stacks wait for
 `docs/proposals/target-declared-environments.md`.
 
+The image also holds the system's acceptance runner (2026-10-21,
+`docs/features/protected-acceptance-tests/plan.md`): `@playwright/test` 1.64.1
+and its Chromium under `/opt/bw-browser`, and the committed
+`container/acceptance.config.mjs`. The image's tag is a hash over every file in
+`container/`, not the Dockerfile alone, so a configuration-only change builds a
+new image. A run already frozen keeps its image ID. The runner opens static
+pages from the worktree (`file:///work/`); a target that must start a server
+first is not supported.
+
 Verification commands live in a committed `governed.yaml` at the repository
 root, authored by the operator before the first run. The verification stage
 finds its commands there and must actually run them; a stage that cannot
@@ -247,7 +262,12 @@ target could read its siblings' findings (hazard 14). Their prompts carry every
 document they judge. The implementer works in its own worktree through the
 tool server (section 11): it reads and writes files and runs commands there,
 and its prompt tells it to read what each command runs before it chooses a
-file's content.
+file's content. On a run with an acceptance suite, the phase, self-review and
+remediation prompts also say where the read-only suite is, who wrote it, that it
+runs and blocks at every verification point, and the system's command to run
+it. They also give the abort rule: a test that contradicts the approved
+specification is never special-cased, but returned `blocked`, naming the test
+(2026-10-21).
 
 ### What the system writes
 
@@ -275,7 +295,12 @@ that computes and gates an agent's diff rather than requested in a prompt:
 - agent definitions and the executor definition;
 - `governed.yaml`, policy, and configuration the run snapshotted;
 - the audit chain and anything under `.governance/`;
-- the design document that is the run's own input.
+- the design document that is the run's own input;
+- on a run with an acceptance suite, the suite's directory `acceptance/<slug>/`
+  after its author's commit (2026-10-21). Every later container that holds the
+  worktree, verification included, mounts it read-only over the worktree, and
+  the boundary refuses a diff under it. A specification may not declare a path
+  under `acceptance/`: the spec write and the approval gate refuse it.
 
 An agent that could edit its own permissions, its own input, or the record of
 what it did has no meaningful boundary. Enforcement belongs in the write path,
@@ -693,8 +718,8 @@ The command carries no `--safe-mode` (2026-10-19,
 named by `--mcp-config`, and `--restricted` alone keeps every `CLAUDE.md` out
 (the spike's positive-controlled probes, Claude Code 2.1.303).
 `--strict-mcp-config` admits only servers named by `--mcp-config`, so a dispatch
-that names none, which is every dispatch but the three patch dispatches, sees no
-MCP server at all.
+that names none, which is every dispatch but the three patch dispatches and the
+acceptance test author, sees no MCP server at all.
 
 ### Invocation
 
@@ -739,6 +764,13 @@ under the frozen ceiling (300 s, below the idle budget, hazard 19), and log each
 call before it runs. The agent has no other write path and no git. After the
 dispatch the proxy's log is captured, the sandbox is destroyed, and the system
 computes the diff (section 8) only once the work container is proven gone.
+
+On a run with an acceptance suite (2026-10-21), the acceptance test author is a
+fourth such dispatch, before the first phase: the same sandbox, tool server,
+schema and reply, with a scope of exactly the suite's directory. Every later
+work container mounts that directory read-only over the worktree. The work
+container starts with `--init`, so the processes a browser orphans are reaped
+rather than accumulating against the process limit.
 
 **Probe before any run.** Run the probe command at setup and refuse to proceed
 if the executable does not resolve in the environment that will actually spawn
@@ -1160,6 +1192,39 @@ and code review still reads the change (2026-10-19). A moved head, a refused
 diff, or a discard that cannot run blocks the run, because each shows the
 boundary failed.
 
+**The acceptance suite** (section 23, 2026-10-20;
+`docs/features/protected-acceptance-tests/plan.md`). On a run frozen with
+`new-run --acceptance-tests`, the stage starts with one dispatch of a distinct
+`acceptance-test-author` agent, under its own setting, before phase 1. The
+author writes browser tests from the approved acceptance criteria, each titled
+with the criterion's ID, under `acceptance/<slug>/`. The system commits that
+directory (`implementation.acceptance.authored`) and runs the suite on that
+commit. When the commit holds no `index.html`, the suite runs in a throwaway
+checkout where the system writes a blank stub page, and the run worktree never
+holds the stub. A deterministic validity gate then decides from the report and
+the files. Its checks:
+- the suite loads, and has a test;
+- every test traces to a criterion the specification defines, and every
+  criterion has a test;
+- each criterion has a test that fails for the right reason on that baseline (a
+  locator action or a retrying matcher in the test's own body), or only tests
+  that already pass, recorded as `already_satisfied` regression guards;
+- the two repeats of each test agree;
+- a lint over the files: no untrusted input events, fixed waits, timeouts,
+  `networkidle`, hooks or focused tests; only retrying `await expect(...)`
+  assertions; no unsettled promise; the image's import line; and an assertion in
+  every test.
+
+A failure blocks the run with every reason named (`implementation.acceptance.gate.block`),
+before any phase is paid for, and is never retried. Either way the gate's record,
+each test's baseline class and each `already_satisfied` criterion, is written to
+`.governance/acceptance/<run>/gate.json`. After a pass, phase 1's base is the
+suite commit, so the implementation diff that reviewers judge never holds the
+suite.
+A phase or self-review that returns `blocked` naming a test's exact title is
+recorded as `implementation.acceptance.disputed`, as well as its usual block or
+skip, so the operator can see a test-author error as one.
+
 What phasing does not establish: each phase sees the plan and the checkout, not
 the reasoning of the previous phase, and no code review runs between phases.
 The self-review is the author's own pass, not independent review (hazard 14):
@@ -1183,6 +1248,16 @@ removal, every target whose commands install or build would fail that guard. No
 agent runs between the last command and the removal, so it hides nothing an
 agent wrote. A removal that fails blocks the run.
 
+On a run with an acceptance suite, the system's acceptance command runs after
+the frozen commands, at this stage and after every code-review remediation
+(2026-10-21). The suite directory is mounted read-only for the whole container,
+so a verify command cannot change the suite either. The command's output budget
+is the retention ceiling, and its verdict is read from the report, not from its
+exit code alone. Per-test outcomes are recorded beside the commands in
+`result.json`. A failing test blocks as `acceptance failed: <titles>`, and a
+test whose repeats disagree blocks as `acceptance flaky: <titles>`. A frozen
+verify command may not be named `acceptance` on such a run.
+
 **`code_review`.** Seats exactly the configured number of specialized code
 reviewers — role `reviewer`, output kind `code-findings`, bound to the frozen
 executor — and hands each the approved specification and plan, the complete
@@ -1201,6 +1276,14 @@ report only actionable defects in the current code. Style, preference,
 optional refactoring, speculative hardening, questions, and concerns that
 require changing the approved specification or plan are not findings in this
 stage.
+
+On a run with an acceptance suite, every reviewer's prompt also says where the
+suite is, so the reviewer can read it, and that code which detects the test
+environment or special-cases a test's inputs is a high-severity defect. It also
+names each criterion the validity gate recorded as `already_satisfied`, so the
+reviewer can check the author's claim. The stage reads those IDs from
+`gate.json`, and refuses before its stage row when that record is missing or
+malformed (2026-10-21).
 
 The quiescent panel check compares HEAD with the reviewed commit and runs the
 full worktree-clean guard exactly once after all members settle. A changed
@@ -1578,6 +1661,9 @@ report lives there.
                            signature supplied by the external authority
   verification/<run>/  retained command output, one file per command, plus the
                        structured result record handed to delivery_check
+  acceptance/<run>/    the acceptance suite's validity-gate record, gate.json,
+                       which code review reads; baseline/ is the throwaway
+                       checkout with the stub page, removed after the gate run
   proposals/<run>/  retained upstream-proposal evidence, one file per
 candidate; proposal.evidence_ref references only the
                     creating candidate's file — a later candidate that
@@ -1914,7 +2000,8 @@ price.
   more phases than the ceiling refuses by name before the first implementer
   dispatch, never truncating the plan. A failed phase blocks the run and is not
   retried. The stage's dispatch ceiling is the phase ceiling plus one, for the
-  self-review after the last phase. Since 2026-10-19 a phase's change no longer
+  self-review after the last phase, and plus two on a run with an acceptance
+  suite, for the test author before the first. Since 2026-10-19 a phase's change no longer
   travels in its reply (section 8), so the phase size is no longer a
   response-size workaround (hazard 20), only the cadence at which the change is
   committed, checked and regenerated.
@@ -2191,6 +2278,62 @@ It does not authorize changes 4, 7 or 9, a second agent, a second image or
 ecosystem, target-declared environments
 (`docs/proposals/target-declared-environments.md`), service containers, network
 access beyond the frozen allowlist, or any paid run.
+
+**Protected acceptance tests — 2026-10-20.** The operator authorized building
+change 4 of `docs/proposals/sandboxed-delivery-rework.md` as
+`docs/features/protected-acceptance-tests/plan.md` states it, by invoking the
+plan's implementation on 2026-10-20. The reason: the second sandboxed
+web-calculator run (fixture
+`test/fixtures/recorded/code-review-web-calculator-remediation-regression.json`)
+delivered a remediation that broke a behaviour no executed check held, and
+verification checked only `node --version` and `npm --version` (hazard 18).
+
+What it authorizes:
+- on a run frozen with `new-run --acceptance-tests`, one dispatch of a distinct
+  `acceptance-test-author` agent before the first implementation phase. It writes
+  Playwright tests from the approved acceptance criteria through the tool
+  server, and the system commits them;
+- a deterministic validity gate over that suite, decided before phase 1. A
+  failure blocks the run (operator, 2026-10-20) and is never retried;
+- the suite held read-only for every later container that holds the worktree,
+  verification included, and refused at the commit boundary;
+- the system's own runner, configuration and browser in the one sandbox
+  image, run at every verification point. A failing or flaky test blocks;
+- the plan's prompt additions: the abort path for a test that contradicts the
+  specification, and the reviewers' special-casing lens;
+- one evaluation of the test author on the recorded run, under a $5 ceiling,
+  with the operator's consent given when the implementation was invoked.
+
+The test author's rules were settled after the spike (operator, 2026-10-20):
+no hooks, only Playwright's retrying assertions, no hard-coded timeouts or
+delays, no missing `await`, and no `networkidle` wait. Each is enforced by the
+gate's lint and stated in the author's prompt.
+
+It does not authorize change 7 or 9, a `test_authoring` stage, a server-backed
+target, hidden tests, feeding an acceptance failure into remediation, guided
+mode offering the flag, or any paid run other than that evaluation.
+
+The operator's later decisions on the same change (2026-10-21), each recorded
+in the plan's Task 4 evaluation record:
+- After the first evaluation round failed on the plan's own instruments: "if my
+  rules are not the best rules, dont use them. Update the lint and or test
+  issues with the correct and robust fix, then we will rerun the test and loop
+  until it catches all findings and errors and doesnt produce any false
+  positives (up to a total of $15 SPEND)." The ceiling is cumulative, the
+  evaluation's $4.94 included. The gate's lint was rebuilt on the TypeScript
+  parser, with `typescript` moved into `dependencies`, and the benchmark's
+  control was rebuilt to be faithful to the specification.
+- The suite runs four-wide (`workers: 4`, `fullyParallel`), and the work
+  container starts with `--init`. Without the latter, orphaned browser processes
+  exhausted the process limit.
+- A valid red may carry an assertion's custom message before the matcher's own
+  header.
+- "we'll stick with Sonnet-medium": the test author's seeded setting is Sonnet
+  5.5 `medium`, chosen over Opus 5.5 `high` when both passed every
+  pre-registered threshold, at $9.73 of the $15.
+
+None of these authorizes the paid end-to-end run, the plan's Task 11, which
+needs its own consent.
 
 ## 24. Non-goals
 
