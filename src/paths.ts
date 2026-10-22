@@ -184,6 +184,14 @@ export function acceptanceEvidenceDir(rootDir: string, runId: number): string {
   return join(rootDir, GOVERNANCE_DIR, "acceptance", String(runId));
 }
 
+/**
+ * The committed copy of a sandbox's read-only paths (`createSandbox`), beside
+ * the run's worktree and never inside it, so no path under `/work` reaches it.
+ */
+export function acceptanceMountDir(rootDir: string, runId: number, sandboxName: string): string {
+  return join(acceptanceEvidenceDir(rootDir, runId), "mounts", sandboxName);
+}
+
 /** The root-relative form stored inside retained command records. */
 export function codeReviewVerificationRef(runId: number, round: number, name: string): string {
   return join(

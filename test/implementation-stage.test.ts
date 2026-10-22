@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -22,6 +23,7 @@ import { deliveryCoverage } from "../src/delivery-coverage.ts";
 import { parseWorkspaceReply, validateWorkspaceReply, WORKSPACE_REPLY_SCHEMA } from "../src/agent-result.ts";
 import {
   acceptanceRuns,
+  committedSuiteMount,
   markUnremovable,
   markUnstartable,
   recordingDockerCommand,
@@ -2029,12 +2031,9 @@ function recordDockerCalls(store: Store, root: string, runId: number, dir: strin
   return recording.calls;
 }
 
-/** The two mounts every work container gets, and the suite's read-only overlay. */
+/** The two mounts every work container gets. */
 function baseMounts(tree: string): string[] {
   return [`${tree}:/work`, `${join(tree, ".git")}:/work/.git:ro`];
-}
-function suiteOverlay(tree: string): string {
-  return `${join(tree, "acceptance", SLUG)}:/work/acceptance/${SLUG}:ro`;
 }
 
 test("after its author, the suite is mounted read-only into the gate run, every phase and the self-review", async () => {
@@ -2045,13 +2044,17 @@ test("after its author, the suite is mounted read-only into the gate run, every 
       const result = await runImplementationStage(store, fixtureExecutor(), { runId, rootDir: root });
       assert.equal(result.ok, true, (result as { reason?: string }).reason);
       const started = workContainerMounts(calls());
-      const mounts = (label: string) => started.filter((s) => s.name.startsWith(sandboxPrefix(root, runId, label))).map((s) => s.mounts);
-      assert.deepEqual(mounts("test-author"), [baseMounts(worktreePath)], "the author writes the suite");
+      const of = (label: string) => started.filter((s) => s.name.startsWith(sandboxPrefix(root, runId, label)));
+      // With a suite, each mount is the committed copy beside the worktree, never the worktree (Task 12).
+      const withSuite = (label: string, tree: string) => of(label).map((s) => [...baseMounts(tree), committedSuiteMount(root, runId, s.name, ACCEPTANCE.dir)]);
+      assert.deepEqual(of("test-author").map((s) => s.mounts), [baseMounts(worktreePath)], "the author writes the suite");
       const baseline = join(root, ".governance", "acceptance", String(runId), "baseline");
-      assert.deepEqual(mounts("acceptance-gate"), [[...baseMounts(baseline), suiteOverlay(baseline)]]);
-      assert.deepEqual(mounts("phase-1"), [[...baseMounts(worktreePath), suiteOverlay(worktreePath)]]);
-      assert.deepEqual(mounts("self-review"), [[...baseMounts(worktreePath), suiteOverlay(worktreePath)]]);
+      assert.deepEqual(of("acceptance-gate").map((s) => s.mounts), withSuite("acceptance-gate", baseline));
+      assert.deepEqual(of("phase-1").map((s) => s.mounts), withSuite("phase-1", worktreePath));
+      assert.deepEqual(of("self-review").map((s) => s.mounts), withSuite("self-review", worktreePath));
       assert.equal(started.length, 4, started.map((s) => s.name).join(", "));
+      // Teardown removed every copy.
+      assert.deepEqual(readdirSync(join(root, ".governance", "acceptance", String(runId), "mounts")), []);
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });

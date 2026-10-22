@@ -1,9 +1,10 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync, type Dirent } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, type Dirent } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { VerifyCommand } from "./governed-config.ts";
 import { killTree } from "./harness.ts";
+import { acceptanceMountDir } from "./paths.ts";
 import { runVerifyCommand, type CommandOutcome } from "./verify-command.ts";
 
 /**
@@ -104,6 +105,8 @@ export interface Sandbox {
   ids: { network: string | null; proxy: string | null; work: string | null };
   /** The `--env` assignments the work container was given, and nothing else. */
   env: string[];
+  /** The committed copy mounted for the read-only paths, which teardown removes; null without them. */
+  mountDir: string | null;
 }
 
 /** What a command runs against: the Docker argv and the work container's ID. */
@@ -344,6 +347,36 @@ export function missingImagePrograms(frozen: FrozenSandbox, programs: string[]):
 }
 
 /**
+ * Write the files under each of `paths` at the worktree's `HEAD` into `dir`,
+ * from Git's objects, never from the worktree's files: the worktree is the
+ * writable `/work` mount, which a differently cased path reaches on a
+ * case-insensitive host (docs/features/protected-acceptance-tests/plan.md,
+ * Task 12). Anything but a regular file is refused.
+ */
+function writeCommittedPaths(worktreePath: string, paths: string[], dir: string): void {
+  const git = (args: string[]): Buffer => {
+    const result = spawnSync("git", args, { cwd: worktreePath, maxBuffer: CONTROL_MAX_BUFFER, windowsHide: true });
+    if (result.error || result.status !== 0) {
+      throw new Error(`git ${args.join(" ")} failed in ${worktreePath}: ${result.error?.message ?? (result.stderr ?? Buffer.alloc(0)).toString("utf8").trim()}`);
+    }
+    return result.stdout;
+  };
+  for (const path of paths) {
+    const entries = git(["ls-tree", "-r", "-z", "HEAD", "--", path]).toString("utf8").split("\0").filter((e) => e !== "");
+    if (entries.length === 0) throw new Error(`read-only path ${JSON.stringify(path)} holds no file at HEAD in ${worktreePath}`);
+    for (const entry of entries) {
+      const [meta, file] = [entry.slice(0, entry.indexOf("\t")), entry.slice(entry.indexOf("\t") + 1)];
+      const [mode, type, object] = meta.split(" ");
+      if (type !== "blob" || (mode !== "100644" && mode !== "100755")) {
+        throw new Error(`read-only path ${JSON.stringify(path)} holds ${file} with mode ${mode}, not a regular file`);
+      }
+      mkdirSync(dirname(join(dir, file)), { recursive: true });
+      writeFileSync(join(dir, file), git(["cat-file", "blob", object!]));
+    }
+  }
+}
+
+/**
  * Start one sandbox for `worktreePath`. A failure part-way removes exactly the
  * objects this call created, by the IDs Docker returned, never anything by
  * name pattern, and raises the start's `ContainerError` with any cleanup
@@ -358,7 +391,9 @@ export function createSandbox(input: {
   /**
    * Worktree-relative paths mounted read-only over `/work`, after the `.git`
    * overlay: the acceptance suite (docs/features/protected-acceptance-tests/plan.md,
-   * Task 7). Absent, the argv is unchanged.
+   * Tasks 7 and 12). Each is mounted from a copy of its files at the worktree's
+   * `HEAD` under `acceptanceMountDir`, not from the worktree. Absent, the argv
+   * is unchanged.
    */
   readOnlyPaths?: string[];
 }): Sandbox {
@@ -388,9 +423,11 @@ export function createSandbox(input: {
     // otherwise send a test's call to its own local server to the proxy, which
     // refuses it.
     env: [`HTTPS_PROXY=${proxyUrl}`, `HTTP_PROXY=${proxyUrl}`, `NO_PROXY=${LOOPBACK_HOSTS}`, ...frozen.env],
+    mountDir: (input.readOnlyPaths ?? []).length > 0 ? acceptanceMountDir(input.rootDir, input.runId, name) : null,
   };
   const dc = frozen.dockerCommand;
   try {
+    if (sandbox.mountDir !== null) writeCommittedPaths(input.worktreePath, input.readOnlyPaths!, sandbox.mountDir);
     sandbox.ids.network = control(dc, "create network", sandbox.network, [
       "network", "create", "--internal", ...labels, sandbox.network,
     ]).trim();
@@ -418,7 +455,7 @@ export function createSandbox(input: {
       "-v", `${join(input.worktreePath, ".git")}:/work/.git:ro`,
       ...(input.readOnlyPaths ?? []).flatMap((path) => {
         const trimmed = path.replace(/\/$/, "");
-        return ["-v", `${join(input.worktreePath, trimmed)}:/work/${trimmed}:ro`];
+        return ["-v", `${join(sandbox.mountDir!, trimmed)}:/work/${trimmed}:ro`];
       }),
       "-w", "/work",
       ...sandbox.env.flatMap((assignment) => ["--env", assignment]),
@@ -486,6 +523,14 @@ export function destroySandbox(sandbox: Sandbox): TeardownResult {
       removed.push(sandbox.network);
     } catch (err) {
       failures.push((err as Error).message);
+    }
+  }
+  if (sandbox.mountDir !== null) {
+    try {
+      rmSync(sandbox.mountDir, { recursive: true, force: true });
+      removed.push(sandbox.mountDir);
+    } catch (err) {
+      failures.push(`remove read-only copy ${sandbox.mountDir} failed: ${(err as Error).message}`);
     }
   }
   return { removed, failures, workContainerGone };

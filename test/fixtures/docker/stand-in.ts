@@ -119,6 +119,17 @@ export function workContainerMounts(calls: string[][]): { name: string; mounts: 
     .filter((r) => r.name.endsWith("-work"));
 }
 
+/**
+ * The read-only `-v` value for `suiteDir` in the work container `workName`: the
+ * copy of the committed suite beside the worktree under
+ * `.governance/acceptance/<run>/mounts/<sandbox name>/`, never the worktree
+ * (docs/features/protected-acceptance-tests/plan.md, Task 12).
+ */
+export function committedSuiteMount(rootDir: string, runId: number, workName: string, suiteDir: string): string {
+  const trimmed = suiteDir.replace(/\/$/, "");
+  return `${join(rootDir, ".governance", "acceptance", String(runId), "mounts", workName.replace(/-work$/, ""), trimmed)}:/work/${trimmed}:ro`;
+}
+
 /** The name every sandbox of `runId` and `label` in `rootDir` starts with (`createSandbox`). */
 export function sandboxPrefix(rootDir: string, runId: number, label: string): string {
   return `bw-${repositoryKey(rootDir)}-${runId}-${label}-`;

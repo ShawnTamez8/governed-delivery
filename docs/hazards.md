@@ -492,6 +492,25 @@ does run the config. The first review had withheld this case, reasoning that a
 scope entry cannot name a directory. That rule refuses only directories already
 in the starting commit, and the reasoning missed a path the agent creates.
 
+**2026-10-21: a case alias of the worktree reached the read-only suite** (a
+code-path gap, raised by the protected acceptance tests' review,
+`docs/features/protected-acceptance-tests/2026-10-21-code-review.md`, and
+reproduced on Docker Desktop for Windows). The acceptance suite was mounted
+read-only over the worktree at `/work/acceptance/<slug>/`, but on a
+case-insensitive host bind `/work/Acceptance/<slug>/` is the same host directory
+reached through the writable `/work` mount. A verify command could rewrite a
+test while the runner read it, so the system's own acceptance command judged a
+suite the boundary never saw, and restoring the file afterwards left nothing for
+`commitWorkspace` to refuse. The suite is now mounted from a copy the system
+writes out of the worktree's HEAD commit, beside the worktree under
+`.governance/acceptance/<run>/mounts/<sandbox>/`, and removed when the container
+is; nothing the container can write reaches the copy under any spelling.
+`test/acceptance-engine.test.ts` runs the review's probe against a real engine,
+and with the worktree mounted again the tampered suite ran and passed. What this
+does not show: a file written through the alias still lands in the worktree,
+where `commitWorkspace` refuses it as a suite change, and an engine whose bind
+is case-sensitive has no alias to test, so those tests skip by name there.
+
 ## 16. A remediation loop aimed at the wrong artifact cannot repair an upstream omission
 
 A reviewer's finding is sometimes correct about a concern the artifact under

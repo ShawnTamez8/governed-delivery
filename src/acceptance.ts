@@ -173,12 +173,21 @@ const MATCHER = /^Error: expect\(/;
  */
 const CUSTOM_MESSAGE_MATCHER = /^Error: [\s\S]*?\n\nexpect\((?:locator|page)\)\.(?:not\.)?\w+\([^\n]*\) failed(?:\n|$)/;
 const LOCATOR_TIMEOUT = /^TimeoutError: locator\.\w+: Timeout \d+ms exceeded\./;
+/**
+ * A matcher that refuses its own argument, such as `toHaveText(undefined)`,
+ * fails under the same header as a mismatch, with or without a custom message,
+ * but describes the argument on a line of its own: `Expected has value:
+ * undefined`. No page can satisfy it, so it is the test's own error (Task 14;
+ * the line appears in neither recorded mismatch nor locator timeout).
+ */
+const MATCHER_ARGUMENT = /\n(?:Expected|Received) has (?:type|value): /;
 
 /**
  * Classify one failed result from its retained fields alone, by the rule pinned
  * against the real runner's reports (Task 1 spike record). A valid red is a
  * matcher failure, with or without a custom message, or a locator action's own
- * timeout, located in a suite file that declares no hook.
+ * timeout, located in a suite file that declares no hook. A matcher that
+ * refuses its own argument is not one.
  */
 export function classifyFailure(result: AcceptanceResult, suiteFiles: AcceptanceFile[]): FailureClass {
   if (result.status === "timedOut") return "test_timeout";
@@ -189,6 +198,7 @@ export function classifyFailure(result: AcceptanceResult, suiteFiles: Acceptance
   if (file === undefined) return "test_code";
   if (declaresHook(parseSuiteFile(file.content))) return "hook";
   if (NAVIGATION.test(first.message)) return "navigation";
+  if (MATCHER_ARGUMENT.test(first.message)) return "test_code";
   if (MATCHER.test(first.message) || CUSTOM_MESSAGE_MATCHER.test(first.message) || LOCATOR_TIMEOUT.test(first.message)) return "valid_red";
   return "test_code";
 }
@@ -325,10 +335,55 @@ function localFunctions(file: ts.SourceFile): Map<string, FunctionNode> {
 }
 
 /**
+ * The value `name` is declared with where `from` uses it: the initializer, or
+ * the function declaration, in the nearest enclosing block or file that
+ * declares the name. Null when the nearest declaration is a parameter or has no
+ * initializer, so two tests' helpers of the same name stay apart.
+ */
+function declaredValue(name: string, from: ts.Node): ts.Node | null {
+  for (let scope = from.parent; scope !== undefined; scope = scope.parent) {
+    if (ts.isFunctionLike(scope) && scope.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === name)) return null;
+    if (!ts.isBlock(scope) && !ts.isSourceFile(scope)) continue;
+    for (const statement of scope.statements) {
+      if (ts.isFunctionDeclaration(statement) && statement.name?.text === name) return statement;
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const d of statement.declarationList.declarations) {
+        if (ts.isIdentifier(d.name) && d.name.text === name) return d.initializer === undefined ? null : unwrap(d.initializer);
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * The function `expression` names, resolved lexically: an identifier declared
+ * as a function, or `object.method` where `object` is declared as an object
+ * literal holding that method. Null for anything else.
+ */
+function namedFunction(expression: ts.Expression): ts.FunctionLikeDeclaration | null {
+  const e = unwrap(expression);
+  if (ts.isIdentifier(e)) {
+    const value = declaredValue(e.text, e);
+    return value !== null && isFunctionNode(value) ? value : null;
+  }
+  if (!ts.isPropertyAccessExpression(e) || !ts.isIdentifier(e.expression)) return null;
+  const object = declaredValue(e.expression.text, e);
+  if (object === null || !ts.isObjectLiteralExpression(object)) return null;
+  const property = object.properties.find((p) => p.name !== undefined && ts.isIdentifier(p.name) && p.name.text === e.name.text);
+  if (property === undefined) return null;
+  if (ts.isMethodDeclaration(property)) return property;
+  if (ts.isShorthandPropertyAssignment(property)) return namedFunction(property.name);
+  if (!ts.isPropertyAssignment(property)) return null;
+  const value = unwrap(property.initializer);
+  return isFunctionNode(value) ? value : null;
+}
+
+/**
  * Whether evaluating `expression` yields a promise, as far as syntax shows: a
  * Playwright async method, a retrying matcher, a `Promise` combinator or
- * `new Promise`, a `then` chain on any of them, a `map` whose callback returns
- * one, or a call of a file-local function that returns one.
+ * `new Promise`, a `then` chain on any of them, or a call of a file-local
+ * function that returns one. A `map` with an async callback yields an array of
+ * promises, not a promise (`isPromiseArray`).
  */
 function isPromise(expression: ts.Expression, promising: Set<string>): boolean {
   const e = unwrap(expression);
@@ -349,12 +404,99 @@ function isPromise(expression: ts.Expression, promising: Set<string>): boolean {
   const object = e.expression.expression;
   if (ts.isIdentifier(object) && object.text === "Promise") return PROMISE_STATICS.has(name);
   if (name === "then" || name === "catch" || name === "finally") return isPromise(object, promising);
-  if (name === "map") return e.arguments.some((a) => isFunctionNode(a) && returnsPromise(a, promising));
   return PLAYWRIGHT_ASYNC.has(name) || RETRYING_MATCHERS.has(name);
 }
 
+/**
+ * Whether `expression` yields an array of promises: a `map` whose callback,
+ * inline or named, returns a promise, an array literal holding one or spreading
+ * such an array, or a call of a file-local
+ * function in `arrays`, awaited when that function is async. Awaiting the array
+ * settles none of its promises (Task 15).
+ */
+function isPromiseArray(expression: ts.Expression, promising: Set<string>, arrays: Set<string>): boolean {
+  const e = unwrap(expression);
+  if (ts.isArrayLiteralExpression(e)) {
+    return e.elements.some((element) =>
+      ts.isSpreadElement(element) ? isPromiseArray(element.expression, promising, arrays) : isPromise(element, promising)
+    );
+  }
+  const localCall = (call: ts.Expression): string | null => {
+    const c = unwrap(call);
+    return ts.isCallExpression(c) && ts.isIdentifier(c.expression) && arrays.has(c.expression.text) ? c.expression.text : null;
+  };
+  if (ts.isAwaitExpression(e)) {
+    const name = localCall(e.expression);
+    return name !== null && promising.has(name);
+  }
+  if (!ts.isCallExpression(e)) return false;
+  const name = localCall(e);
+  if (name !== null) return !promising.has(name);
+  return calledName(e) === "map" && e.arguments.some((a) => {
+    const callback = isFunctionNode(a) ? a : namedFunction(a);
+    return callback !== null && returnsPromise(callback, promising);
+  });
+}
+
+/** The names of file-local functions that return an array of promises, to a fixed point. */
+function promiseArrayFunctions(functions: Map<string, FunctionNode>, promising: Set<string>): Set<string> {
+  const arrays = new Set<string>();
+  const returnsArray = (fn: FunctionNode): boolean => {
+    const body = fn.body;
+    if (body === undefined) return false;
+    if (!ts.isBlock(body)) return isPromiseArray(body, promising, arrays);
+    let found = false;
+    const walk = (node: ts.Node): void => {
+      if (found || isFunctionNode(node)) return;
+      if (ts.isReturnStatement(node) && node.expression !== undefined && isPromiseArray(node.expression, promising, arrays)) found = true;
+      ts.forEachChild(node, walk);
+    };
+    ts.forEachChild(body, walk);
+    return found;
+  };
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [name, fn] of functions) {
+      if (!arrays.has(name) && returnsArray(fn)) {
+        arrays.add(name);
+        changed = true;
+      }
+    }
+  }
+  return arrays;
+}
+
+/**
+ * Whether an array of promises is joined where `reference` uses it: passed to
+ * `Promise.all` or `Promise.allSettled`, whose own promise the promise rule
+ * then holds, or returned from a named file-local function, whose calls are
+ * held to this rule in turn.
+ */
+function joins(reference: ts.Node, named: Set<FunctionNode>): boolean {
+  let child = reference;
+  let n = reference.parent;
+  // Through parentheses, and through a spread into an array literal, which holds the same promises.
+  for (;;) {
+    if (ts.isParenthesizedExpression(n)) {
+      child = n;
+      n = n.parent;
+    } else if (ts.isSpreadElement(n) && ts.isArrayLiteralExpression(n.parent)) {
+      child = n.parent;
+      n = n.parent.parent;
+    } else break;
+  }
+  if (ts.isCallExpression(n) && n.arguments.some((a) => a === child)) {
+    const callee = n.expression;
+    return ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === "Promise" &&
+      (callee.name.text === "all" || callee.name.text === "allSettled");
+  }
+  const returned = ts.isReturnStatement(n) || (ts.isArrowFunction(n) && n.body === child);
+  const owner = ts.findAncestor(n, isFunctionNode);
+  return returned && owner !== undefined && named.has(owner);
+}
+
 /** Whether a function returns a promise: it is `async`, or its body or a `return` of its own yields one. */
-function returnsPromise(fn: FunctionNode, promising: Set<string>): boolean {
+function returnsPromise(fn: ts.FunctionLikeDeclaration, promising: Set<string>): boolean {
   if ((ts.getCombinedModifierFlags(fn) & ts.ModifierFlags.Async) !== 0) return true;
   const body = fn.body;
   if (body === undefined) return false;
@@ -450,6 +592,8 @@ function lintSuiteFile(file: AcceptanceFile): string[] {
 
   const functions = localFunctions(source);
   const promising = promisingFunctions(functions);
+  const arrays = promiseArrayFunctions(functions, promising);
+  const named = new Set(functions.values());
 
   everyNode(source, (node) => {
     // Untrusted input, fixed waits, timeout changes, hooks and .only, by name.
@@ -516,28 +660,63 @@ function lintSuiteFile(file: AcceptanceFile): string[] {
     if (ts.isCallExpression(node) && calledName(node) === "forEach" && node.arguments.some((a) => isFunctionNode(a) && returnsPromise(a, promising))) {
       refuse(node, "forEach( does not wait for the promises its callback returns");
     }
+    // An array of promises is settled only through Promise.all, never by awaiting the array.
+    if (ts.isExpression(node) && !ts.isParenthesizedExpression(node) && isPromiseArray(node, promising, arrays)) {
+      let top: ts.Node = node;
+      while (ts.isParenthesizedExpression(top.parent)) top = top.parent;
+      const declaration = top.parent;
+      if (ts.isVariableDeclaration(declaration) && declaration.initializer === top && ts.isIdentifier(declaration.name)) {
+        const name = declaration.name.text;
+        const scope = ts.findAncestor(declaration.parent, (n) => isFunctionNode(n) || ts.isSourceFile(n))!;
+        let joined = false;
+        everyNode(scope, (n) => {
+          if (n !== declaration.name && ts.isIdentifier(n) && n.text === name && joins(n, named)) joined = true;
+        });
+        if (!joined) refuse(declaration, `an array of promises assigned to ${name} is never passed to Promise.all; awaiting the array settles none of them`);
+      } else if (!joins(node, named)) {
+        refuse(node, "an array of promises that is never passed to Promise.all; awaiting the array settles none of them");
+      }
+    }
   });
 
-  // Every test asserts, in its own body or in a file-local helper it calls.
-  const asserts = (root: ts.Node, seen: Set<string>): boolean => {
+  // Every test runs a retrying assertion: in its own body, or in a function it
+  // calls or passes to a call, followed through file-local helpers and
+  // object-literal methods by the declaration each name resolves to. A function
+  // the test declares and neither calls nor passes on runs nothing (Task 13).
+  const runsAssertion = (fn: ts.FunctionLikeDeclaration, seen: Set<ts.Node>): boolean => {
+    if (seen.has(fn)) return false;
+    seen.add(fn);
     let found = false;
-    everyNode(root, (n) => {
+    const walk = (n: ts.Node): void => {
       if (found || inPageContext(n)) return;
-      if (isRetryingAssertion(n)) found = true;
-      else if (ts.isCallExpression(n) && ts.isIdentifier(n.expression)) {
-        const helper = functions.get(n.expression.text);
-        if (helper !== undefined && !seen.has(n.expression.text)) {
-          seen.add(n.expression.text);
-          if (asserts(helper, seen)) found = true;
+      if (isRetryingAssertion(n)) {
+        found = true;
+        return;
+      }
+      if (ts.isFunctionLike(n)) {
+        // An inline function runs when it is called on the spot or handed to a
+        // call; a named one or a method only through a call that names it, below.
+        let site: ts.Node = n;
+        while (ts.isParenthesizedExpression(site.parent)) site = site.parent;
+        const call = site.parent;
+        if (isFunctionNode(n) && ts.isCallExpression(call) && (call.expression === site || call.arguments.some((a) => a === site)) && runsAssertion(n, seen)) found = true;
+        return;
+      }
+      if (ts.isCallExpression(n)) {
+        for (const named of [n.expression, ...n.arguments]) {
+          const helper = namedFunction(named);
+          if (helper !== null && runsAssertion(helper, seen)) found = true;
         }
       }
-    });
+      ts.forEachChild(n, walk);
+    };
+    ts.forEachChild(fn, walk);
     return found;
   };
   everyNode(source, (node) => {
     if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression) || node.expression.text !== "test") return;
     const body = node.arguments[node.arguments.length - 1];
-    if (body !== undefined && isFunctionNode(body) && !asserts(body, new Set())) refuse(node, "a test with no retrying assertion");
+    if (body !== undefined && isFunctionNode(body) && !runsAssertion(body, new Set())) refuse(node, "a test with no retrying assertion");
   });
   return refusals;
 }

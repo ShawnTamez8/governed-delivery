@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -43,6 +43,8 @@ const CASES = [
   "hook-locator-after",
   "test-code",
   "test-code-expect-text",
+  "matcher-argument",
+  "matcher-argument-custom-message",
   "test-timeout",
   "flaky",
   "load-error",
@@ -83,6 +85,9 @@ test("each failing case gets its own class, and only the three valid-red reports
     "hook-locator-after": "hook",
     "test-code": "test_code",
     "test-code-expect-text": "test_code",
+    // A matcher that refuses its own argument (Task 14): no page can satisfy it.
+    "matcher-argument": "test_code",
+    "matcher-argument-custom-message": "test_code",
     "test-timeout": "test_timeout",
   } as const;
   for (const [name, failureClass] of Object.entries(expected)) {
@@ -115,6 +120,14 @@ test("an assertion's custom message comes first, and the matcher's header follow
   assert.match(report.tests[0]!.results[0]!.errors[0]!.message, /^Error: the output\n\nexpect\(locator\)\.toHaveText\(expected\) failed\n/);
   const thrown = parsed("test-code-expect-text").report.tests[0]!.results[0]!.errors[0]!.message;
   assert.match(thrown, /^Error: the output\n\nexpect\(the output\) to show 5\n/, "the thrown error has the same layout, with no matcher header");
+});
+
+test("a matcher's argument error opens with the same header as a mismatch, with or without a custom message", () => {
+  for (const name of ["matcher-argument", "matcher-argument-custom-message"] as const) {
+    const message = parsed(name).report.tests[0]!.results[0]!.errors[0]!.message;
+    assert.match(message, /^Error: expect\(locator\)\.toHaveText\(expected\) failed\n\n/, name);
+    assert.match(message, /\nError: expected value must be a string or regular expression\nExpected has value: undefined\n/, name);
+  }
 });
 
 test("the flaky test is flaky, never pass", () => {
@@ -223,6 +236,8 @@ test("a criterion whose only failing test is broken is refused, for each broken 
     ["hook-throw", "AC-007", "hook"],
     ["hook-locator-after", "AC-013", "hook"],
     ["test-code", "AC-008", "test_code"],
+    ["matcher-argument", "AC-021", "test_code"],
+    ["matcher-argument-custom-message", "AC-022", "test_code"],
     ["test-timeout", "AC-009", "test_timeout"],
   ] as const;
   for (const [name, criterion, failureClass] of cases) {
@@ -358,4 +373,146 @@ test("helpers that return promises or build locators, page-context DOM calls and
   assert.deepEqual(withHelpers('await Promise.all(["1", "2"].map((key) => press(page, key)));\n  await expectOut(page, "5");'), []);
   assert.deepEqual(withHelpers('const typed = press(page, "5");\n  await typed;\n  await expectOut(page, "5");'), [], "a promise awaited after assignment is settled");
   assert.ok(withHelpers('press(page, "5");\n  await expectOut(page, "5");').some((r) => /a call of press\( that is not awaited$/.test(r)));
+});
+
+/** The lint's refusals alone for `files`: the gate over an empty report, less the gates that read it. */
+function lintOnly(files: AcceptanceFile[]): string[] {
+  return validateAcceptanceSuite({ report: { loadErrors: [], tests: [] }, files, criteria: [] }).refusals.filter((r) =>
+    files.some((f) => r.startsWith(`${f.path}:`))
+  );
+}
+
+/** The code review's counterexample suite (review Findings 2 and 4), as its probe recorded it. */
+const REVIEW_PROBE = (
+  JSON.parse(readFileSync(resolve("test", "fixtures", "recorded", "acceptance-code-review-probes.json"), "utf8")) as {
+    browser: { files: AcceptanceFile[] }[];
+  }
+).browser[0]!.files;
+
+/**
+ * Every distinct suite file the test author wrote in the Task 4 evaluations
+ * (`test-author-evaluation-*.json`): idiomatic model code written without
+ * reference to this lint, which must stay at zero refusals as the lint changes.
+ */
+function recordedAuthorFiles(): AcceptanceFile[] {
+  const dir = resolve("test", "fixtures", "recorded");
+  const byContent = new Map<string, AcceptanceFile>();
+  for (const name of readdirSync(dir).filter((n) => n.startsWith("test-author-evaluation-"))) {
+    const record = JSON.parse(readFileSync(join(dir, name), "utf8")) as { samples: { suite?: AcceptanceFile[] }[] };
+    for (const sample of record.samples) for (const file of sample.suite ?? []) byContent.set(file.content, file);
+  }
+  return [...byContent.values()];
+}
+
+test("every suite file the recorded test authors wrote passes the lint", () => {
+  const files = recordedAuthorFiles();
+  assert.equal(files.length, 53, "the distinct files in the five evaluation records");
+  for (const file of files) assert.deepEqual(lintOnly([file]), [], file.path);
+});
+
+test("an assertion only in a function the test declares and never calls or passes on is refused (review Finding 2)", () => {
+  const refusals = lintOnly(REVIEW_PROBE);
+  assert.ok(refusals.some((r) => /review\.spec\.mjs:6: a test with no retrying assertion$/.test(r)), refusals.join("\n"));
+  // The same helper, once the test calls it, counts.
+  const called = REVIEW_PROBE.map((f) => ({ ...f, content: f.content.replace("click();\n});", "click();\n  await assertResult();\n});") }));
+  assert.notEqual(called[0]!.content, REVIEW_PROBE[0]!.content);
+  assert.ok(!lintOnly(called).some((r) => /:6: /.test(r)), lintOnly(called).join("\n"));
+});
+
+test("an assertion in a nested helper the test calls, or in a callback it passes to a call, counts", () => {
+  const callback = [
+    "async function keyboardCriterion(page, check) {",
+    '  await page.keyboard.press("Enter");',
+    "  await check();",
+    "}",
+    "",
+  ].join("\n");
+  const body = (text: string) => lintWith("", [ACCEPTANCE_IMPORT_LINE, `${ACCEPTANCE_IMPORT_LINE}\n${callback}`], ['await expect(page.locator("#out")).toHaveText("5");', text]);
+  assert.deepEqual(body('const check = async () => { await expect(page.locator("#out")).toHaveText("5"); };\n  await check();'), []);
+  assert.deepEqual(body('await keyboardCriterion(page, async () => { await expect(page.locator("#out")).toHaveText("5"); });'), []);
+  assert.deepEqual(body('await test.step("the output", async () => { await expect(page.locator("#out")).toHaveText("5"); });'), []);
+  assert.deepEqual(body('await (async () => { await expect(page.locator("#out")).toHaveText("5"); })();'), []);
+  assert.ok(body('const check = async () => { await expect(page.locator("#out")).toHaveText("5"); };').some((r) => /:\d+: a test with no retrying assertion$/.test(r)));
+  assert.ok(body('function check() { return expect(page.locator("#out")).toHaveText("5"); }').some((r) => /:\d+: a test with no retrying assertion$/.test(r)));
+});
+
+test("an awaited array of promises settles nothing, and only Promise.all over it does (review Finding 4)", () => {
+  const unjoined = /: an array of promises (assigned to \w+ |that )is never passed to Promise\.all; awaiting the array settles none of them$/;
+  const refusals = lintOnly(REVIEW_PROBE);
+  assert.ok(
+    refusals.includes("acceptance/review-probes/review.spec.mjs:13: an array of promises assigned to operations is never passed to Promise.all; awaiting the array settles none of them"),
+    refusals.join("\n")
+  );
+  const joined = REVIEW_PROBE.map((f) => ({ ...f, content: f.content.replace("await operations;", "await Promise.all(operations);") }));
+  assert.notEqual(joined[0]!.content, REVIEW_PROBE[0]!.content);
+  assert.ok(!lintOnly(joined).some((r) => unjoined.test(r)), lintOnly(joined).join("\n"));
+
+  const press = 'async (key) => { await page.keyboard.press(key); }';
+  const line = (text: string) => lintWith(text);
+  assert.deepEqual(line(`  await Promise.all(["1", "2"].map(${press}));`), []);
+  assert.deepEqual(line(`  await Promise.allSettled([page.keyboard.press("1"), page.keyboard.press("2")]);`), []);
+  assert.ok(line(`  await ["1", "2"].map(${press});`).some((r) => /:6: an array of promises that is never passed/.test(r)));
+  assert.ok(line(`  ["1", "2"].map(${press});`).some((r) => /:6: an array of promises that is never passed/.test(r)));
+  assert.ok(line(`  await [page.keyboard.press("1"), page.keyboard.press("2")];`).some((r) => /:6: an array of promises that is never passed/.test(r)));
+  assert.ok(line(`  await Promise.race(["1", "2"].map(${press}));`).some((r) => /:6: an array of promises that is never passed/.test(r)));
+
+  // An array returned from a named helper is held to the rule where the helper is called.
+  const helper = 'const pressAll = (p, keys) => keys.map((key) => p.keyboard.press(key));';
+  const withHelper = (text: string) =>
+    lintWith("", [ACCEPTANCE_IMPORT_LINE, `${ACCEPTANCE_IMPORT_LINE}\n${helper}`], ['await expect(page.locator("#out")).toHaveText("5");', `${text}\n  await expect(page.locator("#out")).toHaveText("5");`]);
+  assert.deepEqual(withHelper('await Promise.all(pressAll(page, ["1", "2"]));'), []);
+  assert.ok(withHelper('await pressAll(page, ["1", "2"]);').some((r) => unjoined.test(r)), withHelper('await pressAll(page, ["1", "2"]);').join("\n"));
+});
+
+// The re-review of Tasks 12 to 15 (2026-10-21): shapes the first fixes refused or let through.
+const ASSERT_OUT = 'await expect(page.locator("#out")).toHaveText("5");';
+
+test("a helper resolves to the declaration in scope where the test calls it, so two tests' same-named helpers stay apart", () => {
+  const asserting = `const check = async () => { ${ASSERT_OUT} };\n  await check();`;
+  const clicking = 'const check = async () => { await page.locator("#go").click(); };\n  await check();';
+  const twoTests = (first: string, second: string) =>
+    lintOnly([
+      {
+        path: "acceptance/x/two.spec.mjs",
+        content: [
+          ACCEPTANCE_IMPORT_LINE,
+          'test("AC-001 one", async ({ page }) => {',
+          '  await page.goto("index.html");',
+          `  ${first}`,
+          "});",
+          'test("AC-002 two", async ({ page }) => {',
+          '  await page.goto("index.html");',
+          `  ${second}`,
+          "});",
+          "",
+        ].join("\n"),
+      },
+    ]);
+  assert.deepEqual(twoTests(asserting, `${clicking}\n  ${ASSERT_OUT}`), []);
+  assert.deepEqual(twoTests(clicking, asserting), ["acceptance/x/two.spec.mjs:2: a test with no retrying assertion"]);
+});
+
+test("an assertion in an object literal's method counts when the test calls it, and not otherwise", () => {
+  const body = (text: string) => lintWith("", ['await expect(page.locator("#out")).toHaveText("5");', text]);
+  const arrow = `const calc = { expectOut: async () => { ${ASSERT_OUT} } };`;
+  const method = `const calc = { async expectOut() { ${ASSERT_OUT} } };`;
+  const shorthand = `const expectOut = async () => { ${ASSERT_OUT} };\n  const calc = { expectOut };`;
+  for (const helper of [arrow, method, shorthand]) {
+    assert.deepEqual(body(`${helper}\n  await calc.expectOut();`), [], helper);
+    assert.ok(body(helper).some((r) => /:\d+: a test with no retrying assertion$/.test(r)), helper);
+  }
+});
+
+test("a named promise-returning callback to map makes an array of promises, and a spread of one still reaches Promise.all", () => {
+  const unjoined = /: an array of promises (assigned to \w+ |that )is never passed to Promise\.all; awaiting the array settles none of them$/;
+  const press = "const press = async (key) => { await page.keyboard.press(key); };";
+  const line = (text: string) => lintWith(`  ${press}\n  ${text}`);
+  assert.ok(line('await ["1", "2"].map(press);').some((r) => unjoined.test(r)));
+  assert.ok(line('const ops = ["1", "2"].map(press);\n  await ops;').some((r) => unjoined.test(r)));
+  assert.deepEqual(line('await Promise.all(["1", "2"].map(press));'), []);
+  assert.deepEqual(line('await Promise.all([...["1", "2"].map(press)]);'), []);
+  assert.deepEqual(line('const ops = ["1", "2"].map(press);\n  await Promise.all([...ops, page.keyboard.press("3")]);'), []);
+  assert.ok(line('const ops = ["1", "2"].map(press);\n  const all = [...ops];\n  await all;').some((r) => unjoined.test(r)));
+  // A named callback that returns no promise makes no array of promises.
+  assert.deepEqual(lintWith('  const label = (key) => key;\n  ["1", "2"].map(label);'), []);
 });

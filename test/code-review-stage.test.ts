@@ -38,6 +38,7 @@ import type { VerificationConfig } from "../src/governed-config.ts";
 import { readAcceptanceReport, type AcceptanceReport } from "../src/acceptance.ts";
 import {
   acceptanceRuns,
+  committedSuiteMount,
   markUnremovable,
   markUnstartable,
   recordingDockerCommand,
@@ -1066,13 +1067,15 @@ test("with an acceptance suite, the remediation and its verification see the sui
           assert.equal(result.ok, true, result.ok ? "" : result.reason);
         }, "high-then-clean");
         const base = [`${ctx.worktreePath}:/work`, `${join(ctx.worktreePath, ".git")}:/work/.git:ro`];
-        const expected = acceptance === null ? base : [...base, `${join(ctx.worktreePath, "acceptance", SLUG)}:/work/acceptance/${SLUG}:ro`];
         const started = workContainerMounts(recording.calls());
         for (const label of ["remediation-1", "remediation-1-verify"]) {
+          // The whole name: `remediation-1-` is also a prefix of the verify sandbox's.
+          const own = started.filter((s) => new RegExp(`^${sandboxPrefix(ctx.root, ctx.runId, label)}[0-9a-f]{6}-work$`).test(s.name));
+          assert.equal(own.length, 1, label);
           assert.deepEqual(
-            // The whole name: `remediation-1-` is also a prefix of the verify sandbox's.
-            started.filter((s) => new RegExp(`^${sandboxPrefix(ctx.root, ctx.runId, label)}[0-9a-f]{6}-work$`).test(s.name)).map((s) => s.mounts),
-            [expected],
+            own[0]!.mounts,
+            // With a suite, the mount is the committed copy beside the worktree, never the worktree (Task 12).
+            acceptance === null ? base : [...base, committedSuiteMount(ctx.root, ctx.runId, own[0]!.name, ACCEPTANCE.dir)],
             `${label} with acceptance ${JSON.stringify(acceptance)}`
           );
         }

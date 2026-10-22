@@ -28,6 +28,7 @@ import { readAcceptanceReport, type AcceptanceReport } from "../src/acceptance.t
 import { parseVerificationHandoff } from "../src/handoff.ts";
 import {
   acceptanceRuns,
+  committedSuiteMount,
   markUnremovable,
   recordingDockerCommand,
   sandboxPrefix,
@@ -367,11 +368,14 @@ test("a run with an acceptance suite verifies with the suite mounted read-only, 
         const result = await runVerificationStage(ctx.store, { runId: ctx.runId, rootDir: ctx.root });
         assert.ok(result.ok, result.ok ? "" : result.reason);
         const base = [`${ctx.worktreePath}:/work`, `${join(ctx.worktreePath, ".git")}:/work/.git:ro`];
-        const overlay = `${join(ctx.worktreePath, "acceptance", SLUG)}:/work/acceptance/${SLUG}:ro`;
+        const started = workContainerMounts(recording.calls());
+        assert.equal(started.length, 1);
         assert.deepEqual(
-          workContainerMounts(recording.calls()).map((s) => s.mounts),
-          [acceptance === null ? base : [...base, overlay]]
+          started[0]!.mounts,
+          acceptance === null ? base : [...base, committedSuiteMount(ctx.root, ctx.runId, started[0]!.name, ACCEPTANCE.dir)]
         );
+        // Teardown removed the copy (Task 12).
+        assert.equal(existsSync(join(ctx.root, ".governance", "acceptance", String(ctx.runId), "mounts", started[0]!.name.replace(/-work$/, ""))), false);
       } finally {
         unserve();
         rmSync(dir, { recursive: true, force: true });

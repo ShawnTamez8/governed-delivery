@@ -5,9 +5,25 @@ history and may name superseded state; Current state wins when they disagree. Th
 the system of record; machine-local memory is only a cache
 (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-10-20: change 1 committed `ff260eb`; inspectable-profiles fix committed `7a725e3`; crew-chatter run 8 completed, not merged; a second web-calculator run blocked at code review and its evidence is committed; rework changes 4 and 7 revised; no spend authorized)
+## Current state (2026-10-21: change 4, protected acceptance tests, committed `9319f0a` and its review fixes built uncommitted; change 1 committed `ff260eb`; crew-chatter run 8 completed, not merged; no spend authorized)
 
-**Resume point.** Branch `sandboxed-delivery` is past `7a725e3`, none of it pushed
+**Change 4 (2026-10-21).**
+- **Committed.** `9319f0a` holds the protected-acceptance-tests build (Tasks 1-10) and its reconciled code review.
+- **Built, not committed.** Tasks 12-16 fix the review's four findings:
+  - the suite is mounted from a copy of the commit under `.governance/acceptance/<run>/mounts/`;
+  - the assertion rule counts only assertions a test runs;
+  - a matcher's argument error is a broken test;
+  - an array of promises is settled only through `Promise.all`.
+
+  The re-review, `2026-10-21-code-review-2.md`, is reconciled, and its 4 lint defects were fixed.
+- **Validation.**
+  - The full serial suite: 1,829 of 1,833 pass, 0 fail, 4 named skips. The engine tests ran in it.
+  - Smoke passes 13/13 twice; typecheck and check:docs are clean.
+- **Plan status.** `Implemented`, apart from Task 11.
+- **Records.** The task record is `.claude/sessions/2026-10-21-protected-acceptance-tests-fixes.md`.
+- **Next.** The operator decides whether to commit these fixes, and gives separate consent for Task 11, the paid end-to-end run with `--acceptance-tests`.
+
+**Resume point (2026-10-20, still current except as above).** Branch `sandboxed-delivery` is past `7a725e3`, none of it pushed
 (`origin/sandboxed-delivery` is `be6a88c`). The operator asked for three commits on 2026-10-20:
 - change 1 (`ff260eb`, "commit change 1");
 - the inspectable-profiles fix (`7a725e3`);

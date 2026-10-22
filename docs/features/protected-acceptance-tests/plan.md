@@ -1,6 +1,6 @@
 # Executable Acceptance Criteria Implementation Plan
 
-**Status:** Reconciled
+**Status:** Implemented — Tasks 1-10 and 12-16 complete; Task 11, the paid end-to-end run, needs its own consent
 
 **Goal:** On a run that opts in, an independent test-author agent turns every acceptance criterion of the approved specification into browser tests before the first implementation phase. The system validates those tests, then holds them read-only for every later agent, and runs them in a browser-capable sandbox at every verification point. Before any of that is wired into the chain, the test author is evaluated on the recorded calculator run.
 
@@ -532,7 +532,7 @@ A setting passes if it meets all four. If neither setting passes, stop. Report t
 
 ### Task 11: The paid end-to-end benchmark (separate authorization)
 
-**Depends on:** Task 10 and the operator's consent. A completed paid run never authorizes another.
+**Depends on:** Task 10, Tasks 12 to 16, and the operator's consent. A completed paid run never authorizes another.
 
 **Steps:**
 - Run `node .claude/skills/run-buildworks/driver.mjs paid --yes --model claude-sonnet-5-5 --acceptance-tests --dir <a durable directory under C:\Users\tamezs\buildWorks_test_repos>` on the committed web-calculator design. Redirect the output to a file.
@@ -545,6 +545,111 @@ A setting passes if it meets all four. If neither setting passes, stop. Report t
 - Extract the load-bearing responses into `test/fixtures/recorded/` with provenance before any `driver.mjs clean`.
 
 **Task completion evidence:** the run record and the extracted fixture.
+
+### Task 12: Mount the suite from the commit, not the worktree
+
+**Depends on:** Task 10. Free. The operator chose this route on 2026-10-21 over refusing case-insensitive hosts, which would refuse every opted-in run on this machine.
+
+**Why.** The overlay mounts `<worktree>/acceptance/<slug>` at `/work/acceptance/<slug>`. On a case-insensitive host, `/work/Acceptance/<slug>/` reaches the same host files through the writable `/work` mount, so a process can rewrite the suite while it runs and restore it before any check (Task 7 build record, its correction). Removing that route means the files the runner reads must not be the worktree's files at all.
+
+**Files:**
+- Modify: `src/container.ts`. For each `readOnlyPaths` entry, `createSandbox` writes that path's files from the worktree's `HEAD` commit, read through Git's objects and never from the worktree's files, into a fresh directory under `.governance/acceptance/<run>/mounts/<sandbox name>/`. It mounts that copy read-only at `/work/<path>`, in place of `<worktree>/<path>`. `destroySandbox` removes the copy, and a failed removal is a teardown failure like the others. The copy lives beside the worktree (`.governance/worktrees/<run>`), never inside it, so no path under `/work`, in any casing, reaches it. Without `readOnlyPaths` the argv stays byte-identical.
+- Modify: `test/container.test.ts`, `test/acceptance-engine.test.ts`, and the stand-in argv tests in `test/implementation-stage.test.ts`, `test/verification-stage.test.ts` and `test/code-review-stage.test.ts`, whose expected mount source changes.
+- Modify: `docs/hazards.md` entry 15, a dated paragraph. Grep `ARCHITECTURE.md`, `README.md`, `docs/runbooks/cli-operator.md`, `CLAUDE.md` and `AGENTS.md` for the overlay's description, and correct every site that says the suite is mounted from the worktree.
+
+**Steps:**
+- **Tests:**
+  - **On the engine, the reviewer's probe** (`test/fixtures/recorded/acceptance-code-review-probes.json`, `caseAlias`). `verifyCommit` runs a failing suite, with a verify command before it that starts a detached process. While the acceptance command runs, that process rewrites the suite through `/work/Acceptance/<slug>/` so the test would pass, then restores the bytes. Expected: verification blocks as `acceptance failed`, naming the test. The test skips by name when the engine's filesystem is case-sensitive, which it detects by `/work/ACCEPTANCE` not existing.
+  - **On the engine, a write left in place.** A file written through the alias in a work container and not restored is reported by Git under `acceptance/<slug>/`, and `commitWorkspace` refuses it with the suite cause. Its expected value is the existing refusal text in `src/workspace-commit.ts`.
+  - **On the engine,** the mounted suite is byte-identical to the commit's blobs while the worktree's copy differs, and the copy's directory is gone after teardown.
+  - **With the stand-in,** each overlay's source is under `.governance/acceptance/<run>/mounts/`, and a sandbox without `readOnlyPaths` has the same argv as before.
+- **Break-tests:**
+  - mount the worktree path again: the probe test fails, because verification passes;
+  - copy from the worktree's files instead of the commit: the byte-identity test fails;
+  - skip the removal in teardown: the teardown test fails.
+- Verify: `node --test test/container.test.ts test/acceptance-engine.test.ts` on the engine, then the three stage test files, then `npm run typecheck`. Expected: pass and clean.
+
+**Task completion evidence:** the tests, the three break-test failures, and the probe's log.
+
+### Task 13: Count only assertions a test runs
+
+**Depends on:** Task 10. Free.
+
+**Why.** `asserts` in `src/acceptance.ts` walks every node of the test body, including nested function bodies, so an assertion inside a helper the test declares and never calls satisfies gate 5 (review Finding 2). The rule is gate 5's "An assertion the test runs".
+
+**Files:**
+- Modify: `src/acceptance.ts`. An assertion counts when it is in the test's own body outside any nested function, or inside a function the test calls or passes to a call, followed through file-local helpers. A function the test declares and neither calls nor passes on contributes nothing.
+- Modify: `test/acceptance.test.ts`.
+
+**Steps:**
+- **Tests:**
+  - the review's Finding 2 counterexample is refused, with the existing reason;
+  - an assertion in a nested helper that the test calls passes;
+  - an async callback holding the assertion, passed to a file-local helper, passes. That is the shape the recorded suites use with `keyboardCriterion`;
+  - **the recorded suites.** Every unique suite source in the committed `test-author-evaluation-*.json` records, 53 of them, gets 0 lint refusals. Add this test if none exists. Its expected value is those records, in which every gate-passing suite was written independently of this check.
+- **Break-test:** restore the walk into every nested function. The counterexample test fails.
+- Verify: `node --test test/acceptance.test.ts`. Expected: pass.
+
+**Task completion evidence:** the tests, the break-test failure, and the recorded-suite count.
+
+### Task 14: Class a matcher's argument error as a broken test
+
+**Depends on:** Task 10. Free.
+
+**Why.** `toHaveText(undefined)` fails with the same matcher header that `classifyFailure`'s `MATCHER` and `CUSTOM_MESSAGE_MATCHER` accept, so it is classed `valid_red`. No page can satisfy it (review Finding 3). Gate 3 lists it as a broken test.
+
+**Files:**
+- Create: `test/fixtures/recorded/acceptance-report-matcher-argument.json` and `acceptance-report-matcher-argument-custom-message.json`, each with a provenance block. Capture them from the real runner in the current image through `createSandbox` and `runInSandbox`, as the custom-message fix captured its reports. One is a `toHaveText(undefined)` without a custom message, the other with one.
+- Modify: `src/acceptance.ts`. `classifyFailure` classes such an error `test_code`, by the field that the captured reports show separates it from a mismatch.
+- Modify: `test/acceptance.test.ts`.
+
+**Steps:**
+- **First, read the two reports.** If no retained field separates an argument error from a mismatch, stop and report, as Task 1 did: gate 3's rule depends on it.
+- **Tests:**
+  - both new reports classify as `test_code`;
+  - every existing recorded report keeps its class, including both valid-red reports and the custom-message one;
+  - a criterion whose only failing test is an argument error is refused.
+- **Break-test:** remove the new rule. Both new-report tests fail.
+- Verify: `node --test test/acceptance.test.ts`, then `npm run typecheck`. Expected: pass and clean.
+
+**Task completion evidence:** the captured reports, the tests, and the break-test failure.
+
+### Task 15: An awaited array of promises settles nothing
+
+**Depends on:** Task 13, which changes the same file. Free.
+
+**Why.** `isPromise` treats a `map` with an async callback as a promise, and `settles` accepts any `await` of the assigned name. So `await operations` passes the lint while every action inside stays unsettled (review Finding 4; the probe ended `locator.click: Test ended.`). The rule is gate 5's "No unsettled promise".
+
+**Files:**
+- Modify: `src/acceptance.ts`. An array of promises is settled only when an awaited `Promise.all` or `Promise.allSettled` takes it, or when it is returned to a caller that awaits it that way. `await` on the array itself settles nothing.
+- Modify: `test/acceptance.test.ts`.
+
+**Steps:**
+- **Tests:**
+  - the review's Finding 4 counterexample is refused, naming the unsettled array;
+  - `await Promise.all(operations)` and `await Promise.all(items.map(async …))` pass;
+  - the recorded suites from Task 13 still get 0 refusals.
+- **Break-test:** accept `await` of the array again. The counterexample test fails.
+- Verify: `node --test test/acceptance.test.ts`. Expected: pass.
+
+**Task completion evidence:** the tests and the break-test failure.
+
+### Task 16: Regression and re-review
+
+**Depends on:** Tasks 12 to 15.
+
+**Steps:**
+- Verify, in order:
+  - `npm run typecheck`;
+  - `npm run check:docs`;
+  - `node .claude/skills/run-buildworks/driver.mjs smoke`, and `smoke --acceptance-tests`;
+  - the full serial no-engine suite in the background, with the stand-in state in the scratchpad, as Task 10 ran it;
+  - `test/container.test.ts` and `test/acceptance-engine.test.ts` on the engine.
+
+  Expected: clean, clean, `13/13` twice, 0 failures with the named skips, and both engine suites passing. The code review's regression run had 5 failures in 502. Any failure here is reported with its cause, not attributed to the baseline without a run at the commit before these tasks.
+- Re-review the diff from the commit before Task 12, with the review's four findings as the first things to check.
+
+**Task completion evidence:** the counts and clean checks, and the dated re-review.
 
 ## Task 1 spike record (2026-10-20)
 
@@ -857,6 +962,61 @@ A setting passes if it meets all four. If neither setting passes, stop. Report t
   - the runbook's troubleshooting table has no rows for `acceptance failed`, `acceptance flaky` or a gate refusal.
 
   Task 11 needs its own authorization.
+
+## Tasks 12 to 16 build record (2026-10-21)
+
+- **Task 12: the suite is mounted from the commit.**
+  - **The mount.** `createSandbox` takes the worktree's `HEAD` tree through `git ls-tree -r -z HEAD -- <path>`. It writes each file with `git cat-file blob` into `.governance/acceptance/<run>/mounts/<sandbox name>/`, through `acceptanceMountDir` in `src/paths.ts`. It then mounts that copy read-only at `/work/<path>`.
+  - **What the copy refuses.** A path whose tree holds a link, a gitlink or any mode other than 100644 or 100755 is refused, and so is a path with no file at `HEAD`. The sandbox then never starts.
+  - **Teardown.** `destroySandbox` removes the copy, and a failed removal is a teardown failure. A start that fails partway runs the same teardown.
+  - **Argv without a suite.** It is unchanged.
+  - **The engine tests** (`test/acceptance-engine.test.ts`, on Docker 29.8.2):
+    - **The review's probe.** A detached writer rewrites the suite through `/work/Acceptance/s/` while the runner runs, then restores it. The alias write still exits 0, every result fails against the committed suite, and verification blocks on `acceptance`.
+    - **A write through the alias that is left behind** is refused by `commitWorkspace` with the suite cause.
+    - **The copy** holds the commit's bytes while the worktree holds an edit, and it is gone after teardown.
+    - **On a case-sensitive engine,** the two alias tests skip by name.
+  - **The stand-in tests.** The three stage files' argv tests expect the mount source under `mounts/` through `committedSuiteMount` in the stand-in. Each asserts that the copy is gone after the stage.
+- **Task 13: only assertions a test runs count.**
+  - **The walk.** `runsAssertion` walks the test's body without entering any nested function or method. It enters one only when that function is called on the spot or handed to a call, or when a call names it.
+  - **Resolving a name.** `namedFunction` resolves a name lexically, so two tests' same-named helpers stay apart. It also resolves `object.method` on an object literal.
+  - **The tests.** The review's counterexample is refused at `review.spec.mjs:6`. A called helper counts, and so do a callback handed to `keyboardCriterion`, a `test.step` body and an immediately invoked function. All 53 distinct recorded author suites get 0 refusals.
+- **Task 14: a matcher's argument error is a broken test.**
+  - **The fixtures.** Two reports were captured from the real runner through `createSandbox` and `runInSandbox`: `acceptance-report-matcher-argument.json` and `…-custom-message.json`, both exit 1.
+  - **The separating field.** A survey of 167 retained evaluation logs found 1,720 failed results. 966 of them sit under a matcher header, and 650 of the valid reds carry their own `Error:` line, so `Error:` cannot separate them. The line `Expected has value: ` (or `type`) appears in none of them, but in both captured argument errors.
+  - **The rule.** `classifyFailure` checks `MATCHER_ARGUMENT` before the valid-red patterns.
+- **Task 15: an awaited array of promises settles nothing.**
+  - **What counts as an array of promises.** `isPromiseArray` recognises:
+    - a `map` whose callback returns a promise, whether inline or a named function;
+    - an array literal that holds a promise or spreads an array of promises;
+    - a call of a file-local function that returns such an array.
+  - **What joins one.** `joins` accepts only `Promise.all` or `Promise.allSettled`, through a spread into an array literal, or a return from a named function whose callers are then held to the rule.
+  - **The tests.** The review's line-13 counterexample is refused by name. So are `await` of a `map`, a dropped `map`, an array literal and `Promise.race`.
+- **The re-review** (`2026-10-21-code-review-2.md`, reconciled). It found the four original findings closed, and four new defects in how Tasks 13 and 15 were first written:
+  - same-named helpers resolved file-wide;
+  - object-literal helpers not counted;
+  - a named `map` callback not checked;
+  - a spread join refused.
+
+  All four were fixed in this build and break-tested. Its follow-ups:
+  - the `forEach` rule shares the named-callback gap, and predates this work;
+  - the assertion rule stays syntactic, so dead code satisfies it;
+  - an empty `mounts/` directory remains after teardown.
+- **The break-tests,** each restored byte-identically by SHA-256:
+  - mounting the worktree again fails the probe and the byte-identity engine tests;
+  - copying from the worktree's files fails the byte-identity test;
+  - skipping the removal fails the engine teardown test and the verification-stage test;
+  - walking every nested function fails the two Finding 2 tests;
+  - removing `MATCHER_ARGUMENT` fails both argument-error tests;
+  - accepting `await` of the array fails the Finding 4 test;
+  - the four re-review fixes each fail their own test when reverted.
+- **Task 16: regression.**
+  - **The checks.** `npm run typecheck` is clean, and so is `npm run check:docs`.
+  - **The smoke.** `driver.mjs smoke` passes 13/13, and so does `smoke --acceptance-tests`.
+  - **The full suite** ran serially on the final tree, with the stand-in state in the scratchpad. 1,829 of 1,833 tests pass, with 0 failures and 4 skips, each skipped by name: the same three POSIX-only PATH differentials and the Windows symlink-privilege test that Task 10 recorded.
+  - **The engine.** A Docker engine was running, so `test/container.test.ts` and `test/acceptance-engine.test.ts` ran inside that run rather than skipping.
+  - **Source identity.** `src/acceptance.ts` and `src/container.ts` hashed the same before and after the run.
+  - **The aborted first run.** It was started before the re-review fixes and was stopped, so it is not counted.
+  - **Nothing was committed.**
 
 ## Rollback
 

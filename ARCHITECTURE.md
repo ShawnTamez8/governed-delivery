@@ -298,8 +298,9 @@ that computes and gates an agent's diff rather than requested in a prompt:
 - the design document that is the run's own input;
 - on a run with an acceptance suite, the suite's directory `acceptance/<slug>/`
   after its author's commit (2026-10-21). Every later container that holds the
-  worktree, verification included, mounts it read-only over the worktree, and
-  the boundary refuses a diff under it. A specification may not declare a path
+  worktree, verification included, mounts at that path a read-only copy of the
+  suite as the worktree's HEAD commits it, and the boundary refuses a diff under
+  it. A specification may not declare a path
   under `acceptance/`: the spec write and the approval gate refuse it.
 
 An agent that could edit its own permissions, its own input, or the record of
@@ -768,7 +769,11 @@ computes the diff (section 8) only once the work container is proven gone.
 On a run with an acceptance suite (2026-10-21), the acceptance test author is a
 fourth such dispatch, before the first phase: the same sandbox, tool server,
 schema and reply, with a scope of exactly the suite's directory. Every later
-work container mounts that directory read-only over the worktree. The work
+work container mounts that directory read-only, from a copy the system writes
+out of the worktree's HEAD commit beside the worktree, never from the worktree
+itself: on a case-insensitive host bind, `/work/Acceptance/` reached the suite
+through the writable worktree mount (hazard 15, 2026-10-21). The copy is
+removed when the container is. The work
 container starts with `--init`, so the processes a browser orphans are reaped
 rather than accumulating against the process limit.
 
@@ -1251,7 +1256,8 @@ agent wrote. A removal that fails blocks the run.
 On a run with an acceptance suite, the system's acceptance command runs after
 the frozen commands, at this stage and after every code-review remediation
 (2026-10-21). The suite directory is mounted read-only for the whole container,
-so a verify command cannot change the suite either. The command's output budget
+from the committed copy section 11 describes, so a verify command cannot change
+the suite either, under any spelling of its path. The command's output budget
 is the retention ceiling, and its verdict is read from the report, not from its
 exit code alone. Per-test outcomes are recorded beside the commands in
 `result.json`. A failing test blocks as `acceptance failed: <titles>`, and a
@@ -1663,7 +1669,9 @@ report lives there.
                        structured result record handed to delivery_check
   acceptance/<run>/    the acceptance suite's validity-gate record, gate.json,
                        which code review reads; baseline/ is the throwaway
-                       checkout with the stub page, removed after the gate run
+                       checkout with the stub page, removed after the gate run;
+                       mounts/<sandbox>/ is the committed copy of the suite a
+                       work container mounts read-only, removed with it
   proposals/<run>/  retained upstream-proposal evidence, one file per
 candidate; proposal.evidence_ref references only the
                     creating candidate's file — a later candidate that
@@ -1844,8 +1852,9 @@ settings).
 through the tool server, every verification command and every derived command
 runs in a disposable container with every capability dropped,
 `no-new-privileges`, the frozen user and CPU, memory and process limits. It
-mounts only the run's worktree, with `.git` read-only, so the main repository's
-`.governance/` and the operator's profile are out of reach. Its only network is
+mounts only the run's worktree, with `.git` read-only, and on a run with an
+acceptance suite a read-only copy of that suite (section 11), so the rest of the
+main repository's `.governance/` and the operator's profile are out of reach. Its only network is
 a private one whose sole exit is an egress proxy admitting the frozen allowlist
 (`registry.npmjs.org:443`); ignored-output removal runs with no network at all.
 The spike's attempted violations are re-run as integration tests against a real
