@@ -1,0 +1,821 @@
+{
+  "provenance": {
+    "capturedOn": "2026-10-21",
+    "plan": "docs/features/protected-acceptance-tests/plan.md, Task 11, the paid end-to-end benchmark",
+    "command": "node .claude/skills/run-buildworks/driver.mjs paid --yes --model claude-sonnet-5-5 --acceptance-tests --dir C:\\Users\\tamezs\\buildWorks_test_repos\\acceptance-web-calculator-2026-10-21",
+    "buildworksCommit": "6a63ee7",
+    "run": {
+      "id": 1,
+      "slug": "web-calculator",
+      "status": "completed"
+    },
+    "target": "C:\\Users\\tamezs\\buildWorks_test_repos\\acceptance-web-calculator-2026-10-21\\target (retained)",
+    "dispatchWindow": "2026-10-22T04:36:47.524Z to 2026-10-22T04:41:07.549Z",
+    "frozenAcceptance": {
+      "dir": "acceptance/web-calculator/",
+      "repeatEach": 2
+    },
+    "dropped": "harness envelopes and raw streams (they stay in the retained target's .governance/raw/1); per-test messages in verification are kept as recorded; audit rows outside the acceptance, phase, gate and command events"
+  },
+  "suite": [
+    {
+      "path": "acceptance/web-calculator/buttons.spec.mjs",
+      "content": "const { test, expect } = await import(process.env.BW_PLAYWRIGHT_TEST);\n\nconst DIGITS = [\"0\", \"1\", \"2\", \"3\", \"4\", \"5\", \"6\", \"7\", \"8\", \"9\"];\nconst ALL_BUTTONS = [...DIGITS, \"+\", \"-\", \"×\", \"÷\", \".\", \"=\", \"C\", \"Backspace\"];\n\nfunction button(page, name) {\n  return page.getByRole(\"button\", { name, exact: true });\n}\n\nfunction display(page) {\n  return page.getByRole(\"status\");\n}\n\nasync function press(page, labels) {\n  for (const label of labels) {\n    await button(page, label).click();\n  }\n}\n\nasync function initialText(page) {\n  await expect(display(page)).toBeVisible();\n  return await display(page).innerText();\n}\n\ntest(\"AC-001 Serving the repository root with a static file server and opening index.html in a browser, with no build or install step run first, shows the display and every calculator button.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await expect(display(page)).toBeVisible();\n  for (const name of ALL_BUTTONS) {\n    await expect(button(page, name)).toBeVisible();\n  }\n});\n\ntest(\"AC-030 On first load, the display element is visible: it is not hidden and its bounding box has a width and height greater than 0.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await expect(display(page)).toBeVisible();\n  await expect(display(page)).not.toHaveCSS(\"display\", \"none\");\n  await expect(display(page)).not.toHaveCSS(\"visibility\", \"hidden\");\n});\n\ntest(\"AC-003 The page has exactly one button for each digit 0 through 9, and pressing any digit button from the initial state shows that digit in the display.\", async ({ page }) => {\n  for (const digit of DIGITS) {\n    await page.goto(\"index.html\");\n    await expect(button(page, digit)).toHaveCount(1);\n    await button(page, digit).click();\n    await expect(display(page)).toHaveText(digit);\n  }\n});\n\ntest(\"AC-005 Pressing the buttons 1, 2, 3 in order from the initial state makes the display show 123.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await press(page, [\"1\", \"2\", \"3\"]);\n  await expect(display(page)).toHaveText(\"123\");\n});\n\ntest(\"AC-006 Pressing the buttons 1, 2, +, 7, = makes the display show 19.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await press(page, [\"1\", \"2\", \"+\", \"7\", \"=\"]);\n  await expect(display(page)).toHaveText(\"19\");\n});\n\ntest(\"AC-007 Pressing the buttons 9, -, 4, = makes the display show 5, and pressing C, 3, -, 5, = makes the display show -2.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await press(page, [\"9\", \"-\", \"4\", \"=\"]);\n  await expect(display(page)).toHaveText(\"5\");\n  await press(page, [\"C\", \"3\", \"-\", \"5\", \"=\"]);\n  await expect(display(page)).toHaveText(\"-2\");\n});\n\ntest(\"AC-008 Pressing the buttons 6, ×, 7, = makes the display show 42.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await press(page, [\"6\", \"×\", \"7\", \"=\"]);\n  await expect(display(page)).toHaveText(\"42\");\n});\n\ntest(\"AC-009 Pressing the buttons 8, ÷, 2, = makes the display show 4.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await press(page, [\"8\", \"÷\", \"2\", \"=\"]);\n  await expect(display(page)).toHaveText(\"4\");\n});\n\ntest(\"AC-010 Pressing the buttons 1, ., 5, +, 2, ., 2, 5, = makes the display show 3.75.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await press(page, [\"1\", \".\", \"5\", \"+\", \"2\", \".\", \"2\", \"5\", \"=\"]);\n  await expect(display(page)).toHaveText(\"3.75\");\n});\n\ntest(\"AC-012 Pressing the buttons 5, +, 3, C makes the display show the same content it showed on first load, and then pressing 2, +, 2, = makes the display show 4.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  const initial = await initialText(page);\n  await press(page, [\"5\", \"+\", \"3\", \"C\"]);\n  await expect(display(page)).toHaveText(initial);\n  await press(page, [\"2\", \"+\", \"2\", \"=\"]);\n  await expect(display(page)).toHaveText(\"4\");\n});\n\ntest(\"AC-013 Pressing the buttons 1, 2, 3 and then the button with accessible name Backspace makes the display show 12.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await press(page, [\"1\", \"2\", \"3\", \"Backspace\"]);\n  await expect(display(page)).toHaveText(\"12\");\n});\n\ntest(\"AC-014 Pressing the button 7 and then the button with accessible name Backspace makes the display show the same content it showed on first load.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  const initial = await initialText(page);\n  await press(page, [\"7\", \"Backspace\"]);\n  await expect(display(page)).toHaveText(initial);\n});\n\ntest(\"AC-029 On first load, the page contains no input element of type password and no prompt asking for a username, email address, or password.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await expect(page.locator(\"input[type=password]\")).toHaveCount(0);\n  await expect(page.getByRole(\"textbox\")).toHaveCount(0);\n  await expect(page.getByText(/user\\s*name|e-?mail|password|log\\s*in|sign\\s*in/i)).toHaveCount(0);\n  await expect(page.getByLabel(/user\\s*name|e-?mail|password/i)).toHaveCount(0);\n});\n"
+    },
+    {
+      "path": "acceptance/web-calculator/keyboard.spec.mjs",
+      "content": "const { test, expect } = await import(process.env.BW_PLAYWRIGHT_TEST);\n\nconst DIGITS = [\"0\", \"1\", \"2\", \"3\", \"4\", \"5\", \"6\", \"7\", \"8\", \"9\"];\n\nfunction button(page, name) {\n  return page.getByRole(\"button\", { name, exact: true });\n}\n\nfunction display(page) {\n  return page.getByRole(\"status\");\n}\n\nasync function press(page, labels) {\n  for (const label of labels) {\n    await button(page, label).click();\n  }\n}\n\nasync function type(page, keys) {\n  for (const key of keys) {\n    await page.keyboard.press(key);\n  }\n}\n\nasync function initialText(page) {\n  await expect(display(page)).toBeVisible();\n  return await display(page).innerText();\n}\n\ntest(\"AC-015 With no element focused, typing the keys 7, *, 6, Enter makes the display show 42.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await type(page, [\"7\", \"*\", \"6\", \"Enter\"]);\n  await expect(display(page)).toHaveText(\"42\");\n});\n\ntest(\"AC-015 typing 7, *, 6, Enter with the theme toggle focused makes the display show 42.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await button(page, \"Toggle theme\").focus();\n  await type(page, [\"7\", \"*\", \"6\", \"Enter\"]);\n  await expect(display(page)).toHaveText(\"42\");\n});\n\ntest(\"AC-016 With no element focused, typing the keys 9, /, 3, Enter makes the display show 3.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await type(page, [\"9\", \"/\", \"3\", \"Enter\"]);\n  await expect(display(page)).toHaveText(\"3\");\n});\n\ntest(\"AC-017 With no element focused, typing the keys 4, +, 5, Enter makes the display show 9, and then typing Escape, 9, -, 2, Enter makes the display show 7.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await type(page, [\"4\", \"+\", \"5\", \"Enter\"]);\n  await expect(display(page)).toHaveText(\"9\");\n  await type(page, [\"Escape\", \"9\", \"-\", \"2\", \"Enter\"]);\n  await expect(display(page)).toHaveText(\"7\");\n});\n\ntest(\"AC-018 With no element focused, typing the keys 1, ., 5, +, 1, Enter makes the display show 2.5.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await type(page, [\"1\", \".\", \"5\", \"+\", \"1\", \"Enter\"]);\n  await expect(display(page)).toHaveText(\"2.5\");\n});\n\ntest(\"AC-019 With no element focused, typing the keys 1, 2, 3, Backspace makes the display show 12.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await type(page, [\"1\", \"2\", \"3\", \"Backspace\"]);\n  await expect(display(page)).toHaveText(\"12\");\n});\n\ntest(\"AC-019 typing 1, 2, 3, Backspace with a calculator button focused makes the display show 12.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await button(page, \"C\").focus();\n  await type(page, [\"1\", \"2\", \"3\", \"Backspace\"]);\n  await expect(display(page)).toHaveText(\"12\");\n});\n\ntest(\"AC-020 With no element focused, typing the keys 5, +, 3, Escape makes the display show the same content it showed on first load.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  const initial = await initialText(page);\n  await type(page, [\"5\", \"+\", \"3\", \"Escape\"]);\n  await expect(display(page)).toHaveText(initial);\n});\n\ntest(\"AC-020 typing 5, +, 3, Escape with the theme toggle focused makes the display show the same content it showed on first load.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  const initial = await initialText(page);\n  await button(page, \"Toggle theme\").focus();\n  await type(page, [\"5\", \"+\", \"3\", \"Escape\"]);\n  await expect(display(page)).toHaveText(initial);\n});\n\ntest(\"AC-031 For each digit key 0 through 9, reloading the page and then typing that key with no element focused shows that digit in the display.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  for (const digit of DIGITS) {\n    await page.reload();\n    await expect(display(page)).toBeVisible();\n    await page.keyboard.press(digit);\n    await expect(display(page)).toHaveText(digit);\n  }\n});\n\ntest(\"AC-021 Clicking the buttons 4, +, 2 and then pressing the Enter key while the 2 button still has focus makes the display show 6.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await press(page, [\"4\", \"+\", \"2\"]);\n  await expect(button(page, \"2\")).toBeFocused();\n  await page.keyboard.press(\"Enter\");\n  await expect(display(page)).toHaveText(\"6\");\n});\n\ntest(\"AC-021 pressing Enter while the C button has focus evaluates and does not also clear.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await press(page, [\"4\", \"+\", \"2\"]);\n  await button(page, \"C\").focus();\n  await page.keyboard.press(\"Enter\");\n  await expect(display(page)).toHaveText(\"6\");\n});\n\ntest(\"AC-021 pressing Enter while the Backspace button has focus evaluates and does not also delete.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await press(page, [\"4\", \"+\", \"2\"]);\n  await button(page, \"Backspace\").focus();\n  await page.keyboard.press(\"Enter\");\n  await expect(display(page)).toHaveText(\"6\");\n});\n\ntest(\"AC-021 pressing Enter while the theme toggle has focus evaluates and leaves the theme unchanged.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  const html = page.locator(\"html\");\n  await expect(html).toHaveAttribute(\"data-theme\", /^(light|dark)$/);\n  const theme = await html.getAttribute(\"data-theme\");\n  await press(page, [\"4\", \"+\", \"2\"]);\n  await button(page, \"Toggle theme\").focus();\n  await page.keyboard.press(\"Enter\");\n  await expect(display(page)).toHaveText(\"6\");\n  await expect(html).toHaveAttribute(\"data-theme\", theme);\n});\n"
+    },
+    {
+      "path": "acceptance/web-calculator/theme-layout.spec.mjs",
+      "content": "const { test, expect } = await import(process.env.BW_PLAYWRIGHT_TEST);\n\nconst CONTROLS = [\"0\", \"1\", \"2\", \"3\", \"4\", \"5\", \"6\", \"7\", \"8\", \"9\", \"+\", \"-\", \"×\", \"÷\", \".\", \"=\", \"C\", \"Backspace\", \"Toggle theme\"];\n\nfunction button(page, name) {\n  return page.getByRole(\"button\", { name, exact: true });\n}\n\nfunction display(page) {\n  return page.getByRole(\"status\");\n}\n\nfunction toggle(page) {\n  return button(page, \"Toggle theme\");\n}\n\nasync function startWithTheme(page, theme) {\n  await page.goto(\"index.html\");\n  await page.evaluate((value) => window.localStorage.setItem(\"calculator-theme\", value), theme);\n  await page.reload();\n  await expect(page.locator(\"html\")).toHaveAttribute(\"data-theme\", theme);\n}\n\nasync function showProbe(page, id, text) {\n  await page.evaluate(([probeId, value]) => {\n    const element = document.createElement(\"div\");\n    element.id = probeId;\n    element.textContent = value;\n    document.body.append(element);\n  }, [id, text]);\n}\n\nasync function expectStored(page, theme) {\n  const stored = await page.evaluate(() => String(window.localStorage.getItem(\"calculator-theme\")));\n  await showProbe(page, \"stored-probe\", stored);\n  await expect(page.locator(\"#stored-probe\")).toHaveText(theme);\n}\n\ntest(\"AC-022 The page has one theme toggle control, and activating it switches the data-theme attribute of the html element from light to dark or from dark to light.\", async ({ page }) => {\n  await startWithTheme(page, \"light\");\n  await expect(page.getByRole(\"button\", { name: /theme/i })).toHaveCount(1);\n  await toggle(page).click();\n  await expect(page.locator(\"html\")).toHaveAttribute(\"data-theme\", \"dark\");\n  await toggle(page).click();\n  await expect(page.locator(\"html\")).toHaveAttribute(\"data-theme\", \"light\");\n});\n\ntest(\"AC-022 activating the focused theme toggle with the Space key switches the theme.\", async ({ page }) => {\n  await startWithTheme(page, \"dark\");\n  await toggle(page).focus();\n  await page.keyboard.press(\"Space\");\n  await expect(page.locator(\"html\")).toHaveAttribute(\"data-theme\", \"light\");\n  await page.keyboard.press(\"Space\");\n  await expect(page.locator(\"html\")).toHaveAttribute(\"data-theme\", \"dark\");\n});\n\ntest(\"AC-023 The computed background-color of the body element and the computed color of the display element each have a different value when data-theme is dark than when it is light.\", async ({ page }) => {\n  await startWithTheme(page, \"light\");\n  const bodyLight = await page.locator(\"body\").evaluate((el) => getComputedStyle(el).backgroundColor);\n  const displayLight = await display(page).evaluate((el) => getComputedStyle(el).color);\n  await toggle(page).click();\n  await expect(page.locator(\"html\")).toHaveAttribute(\"data-theme\", \"dark\");\n  await expect(page.locator(\"body\")).not.toHaveCSS(\"background-color\", bodyLight);\n  await expect(display(page)).not.toHaveCSS(\"color\", displayLight);\n});\n\ntest(\"AC-024 After the user picks the dark theme with the toggle, localStorage.getItem('calculator-theme') returns dark, and reloading the page leaves the html element's data-theme set to dark.\", async ({ page }) => {\n  await startWithTheme(page, \"light\");\n  await toggle(page).click();\n  await expect(page.locator(\"html\")).toHaveAttribute(\"data-theme\", \"dark\");\n  await expectStored(page, \"dark\");\n  await page.reload();\n  await expect(page.locator(\"html\")).toHaveAttribute(\"data-theme\", \"dark\");\n});\n\ntest(\"AC-025 After the user picks the light theme with the toggle, localStorage.getItem('calculator-theme') returns light, and reloading the page leaves the html element's data-theme set to light.\", async ({ page }) => {\n  await startWithTheme(page, \"dark\");\n  await toggle(page).click();\n  await expect(page.locator(\"html\")).toHaveAttribute(\"data-theme\", \"light\");\n  await expectStored(page, \"light\");\n  await page.reload();\n  await expect(page.locator(\"html\")).toHaveAttribute(\"data-theme\", \"light\");\n});\n\ntest(\"AC-026 At a viewport width of 320 pixels, document.documentElement.scrollWidth is at most 320, every calculator button and the theme toggle sit fully inside the viewport horizontally, and document.elementFromPoint at the center of each of them returns that control or one of its descendants.\", async ({ page }) => {\n  await page.setViewportSize({ width: 320, height: 2000 });\n  await page.goto(\"index.html\");\n  await expect(display(page)).toBeVisible();\n  const problems = await page.evaluate(() => {\n    const out = [];\n    if (document.documentElement.scrollWidth > 320) {\n      out.push(\"scrollWidth \" + document.documentElement.scrollWidth);\n    }\n    const buttons = [...document.querySelectorAll(\"button\")];\n    if (buttons.length < 19) {\n      out.push(\"only \" + buttons.length + \" buttons\");\n    }\n    for (const b of buttons) {\n      const r = b.getBoundingClientRect();\n      const label = b.textContent.trim();\n      if (r.width <= 0 || r.height <= 0 || r.left < 0 || r.right > 320) {\n        out.push(\"outside \" + label);\n      }\n      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);\n      if (!hit || !b.contains(hit)) {\n        out.push(\"covered \" + label);\n      }\n    }\n    return out.join(\"; \") || \"ok\";\n  });\n  await showProbe(page, \"layout-probe\", problems);\n  await expect(page.locator(\"#layout-probe\")).toHaveText(\"ok\");\n});\n\ntest(\"AC-027 For every calculator button and the theme toggle, the computed background-color, color, outline-style, or box-shadow while the pointer hovers over it differs from its value when not hovered.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  const failures = [];\n  const read = (el) => {\n    const s = getComputedStyle(el);\n    return [s.backgroundColor, s.color, s.outlineStyle, s.boxShadow].join(\"|\");\n  };\n  for (const name of CONTROLS) {\n    const control = button(page, name);\n    await page.mouse.move(1279, 719);\n    const before = await control.evaluate(read);\n    await control.hover();\n    const after = await control.evaluate(read);\n    if (before === after) {\n      failures.push(name);\n    }\n  }\n  await page.mouse.move(1279, 719);\n  await showProbe(page, \"hover-probe\", failures.join(\",\") || \"ok\");\n  await expect(page.locator(\"#hover-probe\")).toHaveText(\"ok\");\n});\n\ntest(\"AC-028 For every calculator button and the theme toggle, after it receives focus with the Tab key, either its computed outline-style is not none or its computed box-shadow differs from its unfocused value.\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await expect(display(page)).toBeVisible();\n  const before = await page.evaluate(() =>\n    [...document.querySelectorAll(\"button\")].map((b) => getComputedStyle(b).boxShadow));\n  const failures = [];\n  const seen = new Set();\n  for (let i = 0; i < before.length + 2; i++) {\n    await page.keyboard.press(\"Tab\");\n    const state = await page.evaluate(() => {\n      const buttons = [...document.querySelectorAll(\"button\")];\n      const s = getComputedStyle(document.activeElement);\n      return [buttons.indexOf(document.activeElement), s.outlineStyle, s.boxShadow];\n    });\n    const [index, outline, shadow] = state;\n    if (index < 0) {\n      continue;\n    }\n    seen.add(index);\n    if (outline === \"none\" && shadow === before[index]) {\n      failures.push(index);\n    }\n  }\n  const result = before.length >= 19 && seen.size === before.length && failures.length === 0\n    ? \"ok\"\n    : \"seen \" + seen.size + \" of \" + before.length + \", failing \" + failures.join(\",\");\n  await showProbe(page, \"focus-probe\", result);\n  await expect(page.locator(\"#focus-probe\")).toHaveText(\"ok\");\n});\n"
+    }
+  ],
+  "gate": {
+    "runId": 1,
+    "suiteCommit": "c0669ce41bfb4545859f1a1d0babe74890a18238",
+    "baseline": "the suite commit with the blank stub page",
+    "log": ".governance\\acceptance\\1\\gate-run\\acceptance.log",
+    "ok": true,
+    "refusals": [],
+    "alreadySatisfied": [
+      "AC-029"
+    ],
+    "tests": [
+      {
+        "title": "AC-001 Serving the repository root with a static file server and opening index.html in a browser, with no build or install step run first, shows the display and every calculator button.",
+        "criterion": "AC-001",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-030 On first load, the display element is visible: it is not hidden and its bounding box has a width and height greater than 0.",
+        "criterion": "AC-030",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-003 The page has exactly one button for each digit 0 through 9, and pressing any digit button from the initial state shows that digit in the display.",
+        "criterion": "AC-003",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-005 Pressing the buttons 1, 2, 3 in order from the initial state makes the display show 123.",
+        "criterion": "AC-005",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-006 Pressing the buttons 1, 2, +, 7, = makes the display show 19.",
+        "criterion": "AC-006",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-007 Pressing the buttons 9, -, 4, = makes the display show 5, and pressing C, 3, -, 5, = makes the display show -2.",
+        "criterion": "AC-007",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-008 Pressing the buttons 6, ×, 7, = makes the display show 42.",
+        "criterion": "AC-008",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-009 Pressing the buttons 8, ÷, 2, = makes the display show 4.",
+        "criterion": "AC-009",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-010 Pressing the buttons 1, ., 5, +, 2, ., 2, 5, = makes the display show 3.75.",
+        "criterion": "AC-010",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-012 Pressing the buttons 5, +, 3, C makes the display show the same content it showed on first load, and then pressing 2, +, 2, = makes the display show 4.",
+        "criterion": "AC-012",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-013 Pressing the buttons 1, 2, 3 and then the button with accessible name Backspace makes the display show 12.",
+        "criterion": "AC-013",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-014 Pressing the button 7 and then the button with accessible name Backspace makes the display show the same content it showed on first load.",
+        "criterion": "AC-014",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-029 On first load, the page contains no input element of type password and no prompt asking for a username, email address, or password.",
+        "criterion": "AC-029",
+        "outcome": "pass",
+        "failureClass": null,
+        "role": "guard"
+      },
+      {
+        "title": "AC-015 With no element focused, typing the keys 7, *, 6, Enter makes the display show 42.",
+        "criterion": "AC-015",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-015 typing 7, *, 6, Enter with the theme toggle focused makes the display show 42.",
+        "criterion": "AC-015",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-016 With no element focused, typing the keys 9, /, 3, Enter makes the display show 3.",
+        "criterion": "AC-016",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-017 With no element focused, typing the keys 4, +, 5, Enter makes the display show 9, and then typing Escape, 9, -, 2, Enter makes the display show 7.",
+        "criterion": "AC-017",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-018 With no element focused, typing the keys 1, ., 5, +, 1, Enter makes the display show 2.5.",
+        "criterion": "AC-018",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-019 With no element focused, typing the keys 1, 2, 3, Backspace makes the display show 12.",
+        "criterion": "AC-019",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-019 typing 1, 2, 3, Backspace with a calculator button focused makes the display show 12.",
+        "criterion": "AC-019",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-020 With no element focused, typing the keys 5, +, 3, Escape makes the display show the same content it showed on first load.",
+        "criterion": "AC-020",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-020 typing 5, +, 3, Escape with the theme toggle focused makes the display show the same content it showed on first load.",
+        "criterion": "AC-020",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-031 For each digit key 0 through 9, reloading the page and then typing that key with no element focused shows that digit in the display.",
+        "criterion": "AC-031",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-021 Clicking the buttons 4, +, 2 and then pressing the Enter key while the 2 button still has focus makes the display show 6.",
+        "criterion": "AC-021",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-021 pressing Enter while the C button has focus evaluates and does not also clear.",
+        "criterion": "AC-021",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-021 pressing Enter while the Backspace button has focus evaluates and does not also delete.",
+        "criterion": "AC-021",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-021 pressing Enter while the theme toggle has focus evaluates and leaves the theme unchanged.",
+        "criterion": "AC-021",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-022 The page has one theme toggle control, and activating it switches the data-theme attribute of the html element from light to dark or from dark to light.",
+        "criterion": "AC-022",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-022 activating the focused theme toggle with the Space key switches the theme.",
+        "criterion": "AC-022",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-023 The computed background-color of the body element and the computed color of the display element each have a different value when data-theme is dark than when it is light.",
+        "criterion": "AC-023",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-024 After the user picks the dark theme with the toggle, localStorage.getItem('calculator-theme') returns dark, and reloading the page leaves the html element's data-theme set to dark.",
+        "criterion": "AC-024",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-025 After the user picks the light theme with the toggle, localStorage.getItem('calculator-theme') returns light, and reloading the page leaves the html element's data-theme set to light.",
+        "criterion": "AC-025",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-026 At a viewport width of 320 pixels, document.documentElement.scrollWidth is at most 320, every calculator button and the theme toggle sit fully inside the viewport horizontally, and document.elementFromPoint at the center of each of them returns that control or one of its descendants.",
+        "criterion": "AC-026",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-027 For every calculator button and the theme toggle, the computed background-color, color, outline-style, or box-shadow while the pointer hovers over it differs from its value when not hovered.",
+        "criterion": "AC-027",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      },
+      {
+        "title": "AC-028 For every calculator button and the theme toggle, after it receives focus with the Tab key, either its computed outline-style is not none or its computed box-shadow differs from its unfocused value.",
+        "criterion": "AC-028",
+        "outcome": "fail",
+        "failureClass": "valid_red",
+        "role": "red"
+      }
+    ]
+  },
+  "verification": {
+    "outcome": "pass",
+    "commands": [
+      {
+        "name": "node-version",
+        "argv": [
+          "node",
+          "--version"
+        ],
+        "exitCode": 0,
+        "timedOut": false,
+        "spawnError": null,
+        "killError": null,
+        "outputOverflow": false,
+        "durationMs": 168,
+        "evidenceRef": ".governance\\verification\\1\\node-version.log",
+        "blockedBecause": null
+      },
+      {
+        "name": "npm-version",
+        "argv": [
+          "npm",
+          "--version"
+        ],
+        "exitCode": 0,
+        "timedOut": false,
+        "spawnError": null,
+        "killError": null,
+        "outputOverflow": false,
+        "durationMs": 253,
+        "evidenceRef": ".governance\\verification\\1\\npm-version.log",
+        "blockedBecause": null
+      },
+      {
+        "name": "acceptance",
+        "argv": [
+          "node",
+          "/opt/bw-browser/node_modules/@playwright/test/cli.js",
+          "test",
+          "--config",
+          "/opt/bw-browser/acceptance.config.mjs",
+          "--repeat-each",
+          "2",
+          "acceptance/web-calculator/"
+        ],
+        "exitCode": 0,
+        "timedOut": false,
+        "spawnError": null,
+        "killError": null,
+        "outputOverflow": false,
+        "durationMs": 13748,
+        "evidenceRef": ".governance\\verification\\1\\acceptance.log",
+        "blockedBecause": null
+      }
+    ],
+    "acceptance": {
+      "tests": [
+        {
+          "title": "AC-001 Serving the repository root with a static file server and opening index.html in a browser, with no build or install step run first, shows the display and every calculator button.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-030 On first load, the display element is visible: it is not hidden and its bounding box has a width and height greater than 0.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-003 The page has exactly one button for each digit 0 through 9, and pressing any digit button from the initial state shows that digit in the display.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-005 Pressing the buttons 1, 2, 3 in order from the initial state makes the display show 123.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-006 Pressing the buttons 1, 2, +, 7, = makes the display show 19.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-007 Pressing the buttons 9, -, 4, = makes the display show 5, and pressing C, 3, -, 5, = makes the display show -2.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-008 Pressing the buttons 6, ×, 7, = makes the display show 42.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-009 Pressing the buttons 8, ÷, 2, = makes the display show 4.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-010 Pressing the buttons 1, ., 5, +, 2, ., 2, 5, = makes the display show 3.75.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-012 Pressing the buttons 5, +, 3, C makes the display show the same content it showed on first load, and then pressing 2, +, 2, = makes the display show 4.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-013 Pressing the buttons 1, 2, 3 and then the button with accessible name Backspace makes the display show 12.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-014 Pressing the button 7 and then the button with accessible name Backspace makes the display show the same content it showed on first load.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-029 On first load, the page contains no input element of type password and no prompt asking for a username, email address, or password.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-015 With no element focused, typing the keys 7, *, 6, Enter makes the display show 42.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-015 typing 7, *, 6, Enter with the theme toggle focused makes the display show 42.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-016 With no element focused, typing the keys 9, /, 3, Enter makes the display show 3.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-017 With no element focused, typing the keys 4, +, 5, Enter makes the display show 9, and then typing Escape, 9, -, 2, Enter makes the display show 7.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-018 With no element focused, typing the keys 1, ., 5, +, 1, Enter makes the display show 2.5.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-019 With no element focused, typing the keys 1, 2, 3, Backspace makes the display show 12.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-019 typing 1, 2, 3, Backspace with a calculator button focused makes the display show 12.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-020 With no element focused, typing the keys 5, +, 3, Escape makes the display show the same content it showed on first load.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-020 typing 5, +, 3, Escape with the theme toggle focused makes the display show the same content it showed on first load.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-031 For each digit key 0 through 9, reloading the page and then typing that key with no element focused shows that digit in the display.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-021 Clicking the buttons 4, +, 2 and then pressing the Enter key while the 2 button still has focus makes the display show 6.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-021 pressing Enter while the C button has focus evaluates and does not also clear.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-021 pressing Enter while the Backspace button has focus evaluates and does not also delete.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-021 pressing Enter while the theme toggle has focus evaluates and leaves the theme unchanged.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-022 The page has one theme toggle control, and activating it switches the data-theme attribute of the html element from light to dark or from dark to light.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-022 activating the focused theme toggle with the Space key switches the theme.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-023 The computed background-color of the body element and the computed color of the display element each have a different value when data-theme is dark than when it is light.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-024 After the user picks the dark theme with the toggle, localStorage.getItem('calculator-theme') returns dark, and reloading the page leaves the html element's data-theme set to dark.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-025 After the user picks the light theme with the toggle, localStorage.getItem('calculator-theme') returns light, and reloading the page leaves the html element's data-theme set to light.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-026 At a viewport width of 320 pixels, document.documentElement.scrollWidth is at most 320, every calculator button and the theme toggle sit fully inside the viewport horizontally, and document.elementFromPoint at the center of each of them returns that control or one of its descendants.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-027 For every calculator button and the theme toggle, the computed background-color, color, outline-style, or box-shadow while the pointer hovers over it differs from its value when not hovered.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        },
+        {
+          "title": "AC-028 For every calculator button and the theme toggle, after it receives focus with the Tab key, either its computed outline-style is not none or its computed box-shadow differs from its unfocused value.",
+          "outcome": "pass",
+          "failureClass": null,
+          "message": null
+        }
+      ]
+    }
+  },
+  "dispatches": [
+    {
+      "agent": "spec-author",
+      "role": "author",
+      "requested_model": "claude-opus-5-5",
+      "effective_model": "claude-opus-5-5",
+      "requested_effort": "high",
+      "cost": 0.2055244,
+      "duration_ms": 79689,
+      "tokens_in": 6,
+      "tokens_out": 7982,
+      "stage": "spec"
+    },
+    {
+      "agent": "spec-author",
+      "role": "author",
+      "requested_model": "claude-opus-5-5",
+      "effective_model": "claude-opus-5-5",
+      "requested_effort": "high",
+      "cost": 0.22750840000000003,
+      "duration_ms": 74591,
+      "tokens_in": 4,
+      "tokens_out": 8093,
+      "stage": "spec"
+    },
+    {
+      "agent": "spec-reviewer-traceability",
+      "role": "reviewer",
+      "requested_model": "claude-haiku-5-5",
+      "effective_model": "claude-haiku-5-5",
+      "requested_effort": "medium",
+      "cost": 0.00377173,
+      "duration_ms": 23122,
+      "tokens_in": 2,
+      "tokens_out": 4693,
+      "stage": "spec_review"
+    },
+    {
+      "agent": "spec-reviewer-consistency",
+      "role": "reviewer",
+      "requested_model": "claude-haiku-5-5",
+      "effective_model": "claude-haiku-5-5",
+      "requested_effort": "medium",
+      "cost": 0.00472597,
+      "duration_ms": 33143,
+      "tokens_in": 2,
+      "tokens_out": 7180,
+      "stage": "spec_review"
+    },
+    {
+      "agent": "spec-author",
+      "role": "author",
+      "requested_model": "claude-sonnet-5-5",
+      "effective_model": "claude-sonnet-5-5",
+      "requested_effort": "medium",
+      "cost": 0.1220543,
+      "duration_ms": 42505,
+      "tokens_in": 2,
+      "tokens_out": 7224,
+      "stage": "spec"
+    },
+    {
+      "agent": "plan-author",
+      "role": "author",
+      "requested_model": "claude-opus-5-5",
+      "effective_model": "claude-opus-5-5",
+      "requested_effort": "high",
+      "cost": 0.1435788,
+      "duration_ms": 44207,
+      "tokens_in": 4,
+      "tokens_out": 4469,
+      "stage": "plan"
+    },
+    {
+      "agent": "plan-author",
+      "role": "author",
+      "requested_model": "claude-opus-5-5",
+      "effective_model": "claude-opus-5-5",
+      "requested_effort": "high",
+      "cost": 0.2915332,
+      "duration_ms": 84135,
+      "tokens_in": 4,
+      "tokens_out": 8970,
+      "stage": "plan"
+    },
+    {
+      "agent": "spec-reviewer-traceability",
+      "role": "reviewer",
+      "requested_model": "claude-haiku-5-5",
+      "effective_model": "claude-haiku-5-5",
+      "requested_effort": "medium",
+      "cost": 0.00271837,
+      "duration_ms": 11218,
+      "tokens_in": 2,
+      "tokens_out": 2092,
+      "stage": "plan_review"
+    },
+    {
+      "agent": "spec-reviewer-consistency",
+      "role": "reviewer",
+      "requested_model": "claude-haiku-5-5",
+      "effective_model": "claude-haiku-5-5",
+      "requested_effort": "medium",
+      "cost": 0.00399077,
+      "duration_ms": 20326,
+      "tokens_in": 2,
+      "tokens_out": 4640,
+      "stage": "plan_review"
+    },
+    {
+      "agent": "plan-author",
+      "role": "author",
+      "requested_model": "claude-sonnet-5-5",
+      "effective_model": "claude-sonnet-5-5",
+      "requested_effort": "medium",
+      "cost": 0.0806977,
+      "duration_ms": 18753,
+      "tokens_in": 2,
+      "tokens_out": 3655,
+      "stage": "plan"
+    },
+    {
+      "agent": "acceptance-test-author",
+      "role": "author",
+      "requested_model": "claude-sonnet-5-5",
+      "effective_model": "claude-sonnet-5-5",
+      "requested_effort": "medium",
+      "cost": 0.3604441,
+      "duration_ms": 212825,
+      "tokens_in": 16,
+      "tokens_out": 19054,
+      "stage": "implementation"
+    },
+    {
+      "agent": "implementer",
+      "role": "author",
+      "requested_model": "claude-sonnet-5-5",
+      "effective_model": "claude-sonnet-5-5",
+      "requested_effort": "medium",
+      "cost": 0.10579920000000001,
+      "duration_ms": 29885,
+      "tokens_in": 4,
+      "tokens_out": 4436,
+      "stage": "implementation"
+    },
+    {
+      "agent": "implementer",
+      "role": "author",
+      "requested_model": "claude-sonnet-5-5",
+      "effective_model": "claude-sonnet-5-5",
+      "requested_effort": "medium",
+      "cost": 0.0697428,
+      "duration_ms": 30661,
+      "tokens_in": 8,
+      "tokens_out": 1472,
+      "stage": "implementation"
+    },
+    {
+      "agent": "implementer",
+      "role": "author",
+      "requested_model": "claude-sonnet-5-5",
+      "effective_model": "claude-sonnet-5-5",
+      "requested_effort": "medium",
+      "cost": 0.088434,
+      "duration_ms": 26852,
+      "tokens_in": 4,
+      "tokens_out": 1176,
+      "stage": "implementation"
+    },
+    {
+      "agent": "code-reviewer-security",
+      "role": "reviewer",
+      "requested_model": "claude-haiku-5-5",
+      "effective_model": "claude-haiku-5-5",
+      "requested_effort": "medium",
+      "cost": 0.00310267,
+      "duration_ms": 6795,
+      "tokens_in": 2,
+      "tokens_out": 817,
+      "stage": "code_review"
+    },
+    {
+      "agent": "code-reviewer-correctness",
+      "role": "reviewer",
+      "requested_model": "claude-haiku-5-5",
+      "effective_model": "claude-haiku-5-5",
+      "requested_effort": "medium",
+      "cost": 0.005963070000000001,
+      "duration_ms": 31028,
+      "tokens_in": 2,
+      "tokens_out": 6535,
+      "stage": "code_review"
+    },
+    {
+      "agent": "code-reviewer-state-integrity",
+      "role": "reviewer",
+      "requested_model": "claude-haiku-5-5",
+      "effective_model": "claude-haiku-5-5",
+      "requested_effort": "medium",
+      "cost": 0.00597197,
+      "duration_ms": 32308,
+      "tokens_in": 2,
+      "tokens_out": 6458,
+      "stage": "code_review"
+    }
+  ],
+  "totalCost": 1.72556145,
+  "audit": [
+    {
+      "action": "implementation.acceptance.authored",
+      "summary": "base=e098d7a564b733d517df089f8b1dbfa0e6cbe79b; head=c0669ce41bfb4545859f1a1d0babe74890a18238; paths=acceptance/web-calculator/buttons.spec.mjs,acceptance/web-calculator/keyboard.spec.mjs,acceptance/web-calculator/theme-layout.spec.mjs",
+      "created_at": "2026-10-22T04:36:47.524Z"
+    },
+    {
+      "action": "implementation.acceptance.command.fail",
+      "summary": "acceptance: node /opt/bw-browser/node_modules/@playwright/test/cli.js test --config /opt/bw-browser/acceptance.config.mjs --repeat-each 2 acceptance/web-calculator/; exit=1; timedOut=false; durationMs=98604; evidence=.governance\\acceptance\\1\\gate-run\\acceptance.log; the command exited with code 1",
+      "created_at": "2026-10-22T04:38:29.482Z"
+    },
+    {
+      "action": "implementation.acceptance.gate.pass",
+      "summary": "suite=c0669ce41bfb4545859f1a1d0babe74890a18238; tests=35; red=34; guards=1; alreadySatisfied=AC-029; record=.governance\\acceptance\\1\\gate.json",
+      "created_at": "2026-10-22T04:38:30.996Z"
+    },
+    {
+      "action": "implementation.phase.apply",
+      "summary": "phase 1 of 2: tasks 1-10; base=c0669ce41bfb4545859f1a1d0babe74890a18238; head=49517acd276705f81271255096ba82f43d0036b4; paths=index.html,script.js,styles.css",
+      "created_at": "2026-10-22T04:39:05.884Z"
+    },
+    {
+      "action": "implementation.phase.apply",
+      "summary": "phase 2 of 2: tasks 11-13; base=49517acd276705f81271255096ba82f43d0036b4; head=de8788af0776446ed47e6599223800fa4073370a; paths=script.js",
+      "created_at": "2026-10-22T04:39:41.362Z"
+    },
+    {
+      "action": "implementation.gate.pass",
+      "summary": "base=c0669ce41bfb4545859f1a1d0babe74890a18238; head=de8788af0776446ed47e6599223800fa4073370a",
+      "created_at": "2026-10-22T04:40:12.964Z"
+    },
+    {
+      "action": "verification.command.pass",
+      "summary": "node-version: node --version; exit=0; timedOut=false; durationMs=168; evidence=.governance\\verification\\1\\node-version.log",
+      "created_at": "2026-10-22T04:40:16.793Z"
+    },
+    {
+      "action": "verification.command.pass",
+      "summary": "npm-version: npm --version; exit=0; timedOut=false; durationMs=253; evidence=.governance\\verification\\1\\npm-version.log",
+      "created_at": "2026-10-22T04:40:17.455Z"
+    },
+    {
+      "action": "verification.command.pass",
+      "summary": "acceptance: node /opt/bw-browser/node_modules/@playwright/test/cli.js test --config /opt/bw-browser/acceptance.config.mjs --repeat-each 2 acceptance/web-calculator/; exit=0; timedOut=false; durationMs=13748; evidence=.governance\\verification\\1\\acceptance.log",
+      "created_at": "2026-10-22T04:40:31.627Z"
+    },
+    {
+      "action": "code_review.gate.pass",
+      "summary": "round=1/2; commit=de8788af0776446ed47e6599223800fa4073370a; findings=0; blocking=0; threshold=high",
+      "created_at": "2026-10-22T04:41:07.549Z"
+    }
+  ]
+}

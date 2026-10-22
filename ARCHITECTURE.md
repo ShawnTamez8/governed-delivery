@@ -2342,7 +2342,8 @@ in the plan's Task 4 evaluation record:
   pre-registered threshold, at $9.73 of the $15.
 
 None of these authorizes the paid end-to-end run, the plan's Task 11, which
-needs its own consent.
+needs its own consent. The operator gave it on 2026-10-21 ("run task 11") for
+that one run, which completed; it authorizes no other spend.
 
 ## 24. Non-goals
 

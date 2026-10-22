@@ -5,7 +5,7 @@ history and may name superseded state; Current state wins when they disagree. Th
 the system of record; machine-local memory is only a cache
 (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-10-21: change 4, protected acceptance tests, committed `9319f0a` and its review fixes built uncommitted; change 1 committed `ff260eb`; crew-chatter run 8 completed, not merged; no spend authorized)
+## Current state (2026-10-21: change 4, protected acceptance tests, committed `9319f0a` and its review fixes `6a63ee7`; Task 11's paid run completed for $1.72556, its record uncommitted; change 1 committed `ff260eb`; crew-chatter run 8 completed, not merged; no spend authorized)
 
 **Change 4 (2026-10-21).**
 - **Committed.** `9319f0a` holds the protected-acceptance-tests build (Tasks 1-10) and its reconciled code review.
@@ -21,7 +21,13 @@ the system of record; machine-local memory is only a cache
   - Smoke passes 13/13 twice; typecheck and check:docs are clean.
 - **Plan status.** `Implemented`, apart from Task 11.
 - **Records.** The task record is `.claude/sessions/2026-10-21-protected-acceptance-tests-fixes.md`.
-- **Next.** The operator decides whether to commit these fixes, and gives separate consent for Task 11, the paid end-to-end run with `--acceptance-tests`.
+- **Committed.** The fixes are `6a63ee7`.
+- **Task 11's paid run.** The operator consented on 2026-10-21, and the run completed: 17 dispatches, $1.72556, one clean panel. The test author passed the gate with 34 reds and 1 guard, and the suite passed 35/35 at verification.
+  - The target is kept at `C:\Users\tamezs\buildWorks_test_repos\acceptance-web-calculator-2026-10-21\target`.
+  - The evidence fixture is `test/fixtures/recorded/acceptance-web-calculator-e2e-2026-10-21.json`.
+  - The record and the doc updates are uncommitted.
+  - Container mount argv is not recorded by the system, so that half of Task 11's criterion rests on tests.
+- **Next.** The operator decides whether to commit the Task 11 record. No spend is authorized.
 
 **Resume point (2026-10-20, still current except as above).** Branch `sandboxed-delivery` is past `7a725e3`, none of it pushed
 (`origin/sandboxed-delivery` is `be6a88c`). The operator asked for three commits on 2026-10-20:

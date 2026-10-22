@@ -144,7 +144,8 @@ passes or blocks; a refusal blocks the run before any phase is paid for. From
 then on the suite is a protected path. It runs after the frozen verification
 commands at every verification point, and a failing or flaky test blocks. The
 suite applies only to static pages opening from a root `index.html`. Guided mode
-does not offer it, and no paid run has exercised it yet.
+does not offer it. One paid run has exercised it, the 2026-10-21 web calculator
+(completed, $1.72556; the plan's Task 11 record).
 `test/acceptance-engine.test.ts` needs a real engine, as `test/container.test.ts`
 does.
 

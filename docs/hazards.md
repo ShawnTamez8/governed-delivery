@@ -710,10 +710,12 @@ What this does not show. The suite is the test author's reading of the criteria,
 not the specification itself: a criterion it tests too weakly passes weak code,
 and the gate checks coverage by ID, not the strength of each test. An
 `already_satisfied` criterion is the author's claim, shown to the reviewers but
-not checked by the system. Only static pages are supported. No paid run has used
-the suite end to end (Task 11), so its cost, its time against the verification
-ceiling on a real build, and whether an implementer special-cases a test are
-unmeasured. A run without the flag is unchanged, and `node --version` against a
+not checked by the system. Only static pages are supported. One paid run has used
+the suite end to end (Task 11, 2026-10-21): the web calculator completed for
+$1.72556, the test author's share $0.36044, and the suite of 35 tests went from 34
+valid reds to 35 passes, with a clean review panel. One clean run is a sample of
+one, so whether the suite catches what a panel misses, and whether an implementer
+special-cases a test, are still unmeasured. A run without the flag is unchanged, and `node --version` against a
 calculator is still accepted there.
 
 ## 19. An inactivity budget over non-streaming output is a wall clock

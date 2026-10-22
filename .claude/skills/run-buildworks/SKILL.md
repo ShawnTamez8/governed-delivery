@@ -137,8 +137,12 @@ gate runs that suite before any phase is paid for. `verify` and every
 remediation run it after the frozen commands. On `smoke`, the flag changes only
 what `new-run` freezes, because the smoke reaches no dispatch. Without the flag
 the chain is unchanged. The web calculator opens from `index.html` at the
-repository root, which is the only page shape the suite supports. No paid chain
-has run with this flag yet.
+repository root, which is the only page shape the suite supports. One paid
+chain has run with this flag, `paid --yes --model claude-sonnet-5-5
+--acceptance-tests` on 2026-10-21: it completed in 17 dispatches for $1.72556,
+the test author's dispatch $0.36044 of it, with one clean panel and no
+remediation (`docs/features/protected-acceptance-tests/plan.md`, Task 11 run
+record).
 
 ## Run: the paid chain (spends real money)
 

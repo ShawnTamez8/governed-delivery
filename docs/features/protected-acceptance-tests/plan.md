@@ -1,6 +1,6 @@
 # Executable Acceptance Criteria Implementation Plan
 
-**Status:** Implemented — Tasks 1-10 and 12-16 complete; Task 11, the paid end-to-end run, needs its own consent
+**Status:** Implemented — Tasks 1-16 complete; Task 11's run completed on 2026-10-21, with the mount-argv half of its criterion shown by tests rather than by the run's record
 
 **Goal:** On a run that opts in, an independent test-author agent turns every acceptance criterion of the approved specification into browser tests before the first implementation phase. The system validates those tests, then holds them read-only for every later agent, and runs them in a browser-capable sandbox at every verification point. Before any of that is wired into the chain, the test author is evaluated on the recorded calculator run.
 
@@ -1017,6 +1017,34 @@ A setting passes if it meets all four. If neither setting passes, stop. Report t
   - **Source identity.** `src/acceptance.ts` and `src/container.ts` hashed the same before and after the run.
   - **The aborted first run.** It was started before the re-review fixes and was stopped, so it is not counted.
   - **Nothing was committed.**
+
+## Task 11 run record (2026-10-21)
+
+- **The run.**
+  - **Consent.** The operator authorized it on 2026-10-21 ("run task 11") and it ran from `6a63ee7`.
+  - **The command.** `driver.mjs paid --yes --model claude-sonnet-5-5 --acceptance-tests`, on the committed web-calculator design.
+  - **The outcome.** It completed 15/15 steps in 17 dispatches, for **$1.72556**. The run is `completed` and its audit chain is valid.
+  - **Where the evidence is.** The target is kept at `C:\Users\tamezs\buildWorks_test_repos\acceptance-web-calculator-2026-10-21\target`. The extracted evidence is `test/fixtures/recorded/acceptance-web-calculator-e2e-2026-10-21.json`, with its provenance. It holds the suite as committed, `gate.json`, the verification record, every dispatch row and the acceptance, phase, gate and command audit events.
+- **The success criterion, read from the store and the evidence:**
+  - **The suite was authored, passed the validity gate, and was committed before phase 1: met.**
+    - The test author ($0.36044, 213 s) wrote three files under `acceptance/web-calculator/`, committed as `c0669ce`.
+    - The gate passed 35 tests: 34 valid reds and 1 guard, with `AC-029` recorded `already_satisfied`.
+    - Phase 1's base is `c0669ce`.
+  - **No later agent diff touched the suite: met.**
+    - `git diff c0669ce de8788a -- acceptance/` is empty. The phases changed `index.html`, `script.js` and `styles.css`, and the self-review changed nothing.
+    - The tool-server logs show the implementers only ran the suite. The test author is the only agent that wrote under `acceptance/`, before its commit.
+  - **The read-only mount was in every work container's argv: not shown by the run's own record.**
+    - The system records each command's argv in the evidence header, but not the container's `docker create` argv. The containers are removed, and `mounts/` was left empty, as designed.
+    - That half of the criterion rests on the stand-in argv tests and the engine tests of Tasks 7 and 12, not on this run.
+    - Recording the mount argv would be a new instrument. This plan does not include one.
+  - **The suite ran at verification, with per-test outcomes recorded: met.**
+    - `verification/1/result.json` records 35 of 35 passing after `node --version` and `npm --version`.
+    - There was no remediation, so no remediation verification point ran.
+  - **Any block named its test, or recorded a dispute: no block or dispute occurred.**
+- **What the suite caught compared with the panel.**
+  - **Nothing to compare.** The three-reviewer panel returned 0 findings on its first round, and the suite passed every test, so this run holds no defect that either one caught or missed.
+  - **What it does show.** The suite went from red at the stub baseline to green on the delivered code, which is evidence that it exercised the delivered behaviour. That is a sample of one.
+- **Cost against earlier runs.** The test author was 21 percent of the run's cost. The other 16 dispatches cost $1.36512, in line with the earlier clean-panel web-calculator runs. One run is not a range.
 
 ## Rollback
 
