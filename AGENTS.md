@@ -79,6 +79,22 @@ Code reviewers may report only actionable defects in the current code. They do
 not create a human gate, waiver, proposal, spike, or upstream route. Do not
 change `spec_review` or `plan_review` while maintaining this loop.
 
+Since 2026-10-22 (operator decision, `docs/features/reproduced-review-findings/plan.md`)
+reviewers answer through `--json-schema` structured output and may attach one
+Playwright reproduction per finding, at most five per reply. Before the round is
+decided and before the reconciler, the system runs each one by itself with its
+own checks runner, in its own throwaway checkout of the reviewed commit:
+`confirmed` only on a matcher failure on every test and repeat,
+`not_reproduced` when every test passes, `repro_failed` otherwise. A reply
+whose reproductions the validator refuses keeps its findings. The outcome is
+evidence only. The reconciler is not told it, and no outcome, nor a missing
+reproduction, lowers a finding's severity or keeps it from remediation or the
+final gate. A confirmed reproduction of a kept finding becomes a preserved
+check that runs by itself after every later remediation's verification passes;
+no check blocks anything, and a failing one is named to the next panel.
+Remediation and the checks mount only the preserved checks. Rejected findings
+are never preserved.
+
 `docs/features/code-review-remediation/plan.md` is `Implemented`; its review is
 `reconciled`, and Task 10 is complete. A separately authorized live chain on
 2026-09-07 completed all stages in 13 of the allowed 16 dispatches for a total
@@ -117,8 +133,9 @@ reply skips the self-review, discarding whatever it changed, and a guard failure
 blocks the run. The self-review is the author's own pass, not independent
 review. Phases, the self-review and code-review remediation receive their answer
 through the `claude` CLI's `--json-schema` structured output, not reply text
-(`docs/features/structured-patch-output/plan.md`, hazard 1, item 11); every
-other dispatch still returns free text.
+(`docs/features/structured-patch-output/plan.md`, hazard 1, item 11), and so,
+since 2026-10-22, do the code reviewers; every other dispatch still returns free
+text.
 
 Since 2026-10-19 (`docs/features/sandboxed-implementer/plan.md`, hazard 15)
 those three dispatches change files through BuildWorks' MCP tool server

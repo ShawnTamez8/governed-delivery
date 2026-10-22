@@ -158,7 +158,9 @@ large call wrote its whole answer as text before submitting it, at 81,781 output
 tokens against 53,154 for the free-text reply ($1.2574650 against $0.7789614); the
 reworded sentence is meant to stop that and has not reached a model. Every other
 dispatch (spec and plan authors, self-critiques, reviewers, the split and both
-reconcilers) still returns free text, and this item applies to them unchanged. What
+reconcilers) still returns free text, and this item applies to them unchanged. The
+code reviewers moved to structured output on 2026-10-22, because their reply can
+carry a reproduction file (`docs/features/reproduced-review-findings/plan.md`). What
 the CLI does when a model cannot satisfy the schema is unknown; a result line
 without `structured_output` is refused by name as a failed dispatch.
 
@@ -718,6 +720,29 @@ one, so whether the suite catches what a panel misses, and whether an implemente
 special-cases a test, are still unmeasured. A run without the flag is unchanged, and `node --version` against a
 calculator is still accepted there.
 
+**2026-10-22: a review finding with executed evidence**
+(`docs/features/reproduced-review-findings/plan.md`). A code reviewer may attach
+to a finding a Playwright reproduction, which the system runs by itself in a
+throwaway checkout of the reviewed commit. It is `confirmed` only when every test
+fails on a matcher on both repeats, and a matcher on an element that does not
+exist is not a confirmation. This is the first executed evidence attached to a
+review finding, and it needs no acceptance suite. A confirmed reproduction of a
+kept finding then runs as a check at every later remediation, and the next panel
+is told when it fails. The outcome is evidence only: no outcome, nor a missing
+reproduction, lowers a finding's severity or keeps it from the gate, and a
+failing check blocks nothing. On the free benchmark (Task 9, real engine),
+narrowed copies of two recorded test-author files confirmed findings 9 and 10 at
+the commits they were reviewed at, and held at the fixing commit and on the
+control.
+
+What this does not show. Reviewers cannot run their reproductions, so they
+write them blind, and whether they write ones that confirm is unmeasured; the
+benchmark's reproductions came from the test author, not a reviewer. A
+reproduction that fails for another reason, such as a wrong selector, ends
+`repro_failed` or, when its assertion fails on a matcher for the wrong reason,
+confirms falsely. Because no outcome changes a decision, a false confirmation
+can only add a check that the next panel is shown.
+
 ## 19. An inactivity budget over non-streaming output is a wall clock
 
 An idle timer that resets "on any output" measures inactivity only if the
@@ -1129,6 +1154,23 @@ recorded only in plan review, such as #187 above, is still unseen unless a
 criterion carries it. A remediation that breaks a test blocks the run; it does
 not get another remediation round (the plan's "Not in this plan"). No live run
 has exercised the path.
+
+**2026-10-22: a finding's own reproduction held through remediation**
+(`docs/features/reproduced-review-findings/plan.md`). A confirmed reproduction
+of a finding the reconciler keeps is a preserved check. The remediation prompt
+lists each check with its exact command, the remediation's container has the
+preserved checks, and only those, read-only so the implementer can run them, and
+after every later remediation's verification passes each check runs by itself in
+its own throwaway checkout. Each panel's prompt names every check that fails at the
+commit it reviews, with its finding, location and first error, so a reviewer can
+report the defect again. A preserved check from finding 10 would have shown every
+later panel whether that fix still held.
+
+What this does not show. A check holds only the one behaviour its reproduction
+asserts: a check preserved from finding 9 would not have caught the regression
+that became finding 10. A failing check is shown, not enforced; only a reviewer
+who reports the defect again brings it to the gate. No paid run has exercised the
+path.
 
 ## 24. A declared artifact nothing will change
 

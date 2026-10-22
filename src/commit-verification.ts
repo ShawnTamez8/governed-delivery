@@ -26,7 +26,22 @@ export interface RecordedVerificationCommand {
   durationMs: number;
   evidenceRef: string;
   blockedBecause: string | null;
+  /**
+   * Only on a command run with `blocking: false`: why it failed, or null when
+   * it passed. Its failure blocks nothing, so `blockedBecause` stays null
+   * unless it left the worktree changed.
+   */
+  nonBlockingFailure?: string | null;
 }
+
+/**
+ * One command `verifyCommit` runs. A command with `blocking: false`, a
+ * reviewer's reproduction or a preserved check
+ * (docs/features/reproduced-review-findings/plan.md), has its failure recorded
+ * and the remaining commands still run; a worktree it leaves changed blocks
+ * whatever its flag. Absent, the command blocks, as every command did before.
+ */
+export type VerificationCommand = VerifyCommand & { blocking?: boolean };
 
 export interface CommitVerificationRecord {
   expectedCommit: string;
@@ -50,7 +65,7 @@ export interface CommitVerificationInput {
   rootDir: string;
   worktreePath: string;
   expectedCommit: string;
-  commands: VerifyCommand[];
+  commands: VerificationCommand[];
   timeoutSeconds: number;
   maxBytes: number;
   /** A command's own output budget by name, in place of `maxBytes`: the acceptance report's. */
@@ -63,9 +78,11 @@ export interface CommitVerificationInput {
   label: string;
   /** Worktree-relative paths every command sees read-only: the acceptance suite (`createSandbox`). */
   readOnlyPaths?: string[];
+  /** A host directory every command sees read-only at `/bw-checks`: the reviewers' reproductions (`createSandbox`). */
+  checksDir?: string;
   evidenceDir: string;
   audit: (action: VerificationAuditAction, summary: string) => void;
-  progress?: (command: VerifyCommand, blockedBecause: string | null, durationMs: number) => void;
+  progress?: (command: VerificationCommand, blockedBecause: string | null, durationMs: number) => void;
 }
 
 /**
@@ -176,7 +193,7 @@ type CommandsResult =
   | { kind: "decided"; record: CommitVerificationRecord; reason: string | null }
   | { kind: "infrastructure"; reason: string };
 
-/** Run each frozen command in the sandbox, stopping at the first that blocks. */
+/** Run each command in the sandbox, stopping at the first that blocks. */
 async function runCommands(input: CommitVerificationInput, sandbox: Sandbox): Promise<CommandsResult> {
   const recorded: RecordedVerificationCommand[] = [];
   for (const command of input.commands) {
@@ -199,14 +216,16 @@ async function runCommands(input: CommitVerificationInput, sandbox: Sandbox): Pr
       input.audit("sandbox.failed", reason);
       return { kind: "infrastructure", reason };
     }
-    let because: string | null = null;
+    let failure: string | null = null;
     if (outcome.timedOut) {
-      because = `the command exceeded the ${input.timeoutSeconds}-second ceiling and its process tree was killed${outcome.killError !== null ? ` (the kill failed: ${outcome.killError})` : ""}`;
+      failure = `the command exceeded the ${input.timeoutSeconds}-second ceiling and its process tree was killed${outcome.killError !== null ? ` (the kill failed: ${outcome.killError})` : ""}`;
     } else if (outcome.outputOverflow) {
-      because = `the command produced more than the ${maxBytes}-byte output budget; the complete output is retained at ${relative(input.rootDir, evidencePath)}`;
+      failure = `the command produced more than the ${maxBytes}-byte output budget; the complete output is retained at ${relative(input.rootDir, evidencePath)}`;
     } else if (outcome.exitCode !== 0) {
-      because = `the command exited with code ${outcome.exitCode}`;
+      failure = `the command exited with code ${outcome.exitCode}`;
     }
+    const nonBlocking = command.blocking === false;
+    let because = nonBlocking ? null : failure;
     if (because === null) {
       because = checkCommitState(input.worktreePath, input.expectedCommit, "after command");
     }
@@ -221,10 +240,11 @@ async function runCommands(input: CommitVerificationInput, sandbox: Sandbox): Pr
       durationMs: outcome.durationMs,
       evidenceRef: relative(input.rootDir, evidencePath),
       blockedBecause: because,
+      ...(nonBlocking ? { nonBlockingFailure: failure } : {}),
     });
     input.audit(
-      because === null ? "command.pass" : "command.fail",
-      `${command.name}: ${command.command.join(" ")}; exit=${outcome.exitCode}; timedOut=${outcome.timedOut}; durationMs=${outcome.durationMs}; evidence=${relative(input.rootDir, evidencePath)}${because === null ? "" : `; ${because}`}`
+      because === null && failure === null ? "command.pass" : "command.fail",
+      `${command.name}: ${command.command.join(" ")}; exit=${outcome.exitCode}; timedOut=${outcome.timedOut}; durationMs=${outcome.durationMs}; evidence=${relative(input.rootDir, evidencePath)}${nonBlocking && failure !== null ? `; non-blocking: ${failure}` : ""}${because === null ? "" : `; ${because}`}`
     );
     input.progress?.(command, because, outcome.durationMs);
     if (because !== null) {
@@ -259,7 +279,10 @@ export async function verifyCommit(input: CommitVerificationInput): Promise<Comm
   }
   mkdirSync(input.evidenceDir, { recursive: true });
   const run = await withSandbox(
-    { frozen: input.sandbox, rootDir: input.rootDir, runId: input.runId, label: input.label, worktreePath: input.worktreePath, readOnlyPaths: input.readOnlyPaths },
+    {
+      frozen: input.sandbox, rootDir: input.rootDir, runId: input.runId, label: input.label, worktreePath: input.worktreePath,
+      readOnlyPaths: input.readOnlyPaths, checksDir: input.checksDir,
+    },
     (sandbox) => runCommands(input, sandbox)
   );
   if (!run.started) {

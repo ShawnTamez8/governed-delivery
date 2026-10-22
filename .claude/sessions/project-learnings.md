@@ -5,9 +5,17 @@ history and may name superseded state; Current state wins when they disagree. Th
 the system of record; machine-local memory is only a cache
 (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-10-22: change 7's plan reviewed, reconciled and committed; change 4 and change 1 built and committed; `sandboxed-delivery` pushed through `5e4154e`; crew-chatter run 8 not merged; no spend or implementation authorized)
+## Current state (2026-10-22: change 7 built, reviewed and `Implemented`, uncommitted on `sandboxed-delivery` over `de99c1d`; its paid Task 10 awaits consent; change 4 and change 1 built and committed; crew-chatter run 8 not merged; no spend authorized)
 
-**Change 7, reproduced review findings (2026-10-22).** `docs/features/reproduced-review-findings/plan.md` is `Reconciled` against `2026-10-22-plan-review.md` (3 critical, 4 high, 9 medium, 5 missing, 2 suggested: 22 accepted, 1 deferred). Unbuilt. Ten tasks; Task 1 is a free engine spike of the checks runner.
+**Change 7, reproduced review findings (2026-10-22).** `docs/features/reproduced-review-findings/plan.md` is `Implemented`. Tasks 1-9 and Task 10's documents are built and **uncommitted**; `docs/runbooks/workflow-explorer.html` is not part of it.
+- **Independent review: 7 findings, all fixed.** Operator decisions:
+  - finding 1: drop a refused reply's reproductions and keep its findings;
+  - finding 2: a matcher on a missing element is `repro_failed`;
+  - findings 3/4: each reproduction and check runs alone in its own checkout and sandbox, and checks run after verification passes;
+  - finding 6: remediation mounts only `.governance/code-review/<run>/preserved/`.
+- **Regression:** the full suite is 1877/1883, with 4 skips. Its 2 failures are the `sign-approval` keygen refusal tests: Node v26.4.0 aborts in `process.exit` with a libuv `UV_HANDLE_CLOSING` assertion, and the script is unchanged. The engine suites pass 28/28, and the benchmark 6/6.
+- **Next:** the operator decides whether to commit and whether to authorize Task 10's paid run. It runs once on the web calculator, without `--acceptance-tests`, in a durable directory. `runAlone`'s thrown-error wrapper is written, not verified.
+- The plan's review: `2026-10-22-plan-review.md` (3 critical, 4 high, 9 medium, 5 missing, 2 suggested: 22 accepted, 1 deferred).
 - Reproductions are Playwright `.spec.mjs` files (one constant, `REPRODUCTION_FILE_NAME`) run by a new system-owned `container/checks.config.mjs` (`testDir: "/bw-checks"`), one command per file, in a throwaway detached checkout of the reviewed commit, never the run's worktree.
 - Operator decisions, 2026-10-22:
   - A failing preserved check is evidence named in the next panel's prompt, never a block; only the final panel's gate blocks. A check that dirties the worktree still blocks (integrity).
@@ -16,14 +24,14 @@ the system of record; machine-local memory is only a cache
   - At most 5 reproductions per reviewer reply.
   - The code-review operating-contract change (`CLAUDE.md`, `AGENTS.md`, section 12, a section 23 entry) is approved; it lands in Task 10.
   - A rejected finding's confirmed reproduction is never preserved.
-- Not authorized: building the plan, or Task 10's paid run.
+- Not authorized: Task 10's paid run, or committing the build.
 
 **Change 4, protected acceptance tests: built and committed.** `9319f0a` (Tasks 1-10 and its review), `6a63ee7` (Tasks 12-16, the re-review's fixes), `b0f542e` (Task 11's record). The plan is `Implemented`. Task 11's paid run completed: 17 dispatches, $1.72556, the suite 35/35 at verification. Target kept at `C:\Users\tamezs\buildWorks_test_repos\acceptance-web-calculator-2026-10-21\target`; fixture `test/fixtures/recorded/acceptance-web-calculator-e2e-2026-10-21.json`. Container mount argv is not recorded by the system, so that half of Task 11's criterion rests on tests.
 
 **Change 1, sandboxed implementer: built and committed** (`ff260eb`), with inspectable frozen profiles (`7a725e3`). Its Task 13 paid record: web calculator $1.53764 in 21 dispatches; `CLAUDE.md` probe $0.0043; crew-chatter run 8 (below). Detail is in `docs/features/sandboxed-implementer/plan.md` and `.claude/sessions/2026-10-19-sandboxed-implementer-build.md`.
 
 **Open, the operator's call:**
-- Which change to build next: change 7's plan is ready; the rest of the rework is unbuilt except changes 1, 2, 4 and 10.
+- Whether to commit change 7 and run its paid Task 10. After that, which change to build next: the rest of the rework is unbuilt except changes 1, 2, 4, 7 and 10.
 - Whether to merge `gov/crew-chatter-attachments-versions/8` into crew-chatter `main` (still at `e94a189`). It must be a merge, not a squash, before feature 4 can use `--after 8`.
 - `sandboxed-delivery` is not merged to `master` until the rework is complete, and there is no PR to `master` (operator, 2026-10-17/19).
 - `docs/runbooks/workflow-explorer.html` is untracked and the operator's; it was left out of every commit. A plain-text API key copy sits at `C:\Users\tamezs\.buildworks\[Environment]SetEnvironmentVariable.txt`; removing it is the operator's call.
@@ -37,7 +45,7 @@ the system of record; machine-local memory is only a cache
 - Run 8 (feature 3, `crew-chatter-attachments-versions`, 2026-10-20, sandboxed): completed, $6.34541 in 23 dispatches plus 16 Decision-1; the spec author alone cost $3.248. Created without `--after` (ancestry `c5d2ff3` → `e94a189` checked by hand). 3 phases plus a no-change self-review; round 1 had 3 findings (1 rejected), 1 remediation; delivery 14/14 over `c96d569..b8e6613`; audit chain valid. Phase 1's container made 16 registry requests, 0 denied. Export aside `%LOCALAPPDATA%\Temp\crew-chatter-aside-2026-10-20-feature3-export`.
 - Changes 2 and 10 (`1cda025`): three model-triggered paths have only test proof (regeneration after a self-review fix, a remediation regeneration that commits, the unapproved-addition refusal). Change 10 is npm only, additions only, no allowlist.
 
-**Rework proposal** (`docs/proposals/sandboxed-delivery-rework.md`, ten changes in three tracks). Changes 1, 2, 4 and 10 are built; change 7 is planned; change 9 (`docs/proposals/whole-run-replay.md`) is designed only.
+**Rework proposal** (`docs/proposals/sandboxed-delivery-rework.md`, ten changes in three tracks). Changes 1, 2, 4 and 10 are built and committed; change 7 is built and uncommitted; change 9 (`docs/proposals/whole-run-replay.md`) is designed only.
 - Operator facts (2026-10-18): every developer has Docker Desktop with WSL 2, Docker first; each holds a personal Claude Code Enterprise seat, and BuildWorks has no credential of its own; runs happen on the operator's workstation; Docker, WSL and Claude Code are replaceable between BuildWorks versions, never during a run.
 - So `claude` stays on the host and reaches the container only through the agent-neutral MCP tool server. Every deciding check stays agent-independent. The adapter interface is extracted only when a second agent is added (MHA-03).
 - Changes 4 and 7 were revised on 2026-10-20 from the blocked web-calculator run: interaction criteria need a real browser with trusted input, and a confirmed repro must hold every later commit while "no repro, so advisory" never delivers a real high.

@@ -1360,6 +1360,44 @@ must agree. A rejected finding that the final panel reports again still counts
 at the gate, so the reconciler can turn a run that a remediation would have
 fixed into a block.
 
+**Reproductions and preserved checks** (operator decision, 2026-10-22;
+`docs/features/reproduced-review-findings/plan.md`). Reviewers answer through
+`--json-schema` structured output, and a reviewer may attach to each of its
+findings one reproduction, at most five per reply: a Playwright test file whose
+name matches one constant rule, in the acceptance suite's import form. After
+every panel's findings are recorded, including the final panel's, and before
+the reconciler, the system lints each reproduction with the acceptance gate's
+lint, writes the rest under `.governance/code-review/<run>/checks/`, and runs
+each by itself with the system's own checks runner, in its own sandbox and its
+own throwaway detached checkout of the reviewed commit, never the run's
+worktree. The checks directory is mounted read-only at `/bw-checks`. Each
+outcome is read from the classified report, never the exit code: `confirmed`
+only when every test failed on a matcher on both repeats, `not_reproduced` when
+every test passed, and `repro_failed` otherwise. A locator that never resolves,
+or a matcher whose element does not exist, is `repro_failed`, with the reason
+recorded. A reproduction that cannot start, leaves its checkout dirty or
+crashes is `repro_failed` alone; it stops no other reproduction. A reply whose
+reproductions the validator refuses keeps its findings: its reproductions are
+dropped and the refusal is audited. The outcome is recorded in the round
+record, the audit log and the report, and is evidence only. The reconciler is
+not told it, and no outcome, including the absence of a reproduction, lowers a
+finding's severity, removes it from remediation, or keeps it from the final
+gate.
+
+Each confirmed reproduction of a finding the reconciler keeps becomes a
+preserved check, copied under `.governance/code-review/<run>/preserved/`, which
+holds nothing else. After every later remediation's verification passes, each
+check runs by itself in its own throwaway checkout of the remediated commit,
+with the preserved directory read-only at `/bw-checks`: it `holds` when every
+test passed and `fails` otherwise, including a run that could not start or left
+its checkout dirty. No check blocks anything. Each result is recorded in the
+remediation record, and the next panel's prompt names each failing one, so a
+reviewer may report the defect again at its severity. The remediation
+implementer is told each check's command and sees the preserved directory
+read-only in its container, so it never sees a reproduction that was not
+preserved. A rejected finding's reproduction is never preserved, because it
+encodes behaviour the specification does not require.
+
 The final panel never triggers another remediation. It passes with no findings, and
 also passes when every final finding is below the frozen
 `codeReviewBlockingSeverity`; those below-threshold reports remain attributable
@@ -1688,7 +1726,11 @@ candidate; proposal.evidence_ref references only the
                       round, remediation and verification evidence, final
                       blocking list, and outcome) and its human-readable
                       report.md companion; round-<n>/verification/ retains
-                      collision-free command evidence; the code_review stage's
+                      collision-free command evidence; checks/ holds the
+                      reviewers' reproductions and round-<n>/reproductions/
+                      their reports; preserved/ holds the preserved checks
+                      and round-<n>/preserved-checks/ their reports after
+                      that round's remediation; the code_review stage's
                       output_ref references the structured record, and
                       delivery_check reads it
 ```
@@ -2344,6 +2386,39 @@ in the plan's Task 4 evaluation record:
 None of these authorizes the paid end-to-end run, the plan's Task 11, which
 needs its own consent. The operator gave it on 2026-10-21 ("run task 11") for
 that one run, which completed; it authorizes no other spend.
+
+**Reproduced review findings — 2026-10-22.** The operator extended change 7 of
+`docs/proposals/sandboxed-delivery-rework.md` on 2026-10-20: "extend #7: confirm
+findings through executable reproductions and preserve confirmed checks through
+remediation. Inability to reproduce must not automatically downgrade a
+potentially blocking defect." On 2026-10-22 the operator approved the
+code-review operating contract change this needs, because the 2026-09-04
+authorization covers the stage, not this evidence rule. The operator also
+settled the working choices recorded in
+`docs/features/reproduced-review-findings/plan.md`:
+- a failing preserved check is evidence, not a block, and only the final
+  panel's severity gate blocks on a finding;
+- only a matcher failure confirms a finding, and a locator timeout ends
+  `repro_failed`, with the call log's last entry recorded as the reason;
+- the free benchmark narrows each recorded loop to its one failing case, by an
+  edit named in the test's provenance;
+- a reviewer reply carries at most 5 reproductions, bounded in the schema;
+- rejected findings are not preserved.
+
+After the implementation's independent review the operator settled four more
+on 2026-10-22: a reply whose reproductions the validator refuses keeps its
+findings and loses only its reproductions; a matcher on an element that does
+not exist ends `repro_failed`; each reproduction and each preserved check runs
+by itself, after the remediation's verification for a check, so none blocks the
+run or stops another; and remediation and the checks mount only the preserved
+checks.
+
+What it authorizes: the reviewer reply on structured output, reproductions run
+against the reviewed commit in a throwaway checkout, and confirmed reproductions
+of kept findings run as non-blocking checks at every later remediation and named
+to the next panel, as section 12 states. It does not authorize change 9, a
+blocking check, a reproduction from any agent other than a code reviewer, or any
+paid run. The plan's paid benchmark needs its own consent.
 
 ## 24. Non-goals
 

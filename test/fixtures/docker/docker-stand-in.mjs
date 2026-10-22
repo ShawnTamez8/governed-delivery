@@ -25,6 +25,8 @@
 // its exit code, with only the suite's path substituted by the one suite file
 // the command's directory holds. Each run appends its container, working
 // directory and `index.html` (or null) to `acceptance-runs.jsonl` in the state.
+// A reproduction command is answered the same way (`serveReproduction`), and
+// each run appended to `reproduction-runs.jsonl`.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -164,7 +166,54 @@ function serveAcceptanceReport(container, argv, token) {
   exit(recorded.provenance.exitCode);
 }
 
+const CHECKS_CONFIG = "/opt/bw-browser/checks.config.mjs";
+const CHECKS_ROOT = "/bw-checks/";
+
+/**
+ * Answer a reproduction command (docs/features/reproduced-review-findings/plan.md)
+ * from the recorded report served for this container's prefix and file name:
+ * its log after the header line, with the recorded file's path replaced by the
+ * one the command names, and its exit code. A plan 1 acceptance report is
+ * adapted only in its root: `/work/acceptance/<rel>` becomes the checks path.
+ * A mark may also write a file into the mounted checkout, delay the exit, or
+ * write no exit status for that one command (`noExit`).
+ */
+function serveReproduction(container, argv, token) {
+  const path = argv[argv.length - 1];
+  const cwd = container.mounts["/work"];
+  const served = readdirSync(join(STATE, "marks"))
+    .filter((f) => f.startsWith("reproduction-"))
+    .map((f) => JSON.parse(readFileSync(join(STATE, "marks", f), "utf8")))
+    .find((m) => container.name.startsWith(m.prefix) && (m.fileName === undefined || path.endsWith(`/${m.fileName}`)));
+  const exit = (status) => {
+    if (marked("noexit", container.name) || served?.noExit === true) return;
+    writeFileSync(join(STATE, "exits", `${container.id}-${token}`), `${status}\n`);
+  };
+  if (served === undefined) {
+    process.stderr.write(`docker stand-in: no recorded reproduction report is served for ${container.name} and ${path}\n`);
+    return exit(127);
+  }
+  const actual = path.slice(CHECKS_ROOT.length);
+  if (!path.startsWith(CHECKS_ROOT) || !existsSync(join(container.mounts["/bw-checks"], actual))) {
+    throw new Error(`docker stand-in: ${path} is not a file in the mounted checks directory`);
+  }
+  if (served.writeFile !== undefined) writeFileSync(join(cwd, served.writeFile), "reproduction residue\n");
+  const recorded = JSON.parse(readFileSync(new URL(`../recorded/${served.report}.json`, import.meta.url), "utf8"));
+  const recordedPath = recorded.files[0].path;
+  const rel = recordedPath.startsWith(CHECKS_ROOT) ? recordedPath.slice(CHECKS_ROOT.length) : recordedPath.replace(/^acceptance\//, "");
+  const log = recorded.log
+    .slice(recorded.log.indexOf("\n") + 1)
+    .split(`/work/acceptance/${rel}`).join(`${CHECKS_ROOT}${actual}`)
+    .split(rel).join(actual);
+  appendFileSync(join(STATE, "reproduction-runs.jsonl"), `${JSON.stringify({ container: container.name, cwd, path })}\n`);
+  process.stdout.write(log);
+  const status = served.exitStatus ?? recorded.provenance.exitCode;
+  if (served.delayMs === undefined) return exit(status);
+  setTimeout(() => exit(status), served.delayMs);
+}
+
 function runCommandOnHost(container, argv, seconds, token) {
+  if (argv[0] === "node" && argv[1] === ACCEPTANCE_RUNNER && argv.includes(CHECKS_CONFIG)) return serveReproduction(container, argv, token);
   if (argv[0] === "node" && argv[1] === ACCEPTANCE_RUNNER) return serveAcceptanceReport(container, argv, token);
   const cwd = container.mounts["/work"];
   const env = {};

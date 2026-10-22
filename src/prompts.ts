@@ -1,4 +1,10 @@
-import { ACCEPTANCE_IMPORT_LINE, ACCEPTANCE_STUB_PAGE } from "./acceptance.ts";
+import {
+  ACCEPTANCE_IMPORT_LINE,
+  ACCEPTANCE_STUB_PAGE,
+  CHECKS_ROOT,
+  REPRODUCTION_FILE_NAME,
+  REPRODUCTION_MAX_COUNT,
+} from "./acceptance.ts";
 import type { AgentDefinition } from "./agents.ts";
 import type { VerificationConfig, VerifyCommand } from "./governed-config.ts";
 import type { PlanPhase } from "./plan-doc.ts";
@@ -21,7 +27,9 @@ export const DESIGN_SPLIT_PROMPT_PREFIX = "you are dividing a reviewed specifica
  * implementation self-review, code-review remediation) return their answer: they
  * run with `--json-schema`, and only the structured output is read
  * (`docs/features/structured-patch-output/plan.md`). It replaces the free-text
- * prompts' "Output the JSON object directly" sentence for those three. Under that
+ * prompts' "Output the JSON object directly" sentence for those three, and for the
+ * code reviewers, whose reply can carry reproduction files
+ * (docs/features/reproduced-review-findings/plan.md). Under that
  * sentence the 2026-10-14 large probe wrote its whole 67,514-character answer as
  * text and then again through the tool, at 81,781 output tokens against 53,154
  * (`test/fixtures/recorded/json-schema-probe-gate.json`). One source line, so the
@@ -252,6 +260,72 @@ function acceptanceReviewRules(suite: AcceptanceReviewPrompt | null): string {
     ...(suite.alreadySatisfied.length === 0
       ? []
       : [`The test author claimed the code already met these criteria before the implementation began, so their tests were kept as regression guards; check each claim against the code: ${suite.alreadySatisfied.join(", ")}`]),
+  ].join("\n")}`;
+}
+
+/**
+ * The reproduction contract in the code reviewer prompt
+ * (docs/features/reproduced-review-findings/plan.md, Task 8): what a
+ * reproduction is, how the system runs it, and what confirms a finding. The
+ * file-name rule is `REPRODUCTION_FILE_NAME`'s own source (hazard 3), and the
+ * import, matcher and input rules are the lint and classifier the system
+ * applies. The last rule says a finding without one counts the same without
+ * naming the gate: like the rest of the prompt, it states no consequence. Each
+ * rule is one source line so the constraint scan in `test/prompts.test.ts`
+ * matches it.
+ */
+export const REPRODUCTION_RULES = [
+  `For a finding you may attach one reproduction, and at most ${REPRODUCTION_MAX_COUNT} in all, in proposedContentChanges.reproductions: a Playwright test file that names its finding by the same intentKey and location, with a fileName matching ${REPRODUCTION_FILE_NAME.source}.`,
+  `A reproduction must fail at the reviewed commit because of the defect, and pass once the defect is fixed.`,
+  `Begin its content with exactly this line, which loads the system's own runner: ${ACCEPTANCE_IMPORT_LINE}`,
+  `The system runs it with a checkout of the reviewed commit as the working directory, so open the page with \`await page.goto("index.html")\`.`,
+  `Assert with \`await expect(<locator>)\` and Playwright's auto-retrying matchers, such as toHaveText: only a failed matcher confirms a finding, and a locator that never finds an element it can act on does not.`,
+  `Use only trusted input, through page.keyboard and locator actions such as click and press, never dispatchEvent; write no hooks, and set no fixed wait or timeout.`,
+  `A finding without a reproduction counts exactly as one with a reproduction, at the severity you give it.`,
+];
+
+/** A preserved check that failed at the commit a panel reviews, as the reviewer prompt names it. */
+export interface FailingCheckPrompt {
+  findingId: number;
+  location: string;
+  path: string;
+  /** The first error line, or what a locator waited for; null when the run gave none. */
+  detail: string | null;
+}
+
+/**
+ * Each preserved check that failed at the commit under review (Task 8), so the
+ * panel can raise the defect again. Empty when none failed, so the prompt is
+ * then the prompt without checks.
+ */
+function failingCheckLines(checks: FailingCheckPrompt[]): string {
+  if (checks.length === 0) return "";
+  return `\n\n${[
+    `Each check below is a reviewer's reproduction that confirmed a finding of an earlier review, and it fails at the commit under review:`,
+    ...checks.map((check) => `- finding ${check.findingId}; location ${check.location}; check ${check.path}; first error: ${check.detail ?? "none"}`),
+    `If the defect is still there, report it again as a finding, at its severity.`,
+  ].join("\n")}`;
+}
+
+/** A preserved check as the remediation prompt states it: its finding and the system's command, whose last argument is its path. */
+export interface PreservedCheckPrompt {
+  findingId: number;
+  command: VerifyCommand;
+}
+
+/**
+ * What the remediation prompt says about the preserved checks (Task 8): that
+ * they are read-only, run after every later remediation, and are shown to the
+ * next panel when they fail, and each one's command. Empty without checks, so
+ * the prompt is byte-identical to the prompt before checks existed. Each rule
+ * is one source line so the constraint scan matches it.
+ */
+function preservedCheckRules(checks: PreservedCheckPrompt[]): string {
+  if (checks.length === 0) return "";
+  return `\n${[
+    `Each check below is a reviewer's reproduction that confirmed a finding of this or an earlier review; the checks are read-only to you under ${CHECKS_ROOT}, the system runs every one after this and every later remediation, and the next review is shown each check that fails.`,
+    `Run each check through run_command with its command before you answer: a check that still fails still shows its defect.`,
+    ...checks.map((check) => `- finding ${check.findingId}; check ${check.command.command[check.command.command.length - 1]}; command: ${check.command.command.join(" ")}`),
   ].join("\n")}`;
 }
 
@@ -1727,7 +1801,8 @@ export function buildCodeReviewPrompt(
   changedPaths: string[],
   diff: string,
   verifiedCommit: string,
-  acceptance: AcceptanceReviewPrompt | null = null
+  acceptance: AcceptanceReviewPrompt | null = null,
+  failingChecks: FailingCheckPrompt[] = []
 ): string {
   if (
     !agent.outputs.includes("code-findings") ||
@@ -1749,11 +1824,11 @@ Your working directory is the repository checkout at commit ${verifiedCommit}.
 Read it to see the code surrounding the change. Run no git commands: the
 diff below is the complete statement of what changed, and no git tool is
 available to you. This checkout is read-only for you: do not create, modify,
-or delete any file. Only the findings you return are considered.${acceptanceReviewRules(acceptance)}
+or delete any file. Only the findings you return are considered.${acceptanceReviewRules(acceptance)}${failingCheckLines(failingChecks)}
 
 Return exactly a JSON AgentResult object with this shape; your findings
 travel in the AgentResult's proposedContentChanges.findings:
-{"status": "proposed", "agent": "${agent.id}", "role": "reviewer", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"findings": [{"severity": "...", "classification": "...", "location": "...", "intentKey": "...", "subject": "..."}]}}
+{"status": "proposed", "agent": "${agent.id}", "role": "reviewer", "executor": "claude-code", "summary": "...", "proposedContentChanges": {"findings": [{"severity": "...", "classification": "...", "location": "...", "intentKey": "...", "subject": "..."}], "reproductions": [{"intentKey": "...", "location": "...", "fileName": "...", "content": "..."}]}}
 
 Each finding has:
 - severity one of low, medium, high, critical, meaning:
@@ -1773,8 +1848,10 @@ Each finding has:
 - subject: one sentence naming both the concrete defect and its reproducible
   impact
 
-Output the JSON object directly, with no surrounding prose, no markdown
-fences, and no commentary. Concerns within your specialty that you do not
+${REPRODUCTION_RULES.join("\n")}
+
+${STRUCTURED_OUTPUT_RULE}
+Concerns within your specialty that you do not
 have are represented by an empty findings array, not by prose.
 
 Changed paths:
@@ -1829,7 +1906,8 @@ export function buildCodeReviewRemediationPrompt(
   diff: string,
   findings: CodeReviewRemediationFindingInput[],
   verification: VerificationConfig,
-  acceptance: AcceptanceSuitePrompt | null = null
+  acceptance: AcceptanceSuitePrompt | null = null,
+  checks: PreservedCheckPrompt[] = []
 ): string {
   const derived = derivedArtifactsLines(verification, true);
   const renderedFindings = findings
@@ -1856,7 +1934,7 @@ status must be one of completed, blocked: completed when every finding below is 
 ${STRUCTURED_OUTPUT_RULE}
 Before you return, re-read every task in the approved plan and every acceptance criterion in the approved specification that governs the code you change: a fix that breaks one of them is not a fix, so find a change that keeps both.
 When you fix a defect, look for the same defect in every other file of the approved scope and fix it there too.
-${DEPENDENCY_ADDITION_RULE}${acceptanceSuiteRules(acceptance)}
+${DEPENDENCY_ADDITION_RULE}${acceptanceSuiteRules(acceptance)}${preservedCheckRules(checks)}
 ${derived === "" ? "" : `\n${derived}\n`}
 Approved scope:
 

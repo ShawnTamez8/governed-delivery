@@ -1,9 +1,19 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { ACCEPTANCE_COMMAND_NAME, acceptanceCommand, applyAcceptanceVerdict } from "./acceptance.ts";
+import {
+  ACCEPTANCE_COMMAND_NAME,
+  acceptanceCommand,
+  applyAcceptanceVerdict,
+  CHECKS_ROOT,
+  judgeReproductionRun,
+  lintSuiteFile,
+  reproductionCommand,
+  type AcceptanceFile,
+} from "./acceptance.ts";
 import type { AgentDefinition } from "./agents.ts";
 import {
+  CODE_REVIEW_REPLY_SCHEMA,
   describeIncompleteReply,
   parseWorkspaceReply,
   validateAgentResult,
@@ -16,19 +26,27 @@ import {
   decideCodeReviewRound,
   formatCodeReviewGatePass,
   validateCodeReviewReports,
+  validateCodeReviewReproductions,
   type CodeReviewBlock,
+  type CodeReviewPreservedCheck,
   type CodeReviewReconciliation,
   type CodeReviewRecord,
+  type CodeReviewReproduction,
   type CodeReviewRound,
   type RecordedFinding,
+  type ReviewerReproduction,
 } from "./code-review.ts";
 import {
   agreedRejections,
   validateReconcilerReply,
   type ReconcilerDecision,
 } from "./code-review-reconcile.ts";
-import { verifyCommit } from "./commit-verification.ts";
-import { unquiescedReason } from "./container.ts";
+import {
+  verifyCommit,
+  type RecordedVerificationCommand,
+  type VerificationCommand,
+} from "./commit-verification.ts";
+import { unquiescedReason, type FrozenSandbox } from "./container.ts";
 import { derivedPathExclusion, regenerateDerivedArtifacts } from "./derived-artifacts.ts";
 import { unapprovedDependencyAdditions } from "./dependency-policy.ts";
 import { validateSpecDoc } from "./spec-doc.ts";
@@ -36,11 +54,13 @@ import { dispatchInSandbox, dispatchOnce } from "./dispatch.ts";
 import { type ExecutorDefinition } from "./executor.ts";
 import { extractJsonBody } from "./parse-output.ts";
 import { parseVerificationHandoff } from "./handoff.ts";
-import { checkWorktreeClean, commitWorkspace } from "./workspace-commit.ts";
+import { checkWorktreeClean, commitWorkspace, NO_HOOKS } from "./workspace-commit.ts";
 import {
   acceptanceEvidenceDir,
+  codeReviewChecksDir,
   codeReviewEvidenceDir,
   codeReviewEvidenceRef,
+  codeReviewPreservedDir,
   codeReviewVerificationDir,
   derivedEvidenceDir,
 } from "./paths.ts";
@@ -72,6 +92,9 @@ type ReviewerOutcome =
       status: "valid";
       agentRunId: number;
       reports: ReviewerReport[];
+      reproductions: ReviewerReproduction[];
+      /** Why the reply's reproductions were dropped; its findings still stand. */
+      reproductionRefusal: string | null;
       durationMs: number;
     }
   | {
@@ -80,6 +103,24 @@ type ReviewerOutcome =
       reason: string;
       durationMs: number;
     };
+
+/**
+ * A confirmed reproduction of a finding the reconciler kept, run as a
+ * non-blocking check at every later remediation's commit
+ * (docs/features/reproduced-review-findings/plan.md, Task 6).
+ */
+export interface PreservedCheck {
+  findingId: number;
+  reviewer: string;
+  fileName: string;
+  confirmedInRound: number;
+  location: string;
+  intentKey: string;
+  severity: string;
+  /** At its `/bw-checks/` path. */
+  file: AcceptanceFile;
+  command: VerificationCommand;
+}
 
 function runGit(
   args: string[],
@@ -455,6 +496,11 @@ export async function runCodeReviewStage(
       return { record, resultRef: codeReviewEvidenceRef(runId, "result.json") };
     };
 
+    // Every check preserved so far, never removed during the run, and those
+    // that failed at the last remediation's commit, which the next panel is told of.
+    const preserved: PreservedCheck[] = [];
+    let failingChecks: Array<{ check: PreservedCheck; detail: string | null }> = [];
+
     for (let roundNumber = 1; roundNumber <= profile.policy.codeReviewMaxRounds; roundNumber += 1) {
       const names = runGit(["diff", "--name-only", "-z", patchBase, currentCommit, ...excludeDerived], worktreePath);
       if (!names.ok) {
@@ -501,8 +547,14 @@ export async function runCodeReviewStage(
             requestedModel: seat.model,
             requestedEffort: seat.effort,
             setting: reviewer.id,
-            prompt: buildCodeReviewPrompt(reviewer, specContent, planContent, changedPaths, diff, currentCommit, reviewPrompt),
-            invocation: { cwd: worktreePath },
+            prompt: buildCodeReviewPrompt(
+              reviewer, specContent, planContent, changedPaths, diff, currentCommit, reviewPrompt,
+              failingChecks.map(({ check, detail }) => ({ findingId: check.findingId, location: check.location, path: check.file.path, detail }))
+            ),
+            // The answer comes back as structured output, because a
+            // reproduction is file content inside it
+            // (docs/features/reproduced-review-findings/plan.md, hazard 1).
+            invocation: { cwd: worktreePath, jsonSchema: CODE_REVIEW_REPLY_SCHEMA },
           },
           rootDir
         );
@@ -514,11 +566,8 @@ export async function runCodeReviewStage(
             durationMs: Date.now() - startedAt,
           };
         }
-        const body = extractJsonBody(dispatch.envelope.resultText);
-        if (body.kind === "refused") {
-          return invalid(`body refused: ${body.reason}`);
-        }
-        const result = validateAgentResult(reviewer.id, body.value);
+        // `resultText` is the serialized structured_output object (`parseEnvelope`).
+        const result = validateAgentResult(reviewer.id, JSON.parse(dispatch.envelope.resultText));
         if (!result.ok) {
           return invalid(`result refused: ${result.reason}`);
         }
@@ -527,7 +576,7 @@ export async function runCodeReviewStage(
             `returned status ${result.value.status}, not proposed — a reviewer that cannot review must not pass the gate by absence`
           );
         }
-        const content = result.value.proposedContentChanges as { findings?: unknown } | undefined;
+        const content = result.value.proposedContentChanges as { findings?: unknown; reproductions?: unknown } | undefined;
         if (!Array.isArray(content?.findings)) {
           return invalid("result is missing proposedContentChanges.findings");
         }
@@ -549,11 +598,16 @@ export async function runCodeReviewStage(
             );
           }
         }
+        // A reproduction is evidence, never the review: one the validator
+        // refuses drops the reply's reproductions, not its findings.
+        const reproductions = validateCodeReviewReproductions(content.reproductions, reports.value);
         return {
           reviewer,
           status: "valid",
           agentRunId: dispatch.agentRunId,
           reports: reports.value,
+          reproductions: reproductions.ok ? reproductions.value : [],
+          reproductionRefusal: reproductions.ok ? null : reproductions.reason,
           durationMs: Date.now() - startedAt,
         };
       });
@@ -596,12 +650,27 @@ export async function runCodeReviewStage(
         `round=${roundNumber}/${profile.policy.codeReviewMaxRounds}; commit=${currentCommit}; elapsedMs=${Date.now() - panelStartedAt}; outcomes=${outcomeStatuses.join(",")}; integrity=${integrity}`
       );
 
+      const pendingReproductions: PendingReproduction[] = [];
       if (integrity === "clean") {
         for (const outcome of outcomes) {
           if (outcome.status !== "valid") continue;
           agentByRun.set(outcome.agentRunId, outcome.reviewer.id);
+          if (outcome.reproductionRefusal !== null) {
+            // The reason is free text: last field.
+            audit(
+              stage.id,
+              "code_review.repro.refused",
+              `round=${roundNumber}; commit=${currentCommit}; reviewer=${outcome.reviewer.id}; reason=${outcome.reproductionRefusal}`
+            );
+          }
           for (const report of outcome.reports) {
             const finding = store.upsertCanonicalFinding(stage.id, roundNumber, report.intentKey, report.location);
+            const reproduction = outcome.reproductions.find(
+              (entry) => entry.intentKey === report.intentKey && entry.location === report.location
+            );
+            if (reproduction !== undefined) {
+              pendingReproductions.push({ findingId: finding.id, reviewer: outcome.reviewer.id, reproduction });
+            }
             store.insertFindingReport({
               findingId: finding.id,
               agentRunId: outcome.agentRunId,
@@ -640,6 +709,27 @@ export async function runCodeReviewStage(
         );
       }
 
+      // Before the round is decided and before the reconciler, which is not
+      // told the outcomes: they cannot change a rejection or a gate.
+      const reproductions = pendingReproductions.length === 0
+        ? []
+        : await confirmReproductions({
+            rootDir,
+            runId,
+            round: roundNumber,
+            commit: currentCommit,
+            pending: pendingReproductions,
+            sandbox: profile.sandbox,
+            timeoutSeconds: profile.policy.verifyCommandTimeoutSeconds,
+            retentionMaxBytes: profile.policy.verifyRetentionMaxBytes,
+            audit: (action, summary) => audit(stage.id, action, summary),
+          });
+      for (const result of reproductions) {
+        process.stderr.write(
+          `round ${roundNumber}/${profile.policy.codeReviewMaxRounds} reproduction of finding ${result.findingId} by ${result.reviewer}: ${result.outcome}\n`
+        );
+      }
+
       const withReports = store
         .getCanonicalFindings(stage.id)
         .filter((finding) => finding.round === roundNumber)
@@ -667,6 +757,7 @@ export async function runCodeReviewStage(
         changedPaths,
         findings: recordedFindings,
         blocking: decision.action === "block" ? decision.blocking : [],
+        reproductions,
         reconciliation: null,
         remediation: null,
       };
@@ -846,11 +937,43 @@ export async function runCodeReviewStage(
         return { ok: false, reason };
       }
 
+      // A confirmed reproduction of a kept finding becomes a check from this
+      // remediation on. A rejected finding's never does: what it encodes is
+      // not what the specification requires (hazard 16).
+      for (const reproduction of reproductions) {
+        if (reproduction.outcome !== "confirmed") continue;
+        const finding = remediationFindings.find((entry) => entry.id === reproduction.findingId);
+        if (finding === undefined) continue;
+        const source = pendingReproductions.find(
+          (entry) => entry.findingId === reproduction.findingId && entry.reviewer === reproduction.reviewer
+        )!;
+        const kept = preserveCheck({
+          rootDir,
+          runId,
+          round: roundNumber,
+          finding,
+          reviewer: reproduction.reviewer,
+          fileName: reproduction.fileName,
+          content: source.reproduction.content,
+          severities: profile.policy.severities,
+        });
+        if (!kept.ok) {
+          // A check that cannot be kept is lost evidence, never a block.
+          audit(
+            stage.id,
+            "code_review.check.unpreserved",
+            `round=${roundNumber}; finding=${reproduction.findingId}; reviewer=${reproduction.reviewer}; file=${reproduction.fileName}; reason=${kept.reason}`
+          );
+          continue;
+        }
+        preserved.push(kept.check);
+      }
+
       // The remediation runs in its own sandbox and changes the worktree
       // through the tool server; the system computes the diff against the
       // reviewed commit, gates it and commits it
-      // (docs/features/sandboxed-implementer/plan.md, Task 9). Reviewers and
-      // the reconciler above still read free text.
+      // (docs/features/sandboxed-implementer/plan.md, Task 9). The reconciler
+      // above still reads free text.
       const cleanBeforeAuthor = checkWorktreeClean(worktreePath);
       if (!cleanBeforeAuthor.ok) {
         return abort(
@@ -881,13 +1004,19 @@ export async function runCodeReviewStage(
             diff,
             remediationFindings.map(toRemediationInput),
             profile.verification,
-            suitePrompt
+            suitePrompt,
+            preserved.map((check) => ({ findingId: check.findingId, command: check.command }))
           ),
           // The answer comes back as structured output, never free text
           // (docs/features/structured-patch-output/plan.md).
           invocation: { cwd: worktreePath, jsonSchema: WORKSPACE_REPLY_SCHEMA },
         },
-        { frozen: profile.sandbox, runId, label: `remediation-${roundNumber}`, worktreePath, readOnlyPaths: suiteDirs },
+        {
+          frozen: profile.sandbox, runId, label: `remediation-${roundNumber}`, worktreePath, readOnlyPaths: suiteDirs,
+          // The preserved checks only, read-only, so the implementer can run
+          // them and not change them, and never sees a rejected finding's.
+          ...(preserved.length === 0 ? {} : { checksDir: codeReviewPreservedDir(rootDir, runId) }),
+        },
         rootDir
       );
       if (!sandboxed.started) {
@@ -1009,12 +1138,36 @@ export async function runCodeReviewStage(
           `round=${roundNumber}; commit=${remediatedCommit}; ${verification.reason}`
         );
       }
+      // Each check runs alone, after the verification it cannot change, in its
+      // own throwaway checkout (Task 6): whatever one does, it fails only itself.
+      const judgedChecks = verification.record.outcome === "block"
+        ? []
+        : await runPreservedChecks({
+            rootDir,
+            runId,
+            round: roundNumber,
+            commit: remediatedCommit,
+            checks: preserved,
+            sandbox: profile.sandbox,
+            timeoutSeconds: profile.policy.verifyCommandTimeoutSeconds,
+            retentionMaxBytes: profile.policy.verifyRetentionMaxBytes,
+            audit: (action, summary) => audit(stage.id, action, summary),
+          });
+      failingChecks = judgedChecks
+        .filter(({ result }) => result.outcome === "fails")
+        .map(({ check, result }) => ({ check, detail: result.detail }));
+      for (const { result } of judgedChecks) {
+        process.stderr.write(
+          `round ${roundNumber}/${profile.policy.codeReviewMaxRounds} check of finding ${result.findingId} by ${result.reviewer} at ${remediatedCommit.slice(0, 8)}: ${result.outcome}\n`
+        );
+      }
       roundRecord.remediation = {
         author: author.id,
         baseCommit: currentCommit,
         resultingCommit: remediatedCommit,
         changedPaths: committed.paths,
         verification: verification.record,
+        preservedChecks: judgedChecks.map(({ result }) => result),
       };
       if (verification.record.outcome === "block") {
         const { resultRef } = writeRecord("block", [], currentCommit);
@@ -1040,6 +1193,276 @@ export async function runCodeReviewStage(
     store.setRunStatus(runId, "blocked");
     return { ok: false, reason };
   }
+}
+
+/** A validated reproduction awaiting confirmation, with the canonical finding it names. */
+export interface PendingReproduction {
+  findingId: number;
+  reviewer: string;
+  reproduction: ReviewerReproduction;
+}
+
+/**
+ * Run each reviewer reproduction against the commit it reviewed
+ * (docs/features/reproduced-review-findings/plan.md, Task 5), in panel order.
+ * A reproduction the lint refuses is never written or run. The rest are
+ * written under the run's checks directory, which is mounted read-only at
+ * `/bw-checks`, and each runs alone (`runAlone`): never in the run's worktree
+ * (hazard 15), and never where another reproduction can stop it. Each outcome
+ * is the classified report's, never the exit code's, and is evidence only.
+ */
+export async function confirmReproductions(input: {
+  rootDir: string;
+  runId: number;
+  round: number;
+  commit: string;
+  pending: PendingReproduction[];
+  sandbox: FrozenSandbox;
+  timeoutSeconds: number;
+  /** Each report's output budget and retention, as the acceptance report's. */
+  retentionMaxBytes: number;
+  audit: (action: string, summary: string) => void;
+}): Promise<CodeReviewReproduction[]> {
+  const { rootDir, runId, round, commit } = input;
+  const roundDir = join(codeReviewEvidenceDir(rootDir, runId), `round-${round}`);
+  const checksDir = codeReviewChecksDir(rootDir, runId);
+  const results: CodeReviewReproduction[] = [];
+  for (const { findingId, reviewer, reproduction } of input.pending) {
+    const result: CodeReviewReproduction = {
+      findingId,
+      reviewer,
+      fileName: reproduction.fileName,
+      contentSha256: sha256Hex(reproduction.content),
+      outcome: "repro_failed",
+      detail: null,
+      evidenceRef: null,
+    };
+    results.push(result);
+    const file = { path: `${CHECKS_ROOT}${findingId}/${reviewer}/${reproduction.fileName}`, content: reproduction.content };
+    const refusals = lintSuiteFile(file);
+    const written = refusals.length > 0 ? null : writeCheckFile(checksDir, findingId, reviewer, reproduction.fileName, reproduction.content);
+    if (refusals.length > 0) {
+      result.detail = `the lint refused it: ${refusals.join("; ")}`;
+    } else if (written !== null) {
+      result.detail = `cannot write the reproduction: ${written}`;
+    } else {
+      const ran = await runAlone({
+        rootDir,
+        runId,
+        commit,
+        checkout: join(roundDir, "repro-checkout", `${findingId}-${reviewer}`),
+        label: `round-${round}-repro`,
+        evidenceDir: join(roundDir, "reproductions"),
+        mountDir: checksDir,
+        file,
+        command: { ...reproductionCommand(`${findingId}-${reviewer}-${reproduction.fileName}`, file.path), blocking: false },
+        sandbox: input.sandbox,
+        timeoutSeconds: input.timeoutSeconds,
+        retentionMaxBytes: input.retentionMaxBytes,
+        audit: (action, summary) =>
+          input.audit(`code_review.repro.${action}`, `round=${round}; commit=${commit}; finding=${findingId}; reviewer=${reviewer}; ${summary}`),
+      });
+      result.evidenceRef = ran.evidenceRef;
+      result.outcome = ran.kind === "matcher_failure" ? "confirmed" : ran.kind === "passed" ? "not_reproduced" : "repro_failed";
+      result.detail = ran.detail;
+    }
+    // The detail is free text: last field.
+    input.audit(
+      `code_review.repro.${result.outcome}`,
+      `round=${round}; commit=${commit}; finding=${result.findingId}; reviewer=${result.reviewer}; file=${result.fileName}; sha256=${result.contentSha256}; evidence=${result.evidenceRef ?? "none"}; detail=${result.detail ?? "none"}`
+    );
+  }
+  return results;
+}
+
+/**
+ * Keep a confirmed reproduction of a kept finding as a check (Task 6): its
+ * file is written under the run's preserved directory, which holds nothing
+ * else, at the same `/bw-checks/` path it was confirmed at. Its severity is
+ * the highest any reviewer gave the finding.
+ */
+export function preserveCheck(input: {
+  rootDir: string;
+  runId: number;
+  round: number;
+  finding: RecordedFinding;
+  reviewer: string;
+  fileName: string;
+  content: string;
+  severities: readonly string[];
+}): { ok: true; check: PreservedCheck } | { ok: false; reason: string } {
+  const { finding, reviewer, fileName, severities } = input;
+  const written = writeCheckFile(codeReviewPreservedDir(input.rootDir, input.runId), finding.id, reviewer, fileName, input.content);
+  if (written !== null) return { ok: false, reason: written };
+  const path = `${CHECKS_ROOT}${finding.id}/${reviewer}/${fileName}`;
+  return {
+    ok: true,
+    check: {
+      findingId: finding.id,
+      reviewer,
+      fileName,
+      confirmedInRound: input.round,
+      location: finding.location,
+      intentKey: finding.intentKey,
+      severity: finding.reports
+        .map((report) => report.severity)
+        .reduce((highest, severity) => (severities.indexOf(severity) > severities.indexOf(highest) ? severity : highest)),
+      file: { path, content: input.content },
+      command: { ...reproductionCommand(`${finding.id}-${reviewer}-${fileName}`, path), blocking: false },
+    },
+  };
+}
+
+/**
+ * Run every preserved check at a remediation's verified commit (Task 6), each
+ * alone (`runAlone`) with only the preserved directory at `/bw-checks`:
+ * `holds` when every test passed on both repeats, `fails` otherwise, whatever
+ * stopped it. No result blocks anything.
+ */
+export async function runPreservedChecks(input: {
+  rootDir: string;
+  runId: number;
+  /** The remediation's round. */
+  round: number;
+  commit: string;
+  checks: PreservedCheck[];
+  sandbox: FrozenSandbox;
+  timeoutSeconds: number;
+  retentionMaxBytes: number;
+  audit: (action: string, summary: string) => void;
+}): Promise<Array<{ check: PreservedCheck; result: CodeReviewPreservedCheck }>> {
+  const { rootDir, runId, round, commit } = input;
+  const roundDir = join(codeReviewEvidenceDir(rootDir, runId), `round-${round}`);
+  const judged: Array<{ check: PreservedCheck; result: CodeReviewPreservedCheck }> = [];
+  for (const check of input.checks) {
+    const ran = await runAlone({
+      rootDir,
+      runId,
+      commit,
+      checkout: join(roundDir, "check-checkout", `${check.findingId}-${check.reviewer}`),
+      label: `remediation-${round}-check`,
+      evidenceDir: join(roundDir, "preserved-checks"),
+      mountDir: codeReviewPreservedDir(rootDir, runId),
+      file: check.file,
+      command: check.command,
+      sandbox: input.sandbox,
+      timeoutSeconds: input.timeoutSeconds,
+      retentionMaxBytes: input.retentionMaxBytes,
+      audit: (action, summary) =>
+        input.audit(`code_review.check.${action}`, `round=${round}; commit=${commit}; finding=${check.findingId}; reviewer=${check.reviewer}; ${summary}`),
+    });
+    const result: CodeReviewPreservedCheck = {
+      findingId: check.findingId,
+      reviewer: check.reviewer,
+      fileName: check.fileName,
+      confirmedInRound: check.confirmedInRound,
+      outcome: ran.kind === "passed" ? "holds" : "fails",
+      detail: ran.detail,
+      evidenceRef: ran.evidenceRef,
+    };
+    // The detail is free text: last field.
+    input.audit(
+      `code_review.check.${result.outcome}`,
+      `round=${round}; commit=${commit}; finding=${result.findingId}; reviewer=${result.reviewer}; file=${result.fileName}; confirmedInRound=${result.confirmedInRound}; evidence=${result.evidenceRef ?? "none"}; detail=${result.detail ?? "none"}`
+    );
+    judged.push({ check, result });
+  }
+  return judged;
+}
+
+/** Write one check file at `<dir>/<findingId>/<reviewer>/<fileName>`, never over another; the failure, or `null`. */
+function writeCheckFile(dir: string, findingId: number, reviewer: string, fileName: string, content: string): string | null {
+  const hostDir = join(dir, String(findingId), reviewer);
+  try {
+    mkdirSync(hostDir, { recursive: true });
+    writeFileSync(join(hostDir, fileName), content, { flag: "wx" });
+    return null;
+  } catch (err) {
+    return (err as Error).message;
+  }
+}
+
+/**
+ * Run one reproduction or check by itself: one `verifyCommit` call with its
+ * one command, in its own throwaway detached checkout of `commit`, with
+ * `mountDir` read-only at `/bw-checks`. The checkout is removed afterwards
+ * whatever happened. A checkout that cannot be made, a sandbox failure, a
+ * worktree the command left dirty or anything thrown is `other`, with that
+ * reason as the detail, so no run can stop another or the stage.
+ */
+async function runAlone(input: {
+  rootDir: string;
+  runId: number;
+  commit: string;
+  checkout: string;
+  label: string;
+  evidenceDir: string;
+  mountDir: string;
+  file: AcceptanceFile;
+  command: VerificationCommand;
+  sandbox: FrozenSandbox;
+  timeoutSeconds: number;
+  /** The report's output budget and retention, as the acceptance report's. */
+  retentionMaxBytes: number;
+  /** Receives the step's action unprefixed. */
+  audit: (action: string, summary: string) => void;
+}): Promise<{ evidenceRef: string | null } & ReturnType<typeof judgeReproductionRun>> {
+  const { rootDir, checkout, commit } = input;
+  const added = existsSync(checkout)
+    ? { ok: false as const, detail: "it already exists" }
+    : runGit([...NO_HOOKS, "-c", "core.autocrlf=false", "-c", "core.eol=lf", "worktree", "add", "--detach", checkout, commit], rootDir);
+  if (!added.ok) {
+    return { evidenceRef: null, kind: "other", detail: `cannot create the throwaway checkout at ${checkout}: ${added.detail}` };
+  }
+  try {
+    const ran = await verifyCommit({
+      rootDir,
+      worktreePath: checkout,
+      expectedCommit: commit,
+      commands: [input.command],
+      timeoutSeconds: input.timeoutSeconds,
+      maxBytes: input.retentionMaxBytes,
+      retentionMaxBytes: input.retentionMaxBytes,
+      sandbox: input.sandbox,
+      runId: input.runId,
+      label: input.label,
+      checksDir: input.mountDir,
+      evidenceDir: input.evidenceDir,
+      audit: input.audit,
+    });
+    if (ran.record === null) return { evidenceRef: null, kind: "other", detail: ran.reason };
+    const recorded = ran.record.commands[0];
+    if (recorded === undefined) {
+      return { evidenceRef: null, kind: "other", detail: `not run: ${ran.reason ?? "verification stopped before it"}` };
+    }
+    return { evidenceRef: recorded.evidenceRef, ...judgeRecordedReproduction(rootDir, recorded, input.file) };
+  } catch (err) {
+    return { evidenceRef: null, kind: "other", detail: `the run failed: ${(err as Error).message}` };
+  } finally {
+    const removed = runGit(["worktree", "remove", "--force", checkout], rootDir);
+    if (!removed.ok) input.audit("cleanup.failed", `cannot remove the throwaway checkout ${checkout}: ${removed.detail}`);
+  }
+}
+
+/**
+ * What one reproduction command showed, from its record and its retained
+ * report, never its exit code: a checkout it left dirty, a ceiling or an
+ * output budget is `other`, with that reason as the detail.
+ */
+function judgeRecordedReproduction(
+  rootDir: string,
+  recorded: RecordedVerificationCommand,
+  file: AcceptanceFile
+): ReturnType<typeof judgeReproductionRun> {
+  if (recorded.blockedBecause !== null) return { kind: "other", detail: recorded.blockedBecause };
+  if (recorded.timedOut || recorded.outputOverflow) return { kind: "other", detail: recorded.nonBlockingFailure ?? null };
+  let log: string;
+  try {
+    log = readFileSync(resolve(rootDir, recorded.evidenceRef), "utf8");
+  } catch (err) {
+    return { kind: "other", detail: `cannot read the retained report: ${(err as Error).message}` };
+  }
+  return judgeReproductionRun(log, file);
 }
 
 /**
@@ -1076,6 +1499,11 @@ function buildReport(record: CodeReviewRecord): string {
       for (const report of finding.reports) {
         lines.push(`- **${report.agent}** — ${report.severity}, ${report.classification} — ${report.subject}`);
       }
+      for (const reproduction of round.reproductions.filter((entry) => entry.findingId === finding.id)) {
+        lines.push(
+          `- reproduction by ${reproduction.reviewer} (${reproduction.fileName}): ${reproduction.outcome}${reproduction.detail === null ? "" : ` — ${reproduction.detail}`}`
+        );
+      }
       lines.push("");
     }
     if (round.reconciliation !== null) {
@@ -1105,6 +1533,10 @@ function buildReport(record: CodeReviewRecord): string {
         `- ${round.remediation.author}: ${round.remediation.baseCommit} -> ${round.remediation.resultingCommit}`,
         `- Changed: ${round.remediation.changedPaths.join(", ")}`,
         `- Verification: ${round.remediation.verification.outcome}`,
+        ...round.remediation.preservedChecks.map(
+          (check) =>
+            `- Check ${check.fileName} (finding ${check.findingId}, by ${check.reviewer}, confirmed in round ${check.confirmedInRound}): ${check.outcome}${check.detail === null ? "" : ` — ${check.detail}`}`
+        ),
         ""
       );
     }

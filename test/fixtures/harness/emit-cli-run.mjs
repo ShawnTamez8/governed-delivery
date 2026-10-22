@@ -36,10 +36,13 @@ export function selectPromptRoute(prompt) {
   return matches[0];
 }
 
-// The routes whose dispatches send --json-schema (docs/features/structured-patch-output/plan.md)
-// and the tool server's --mcp-config (docs/features/sandboxed-implementer/plan.md);
-// every other route must arrive without either.
-const SCHEMA_ROUTES = new Set(["IMPLEMENTATION_PROMPT_PREFIX", "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", "ACCEPTANCE_TEST_AUTHOR_PROMPT_PREFIX"]);
+// The routes whose dispatches send the tool server's --mcp-config
+// (docs/features/sandboxed-implementer/plan.md), and those that send
+// --json-schema (docs/features/structured-patch-output/plan.md): the same
+// three, and the code reviewers (docs/features/reproduced-review-findings/plan.md).
+// Every other route must arrive without either.
+const TOOL_SERVER_ROUTES = new Set(["IMPLEMENTATION_PROMPT_PREFIX", "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", "ACCEPTANCE_TEST_AUTHOR_PROMPT_PREFIX"]);
+const SCHEMA_ROUTES = new Set([...TOOL_SERVER_ROUTES, "CODE_REVIEW_PROMPT_PREFIX"]);
 
 const FLAGS = [
   "--implementation-mode", "--code-review-mode", "--delay-ms",
@@ -79,7 +82,7 @@ async function main() {
   if (SCHEMA_ROUTES.has(route.name) !== (config.jsonSchema !== undefined)) {
     throw new Error(`emit-cli-run: a ${route.name} prompt arrived ${config.jsonSchema === undefined ? "without" : "with"} --json-schema`);
   }
-  if (SCHEMA_ROUTES.has(route.name) !== (config.mcpConfig !== undefined)) {
+  if (TOOL_SERVER_ROUTES.has(route.name) !== (config.mcpConfig !== undefined)) {
     throw new Error(`emit-cli-run: a ${route.name} prompt arrived ${config.mcpConfig === undefined ? "without" : "with"} --mcp-config`);
   }
   if (config.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, config.delayMs));

@@ -6,14 +6,19 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   ACCEPTANCE_IMPORT_LINE,
+  CHECKS_ROOT,
   classifyAcceptance,
   classifyFailure,
+  isMatcherFailure,
+  judgeReproductionRun,
+  locatorWaitDetail,
   readAcceptanceReport,
+  readReproductionReport,
   validateAcceptanceSuite,
   type AcceptanceFile,
   type AcceptanceReport,
 } from "../src/acceptance.ts";
-import { requireImage, sandboxImageTag } from "../src/container.ts";
+import { CHECKS_MOUNT, requireImage, sandboxImageTag } from "../src/container.ts";
 import { STAND_IN, STAND_IN_IMAGE_ID, standInSandbox } from "./fixtures/docker/stand-in.ts";
 
 /**
@@ -149,6 +154,112 @@ test("a truncated log is refused by name, never read as an empty suite", () => {
   const read = readAcceptanceReport(log.slice(0, Math.floor(log.length / 2)));
   assert.equal(read.ok, false);
   assert.match(read.ok ? "" : read.reason, /^the acceptance log is not a complete JSON report: /);
+});
+
+/**
+ * The checks runner (docs/features/reproduced-review-findings/plan.md, Task 1),
+ * over reports the real runner wrote from a read-only `/bw-checks` mount:
+ * `test/fixtures/recorded/reproduction-report-<case>.json`.
+ */
+const REPRODUCTION_CASES = ["acceptance-config", "matcher", "pass", "hidden-locator"] as const;
+
+function reproduction(name: (typeof REPRODUCTION_CASES)[number]): { report: AcceptanceReport; files: AcceptanceFile[] } {
+  const fixture = JSON.parse(readFileSync(resolve("test", "fixtures", "recorded", `reproduction-report-${name}.json`), "utf8")) as RecordedReport;
+  const read = readReproductionReport(fixture.log);
+  assert.ok(read.ok, `${name}: ${read.ok ? "" : read.reason}`);
+  return { report: read.report, files: fixture.files };
+}
+
+test("the checks reader's root is the directory the sandbox mounts the reproductions at", () => {
+  assert.equal(CHECKS_ROOT, `${CHECKS_MOUNT}/`);
+});
+
+test("the acceptance runner's config discovers no reproduction under /bw-checks", () => {
+  const { report } = reproduction("acceptance-config");
+  assert.equal(report.tests.length, 0);
+  assert.match(report.loadErrors[0]?.message ?? "", /^Error: No tests found\./);
+});
+
+test("the checks reader names each test by its /bw-checks/ path and locates its errors in that file", () => {
+  for (const name of ["matcher", "pass", "hidden-locator"] as const) {
+    const { report, files } = reproduction(name);
+    assert.deepEqual(report.loadErrors, [], name);
+    assert.equal(report.tests.length, 1, name);
+    assert.equal(report.tests[0]!.results.length, 2, name);
+    assert.equal(report.tests[0]!.file, files[0]!.path, name);
+    assert.match(report.tests[0]!.file, /^\/bw-checks\/9\/code-reviewer-correctness\/[a-z-]+\.spec\.mjs$/, name);
+    for (const result of report.tests[0]!.results.filter((r) => r.status !== "passed")) {
+      assert.equal(result.errors[0]!.location?.file, files[0]!.path, name);
+    }
+  }
+  assert.deepEqual(classifyAcceptance(reproduction("pass").report, reproduction("pass").files).map((t) => t.outcome), ["pass"]);
+});
+
+test("only the failing assertion is a matcher failure; both locator timeouts are not", () => {
+  const matcher = reproduction("matcher");
+  for (const result of matcher.report.tests[0]!.results) assert.equal(isMatcherFailure(result, matcher.files), true);
+  const hidden = reproduction("hidden-locator");
+  const neverResolved = parsed("valid-red-locator");
+  for (const { report, files } of [hidden, neverResolved]) {
+    for (const result of report.tests[0]!.results) {
+      assert.equal(classifyFailure(result, files), "valid_red", "a valid red to the acceptance gate");
+      assert.equal(isMatcherFailure(result, files), false);
+    }
+  }
+});
+
+/**
+ * A matcher on a locator that matched nothing, as the real runner reported it:
+ * the probe report's "promise array" test, whose second error is
+ * `expect(locator).toBeVisible()` on a blank page
+ * (`test/fixtures/recorded/acceptance-code-review-probes.json`, `browser[0]`).
+ * The one edit: that test alone, with its first error (a click's timeout)
+ * dropped, so the matcher's error is first, under the checks root.
+ */
+function notFoundReproduction(): { log: string; file: AcceptanceFile } {
+  const probe = (JSON.parse(readFileSync(resolve("test", "fixtures", "recorded", "acceptance-code-review-probes.json"), "utf8")) as {
+    browser: { log: string; files: AcceptanceFile[] }[];
+  }).browser[0]!;
+  const report = JSON.parse(probe.log.slice(probe.log.indexOf("\n") + 1)) as {
+    suites: { specs: { title: string; tests: { results: { errors: { message: string }[] }[] }[] }[] }[];
+  };
+  // One entry per repeat.
+  const specs = report.suites[0]!.specs.filter((s) => s.title === "AC-003 promise array awaits only the array");
+  assert.equal(specs.length, 2);
+  for (const result of specs.flatMap((s) => s.tests[0]!.results)) {
+    assert.match(result.errors[1]!.message, /element\(s\) not found/);
+    result.errors = [result.errors[1]!];
+  }
+  report.suites[0]!.specs = specs;
+  const rel = "review-probes/review.spec.mjs";
+  const log = JSON.stringify(report).split(`/work/acceptance/${rel}`).join(`/bw-checks/${rel}`);
+  return { log, file: { path: `/bw-checks/${rel}`, content: probe.files[0]!.content } };
+}
+
+test("a matcher whose locator found no element is a valid red to the gate but confirms nothing, and its detail names the locator", () => {
+  const { log, file } = notFoundReproduction();
+  const read = readReproductionReport(log);
+  assert.ok(read.ok, read.ok ? "" : read.reason);
+  for (const result of read.report.tests[0]!.results) {
+    assert.equal(classifyFailure(result, [file]), "valid_red");
+    assert.equal(isMatcherFailure(result, [file]), false);
+  }
+  assert.deepEqual(judgeReproductionRun(log, file), { kind: "other", detail: "element(s) not found: locator('#out')" });
+});
+
+test("a log whose JSON is shaped unlike any report is judged other, never thrown", () => {
+  const judged = judgeReproductionRun('{"errors":[],"suites":[{"specs":5}]}', { path: "/bw-checks/1/r/x.spec.mjs", content: "" });
+  assert.equal(judged.kind, "other");
+  assert.match(judged.detail!, /^the report cannot be read: /);
+});
+
+test("a locator timeout's detail is what the call log says it found, not the retry timing after it", () => {
+  const hidden = reproduction("hidden-locator").report.tests[0]!.results[0]!.errors[0]!.message;
+  assert.match(hidden, /\n {7}- waiting 500ms\n\n/, "the call log's literal last entry is retry timing");
+  assert.equal(locatorWaitDetail(hidden), "element is not visible");
+  const never = parsed("valid-red-locator").report.tests[0]!.results[0]!.errors[0]!.message;
+  assert.equal(locatorWaitDetail(never), "waiting for getByRole('button', { name: '7' })");
+  assert.equal(locatorWaitDetail("Error: no call log here"), null);
 });
 
 test("the image tag covers every file in the image directory, by path and bytes", () => {

@@ -2,7 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { REPRODUCTION_FILE_NAME, REPRODUCTION_MAX_CHARS, REPRODUCTION_MAX_COUNT } from "../src/acceptance.ts";
+import { extractJsonBody } from "../src/parse-output.ts";
 import {
+  CODE_REVIEW_REPLY_SCHEMA,
   describeIncompleteReply,
   parseWorkspaceReply,
   WORKSPACE_REPLY_SCHEMA,
@@ -136,6 +139,37 @@ test("a stage reads the spike's recorded answer from its serialized structured o
   const unparsed = parseWorkspaceReply("not json", validateWorkspaceReply);
   assert.equal(unparsed.ok, false);
   if (!unparsed.ok) assert.match(unparsed.reason, /^implementer body refused: /);
+});
+
+// docs/features/reproduced-review-findings/plan.md, Task 2: the code reviewer's structured reply.
+
+test("the code-review reply schema states the reproduction bounds from their one constant each", () => {
+  const reproductions = CODE_REVIEW_REPLY_SCHEMA.properties.proposedContentChanges.properties.reproductions;
+  assert.equal(reproductions.items.properties.fileName.pattern, REPRODUCTION_FILE_NAME.source);
+  assert.equal(new RegExp(reproductions.items.properties.fileName.pattern).test("enter-on-toggle.spec.mjs"), true);
+  assert.equal(new RegExp(reproductions.items.properties.fileName.pattern).test("enter-on-toggle.test.mjs"), false);
+  assert.equal(reproductions.maxItems, REPRODUCTION_MAX_COUNT);
+  assert.equal(reproductions.items.properties.content.maxLength, REPRODUCTION_MAX_CHARS);
+  assert.deepEqual([REPRODUCTION_MAX_COUNT, REPRODUCTION_MAX_CHARS], [5, 65_536], "the plan's bounds");
+  assert.deepEqual(CODE_REVIEW_REPLY_SCHEMA.properties.proposedContentChanges.required, ["findings"], "a reviewer may attach none");
+});
+
+test("a recorded live reviewer's reply has only the fields the code-review reply schema admits", () => {
+  // The 2026-09-06 correctness reviewer's free-text body, which the structured
+  // reply must still be able to carry without change.
+  const recorded = JSON.parse(readFileSync(join(RECORDED, "code-review-web-calculator-correctness-two-high-findings.json"), "utf8")) as {
+    envelope: { result: string };
+  };
+  const body = extractJsonBody(recorded.envelope.result);
+  assert.equal(body.kind, "ok");
+  if (body.kind !== "ok") return;
+  const reply = body.value as { proposedContentChanges: { findings: Record<string, unknown>[] } } & Record<string, unknown>;
+  const schema = CODE_REVIEW_REPLY_SCHEMA;
+  assert.deepEqual(Object.keys(reply).filter((k) => !(k in schema.properties)), []);
+  for (const key of schema.required) assert.ok(key in reply, key);
+  const finding = schema.properties.proposedContentChanges.properties.findings.items;
+  assert.ok(reply.proposedContentChanges.findings.length > 0);
+  for (const entry of reply.proposedContentChanges.findings) assert.deepEqual(Object.keys(entry).sort(), [...finding.required].sort());
 });
 
 test("an incomplete reply is quoted whole, so the block reason carries what the agent said", () => {

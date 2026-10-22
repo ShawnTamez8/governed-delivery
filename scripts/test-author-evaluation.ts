@@ -97,7 +97,7 @@ export const THRESHOLDS = [
   "4. Precision: no test fails on the control in a gate-passing suite. Each control failure is read by hand against the control's code; one that exposes a real control defect corrects the control and is re-scored, never discounted.",
 ].join("\n");
 
-interface Benchmark {
+export interface Benchmark {
   trees: Record<string, Record<string, string>>;
   approvedDocuments: { specFull: string; planFull: string };
 }
@@ -338,7 +338,7 @@ function counts(run: SuiteRun): string {
   return JSON.stringify(run.tests.reduce((m, t) => ({ ...m, [t.outcome]: (m[t.outcome] ?? 0) + 1 }), {} as Record<string, number>));
 }
 
-function controlTree(benchmark: Benchmark): Record<string, string> {
+export function controlTree(benchmark: Benchmark): Record<string, string> {
   const tree = benchmark.trees[FINDING_10_TREE]!;
   return { ...tree, "src/app.js": tree["src/app.js"]!.replace(CONTROL_FROM, CONTROL_TO) };
 }

@@ -50,6 +50,8 @@ export const PROXY_PORT = 3128;
 export const PROXY_ALIAS = "proxy";
 /** The work container's `NO_PROXY`: the container's own loopback names. */
 export const LOOPBACK_HOSTS = "localhost,127.0.0.1,::1";
+/** Where a sandbox mounts the reviewers' reproductions read-only (`createSandbox`'s `checksDir`). */
+export const CHECKS_MOUNT = "/bw-checks";
 /** The last bytes of a failed call's stderr that its error carries. */
 export const STDERR_TAIL_BYTES = 2000;
 /**
@@ -396,6 +398,13 @@ export function createSandbox(input: {
    * is unchanged.
    */
   readOnlyPaths?: string[];
+  /**
+   * A host directory mounted read-only at `CHECKS_MOUNT`, after the read-only
+   * paths: the reviewers' reproductions (docs/features/reproduced-review-findings/plan.md).
+   * It is the run's evidence, so teardown leaves it in place. Absent, the argv
+   * is unchanged.
+   */
+  checksDir?: string;
 }): Sandbox {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(input.label)) {
     throw new Error(`sandbox label ${JSON.stringify(input.label)} must be lowercase letters, digits and hyphens`);
@@ -457,6 +466,7 @@ export function createSandbox(input: {
         const trimmed = path.replace(/\/$/, "");
         return ["-v", `${join(sandbox.mountDir!, trimmed)}:/work/${trimmed}:ro`];
       }),
+      ...(input.checksDir === undefined ? [] : ["-v", `${input.checksDir}:${CHECKS_MOUNT}:ro`]),
       "-w", "/work",
       ...sandbox.env.flatMap((assignment) => ["--env", assignment]),
       frozen.imageId, "sleep", "infinity",

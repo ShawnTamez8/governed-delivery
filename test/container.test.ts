@@ -23,6 +23,7 @@ import {
 import { CLAUDE_CODE } from "../src/executor.ts";
 import { buildHarnessEnvironment } from "../src/harness.ts";
 import { seededSandbox } from "../src/policy.ts";
+import { recordingDockerCommand, standInSandbox } from "./fixtures/docker/stand-in.ts";
 
 /**
  * Containment against real Docker (docs/features/sandboxed-implementer/plan.md,
@@ -396,6 +397,83 @@ test("criterion 9: escapes are refused by name, and every call is logged before 
       assert.equal(events[0], "started");
     }
   });
+});
+
+// --- the reviewers' reproductions (docs/features/reproduced-review-findings/plan.md, Task 4) ---
+
+test("criterion 2 with a checks mount: /bw-checks is read-only, and the worktree and .git mounts are unchanged", { skip }, async () => {
+  const target = makeTarget();
+  const checksDir = join(target.root, ".governance", "code-review", "1", "checks");
+  mkdirSync(join(checksDir, "9", "code-reviewer-correctness"), { recursive: true });
+  writeFileSync(join(checksDir, "9", "code-reviewer-correctness", "r.spec.mjs"), "// reproduction\n");
+  const sandbox = createSandbox({ frozen: frozen(), rootDir: target.root, runId: 1, label: "test", worktreePath: target.worktree, checksDir });
+  try {
+    const run = (name: string, script: string) =>
+      runInSandbox(execTarget(sandbox), null, { name, command: ["sh", "-c", script] }, {
+        cwd: target.worktree, timeoutSeconds: 30, maxBytes: 65536, retentionMaxBytes: 65536, evidencePath: join(target.root, `${name}.log`),
+      });
+    const log = (name: string) => readFileSync(join(target.root, `${name}.log`), "utf8");
+    // Positive control: the host's file is there to read.
+    assert.equal((await run("read", "cat /bw-checks/9/code-reviewer-correctness/r.spec.mjs")).exitCode, 0);
+    assert.ok(log("read").endsWith("// reproduction\n"), log("read"));
+    for (const [name, script] of [["write-new", "echo x > /bw-checks/new.txt"], ["write-over", "echo x > /bw-checks/9/code-reviewer-correctness/r.spec.mjs"]]) {
+      const write = await run(name!, script!);
+      assert.notEqual(write.exitCode, 0, log(name!));
+      assert.match(log(name!), /read-only file system/i);
+    }
+    assert.equal(readFileSync(join(checksDir, "9", "code-reviewer-correctness", "r.spec.mjs"), "utf8"), "// reproduction\n");
+    assert.equal((await run("mounts", "cat /proc/mounts")).exitCode, 0);
+    const points = new Map(log("mounts").split("\n").slice(1).map((l) => l.split(" ")).map((f) => [f[1] ?? "", (f[3] ?? "").split(",")]));
+    assert.ok(points.get("/bw-checks")?.includes("ro"), "the checks mount is read-only");
+    assert.ok(points.get("/work/.git")?.includes("ro"), "the .git mount is read-only");
+    assert.ok(points.get("/work")?.includes("rw"), "the worktree stays writable");
+    assert.equal((await run("work", "echo y > other.txt")).exitCode, 0);
+    assert.equal(readFileSync(join(target.worktree, "other.txt"), "utf8"), "y\n");
+  } finally {
+    const teardown = destroySandbox(sandbox);
+    assert.deepEqual(teardown.failures, []);
+    assert.ok(existsSync(join(checksDir, "9", "code-reviewer-correctness", "r.spec.mjs")), "teardown leaves the run's evidence in place");
+    target.cleanup();
+  }
+});
+
+/** The work container's `run -d` argv, with the sandbox's random name and network ID made constant. */
+function workRunArgv(calls: string[][]): string[] {
+  const run = calls.find((c) => c[0] === "run" && c.includes("-d") && c[c.indexOf("--name") + 1]!.endsWith("-work"))!;
+  const network = run[run.indexOf("--network") + 1]!;
+  return run.map((a) =>
+    a === network
+      ? "<network>"
+      : a.replace(/bw-[0-9a-f]{8}-1-test-[0-9a-f]{6}/g, "<name>").replace(/^bw\.(repo|instance)=[0-9a-f]+$/, "bw.$1=<random>")
+  );
+}
+
+test("without a checks directory the work container's argv is unchanged; with one it adds only the read-only mount, last", () => {
+  for (const readOnlyPaths of [undefined, ["README.md"]]) {
+    const argv: Record<string, string[]> = {};
+    for (const [variant, extra] of [["absent", {}], ["undefined", { checksDir: undefined }], ["given", { checksDir: "C:\\checks" }]] as const) {
+      const target = makeTarget();
+      const dir = mkdtempSync(join(tmpdir(), "bw-checks-argv-"));
+      try {
+        const recording = recordingDockerCommand(dir);
+        const sandbox = createSandbox({
+          frozen: standInSandbox({ dockerCommand: recording.dockerCommand }), rootDir: target.root, runId: 1, label: "test",
+          worktreePath: target.worktree, ...(readOnlyPaths === undefined ? {} : { readOnlyPaths }), ...extra,
+        });
+        destroySandbox(sandbox);
+        argv[variant] = workRunArgv(recording.calls()).map((a) => a.split(target.root).join("<root>"));
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+        target.cleanup();
+      }
+    }
+    assert.deepEqual(argv.undefined, argv.absent, `readOnlyPaths ${JSON.stringify(readOnlyPaths)}`);
+    const workdir = argv.absent!.indexOf("-w");
+    assert.deepEqual(argv.given, [...argv.absent!.slice(0, workdir), "-v", "C:\\checks:/bw-checks:ro", ...argv.absent!.slice(workdir)]);
+    const mounts = argv.absent!.flatMap((a, i) => (argv.absent![i - 1] === "-v" ? [a] : []));
+    assert.equal(mounts.length, readOnlyPaths === undefined ? 2 : 3, mounts.join(" | "));
+    assert.ok(!argv.absent!.some((a) => a.includes("/bw-checks")));
+  }
 });
 
 test("an absent frozen image is refused by name before any object is created, naming a fresh run", { skip }, () => {

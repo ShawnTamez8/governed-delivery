@@ -3,6 +3,7 @@ import type { ReviewerReport } from "./reconciliation.ts";
 import type { CommitVerificationRecord } from "./commit-verification.ts";
 import type { InspectableProfile } from "./profile.ts";
 import { codeReviewPanel } from "./select.ts";
+import { REPRODUCTION_FILE_NAME, REPRODUCTION_MAX_CHARS, REPRODUCTION_MAX_COUNT } from "./acceptance.ts";
 
 const LINE_SUFFIX = /^[1-9][0-9]*$/;
 const COMMIT = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
@@ -27,12 +28,35 @@ export interface CodeReviewBlock {
   location: string;
 }
 
+/**
+ * One preserved check's result at a remediation's commit
+ * (docs/features/reproduced-review-findings/plan.md, Task 6): `holds` when every
+ * test passed on both repeats, `fails` otherwise, including a run that could
+ * not start or left its checkout dirty. A failing check blocks nothing; the
+ * next panel is told of it.
+ */
+export interface CodeReviewPreservedCheck {
+  findingId: number;
+  reviewer: string;
+  fileName: string;
+  confirmedInRound: number;
+  outcome: "holds" | "fails";
+  detail: string | null;
+  /** `null` when the check never reached its command. */
+  evidenceRef: string | null;
+}
+
 export interface CodeReviewRemediationRecord {
   author: string;
   baseCommit: string;
   resultingCommit: string;
   changedPaths: string[];
   verification: CommitVerificationRecord;
+  /**
+   * Each preserved check's result at `resultingCommit`, in the order they were
+   * preserved; empty when the remediation's verification blocked.
+   */
+  preservedChecks: CodeReviewPreservedCheck[];
 }
 
 /**
@@ -52,12 +76,29 @@ export interface CodeReviewReconciliation {
   kept: number[];
 }
 
+/**
+ * What running one reviewer's reproduction against the commit it reviewed
+ * showed (docs/features/reproduced-review-findings/plan.md). Evidence only: no
+ * outcome changes what the reconciler, remediation or the gate receive.
+ */
+export interface CodeReviewReproduction {
+  findingId: number;
+  reviewer: string;
+  fileName: string;
+  contentSha256: string;
+  outcome: "confirmed" | "not_reproduced" | "repro_failed";
+  detail: string | null;
+  evidenceRef: string | null;
+}
+
 export interface CodeReviewRound {
   round: number;
   reviewedCommit: string;
   changedPaths: string[];
   findings: RecordedFinding[];
   blocking: CodeReviewBlock[];
+  /** In panel order, then reply order. */
+  reproductions: CodeReviewReproduction[];
   reconciliation: CodeReviewReconciliation | null;
   remediation: CodeReviewRemediationRecord | null;
 }
@@ -333,6 +374,74 @@ export function validateCodeReviewReports(
     }
   }
   return null;
+}
+
+/** One reproduction a reviewer attached to one of its own findings, as validated. */
+export interface ReviewerReproduction {
+  intentKey: string;
+  /** Normalized, as the finding it names is. */
+  location: string;
+  fileName: string;
+  content: string;
+}
+
+const REPRODUCTION_FIELDS = ["intentKey", "location", "fileName", "content"];
+
+/**
+ * A reviewer reply's `proposedContentChanges.reproductions`
+ * (docs/features/reproduced-review-findings/plan.md, Task 3), checked against
+ * the reply's own validated findings. Every bound the reply schema states is
+ * checked again here, because nothing has shown the harness enforces them. It
+ * reads its own member only: `validateReviewerReports`, which other stages
+ * share, does not change. An absent member is an empty list.
+ */
+export function validateCodeReviewReproductions(
+  raw: unknown,
+  reports: readonly Pick<ReviewerReport, "intentKey" | "location">[]
+): { ok: true; value: ReviewerReproduction[] } | { ok: false; reason: string } {
+  if (raw === undefined) return { ok: true, value: [] };
+  if (!Array.isArray(raw)) return { ok: false, reason: "proposedContentChanges.reproductions is not an array" };
+  if (raw.length > REPRODUCTION_MAX_COUNT) {
+    return { ok: false, reason: `the reply carries ${raw.length} reproductions; at most ${REPRODUCTION_MAX_COUNT} are allowed` };
+  }
+  const value: ReviewerReproduction[] = [];
+  const named = new Set<string>();
+  const fileNames = new Set<string>();
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      return { ok: false, reason: "a reproduction entry is not an object" };
+    }
+    const r = entry as { [key: string]: unknown };
+    const unknown = Object.keys(r).find((key) => !REPRODUCTION_FIELDS.includes(key));
+    if (unknown !== undefined) {
+      return { ok: false, reason: `a reproduction carries an unknown field ${unknown}: allowed fields are ${REPRODUCTION_FIELDS.join(", ")}` };
+    }
+    if (typeof r.intentKey !== "string" || typeof r.location !== "string") {
+      return { ok: false, reason: "a reproduction's intentKey and location must be strings" };
+    }
+    if (typeof r.fileName !== "string" || !REPRODUCTION_FILE_NAME.test(r.fileName)) {
+      return { ok: false, reason: `reproduction file name ${JSON.stringify(r.fileName)} does not match ${REPRODUCTION_FILE_NAME.source}` };
+    }
+    if (fileNames.has(r.fileName)) return { ok: false, reason: `reproduction file name ${r.fileName} is used twice in the reply` };
+    fileNames.add(r.fileName);
+    // Counted in code points, as the schema's `maxLength` counts them.
+    const characters = typeof r.content === "string" ? [...r.content].length : 0;
+    if (typeof r.content !== "string" || characters > REPRODUCTION_MAX_CHARS) {
+      return {
+        ok: false,
+        reason: `reproduction ${r.fileName} content must be a string of at most ${REPRODUCTION_MAX_CHARS} characters${typeof r.content === "string" ? `, not ${characters}` : ""}`,
+      };
+    }
+    const location = normalizeLocation(r.location);
+    const identity = `${r.intentKey}::${location}`;
+    if (!reports.some((report) => report.intentKey === r.intentKey && report.location === location)) {
+      return { ok: false, reason: `reproduction ${r.fileName} names no finding of this reply: ${identity}` };
+    }
+    if (named.has(identity)) return { ok: false, reason: `the reply attaches two reproductions to one finding: ${identity}` };
+    named.add(identity);
+    value.push({ intentKey: r.intentKey, location, fileName: r.fileName, content: r.content });
+  }
+  return { ok: true, value };
 }
 
 /** The final-panel severity gate, ordered only by the frozen vocabulary. */

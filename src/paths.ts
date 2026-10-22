@@ -166,6 +166,24 @@ export function codeReviewVerificationDir(
 }
 
 /**
+ * One run's reviewer reproductions (docs/features/reproduced-review-findings/plan.md),
+ * as `<findingId>/<reviewer>/<fileName>`: mounted read-only at `/bw-checks` for
+ * confirmation.
+ */
+export function codeReviewChecksDir(rootDir: string, runId: number): string {
+  return join(codeReviewEvidenceDir(rootDir, runId), "checks");
+}
+
+/**
+ * The preserved checks only, in the same layout as `codeReviewChecksDir`:
+ * mounted read-only at `/bw-checks` for remediation and for the checks' own
+ * runs, so neither sees a reproduction that was never preserved.
+ */
+export function codeReviewPreservedDir(rootDir: string, runId: number): string {
+  return join(codeReviewEvidenceDir(rootDir, runId), "preserved");
+}
+
+/**
  * The command logs of one derived-artifact regeneration (`governed.yaml`
  * `derived:`), one directory per regeneration point (`phase-1`,
  * `self-review`, `remediation-1`).

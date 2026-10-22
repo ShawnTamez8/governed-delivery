@@ -30,7 +30,13 @@ import {
 } from "../src/prompts.ts";
 import { IMPLEMENTER } from "../src/agents/implementer.ts";
 import { ACCEPTANCE_TEST_AUTHOR } from "../src/agents/acceptance-test-author.ts";
-import { acceptanceCommand } from "../src/acceptance.ts";
+import {
+  ACCEPTANCE_IMPORT_LINE,
+  acceptanceCommand,
+  REPRODUCTION_FILE_NAME,
+  REPRODUCTION_MAX_COUNT,
+  reproductionCommand,
+} from "../src/acceptance.ts";
 import { PLAN_AUTHOR } from "../src/agents/plan-author.ts";
 import { CODE_REVIEWER_CORRECTNESS } from "../src/agents/code-reviewer-correctness.ts";
 import { CODE_REVIEWER_SECURITY } from "../src/agents/code-reviewer-security.ts";
@@ -41,7 +47,7 @@ import { validatePanelRequest } from "../src/select.ts";
 import { readSpecDeclaredArtifacts, validateSpecDoc } from "../src/spec-doc.ts";
 import { validateDesignSplit } from "../src/design-split.ts";
 import { planPhases, validatePlanDoc, type PlanPhase } from "../src/plan-doc.ts";
-import { validateAgentResult, validateWorkspaceReply, WORKSPACE_REPLY_SCHEMA, type AgentResult, type WorkspaceReply } from "../src/agent-result.ts";
+import { CODE_REVIEW_REPLY_SCHEMA, validateAgentResult, validateWorkspaceReply, WORKSPACE_REPLY_SCHEMA, type AgentResult, type WorkspaceReply } from "../src/agent-result.ts";
 import { CLAUDE_CODE } from "../src/executor.ts";
 import { parseEnvelope } from "../src/harness.ts";
 import { validateSelfCritique } from "../src/self-critique.ts";
@@ -321,6 +327,29 @@ const ACCEPTANCE_REVIEW_SENTENCES = [
   "from the acceptance criteria before the implementation began, and the system runs it at every verification point; read it there to see what each criterion's tests check.",
   "Code that detects the test environment, such as by reading navigator.webdriver, or that special-cases a test's inputs instead of implementing the behavior is a high-severity defect.",
   "The test author claimed the code already met these criteria before the implementation began, so their tests were kept as regression guards; check each claim against the code:",
+];
+
+/** The reviewer's reproduction contract, each source line's fixed text around its interpolations and backticks. */
+const REPRODUCTION_RULE_SENTENCES = [
+  "For a finding you may attach one reproduction, and at most",
+  "in all, in proposedContentChanges.reproductions: a Playwright test file that names its finding by the same intentKey and location, with a fileName matching",
+  "A reproduction must fail at the reviewed commit because of the defect, and pass once the defect is fixed.",
+  "Begin its content with exactly this line, which loads the system's own runner:",
+  "The system runs it with a checkout of the reviewed commit as the working directory, so open the page with",
+  "and Playwright's auto-retrying matchers, such as toHaveText: only a failed matcher confirms a finding, and a locator that never finds an element it can act on does not.",
+  "Use only trusted input, through page.keyboard and locator actions such as click and press, never dispatchEvent; write no hooks, and set no fixed wait or timeout.",
+  "A finding without a reproduction counts exactly as one with a reproduction, at the severity you give it.",
+];
+/** The reviewer prompt's lines for the checks that fail at the commit it reviews. */
+const FAILING_CHECK_SENTENCES = [
+  "Each check below is a reviewer's reproduction that confirmed a finding of an earlier review, and it fails at the commit under review:",
+  "If the defect is still there, report it again as a finding, at its severity.",
+];
+/** The remediation prompt's lines for the preserved checks. */
+const PRESERVED_CHECK_SENTENCES = [
+  "Each check below is a reviewer's reproduction that confirmed a finding of this or an earlier review; the checks are read-only to you under",
+  ", the system runs every one after this and every later remediation, and the next review is shown each check that fails.",
+  "Run each check through run_command with its command before you answer: a check that still fails still shows its defect.",
 ];
 
 /** The three builders whose dispatches send --json-schema, with the reply rule they carry. */
@@ -627,6 +656,11 @@ const CONSTRAINT_STRINGS = [
   // fixed text. Also kept above the criterion-quality block.
   ...ACCEPTANCE_SUITE_SENTENCES,
   ...ACCEPTANCE_REVIEW_SENTENCES,
+  // Reproductions and preserved checks (docs/features/reproduced-review-findings/plan.md,
+  // Task 8), each source line's fixed text. Also kept above the criterion-quality block.
+  ...REPRODUCTION_RULE_SENTENCES,
+  ...FAILING_CHECK_SENTENCES,
+  ...PRESERVED_CHECK_SENTENCES,
   // What a criterion may say (docs/features/spec-criterion-testability/plan.md).
   // Measured 2026-09-27, $1.6186: team-notes run 3 copied the design's
   // "meaningful content change" into AC-041, and its tone guidance reached
@@ -1106,11 +1140,17 @@ test("each patch prompt asks for one structured answer and no longer asks for th
     assert.ok(prompt.indexOf("in exactly this shape:") < prompt.indexOf(status), name);
     assert.ok(prompt.indexOf(status) < prompt.indexOf(STRUCTURED_OUTPUT_RULE), name);
   }
+  // The code reviewers answer through structured output too
+  // (docs/features/reproduced-review-findings/plan.md, Task 2), after their finding contract.
+  const reviewer = buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, "SPEC", "PLAN", ["src/a.ts"], "DIFF", "c".repeat(40));
+  assert.equal(reviewer.split(STRUCTURED_OUTPUT_RULE).length, 2, "the reviewer prompt states the rule once");
+  assert.ok(!reviewer.includes("Output the JSON object"), "the reviewer prompt still asks for the object as text");
+  assert.ok(reviewer.indexOf("- subject: one sentence") < reviewer.indexOf(STRUCTURED_OUTPUT_RULE));
+  assert.ok(reviewer.includes(`${STRUCTURED_OUTPUT_RULE}\nConcerns within your specialty that you do not\nhave are represented by an empty findings array, not by prose.`));
   // The dispatches that still read free text keep their sentence and never get the rule.
   for (const prompt of [
     buildSpecAuthorPrompt(SPEC_AUTHOR, "DESIGN-TEXT", VERIFICATION),
     buildPlanAuthorPrompt(PLAN_AUTHOR, "# spec", "a".repeat(64), ["src/a.ts"], VERIFICATION),
-    buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, "SPEC", "PLAN", ["src/a.ts"], "DIFF", "c".repeat(40)),
     buildDesignSplitPrompt(SPEC_AUTHOR, "DESIGN-TEXT", "SPEC-TEXT", SPLIT_CONTEXT),
   ]) {
     assert.ok(prompt.includes("Output the JSON object"));
@@ -2093,6 +2133,12 @@ const PRE_SUITE_PROMPT_HASHES = {
   codeReviewStateIntegrity: "7c2428707384b38700e944fd8fa242c78378300ccf1f6c81e697128b43579a60",
 };
 
+/** The reproductions member the reviewer reply example gained in Task 8. */
+const EXAMPLE_REPRODUCTIONS = `"reproductions": [{"intentKey": "...", "location": "...", "fileName": "...", "content": "..."}]`;
+
+/** The reviewer prompt's free-text reply sentence at 4be6b2a, up to the sentence that follows it. */
+const FREE_TEXT_REVIEW_REPLY = "Output the JSON object directly, with no surrounding prose, no markdown\nfences, and no commentary. Concerns";
+
 /** The six prompts the suite changes; `undefined` leaves the builder's default. */
 function suiteAwarePrompts(
   suite: AcceptanceSuitePrompt | null | undefined,
@@ -2144,8 +2190,19 @@ function reviewLines(alreadySatisfied: string[]): string {
 test("without a suite, the patch and reviewer prompts are byte for byte the prompts built at 4be6b2a, before the suite existed", () => {
   for (const absent of [undefined, null]) {
     const built = suiteAwarePrompts(absent, absent);
+    // The reviewer prompts have since moved to structured output and gained the
+    // reproduction contract (docs/features/reproduced-review-findings/plan.md,
+    // Tasks 2 and 8); with that sentence put back, and the contract and the
+    // example's reproductions member taken out, they are the 4be6b2a bytes.
+    const beforeStructured = (name: string, prompt: string) =>
+      (REVIEW_PROMPTS as readonly string[]).includes(name)
+        ? prompt
+          .replace(`${promptBuilders.REPRODUCTION_RULES.join("\n")}\n\n`, "")
+          .replace(`, ${EXAMPLE_REPRODUCTIONS}`, "")
+          .replace(`${STRUCTURED_OUTPUT_RULE}\nConcerns`, FREE_TEXT_REVIEW_REPLY)
+        : prompt;
     assert.deepEqual(
-      Object.fromEntries(Object.entries(built).map(([name, prompt]) => [name, sha256Hex(prompt)])),
+      Object.fromEntries(Object.entries(built).map(([name, prompt]) => [name, sha256Hex(beforeStructured(name, prompt))])),
       PRE_SUITE_PROMPT_HASHES,
       `suite ${String(absent)}`
     );
@@ -2535,7 +2592,7 @@ function routingPrompts(document: string) {
     { builder: "buildPlanReconcilePrompt", prefix: "PLAN_AUTHOR_PROMPT_PREFIX", emitter: "emit-plan-stage.mjs", prompt: buildPlanReconcilePrompt(PLAN_AUTHOR, document, document, hash, scope, PAIR, VERIFICATION) },
     { builder: "buildImplementationAuthorPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationAuthorPrompt(IMPLEMENTER, document, document, scope, base, ONLY_PHASE, [], VERIFICATION), schema: WORKSPACE_REPLY_SCHEMA },
     { builder: "buildImplementationSelfReviewPrompt", prefix: "IMPLEMENTATION_PROMPT_PREFIX", emitter: "emit-implementation-stage.mjs", prompt: buildImplementationSelfReviewPrompt(IMPLEMENTER, document, document, scope, base, scope, scope, document, VERIFICATION), schema: SELF_REVIEW_REPLY_SCHEMA },
-    { builder: "buildCodeReviewPrompt", prefix: "CODE_REVIEW_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, document, document, scope, document, base) },
+    { builder: "buildCodeReviewPrompt", prefix: "CODE_REVIEW_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, document, document, scope, document, base), schema: CODE_REVIEW_REPLY_SCHEMA, toolServer: false },
     { builder: "buildCodeReviewRemediationPrompt", prefix: "CODE_REVIEW_REMEDIATION_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewRemediationPrompt(IMPLEMENTER, document, document, scope, base, scope, document, [], VERIFICATION), schema: WORKSPACE_REPLY_SCHEMA },
     { builder: "buildCodeReviewReconcilerPrompt", prefix: "CODE_REVIEW_RECONCILER_PROMPT_PREFIX", emitter: "emit-code-review.mjs", prompt: buildCodeReviewReconcilerPrompt([], document, document, document, base) },
     { builder: "buildDesignSplitPrompt", prefix: "DESIGN_SPLIT_PROMPT_PREFIX", emitter: "emit-spec-stage.mjs", prompt: buildDesignSplitPrompt(SPEC_AUTHOR, document, document, SPLIT_CONTEXT) },
@@ -2609,10 +2666,10 @@ test("CLI fixture directly forwards exact stdin bytes to every selected emitter 
     for (const emitter of new Set(router.PROMPT_ROUTES.map((route) => route.emitter))) {
       writeFileSync(join(harness, emitter), 'import { readFileSync } from "node:fs"; process.stdout.write(readFileSync(0)); process.stderr.write(`child stderr ${JSON.stringify(process.argv.slice(2))}`); process.exitCode = 7;\n');
     }
-    for (const { builder, prompt, schema } of routingPrompts("# Wrapped\r\nUTF-8 🌙\r\n")) {
+    for (const { builder, prompt, schema, toolServer } of routingPrompts("# Wrapped\r\nUTF-8 🌙\r\n")) {
       const input = Buffer.concat([Buffer.from(prompt), Buffer.from([0, 255, 13, 10])]);
-      // A patch dispatch's schema and tool server travel to the selected emitter; nothing else does.
-      const schemaArgs = schema === undefined ? [] : ["--json-schema", JSON.stringify(schema), ...TOOL_SERVER_ARGS];
+      // A dispatch's schema, and a patch dispatch's tool server, travel to the selected emitter; nothing else does.
+      const schemaArgs = schema === undefined ? [] : ["--json-schema", JSON.stringify(schema), ...(toolServer === false ? [] : TOOL_SERVER_ARGS)];
       const child = spawnSync(process.execPath, [fixture, "--model", "m", ...schemaArgs], { input });
       assert.equal(child.status, 7, child.stderr.toString());
       assert.deepEqual(child.stdout, input, `${builder}: router must forward original bytes, not decoded text`);
@@ -2630,6 +2687,19 @@ function runRouter(cwd: string, prompt: string, agentId: string, args: string[] 
   assert.equal(child.status, 0, child.stderr);
   const envelope = parseEnvelope(CLAUDE_CODE, child.stdout);
   const result = validateAgentResult(agentId, JSON.parse(envelope.resultText));
+  assert.ok(result.ok, result.ok ? "" : result.reason);
+  return result.value;
+}
+
+/** A code reviewer: the code-review reply schema is sent without the tool server, and the answer is read from structured_output. */
+function runReviewRouter(cwd: string, prompt: string, agentId: string, args: string[] = []): AgentResult {
+  const child = spawnSync(
+    process.execPath,
+    [CLI_ROUTER, ...args, "--model", "fixture-model", "--json-schema", JSON.stringify(CODE_REVIEW_REPLY_SCHEMA)],
+    { cwd, input: prompt, encoding: "utf8" }
+  );
+  assert.equal(child.status, 0, child.stderr);
+  const result = validateAgentResult(agentId, JSON.parse(parseEnvelope(CLAUDE_CODE, child.stdout, true).resultText));
   assert.ok(result.ok, result.ok ? "" : result.reason);
   return result.value;
 }
@@ -2727,7 +2797,7 @@ test("CLI fixture composes existing emitters for all builder families with recei
     for (const mode of ["ok", "high", "low", "high-then-clean"]) {
       for (const reviewer of [CODE_REVIEWER_CORRECTNESS, CODE_REVIEWER_SECURITY, CODE_REVIEWER_STATE_INTEGRITY]) {
         const prompt = buildCodeReviewPrompt(reviewer, specText as string, planText as string, scope, "", base);
-        const result = runRouter(root, prompt, reviewer.id, ["--code-review-mode", mode]);
+        const result = runReviewRouter(root, prompt, reviewer.id, ["--code-review-mode", mode]);
         const reports = validateReviewerReports(proposedChanges(result).findings, { agentId: reviewer.id, upstreamPrefix: "upstream:plan:" });
         assert.ok(reports.ok, reports.ok ? "" : reports.reason);
         assert.equal(validateCodeReviewReports(reports.value, scope), null);
@@ -2740,7 +2810,7 @@ test("CLI fixture composes existing emitters for all builder families with recei
     assert.equal(runWorkspaceRouter(root, remediationPrompt, ["--code-review-mode", "high-then-clean"]).status, "completed");
     const repaired = readFileSync(join(root, scope[0]!), "utf8");
     assert.ok(repaired.endsWith("\ncode-review-remediated\n"), "the remediation wrote its fix into the first scope path");
-    const after = runRouter(root, buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, specText as string, planText as string, scope, "", base), CODE_REVIEWER_CORRECTNESS.id, ["--code-review-mode", "high-then-clean"]);
+    const after = runReviewRouter(root, buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, specText as string, planText as string, scope, "", base), CODE_REVIEWER_CORRECTNESS.id, ["--code-review-mode", "high-then-clean"]);
     assert.deepEqual(proposedChanges(after).findings, []);
     assert.equal(runWorkspaceRouter(root, remediationPrompt, ["--code-review-mode", "remediation-empty"]).status, "completed");
     assert.equal(readFileSync(join(root, scope[0]!), "utf8"), repaired, "remediation-empty changes nothing");
@@ -2750,4 +2820,83 @@ test("CLI fixture composes existing emitters for all builder families with recei
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// --- reproductions and preserved checks (docs/features/reproduced-review-findings/plan.md, Task 8) ---
+
+function reviewerWith(failing: promptBuilders.FailingCheckPrompt[] | undefined): string {
+  return buildCodeReviewPrompt(CODE_REVIEWER_CORRECTNESS, "SPEC-TEXT", "PLAN-TEXT", ["js/a.js"], "DIFF-TEXT", "c".repeat(40), null, failing);
+}
+
+function remediationWith(checks: promptBuilders.PreservedCheckPrompt[] | undefined): string {
+  const finding = [{
+    findingId: 7,
+    location: "js/a.js:3",
+    intentKey: "wrong-result",
+    reports: [{ reviewerId: "code-reviewer-correctness", severity: "high", classification: "current_artifact" as const, subject: "The calculation returns the wrong result." }],
+  }];
+  return buildCodeReviewRemediationPrompt(IMPLEMENTER, "SPEC-TEXT", "PLAN-TEXT", ["js/a.js"], "b".repeat(40), ["js/a.js"], "DIFF-TEXT", finding, VERIFICATION, null, checks);
+}
+
+test("the reviewer prompt states the reproduction contract once, each rule on its own line, between the finding fields and the reply rule", () => {
+  const prompt = reviewerWith(undefined);
+  const block = promptBuilders.REPRODUCTION_RULES.join("\n");
+  assert.equal(prompt.split(block).length, 2);
+  assert.ok(prompt.indexOf("- subject: one sentence") < prompt.indexOf(block));
+  assert.ok(prompt.indexOf(block) < prompt.indexOf(STRUCTURED_OUTPUT_RULE));
+  for (const sentence of REPRODUCTION_RULE_SENTENCES) {
+    const line = prompt.split("\n").find((l) => l.includes(sentence));
+    assert.ok(line !== undefined && promptBuilders.REPRODUCTION_RULES.includes(line), `not one whole rule line: ${sentence}`);
+  }
+  // The bounds and the import form are the constants the schema, validator and lint read.
+  assert.ok(prompt.includes(`at most ${REPRODUCTION_MAX_COUNT} in all`));
+  assert.ok(prompt.includes(`with a fileName matching ${REPRODUCTION_FILE_NAME.source}.`));
+  assert.ok(prompt.includes(`loads the system's own runner: ${ACCEPTANCE_IMPORT_LINE}\n`));
+  assert.ok(prompt.includes('open the page with `await page.goto("index.html")`.'));
+  // The example's shape is the reply schema's.
+  const example = JSON.parse(prompt.split("\n").find((l) => l.startsWith('{"status": "proposed"'))!) as {
+    proposedContentChanges: { reproductions: Record<string, string>[] };
+  };
+  const item = (CODE_REVIEW_REPLY_SCHEMA.properties.proposedContentChanges.properties as { reproductions: { items: { required: string[] } } }).reproductions.items;
+  assert.deepEqual(Object.keys(example.proposedContentChanges.reproductions[0]!).sort(), [...item.required].sort());
+  // The prompt still names no gate or threshold.
+  assert.ok(!/\bgate\b|\bthreshold\b|\bblock/.test(prompt));
+});
+
+test("the reviewer prompt names each failing check with its finding, location, path and first error, and nothing without one", () => {
+  const without = reviewerWith(undefined);
+  assert.equal(reviewerWith([]), without);
+  for (const sentence of FAILING_CHECK_SENTENCES) assert.ok(!without.includes(sentence), sentence);
+  const failing = [
+    { findingId: 9, location: "js/app.js:42", path: "/bw-checks/9/code-reviewer-correctness/enter.spec.mjs", detail: "Error: expect(locator).toHaveText(expected) failed" },
+    { findingId: 10, location: "js/app.js", path: "/bw-checks/10/code-reviewer-security/focus.spec.mjs", detail: null },
+  ];
+  const block = [
+    FAILING_CHECK_SENTENCES[0],
+    "- finding 9; location js/app.js:42; check /bw-checks/9/code-reviewer-correctness/enter.spec.mjs; first error: Error: expect(locator).toHaveText(expected) failed",
+    "- finding 10; location js/app.js; check /bw-checks/10/code-reviewer-security/focus.spec.mjs; first error: none",
+    FAILING_CHECK_SENTENCES[1],
+  ].join("\n");
+  const prompt = reviewerWith(failing);
+  assert.equal(prompt.split(block).length, 2);
+  assert.equal(prompt.replace(`\n\n${block}`, ""), without, "the failing checks are the only difference");
+  assert.ok(prompt.indexOf(block) < prompt.indexOf("Return exactly a JSON AgentResult"));
+});
+
+test("the remediation prompt lists each check's path and exact command and says to run them, and is byte-identical without checks", () => {
+  const without = remediationWith(undefined);
+  assert.equal(remediationWith([]), without);
+  for (const sentence of PRESERVED_CHECK_SENTENCES) assert.ok(!without.includes(sentence), sentence);
+  const path = "/bw-checks/9/code-reviewer-correctness/enter.spec.mjs";
+  const command = reproductionCommand("9-code-reviewer-correctness-enter.spec.mjs", path);
+  const prompt = remediationWith([{ findingId: 9, command }]);
+  const block = [
+    `${PRESERVED_CHECK_SENTENCES[0]} /bw-checks/${PRESERVED_CHECK_SENTENCES[1]}`,
+    PRESERVED_CHECK_SENTENCES[2],
+    `- finding 9; check ${path}; command: ${command.command.join(" ")}`,
+  ].join("\n");
+  assert.equal(prompt.split(block).length, 2);
+  assert.equal(prompt.replace(`\n${block}`, ""), without, "the checks are the only difference");
+  assert.ok(prompt.indexOf(block) < prompt.indexOf("Approved scope:"));
+  assert.ok(prompt.includes("node /opt/bw-browser/node_modules/@playwright/test/cli.js test --config /opt/bw-browser/checks.config.mjs --repeat-each 2 /bw-checks/9/code-reviewer-correctness/enter.spec.mjs"));
 });

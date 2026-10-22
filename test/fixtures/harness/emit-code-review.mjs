@@ -40,31 +40,32 @@ function emitRaw(resultText) {
   }
 }
 
-function emit(agentResult) {
-  emitRaw(JSON.stringify(agentResult));
-}
-
 // The remediation dispatch sends `--json-schema <schema>` after the model and
 // effort (docs/features/structured-patch-output/plan.md) and `--mcp-config
-// <file>` naming the tool server (docs/features/sandboxed-implementer/plan.md);
-// reviewers and the reconciler send neither. Each branch below checks its own
-// case, so a stage that sends a flag to the wrong dispatch, or stops sending
-// it, fails here.
+// <file>` naming the tool server (docs/features/sandboxed-implementer/plan.md).
+// Reviewers send the code-review reply schema and no tool server
+// (docs/features/reproduced-review-findings/plan.md); the reconciler sends
+// neither. Each branch below checks its own case, so a stage that sends a flag
+// to the wrong dispatch, or stops sending it, fails here.
 const schemaAt = process.argv.indexOf("--json-schema");
 const schemaArg = schemaAt < 0 ? undefined : process.argv[schemaAt + 1];
 const hasToolServer = process.argv.includes("--mcp-config");
-function requireSchema(promptKind, wanted) {
-  if (wanted && schemaArg === undefined) {
+/** `schema` names the reply schema the dispatch must send, "workspace" or "review", or null for none. */
+function requireSchema(promptKind, schema, toolServer) {
+  if (schema !== null && schemaArg === undefined) {
     throw new Error(`emit-code-review: a ${promptKind} prompt arrived without --json-schema`);
   }
-  if (!wanted && schemaArg !== undefined) {
+  if (schema === null && schemaArg !== undefined) {
     throw new Error(`emit-code-review: a ${promptKind} prompt arrived with --json-schema`);
   }
-  if (wanted !== hasToolServer) {
+  if (toolServer !== hasToolServer) {
     throw new Error(`emit-code-review: a ${promptKind} prompt arrived ${hasToolServer ? "with" : "without"} --mcp-config`);
   }
-  // Remediation takes the workspace reply schema, never the self-review one.
-  if (wanted && JSON.parse(schemaArg).required.includes("critique")) {
+  // Remediation takes the workspace reply schema and a reviewer the code-review
+  // reply schema, never another dispatch's.
+  const required = schema === null ? [] : JSON.parse(schemaArg).required;
+  const isReview = required.includes("proposedContentChanges");
+  if (schema !== null && (required.includes("critique") || isReview !== (schema === "review"))) {
     throw new Error(`emit-code-review: a ${promptKind} prompt arrived with the wrong --json-schema`);
   }
 }
@@ -105,7 +106,7 @@ function emitStructured(agentResult) {
 // Every mode not named below keeps every finding, so the stage makes one call
 // and remediates exactly what it did before the reconciler existed.
 if (stdin.startsWith("you are the code-review reconciler")) {
-  requireSchema("reconciler", false);
+  requireSchema("reconciler", null, false);
   const listed = [...stdin.matchAll(/^- finding (\d+); location .*; intentKey (\S+)$/gm)].map((m) => ({
     findingId: Number(m[1]),
     intentKey: m[2],
@@ -158,7 +159,7 @@ if (stdin.startsWith("you are the code-review reconciler")) {
 // the workspace reply shape (WORKSPACE_REPLY_SCHEMA in src/agent-result.ts).
 const remediationMatch = /you are the code-review remediator (\S+)/.exec(stdin);
 if (remediationMatch) {
-  requireSchema("remediation", true);
+  requireSchema("remediation", "workspace", true);
   const baseCommit = /The repository checkout is at commit ([0-9a-f]{40,64}):/.exec(stdin)?.[1];
   const scopeBlock = /Approved scope:\n\n([\s\S]*?)\n\nFindings to remediate:/.exec(stdin)?.[1];
   if (!baseCommit || !scopeBlock) {
@@ -233,7 +234,7 @@ if (!agentMatch) {
   throw new Error("emit-code-review: no agent id found in the prompt");
 }
 const agent = agentMatch[1];
-requireSchema("reviewer", false);
+requireSchema("reviewer", "review", false);
 
 const barrierDir = process.env.BW_TEST_REVIEW_BARRIER_DIR;
 const postMixedRemediation =
@@ -357,6 +358,22 @@ if (mode === "parallel-fail") {
     : onlyFrom(CORRECTNESS, [
         finding({ severity: "high", location: `${first}:1`, intentKey: "needs-remediation" }),
       ]);
+} else if (mode === "high-medium-then-clean") {
+  // A high and a medium finding from two seats, both kept; clean once remediated.
+  const remediated = readFileSync(first, "utf8").includes("code-review-remediated");
+  agentResult = remediated
+    ? proposed([])
+    : agent === CORRECTNESS
+      ? proposed([finding({ severity: "high", location: `${first}:1`, intentKey: "needs-remediation" })])
+      : agent === SECURITY
+        ? proposed([finding({ severity: "medium", location: `${first}:2`, intentKey: "medium-concern" })])
+        : proposed([]);
+} else if (mode === "high-twice-then-clean") {
+  // The high finding survives the first remediation and is clean after the second.
+  const remediations = readFileSync(first, "utf8").split("code-review-remediated").length - 1;
+  agentResult = remediations >= 2
+    ? proposed([])
+    : onlyFrom(CORRECTNESS, [finding({ severity: "high", location: `${first}:1`, intentKey: "needs-remediation" })]);
 } else if (mode === "mixed-then-clean") {
   const remediated = readFileSync(first, "utf8").includes("code-review-remediated");
   agentResult = remediated
@@ -446,12 +463,30 @@ if (mode === "parallel-fail") {
   writeFileSync("reviewer-residue.txt", "fixture wrote this\n");
   agentResult = proposed([]);
 } else if (mode === "prose") {
-  // A well-formed envelope carrying prose instead of a JSON body: the
-  // envelope parses and `extractJsonBody` is what refuses, which is the
-  // boundary this mode exists to exercise.
+  // A reply that never reached the structured channel: a well-formed text
+  // envelope with no structured_output, which the envelope parser refuses
+  // for a dispatch that sent --json-schema.
   emitRaw("I reviewed the change and found nothing of concern.");
   process.exit(0);
 } else {
   throw new Error(`emit-code-review: unknown EMIT_MODE ${mode}`);
 }
-emit(agentResult);
+// Reproductions (docs/features/reproduced-review-findings/plan.md):
+// BW_TEST_REPRODUCTIONS maps a reviewer id to entries `{ fileName, recorded }`,
+// each attached to that reviewer's finding at the same position, while the
+// finding exists. The content is the one file of the recorded report
+// `test/fixtures/recorded/<recorded>.json`, never a literal (hazard 4). An
+// entry's optional `intentKey` or `location` replaces the finding's, to name
+// a finding the reply does not report.
+const reproductionPlan = process.env.BW_TEST_REPRODUCTIONS === undefined ? {} : JSON.parse(process.env.BW_TEST_REPRODUCTIONS);
+const reported = agentResult.proposedContentChanges.findings;
+const attached = (reproductionPlan[agent] ?? []).slice(0, reported.length);
+if (attached.length > 0) {
+  agentResult.proposedContentChanges.reproductions = attached.map((entry, i) => ({
+    intentKey: entry.intentKey ?? reported[i].intentKey,
+    location: entry.location ?? reported[i].location,
+    fileName: entry.fileName,
+    content: JSON.parse(readFileSync(new URL(`../recorded/${entry.recorded}.json`, import.meta.url), "utf8")).files[0].content,
+  }));
+}
+emitStructured(agentResult);

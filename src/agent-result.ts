@@ -1,3 +1,4 @@
+import { REPRODUCTION_FILE_NAME, REPRODUCTION_MAX_CHARS, REPRODUCTION_MAX_COUNT } from "./acceptance.ts";
 import { extractJsonBody } from "./parse-output.ts";
 
 export type AgentResultStatus = "proposed" | "blocked" | "failed";
@@ -38,6 +39,66 @@ export const WORKSPACE_REPLY_SCHEMA = {
     status: { type: "string", enum: [...WORKSPACE_STATUSES] },
     summary: { type: "string" },
     incompleteTasks: { type: "array", items: { type: "string" } },
+  },
+};
+
+/**
+ * What a code reviewer returns through `--json-schema`
+ * (docs/features/reproduced-review-findings/plan.md): the AgentResult its prompt
+ * advertises, with its findings, and an optional list of reproductions, each a
+ * Playwright test file naming one finding by its `intentKey` and `location`. A
+ * reproduction is file content inside a reply, the escaping failure class of
+ * hazard 1, so it travels only through structured output. The schema states
+ * each bound and `validateCodeReviewReproductions` checks it again, since
+ * nothing has shown the harness enforces `pattern`, `maxLength` or `maxItems`.
+ */
+export const CODE_REVIEW_REPLY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["status", "agent", "role", "executor", "summary", "proposedContentChanges"],
+  properties: {
+    status: { type: "string", enum: [...STATUSES] },
+    agent: { type: "string" },
+    role: { type: "string", enum: ["reviewer"] },
+    executor: { type: "string" },
+    summary: { type: "string" },
+    proposedContentChanges: {
+      type: "object",
+      additionalProperties: false,
+      required: ["findings"],
+      properties: {
+        findings: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["severity", "classification", "location", "intentKey", "subject"],
+            properties: {
+              severity: { type: "string" },
+              classification: { type: "string" },
+              location: { type: "string" },
+              intentKey: { type: "string" },
+              subject: { type: "string" },
+            },
+          },
+        },
+        reproductions: {
+          type: "array",
+          maxItems: REPRODUCTION_MAX_COUNT,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["intentKey", "location", "fileName", "content"],
+            properties: {
+              intentKey: { type: "string" },
+              location: { type: "string" },
+              fileName: { type: "string", pattern: REPRODUCTION_FILE_NAME.source },
+              content: { type: "string", maxLength: REPRODUCTION_MAX_CHARS },
+            },
+          },
+        },
+      },
+    },
   },
 };
 

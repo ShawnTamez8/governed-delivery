@@ -16,8 +16,9 @@ own status line.
 | 2 Derived artifacts | Implemented, commit `1cda025`, `docs/features/derived-artifacts-and-dependency-policy/plan.md` |
 | 4 Executable acceptance criteria | Built, uncommitted, not paid-validated, `docs/features/protected-acceptance-tests/plan.md` |
 | 10 Dependency policy | Implemented with change 2, same commit and plan |
+| 7 Evidence for findings | Built, uncommitted, not paid-validated, `docs/features/reproduced-review-findings/plan.md` |
 | 9 Replay | Designed only (`docs/proposals/whole-run-replay.md`); not built |
-| 3, 5, 6, 7, 8 | Not built |
+| 3, 5, 6, 8 | Not built |
 
 Changes 4 and 7 carry a 2026-10-20 revision drawn from a web-calculator run whose
 remediation introduced the defect that blocked it
@@ -610,8 +611,13 @@ route to a feature. That is narrower and easier to measure with change 9.
 
 ### 7. A blocking finding carries evidence the harness checks
 
-**Status (2026-10-20): Not built.** Revised 2026-10-20; see "Revision
-(2026-10-20)" at the end of this change.
+**Status (2026-10-22): Built, uncommitted, not paid-validated.** Revised
+2026-10-20; see "Revision (2026-10-20)" at the end of this change.
+`docs/features/reproduced-review-findings/plan.md` builds the revision, not the
+original rule: a reproduction is evidence only and never decides whether a
+finding blocks (operator, 2026-10-22). A confirmed reproduction of a kept finding
+becomes a non-blocking check at every later remediation, named to the next panel
+when it fails. The plan's paid benchmark needs its own consent.
 
 **What.** A code reviewer that wants a finding to block must attach a repro: a
 test file and command, or a command alone. The harness applies the repro in a

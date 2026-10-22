@@ -42,8 +42,10 @@ import {
   markUnremovable,
   markUnstartable,
   recordingDockerCommand,
+  reproductionRuns,
   sandboxPrefix,
   serveAcceptanceReport,
+  serveReproduction,
   workContainerMounts,
 } from "./fixtures/docker/stand-in.ts";
 
@@ -118,6 +120,7 @@ function fixtureExecutor(
         "BW_TEST_REVIEW_BARRIER_COUNT",
         "BW_TEST_REVIEW_DELAY_MS",
         "BW_TEST_RECONCILE_STATE_DIR",
+        "BW_TEST_REPRODUCTIONS",
       ],
       network: "inherit",
     },
@@ -1861,15 +1864,47 @@ test("a reviewer that cannot review must not pass the gate by absence", async ()
   });
 });
 
-test("a prose result is refused at the body boundary", async () => {
+test("a reviewer reply that never reached the structured channel fails the reviewer, with the harness reason", async () => {
+  // docs/features/reproduced-review-findings/plan.md, Task 2: reviewers send
+  // --json-schema, so a text reply is refused at the envelope, not at the body.
   await withVerifiedRun(async (ctx) => {
     await withMode(async () => {
       const result = await review(ctx);
       assert.equal(result.ok, false);
       if (result.ok) return;
-      assert.match(result.reason, /body refused/);
+      assert.match(
+        result.reason,
+        /^code-review panel failed after round 1\/2 at [0-9a-f]+: code-reviewer-correctness:dispatch_failed \(dispatched agent code-reviewer-correctness \(reviewer\) on stage \d+: envelope parse failed: harness envelope for executor claude-code has a result line without a structured_output object although the dispatch requested --json-schema: line \d+; the line reports total_cost_usd 0 /
+      );
+      assert.equal(eventsOf(ctx, "code_review.reviewer.failed").length, 1);
+      assert.equal(ctx.store.getCanonicalFindings(stageOf(ctx)!.id).length, 0);
       assert.equal(ctx.store.getRun(ctx.runId)!.status, "blocked");
     }, "prose");
+  });
+});
+
+test("a structured reviewer reply with findings and no reproductions is recorded as a free-text reply was", async () => {
+  await withVerifiedRun(async (ctx) => {
+    refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
+      p.policy.codeReviewMaxRounds = 1;
+    });
+    await withMode(async () => {
+      const result = await review(ctx);
+      assert.equal(result.ok, false, "the high finding blocks the one-round profile");
+      const stage = stageOf(ctx)!;
+      const runs = agentRuns(ctx, stage.id);
+      assert.equal(runs.length, 3);
+      for (const run of runs) {
+        const raw = readFileSync(join(ctx.root, run.raw_output_ref), "utf8");
+        assert.match(raw, /"structured_output":\{"status":"proposed"/, `${run.agent} answered through the structured channel`);
+      }
+      const record = readRecord(ctx.root, ctx.runId);
+      assert.deepEqual(
+        record.rounds[0]!.findings.map((f) => [f.location, f.intentKey, f.reports.map((r) => [r.agent, r.severity])]),
+        [[`${ARTIFACT}:12`, "unsafe-input", [["code-reviewer-security", "high"]]]]
+      );
+      assert.deepEqual(record.blocking.map((b) => b.severity), ["high"]);
+    }, "high");
   });
 });
 
@@ -2332,4 +2367,644 @@ test("the second recorded correctness response — prose, then a fence, one high
     verdict.blocking.map((b) => ({ location: b.location, severity: b.severity })),
     stageContext.recordedBlocking.map(({ location, severity }) => ({ location, severity }))
   );
+});
+
+// --- reproductions (docs/features/reproduced-review-findings/plan.md, Task 5) ---
+
+/** A reviewer's reproduction: its file name and the recorded report whose one file is its content. */
+interface PlannedReproduction {
+  fileName: string;
+  recorded: string;
+  /** Names this finding instead of the reviewer's own. */
+  intentKey?: string;
+}
+
+/** The content the emitter attaches for `recorded`. */
+function recordedContent(recorded: string): string {
+  return (JSON.parse(readFileSync(join(process.cwd(), "test", "fixtures", "recorded", `${recorded}.json`), "utf8")) as {
+    files: { content: string }[];
+  }).files[0]!.content;
+}
+
+/** Review with `mode`, each reviewer attaching the reproductions `planned` names for it. */
+async function reviewWithReproductions(
+  ctx: Ctx,
+  mode: string,
+  planned: Record<string, PlannedReproduction[]>
+): Promise<Awaited<ReturnType<typeof review>>> {
+  let result: Awaited<ReturnType<typeof review>> | undefined;
+  await withReviewEnvironment(async () => {
+    result = await review(ctx);
+  }, { EMIT_MODE: mode, BW_TEST_REPRODUCTIONS: JSON.stringify(planned) });
+  return result!;
+}
+
+/** The final panel only: one round, no remediation. */
+function finalPanelOnly(ctx: Ctx): void {
+  refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
+    p.policy.codeReviewMaxRounds = 1;
+  });
+}
+
+/** One reproduction's own throwaway checkout. */
+function reproCheckout(ctx: Ctx, round: number, findingId: number, seat: string): string {
+  return join(ctx.root, ".governance", "code-review", String(ctx.runId), `round-${round}`, "repro-checkout", `${findingId}-${seat}`);
+}
+
+const SECURITY_SEAT = "code-reviewer-security";
+const CORRECTNESS_SEAT = "code-reviewer-correctness";
+
+test("each reproduction outcome is recorded in result.json, the audit log and the report, and the gate decides as without it", async () => {
+  const cases: Array<{
+    name: string;
+    recorded: string;
+    serve: string | null;
+    options?: Parameters<typeof serveReproduction>[3];
+    timeoutSeconds?: number;
+    outcome: string;
+    detail: RegExp;
+  }> = [
+    { name: "a failing assertion", recorded: "reproduction-report-matcher", serve: "reproduction-report-matcher", outcome: "confirmed", detail: /^Error: expect\(locator\)\.toHaveText\(expected\) failed$/ },
+    { name: "a passing assertion", recorded: "reproduction-report-pass", serve: "reproduction-report-pass", outcome: "not_reproduced", detail: /^$/ },
+    { name: "a hidden element's locator timeout", recorded: "reproduction-report-hidden-locator", serve: "reproduction-report-hidden-locator", outcome: "repro_failed", detail: /^element is not visible$/ },
+    { name: "a locator that never resolves", recorded: "reproduction-report-matcher", serve: "acceptance-report-valid-red-locator", outcome: "repro_failed", detail: /^waiting for getByRole\('button', \{ name: '7' \}\)$/ },
+    { name: "a flaky report", recorded: "reproduction-report-matcher", serve: "acceptance-report-flaky", outcome: "repro_failed", detail: /^a test's repeats differ: / },
+    { name: "a load error", recorded: "reproduction-report-matcher", serve: "acceptance-report-load-error", outcome: "repro_failed", detail: /^the reproduction does not load: SyntaxError: / },
+    { name: "a lint refusal", recorded: "acceptance-report-test-timeout", serve: null, outcome: "repro_failed", detail: /^the lint refused it: \/bw-checks\/\d+\/code-reviewer-security\/repro\.spec\.mjs:\d+: setTimeout\( / },
+    { name: "the command ceiling", recorded: "reproduction-report-matcher", serve: "reproduction-report-matcher", options: { exitStatus: 137, delayMs: 1500 }, timeoutSeconds: 1, outcome: "repro_failed", detail: /exceeded the 1-second ceiling/ },
+  ];
+  for (const entry of cases) {
+    await withVerifiedRun(async (ctx) => {
+      finalPanelOnly(ctx);
+      if (entry.timeoutSeconds !== undefined) {
+        refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
+          p.policy.verifyCommandTimeoutSeconds = entry.timeoutSeconds!;
+        });
+      }
+      const prefix = sandboxPrefix(ctx.root, ctx.runId, "round-1-repro");
+      const unserve = entry.serve === null ? () => undefined : serveReproduction(prefix, "repro.spec.mjs", entry.serve, entry.options);
+      try {
+        const result = await reviewWithReproductions(ctx, "high", {
+          [SECURITY_SEAT]: [{ fileName: "repro.spec.mjs", recorded: entry.recorded }],
+        });
+        const record = readRecord(ctx.root, ctx.runId);
+        const finding = record.rounds[0]!.findings[0]!;
+        // The final panel's gate decides exactly as it would with no reproduction.
+        assert.equal(result.ok, false, entry.name);
+        assert.deepEqual(record.blocking, [{ findingId: finding.id, severity: "high", location: finding.location }], entry.name);
+        const [reproduction, ...others] = record.rounds[0]!.reproductions;
+        assert.equal(others.length, 0, entry.name);
+        assert.equal(reproduction!.findingId, finding.id, entry.name);
+        assert.equal(reproduction!.reviewer, SECURITY_SEAT, entry.name);
+        assert.equal(reproduction!.fileName, "repro.spec.mjs", entry.name);
+        assert.equal(reproduction!.contentSha256, sha256Hex(recordedContent(entry.recorded)), entry.name);
+        assert.equal(reproduction!.outcome, entry.outcome, entry.name);
+        assert.match(reproduction!.detail ?? "", entry.detail, entry.name);
+        const events = eventsOf(ctx, `code_review.repro.${entry.outcome}`);
+        assert.equal(events.length, 1, entry.name);
+        assert.ok(
+          events[0]!.summary.includes(`finding=${finding.id}; reviewer=${SECURITY_SEAT}; file=repro.spec.mjs; sha256=${reproduction!.contentSha256}; evidence=${reproduction!.evidenceRef ?? "none"}`),
+          `${entry.name}: ${events[0]!.summary}`
+        );
+        const report = readFileSync(join(ctx.root, ".governance", "code-review", String(ctx.runId), "report.md"), "utf8");
+        assert.ok(report.includes(`- reproduction by ${SECURITY_SEAT} (repro.spec.mjs): ${entry.outcome}`), entry.name);
+        const written = join(ctx.root, ".governance", "code-review", String(ctx.runId), "checks", String(finding.id), SECURITY_SEAT, "repro.spec.mjs");
+        if (entry.serve === null) {
+          // Refused by the lint: never written and never run.
+          assert.equal(existsSync(written), false, entry.name);
+          assert.equal(reproduction!.evidenceRef, null, entry.name);
+          assert.equal(reproductionRuns(prefix).length, 0, entry.name);
+        } else {
+          assert.equal(readFileSync(written, "utf8"), recordedContent(entry.recorded), entry.name);
+          assert.equal(reproduction!.evidenceRef, join(".governance", "code-review", String(ctx.runId), "round-1", "reproductions", `${finding.id}-${SECURITY_SEAT}-repro.spec.mjs.log`), entry.name);
+          assert.deepEqual(reproductionRuns(prefix).map((r) => r.path), [`/bw-checks/${finding.id}/${SECURITY_SEAT}/repro.spec.mjs`], entry.name);
+        }
+        assert.equal(existsSync(reproCheckout(ctx, 1, finding.id, SECURITY_SEAT)), false, entry.name);
+        assert.equal(verifyAuditChain(ctx.store), null, entry.name);
+      } finally {
+        unserve();
+      }
+    });
+  }
+});
+
+test("two reviewers' reproductions of one finding run in two sandboxes, and one confirming is enough", async () => {
+  await withVerifiedRun(async (ctx) => {
+    finalPanelOnly(ctx);
+    const prefix = sandboxPrefix(ctx.root, ctx.runId, "round-1-repro");
+    const unserve = [
+      serveReproduction(prefix, "confirms.spec.mjs", "reproduction-report-matcher"),
+      serveReproduction(prefix, "passes.spec.mjs", "reproduction-report-pass"),
+    ];
+    try {
+      // `shared`: every seat reports one canonical finding.
+      await reviewWithReproductions(ctx, "shared", {
+        [CORRECTNESS_SEAT]: [{ fileName: "confirms.spec.mjs", recorded: "reproduction-report-matcher" }],
+        [SECURITY_SEAT]: [{ fileName: "passes.spec.mjs", recorded: "reproduction-report-pass" }],
+      });
+      const round = readRecord(ctx.root, ctx.runId).rounds[0]!;
+      assert.equal(round.findings.length, 1);
+      const id = round.findings[0]!.id;
+      assert.deepEqual(
+        round.reproductions.map((r) => [r.findingId, r.reviewer, r.outcome]),
+        [[id, CORRECTNESS_SEAT, "confirmed"], [id, SECURITY_SEAT, "not_reproduced"]]
+      );
+      assert.deepEqual(reproductionRuns(prefix).map((r) => r.path), [
+        `/bw-checks/${id}/${CORRECTNESS_SEAT}/confirms.spec.mjs`,
+        `/bw-checks/${id}/${SECURITY_SEAT}/passes.spec.mjs`,
+      ]);
+      // Each ran alone, in its own sandbox.
+      assert.equal(new Set(reproductionRuns(prefix).map((r) => r.container)).size, 2);
+    } finally {
+      for (const u of unserve) u();
+    }
+  });
+});
+
+test("a sandbox failure fails only its own reproduction", async () => {
+  await withVerifiedRun(async (ctx) => {
+    finalPanelOnly(ctx);
+    const prefix = sandboxPrefix(ctx.root, ctx.runId, "round-1-repro");
+    const unserve = [
+      serveReproduction(prefix, "confirms.spec.mjs", "reproduction-report-matcher"),
+      serveReproduction(prefix, "unreadable.spec.mjs", "reproduction-report-matcher", { noExit: true }),
+    ];
+    try {
+      await reviewWithReproductions(ctx, "shared", {
+        [CORRECTNESS_SEAT]: [{ fileName: "confirms.spec.mjs", recorded: "reproduction-report-matcher" }],
+        [SECURITY_SEAT]: [{ fileName: "unreadable.spec.mjs", recorded: "reproduction-report-matcher" }],
+      });
+      const round = readRecord(ctx.root, ctx.runId).rounds[0]!;
+      const id = round.findings[0]!.id;
+      assert.equal(reproductionRuns(prefix).length, 2);
+      assert.deepEqual(round.reproductions.map((r) => r.outcome), ["confirmed", "repro_failed"]);
+      assert.match(round.reproductions[1]!.detail!, /could not be run in sandbox/);
+      assert.equal(round.reproductions[1]!.evidenceRef, null);
+      assert.equal(eventsOf(ctx, "code_review.repro.confirmed").length, 1);
+      assert.equal(eventsOf(ctx, "code_review.repro.repro_failed").length, 1);
+      assert.equal(existsSync(reproCheckout(ctx, 1, id, CORRECTNESS_SEAT)), false);
+      assert.equal(existsSync(reproCheckout(ctx, 1, id, SECURITY_SEAT)), false);
+    } finally {
+      for (const u of unserve) u();
+    }
+  });
+});
+
+test("confirmation runs in a throwaway checkout: the run's worktree is byte-identical before and after, and the checkout is gone", async () => {
+  await withVerifiedRun(async (ctx) => {
+    finalPanelOnly(ctx);
+    const prefix = sandboxPrefix(ctx.root, ctx.runId, "round-1-repro");
+    // The reproduction writes a file into whatever checkout it runs in.
+    const unserve = serveReproduction(prefix, "writes.spec.mjs", "reproduction-report-matcher", { writeFile: "reproduction-residue.txt" });
+    const state = () => [
+      git(ctx.worktreePath, ["rev-parse", "HEAD"]).stdout,
+      git(ctx.worktreePath, ["status", "--porcelain", "--ignored"]).stdout,
+    ];
+    try {
+      const before = state();
+      await reviewWithReproductions(ctx, "high", {
+        [SECURITY_SEAT]: [{ fileName: "writes.spec.mjs", recorded: "reproduction-report-matcher" }],
+      });
+      assert.deepEqual(state(), before);
+      const [reproduction] = readRecord(ctx.root, ctx.runId).rounds[0]!.reproductions;
+      assert.equal(reproduction!.outcome, "repro_failed");
+      // `checkCommitState`'s wording: here, the throwaway checkout is the worktree it checked.
+      assert.match(reproduction!.detail!, /left the worktree dirty in: \?\? reproduction-residue\.txt/);
+      const runs = reproductionRuns(prefix);
+      assert.equal(runs.length, 1);
+      const checkout = reproCheckout(ctx, 1, reproduction!.findingId, SECURITY_SEAT);
+      assert.equal(runs[0]!.cwd, checkout);
+      assert.equal(existsSync(checkout), false);
+      assert.ok(!git(ctx.root, ["worktree", "list", "--porcelain"]).stdout.includes("repro-checkout"));
+    } finally {
+      unserve();
+    }
+  });
+});
+
+test("a reproduction that leaves its checkout dirty fails only itself: a sibling still confirms", async () => {
+  await withVerifiedRun(async (ctx) => {
+    finalPanelOnly(ctx);
+    const prefix = sandboxPrefix(ctx.root, ctx.runId, "round-1-repro");
+    const unserve = [
+      // Panel order runs the dirtying one first.
+      serveReproduction(prefix, "writes.spec.mjs", "reproduction-report-matcher", { writeFile: "reproduction-residue.txt" }),
+      serveReproduction(prefix, "confirms.spec.mjs", "reproduction-report-matcher"),
+    ];
+    try {
+      await reviewWithReproductions(ctx, "shared", {
+        [CORRECTNESS_SEAT]: [{ fileName: "writes.spec.mjs", recorded: "reproduction-report-matcher" }],
+        [SECURITY_SEAT]: [{ fileName: "confirms.spec.mjs", recorded: "reproduction-report-matcher" }],
+      });
+      const round = readRecord(ctx.root, ctx.runId).rounds[0]!;
+      assert.deepEqual(round.reproductions.map((r) => [r.reviewer, r.outcome]), [[CORRECTNESS_SEAT, "repro_failed"], [SECURITY_SEAT, "confirmed"]]);
+      assert.match(round.reproductions[0]!.detail!, /left the worktree dirty in: \?\? reproduction-residue\.txt/);
+      assert.equal(reproductionRuns(prefix).length, 2);
+    } finally {
+      for (const u of unserve) u();
+    }
+  });
+});
+
+test("a confirmation sandbox that cannot start fails only its reproduction, audited under code_review.repro.", async () => {
+  await withVerifiedRun(async (ctx) => {
+    finalPanelOnly(ctx);
+    const unmark = markUnstartable(sandboxPrefix(ctx.root, ctx.runId, "round-1-repro"));
+    try {
+      const result = await reviewWithReproductions(ctx, "high", { [SECURITY_SEAT]: [{ fileName: "repro.spec.mjs", recorded: "reproduction-report-matcher" }] });
+      const record = readRecord(ctx.root, ctx.runId);
+      const finding = record.rounds[0]!.findings[0]!;
+      // The gate decided on the finding as it would with no reproduction.
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.equal(result.reason, `code_review blocked after round 1/1: finding id(s) ${finding.id} (high, severity, ${finding.location}); threshold high`);
+      const [reproduction] = record.rounds[0]!.reproductions;
+      assert.equal(reproduction!.outcome, "repro_failed");
+      assert.match(reproduction!.detail!, /^cannot start the verification sandbox: /);
+      const failed = eventsOf(ctx, "code_review.repro.sandbox.failed");
+      assert.equal(failed.length, 1);
+      assert.ok(failed[0]!.summary.startsWith(`round=1; commit=${record.rounds[0]!.reviewedCommit}; finding=${finding.id}; reviewer=${SECURITY_SEAT}; cannot start`), failed[0]!.summary);
+      assert.equal(eventsOf(ctx, "code_review.sandbox.failed").length, 0);
+      assert.equal(existsSync(reproCheckout(ctx, 1, finding.id, SECURITY_SEAT)), false);
+    } finally {
+      unmark();
+    }
+  });
+});
+
+test("a preserved check whose sandbox cannot start fails, blocks nothing, and is audited under code_review.check.", async () => {
+  await withVerifiedRun(async (ctx) => {
+    const unserve = serveReproduction(sandboxPrefix(ctx.root, ctx.runId, "round-1-repro"), undefined, "reproduction-report-matcher");
+    const unmark = markUnstartable(sandboxPrefix(ctx.root, ctx.runId, "remediation-1-check"));
+    try {
+      const result = await reviewWithReproductions(ctx, "high-then-clean", { [CORRECTNESS_SEAT]: [HIGH_CHECK] });
+      assert.equal(result.ok, true, result.ok ? "" : result.reason);
+      const [check] = readRecord(ctx.root, ctx.runId).rounds[0]!.remediation!.preservedChecks;
+      assert.equal(check!.outcome, "fails");
+      assert.match(check!.detail!, /^cannot start the verification sandbox: /);
+      assert.equal(check!.evidenceRef, null);
+      assert.equal(eventsOf(ctx, "code_review.check.sandbox.failed").length, 1);
+      assert.equal(eventsOf(ctx, "code_review.sandbox.failed").length, 0);
+    } finally {
+      unmark();
+      unserve();
+    }
+  });
+});
+
+test("a reply whose reproductions the validator refuses keeps its findings, runs no reproduction, and records why", async () => {
+  await withVerifiedRun(async (ctx) => {
+    finalPanelOnly(ctx);
+    const prefix = sandboxPrefix(ctx.root, ctx.runId, "round-1-repro");
+    const result = await reviewWithReproductions(ctx, "high", {
+      [SECURITY_SEAT]: [{ fileName: "repro.spec.mjs", recorded: "reproduction-report-matcher", intentKey: "no-such-finding" }],
+    });
+    const record = readRecord(ctx.root, ctx.runId);
+    const finding = record.rounds[0]!.findings[0]!;
+    // The panel completed and its gate decided on the security seat's finding.
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.equal(result.reason, `code_review blocked after round 1/1: finding id(s) ${finding.id} (high, severity, ${finding.location}); threshold high`);
+    assert.ok(finding.reports.some((r) => r.agent === SECURITY_SEAT));
+    assert.deepEqual(record.rounds[0]!.reproductions, []);
+    assert.equal(reproductionRuns(prefix).length, 0);
+    const refused = eventsOf(ctx, "code_review.repro.refused");
+    assert.equal(refused.length, 1);
+    assert.equal(
+      refused[0]!.summary,
+      `round=1; commit=${record.rounds[0]!.reviewedCommit}; reviewer=${SECURITY_SEAT}; reason=reproduction repro.spec.mjs names no finding of this reply: no-such-finding::${finding.location}`
+    );
+    assert.equal(eventsOf(ctx, "code_review.reviewer.failed").length, 0);
+  });
+});
+
+/** The retained prompt of every code-review reconciler call in the run. */
+function reconcilerPrompts(ctx: Ctx): string[] {
+  return ctx.store
+    .query<{ input_hash: string }>(
+      "SELECT ar.input_hash FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? AND ar.setting = 'code-review-reconciler' ORDER BY ar.id",
+      [ctx.runId]
+    )
+    .map((r) => readFileSync(join(ctx.root, ".governance", "prompts", String(ctx.runId), `${r.input_hash}.txt`), "utf8"));
+}
+
+test("the reconciler is not told the outcomes: its prompt is the same with and without a confirmed reproduction", async () => {
+  const prompts: string[][] = [];
+  for (const planned of [true, false]) {
+    await withVerifiedRun(async (ctx) => {
+      const unserve = serveReproduction(sandboxPrefix(ctx.root, ctx.runId, "round-1-repro"), "confirms.spec.mjs", "reproduction-report-matcher");
+      try {
+        const result = await reviewWithReproductions(ctx, "high-then-clean", planned
+          ? { [CORRECTNESS_SEAT]: [{ fileName: "confirms.spec.mjs", recorded: "reproduction-report-matcher" }] }
+          : {});
+        assert.equal(result.ok, true, result.ok ? "" : result.reason);
+        const reproductions = readRecord(ctx.root, ctx.runId).rounds[0]!.reproductions;
+        assert.deepEqual(reproductions.map((r) => r.outcome), planned ? ["confirmed"] : []);
+        // Each run's commits differ by their timestamps, and nothing else does.
+        prompts.push(reconcilerPrompts(ctx).map((prompt) => prompt.replace(/\b[0-9a-f]{40}\b/g, "<commit>")));
+      } finally {
+        unserve();
+      }
+    });
+  }
+  assert.equal(prompts[0]!.length, 1);
+  assert.equal(prompts[0]![0], prompts[1]![0]);
+});
+
+// --- preserved checks (docs/features/reproduced-review-findings/plan.md, Task 6) ---
+
+/** The retained prompt of every remediation dispatch in the run. */
+function remediationPrompts(ctx: Ctx): string[] {
+  return ctx.store
+    .query<{ input_hash: string }>(
+      "SELECT ar.input_hash FROM agent_run ar JOIN stage s ON ar.stage_id = s.id WHERE s.run_id = ? AND s.kind = 'code_review' AND ar.setting = 'implementer' ORDER BY ar.id",
+      [ctx.runId]
+    )
+    .map((r) => readFileSync(join(ctx.root, ".governance", "prompts", String(ctx.runId), `${r.input_hash}.txt`), "utf8"));
+}
+
+const HIGH_CHECK = { fileName: "high.spec.mjs", recorded: "reproduction-report-matcher" };
+const MEDIUM_CHECK = { fileName: "medium.spec.mjs", recorded: "reproduction-report-matcher" };
+const MATCHER_FAILURE = "Error: expect(locator).toHaveText(expected) failed";
+
+test("a preserved check that still fails after remediation blocks nothing, is recorded, and is named to the next panel", async () => {
+  await withVerifiedRun(async (ctx) => {
+    const dir = mkdtempSync(join(tmpdir(), "bw-docker-argv-"));
+    const recording = recordingDockerCommand(dir);
+    refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
+      p.sandbox.dockerCommand = recording.dockerCommand;
+    });
+    const confirm = sandboxPrefix(ctx.root, ctx.runId, "round-1-repro");
+    const check = sandboxPrefix(ctx.root, ctx.runId, "remediation-1-check");
+    const unserve = [
+      serveReproduction(confirm, undefined, "reproduction-report-matcher"),
+      // At the remediated commit the high check still fails and the medium one holds.
+      serveReproduction(check, HIGH_CHECK.fileName, "reproduction-report-matcher"),
+      serveReproduction(check, MEDIUM_CHECK.fileName, "reproduction-report-pass"),
+    ];
+    try {
+      const result = await reviewWithReproductions(ctx, "high-medium-then-clean", {
+        [CORRECTNESS_SEAT]: [HIGH_CHECK],
+        [SECURITY_SEAT]: [MEDIUM_CHECK],
+      });
+      assert.equal(result.ok, true, result.ok ? "" : result.reason);
+      const record = readRecord(ctx.root, ctx.runId);
+      assert.equal(record.rounds.length, 2, "the round-2 panel ran");
+      const [high, medium] = record.rounds[0]!.findings;
+      assert.deepEqual(record.rounds[0]!.reproductions.map((r) => [r.findingId, r.outcome]), [[high!.id, "confirmed"], [medium!.id, "confirmed"]]);
+      const remediation = record.rounds[0]!.remediation!;
+      assert.equal(remediation.verification.outcome, "pass");
+      // The checks are not verification commands: each ran alone afterwards.
+      assert.deepEqual(remediation.verification.commands.map((c) => c.name), ["ok"]);
+      assert.deepEqual(reproductionRuns(check).map((r) => r.path), [
+        `/bw-checks/${high!.id}/${CORRECTNESS_SEAT}/high.spec.mjs`, `/bw-checks/${medium!.id}/${SECURITY_SEAT}/medium.spec.mjs`,
+      ]);
+      assert.deepEqual(remediation.preservedChecks.map((c) => c.evidenceRef), [
+        join(".governance", "code-review", String(ctx.runId), "round-1", "preserved-checks", `${high!.id}-${CORRECTNESS_SEAT}-high.spec.mjs.log`),
+        join(".governance", "code-review", String(ctx.runId), "round-1", "preserved-checks", `${medium!.id}-${SECURITY_SEAT}-medium.spec.mjs.log`),
+      ]);
+      assert.deepEqual(remediation.preservedChecks.map((c) => [c.findingId, c.reviewer, c.fileName, c.confirmedInRound, c.outcome, c.detail]), [
+        [high!.id, CORRECTNESS_SEAT, "high.spec.mjs", 1, "fails", MATCHER_FAILURE],
+        [medium!.id, SECURITY_SEAT, "medium.spec.mjs", 1, "holds", null],
+      ]);
+      assert.equal(eventsOf(ctx, "code_review.check.fails").length, 1);
+      assert.equal(eventsOf(ctx, "code_review.check.holds").length, 1);
+      assert.ok(readFileSync(join(ctx.root, ".governance", "code-review", String(ctx.runId), "report.md"), "utf8")
+        .includes(`- Check high.spec.mjs (finding ${high!.id}, by ${CORRECTNESS_SEAT}, confirmed in round 1): fails — ${MATCHER_FAILURE}`));
+      // The next panel's prompt names the failing check, and only it; the first panel's names none.
+      const reviewers = reviewerPrompts(ctx);
+      assert.equal(reviewers.length, 6);
+      const failingLine = `- finding ${high!.id}; location ${high!.location}; check /bw-checks/${high!.id}/${CORRECTNESS_SEAT}/high.spec.mjs; first error: ${MATCHER_FAILURE}`;
+      for (const prompt of reviewers.slice(0, 3)) assert.ok(!prompt.includes("fails at the commit under review"));
+      for (const prompt of reviewers.slice(3)) {
+        assert.ok(prompt.includes(failingLine), "a round-2 reviewer is told of the failing check");
+        assert.ok(!prompt.includes("medium.spec.mjs"), "a holding check is not named");
+      }
+      // The remediation was told every check and its command, and saw them read-only.
+      const [remediationPrompt] = remediationPrompts(ctx);
+      for (const [id, seat, file] of [[high!.id, CORRECTNESS_SEAT, "high.spec.mjs"], [medium!.id, SECURITY_SEAT, "medium.spec.mjs"]] as const) {
+        assert.ok(remediationPrompt!.includes(`- finding ${id}; check /bw-checks/${id}/${seat}/${file}; command: node /opt/bw-browser/node_modules/@playwright/test/cli.js test --config /opt/bw-browser/checks.config.mjs --repeat-each 2 /bw-checks/${id}/${seat}/${file}`));
+      }
+      // Confirmation sees every reproduction; remediation and the checks' own
+      // runs see only the preserved ones; the verification sees neither.
+      const runDir = join(ctx.root, ".governance", "code-review", String(ctx.runId));
+      const checksMount = `${join(runDir, "checks")}:/bw-checks:ro`;
+      const preservedMount = `${join(runDir, "preserved")}:/bw-checks:ro`;
+      for (const [label, count, mount] of [
+        ["round-1-repro", 2, checksMount],
+        ["remediation-1", 1, preservedMount],
+        ["remediation-1-check", 2, preservedMount],
+        ["remediation-1-verify", 1, null],
+      ] as const) {
+        const own = workContainerMounts(recording.calls()).filter((s) => new RegExp(`^${sandboxPrefix(ctx.root, ctx.runId, label)}[0-9a-f]{6}-work$`).test(s.name));
+        assert.equal(own.length, count, label);
+        for (const sandbox of own) {
+          assert.deepEqual(sandbox.mounts.filter((m) => m.includes(":/bw-checks")), mount === null ? [] : [mount], label);
+        }
+      }
+    } finally {
+      for (const u of unserve) u();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+test("a check confirmed in round 1 also runs after round 2's remediation", async () => {
+  await withVerifiedRun(async (ctx) => {
+    refreeze(ctx.root, ctx.store, ctx.runId, (p) => {
+      p.policy.codeReviewMaxRounds = 3;
+    });
+    const unserve = [
+      serveReproduction(sandboxPrefix(ctx.root, ctx.runId, "round-1-repro"), undefined, "reproduction-report-matcher"),
+      // Round 2's own reproduction does not confirm, so only round 1's is preserved.
+      serveReproduction(sandboxPrefix(ctx.root, ctx.runId, "round-2-repro"), undefined, "reproduction-report-pass"),
+      serveReproduction(sandboxPrefix(ctx.root, ctx.runId, "remediation-1-check"), undefined, "reproduction-report-matcher"),
+      serveReproduction(sandboxPrefix(ctx.root, ctx.runId, "remediation-2-check"), undefined, "reproduction-report-pass"),
+    ];
+    try {
+      const result = await reviewWithReproductions(ctx, "high-twice-then-clean", { [CORRECTNESS_SEAT]: [HIGH_CHECK] });
+      assert.equal(result.ok, true, result.ok ? "" : result.reason);
+      const record = readRecord(ctx.root, ctx.runId);
+      assert.equal(record.rounds.length, 3);
+      const first = record.rounds[0]!.findings[0]!.id;
+      assert.deepEqual(record.rounds[1]!.reproductions.map((r) => r.outcome), ["not_reproduced"]);
+      assert.deepEqual(record.rounds[0]!.remediation!.preservedChecks.map((c) => [c.findingId, c.outcome]), [[first, "fails"]]);
+      assert.deepEqual(record.rounds[1]!.remediation!.preservedChecks.map((c) => [c.findingId, c.confirmedInRound, c.outcome]), [[first, 1, "holds"]]);
+    } finally {
+      for (const u of unserve) u();
+    }
+  });
+});
+
+test("a preserved check that leaves its checkout dirty fails, blocks nothing, and leaves the run's worktree alone", async () => {
+  await withVerifiedRun(async (ctx) => {
+    const unserve = [
+      serveReproduction(sandboxPrefix(ctx.root, ctx.runId, "round-1-repro"), undefined, "reproduction-report-matcher"),
+      serveReproduction(sandboxPrefix(ctx.root, ctx.runId, "remediation-1-check"), undefined, "reproduction-report-pass", { writeFile: "check-residue.txt" }),
+    ];
+    try {
+      const result = await reviewWithReproductions(ctx, "high-then-clean", { [CORRECTNESS_SEAT]: [HIGH_CHECK] });
+      assert.equal(result.ok, true, result.ok ? "" : result.reason);
+      const record = readRecord(ctx.root, ctx.runId);
+      const remediation = record.rounds[0]!.remediation!;
+      assert.equal(remediation.verification.outcome, "pass");
+      assert.deepEqual(remediation.preservedChecks.map((c) => [c.outcome, c.detail]), [["fails", "the command left the worktree dirty in: ?? check-residue.txt"]]);
+      const checkout = join(ctx.root, ".governance", "code-review", String(ctx.runId), "round-1", "check-checkout", `${record.rounds[0]!.findings[0]!.id}-${CORRECTNESS_SEAT}`);
+      assert.equal(existsSync(checkout), false);
+      assert.equal(git(ctx.worktreePath, ["status", "--porcelain"]).stdout, "");
+      assert.equal(ctx.store.getRun(ctx.runId)!.status, "in_progress");
+    } finally {
+      for (const u of unserve) u();
+    }
+  });
+});
+
+test("with the acceptance suite frozen, the preserved checks run after a passing verification and the suite's verdict still decides its block", async () => {
+  for (const report of ["pass", "valid-red-matcher"]) {
+    await withRemediationSuite(report, async (ctx) => {
+      const check = sandboxPrefix(ctx.root, ctx.runId, "remediation-1-check");
+      const unserve = [
+        serveReproduction(sandboxPrefix(ctx.root, ctx.runId, "round-1-repro"), undefined, "reproduction-report-matcher"),
+        serveReproduction(check, undefined, "reproduction-report-pass"),
+      ];
+      try {
+        const result = await reviewWithReproductions(ctx, "high-then-clean", { [CORRECTNESS_SEAT]: [HIGH_CHECK] });
+        const record = readRecord(ctx.root, ctx.runId);
+        const remediation = record.rounds[0]!.remediation!;
+        assert.deepEqual(remediation.verification.commands.map((c) => c.name), ["ok", "acceptance"]);
+        if (report === "pass") {
+          assert.equal(result.ok, true, result.ok ? "" : result.reason);
+          assert.ok(remediation.verification.acceptance !== undefined, "the suite's tests are recorded");
+          assert.deepEqual(remediation.preservedChecks.map((c) => c.outcome), ["holds"]);
+          assert.equal(reproductionRuns(check).length, 1);
+        } else {
+          const title = recordedReport(report).report.tests[0]!.title;
+          assert.equal(result.ok, false);
+          if (result.ok) return;
+          assert.equal(result.reason, `code_review remediation verification blocked after round 1: acceptance failed: ${title}`);
+          assert.equal(remediation.verification.blockingCommand, "acceptance");
+          // The verification blocked, so no check ran.
+          assert.deepEqual(remediation.preservedChecks, []);
+          assert.equal(reproductionRuns(check).length, 0);
+        }
+      } finally {
+        for (const u of unserve) u();
+      }
+    });
+  }
+});
+
+test("a confirmed reproduction of a finding the reconciler rejected is not preserved", async () => {
+  await withVerifiedRun(async (ctx) => {
+    const unserve = [
+      serveReproduction(sandboxPrefix(ctx.root, ctx.runId, "round-1-repro"), undefined, "reproduction-report-matcher"),
+      serveReproduction(sandboxPrefix(ctx.root, ctx.runId, "remediation-1-check"), undefined, "reproduction-report-pass"),
+    ];
+    try {
+      // `reconcile-reject-one`: both calls reject the security seat's finding and keep the correctness seat's.
+      const result = await reviewWithReproductions(ctx, "reconcile-reject-one", {
+        [CORRECTNESS_SEAT]: [{ fileName: "kept.spec.mjs", recorded: "reproduction-report-matcher" }],
+        [SECURITY_SEAT]: [{ fileName: "rejected.spec.mjs", recorded: "reproduction-report-matcher" }],
+      });
+      assert.equal(result.ok, true, result.ok ? "" : result.reason);
+      const round = readRecord(ctx.root, ctx.runId).rounds[0]!;
+      const kept = findingByIntent(ctx, "needs-remediation").id;
+      const rejected = findingByIntent(ctx, "beyond-spec-hardening").id;
+      assert.deepEqual(round.reconciliation!.rejected.map((r) => r.findingId), [rejected]);
+      assert.deepEqual(round.reproductions.map((r) => [r.findingId, r.outcome]), [[kept, "confirmed"], [rejected, "confirmed"]]);
+      assert.deepEqual(round.remediation!.preservedChecks.map((c) => c.findingId), [kept]);
+      assert.deepEqual(reproductionRuns(sandboxPrefix(ctx.root, ctx.runId, "remediation-1-check")).map((r) => r.path), [
+        `/bw-checks/${kept}/${CORRECTNESS_SEAT}/kept.spec.mjs`,
+      ]);
+      // What remediation and the checks mount holds the kept finding's file and nothing else.
+      const runDir = join(ctx.root, ".governance", "code-review", String(ctx.runId));
+      assert.deepEqual(readdirSync(join(runDir, "preserved"), { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name), ["kept.spec.mjs"]);
+      assert.equal(existsSync(join(runDir, "preserved", String(kept), CORRECTNESS_SEAT, "kept.spec.mjs")), true);
+      assert.equal(existsSync(join(runDir, "checks", String(rejected), SECURITY_SEAT, "rejected.spec.mjs")), true);
+      const [remediationPrompt] = remediationPrompts(ctx);
+      assert.ok(remediationPrompt!.includes("kept.spec.mjs"));
+      assert.ok(!remediationPrompt!.includes("rejected.spec.mjs"));
+    } finally {
+      for (const u of unserve) u();
+    }
+  });
+});
+
+// --- no outcome downgrades a finding (docs/features/reproduced-review-findings/plan.md, Task 7) ---
+
+test("a final-panel high finding blocks at the default threshold whether its reproduction is not_reproduced, repro_failed, or absent", async () => {
+  const cases = [
+    { name: "not_reproduced", serve: "reproduction-report-pass", planned: true },
+    { name: "repro_failed", serve: "reproduction-report-hidden-locator", planned: true },
+    { name: "no reproduction", serve: null, planned: false },
+  ];
+  for (const entry of cases) {
+    await withVerifiedRun(async (ctx) => {
+      finalPanelOnly(ctx);
+      assert.equal(loadProfile(ctx.root, ctx.runId).profile.policy.codeReviewBlockingSeverity, "high");
+      const unserve = entry.serve === null
+        ? () => undefined
+        : serveReproduction(sandboxPrefix(ctx.root, ctx.runId, "round-1-repro"), undefined, entry.serve);
+      try {
+        const result = await reviewWithReproductions(ctx, "high", entry.planned ? { [SECURITY_SEAT]: [{ fileName: "repro.spec.mjs", recorded: "reproduction-report-matcher" }] } : {});
+        const record = readRecord(ctx.root, ctx.runId);
+        const finding = record.rounds[0]!.findings[0]!;
+        assert.deepEqual(record.rounds[0]!.reproductions.map((r) => r.outcome), entry.planned ? [entry.name] : [], entry.name);
+        assert.equal(result.ok, false, entry.name);
+        if (result.ok) return;
+        assert.equal(
+          result.reason,
+          `code_review blocked after round 1/1: finding id(s) ${finding.id} (high, severity, ${finding.location}); threshold high`,
+          entry.name
+        );
+        assert.deepEqual(record.blocking, [{ findingId: finding.id, severity: "high", location: finding.location }], entry.name);
+      } finally {
+        unserve();
+      }
+    });
+  }
+});
+
+test("in a non-final round a not_reproduced finding still reaches the reconciler and remediation, and is not preserved", async () => {
+  await withVerifiedRun(async (ctx) => {
+    const unserve = serveReproduction(sandboxPrefix(ctx.root, ctx.runId, "round-1-repro"), undefined, "reproduction-report-pass");
+    try {
+      const result = await reviewWithReproductions(ctx, "high-then-clean", { [CORRECTNESS_SEAT]: [HIGH_CHECK] });
+      assert.equal(result.ok, true, result.ok ? "" : result.reason);
+      const round = readRecord(ctx.root, ctx.runId).rounds[0]!;
+      const finding = round.findings[0]!;
+      assert.deepEqual(round.reproductions.map((r) => r.outcome), ["not_reproduced"]);
+      assert.deepEqual(round.reconciliation!.kept, [finding.id]);
+      assert.ok(reconcilerPrompts(ctx)[0]!.includes(`- finding ${finding.id}; location ${finding.location}; intentKey ${finding.intentKey}`));
+      const [remediationPrompt] = remediationPrompts(ctx);
+      assert.ok(remediationPrompt!.includes(`- finding ${finding.id}; location ${finding.location}; intentKey ${finding.intentKey}`));
+      assert.ok(!remediationPrompt!.includes("/bw-checks/"), "no check is preserved");
+      assert.deepEqual(round.remediation!.preservedChecks, []);
+      assert.deepEqual(round.remediation!.verification.commands.map((c) => c.name), ["ok"]);
+    } finally {
+      unserve();
+    }
+  });
+});
+
+test("a preserved high check that fails at the last remediation does not block when the final panel reports nothing", async () => {
+  await withVerifiedRun(async (ctx) => {
+    const unserve = [
+      serveReproduction(sandboxPrefix(ctx.root, ctx.runId, "round-1-repro"), undefined, "reproduction-report-matcher"),
+      serveReproduction(sandboxPrefix(ctx.root, ctx.runId, "remediation-1-check"), undefined, "reproduction-report-matcher"),
+    ];
+    try {
+      const result = await reviewWithReproductions(ctx, "high-then-clean", { [CORRECTNESS_SEAT]: [HIGH_CHECK] });
+      assert.equal(result.ok, true, result.ok ? "" : result.reason);
+      const record = readRecord(ctx.root, ctx.runId);
+      assert.equal(record.outcome, "pass");
+      assert.deepEqual(record.rounds[1]!.findings, []);
+      assert.deepEqual(record.rounds[0]!.remediation!.preservedChecks.map((c) => [c.outcome, c.detail]), [["fails", MATCHER_FAILURE]]);
+      const report = readFileSync(join(ctx.root, ".governance", "code-review", String(ctx.runId), "report.md"), "utf8");
+      assert.ok(report.includes(`- Check high.spec.mjs (finding ${record.rounds[0]!.findings[0]!.id}, by ${CORRECTNESS_SEAT}, confirmed in round 1): fails — ${MATCHER_FAILURE}`));
+      assert.ok(report.includes("**Outcome:** pass"));
+    } finally {
+      for (const u of unserve) u();
+    }
+  });
 });

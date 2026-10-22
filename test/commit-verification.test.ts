@@ -104,6 +104,56 @@ test("verifyCommit retains passing evidence for the exact clean commit, naming w
   });
 });
 
+test("a non-blocking command's failure is recorded and the next command still runs; a dirty worktree still blocks; no flag still stops", async () => {
+  // docs/features/reproduced-review-findings/plan.md, Task 5.
+  await withRepository(async (root, head) => {
+    const audits: string[] = [];
+    const result = await verifyCommit(input(root, head, {
+      commands: [
+        { name: "fails", command: fixture("exit-two.mjs"), blocking: false },
+        { name: "ok", command: fixture("exit-zero.mjs") },
+      ],
+      audit: (action, summary) => audits.push(`${action}: ${summary}`),
+    }));
+    assert.equal(result.reason, null);
+    assert.equal(result.record!.outcome, "pass");
+    assert.equal(result.record!.blockingCommand, null);
+    assert.deepEqual(result.record!.commands.map((c) => [c.name, c.blockedBecause, c.nonBlockingFailure]), [
+      ["fails", null, "the command exited with code 2"],
+      ["ok", null, undefined],
+    ]);
+    assert.match(audits[0]!, /^command\.fail: fails: .*; non-blocking: the command exited with code 2$/);
+    assert.match(audits[1]!, /^command\.pass: ok:/);
+  });
+
+  await withRepository(async (root, head) => {
+    const result = await verifyCommit(input(root, head, {
+      commands: [
+        { name: "dirties", command: fixture("touch-tracked.mjs"), blocking: false },
+        { name: "ok", command: fixture("exit-zero.mjs") },
+      ],
+      evidenceDir: join(root, ".governance", "verification-dirty"),
+    }));
+    assert.equal(result.record!.outcome, "block");
+    assert.equal(result.record!.blockingCommand, "dirties");
+    assert.equal(result.record!.commands.length, 1);
+    assert.match(result.reason!, /left the worktree dirty/);
+  });
+
+  await withRepository(async (root, head) => {
+    const result = await verifyCommit(input(root, head, {
+      commands: [
+        { name: "fails", command: fixture("exit-two.mjs") },
+        { name: "ok", command: fixture("exit-zero.mjs") },
+      ],
+    }));
+    assert.equal(result.record!.outcome, "block");
+    assert.equal(result.record!.blockingCommand, "fails");
+    assert.deepEqual(result.record!.commands.map((c) => c.name), ["fails"]);
+    assert.equal("nonBlockingFailure" in result.record!.commands[0]!, false);
+  });
+});
+
 test("verifyCommit blocks on command failure and retained residue", async () => {
   await withRepository(async (root, head) => {
     const evidenceDir = join(root, ".governance", "verification-fail");

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -70,6 +71,39 @@ export function serveAcceptanceReport(prefix: string, report: string): () => voi
   const path = join(dir, `acceptance-${Buffer.from(prefix).toString("hex").slice(0, 120)}`);
   writeFileSync(path, JSON.stringify({ prefix, report }));
   return () => rmSync(path, { force: true });
+}
+
+/**
+ * Answer the reproduction command for `fileName` (every file when undefined), in
+ * every container whose name starts with `prefix`, from
+ * `test/fixtures/recorded/<report>.json`: a `reproduction-report-*` or a plan 1
+ * `acceptance-report-*`. `exitStatus` and `delayMs` replace the recorded exit
+ * and its timing; `writeFile` names a file the run writes into its checkout;
+ * `noExit` writes no exit status for this command alone, as `markNoExitStatus`
+ * does for a whole container.
+ */
+export function serveReproduction(
+  prefix: string,
+  fileName: string | undefined,
+  report: string,
+  options: { exitStatus?: number; delayMs?: number; writeFile?: string; noExit?: boolean } = {}
+): () => void {
+  const dir = join(STAND_IN_STATE, "marks");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `reproduction-${createHash("sha256").update(`${prefix}|${fileName ?? ""}`).digest("hex")}`);
+  writeFileSync(path, JSON.stringify({ prefix, fileName, report, ...options }));
+  return () => rmSync(path, { force: true });
+}
+
+/** Every reproduction run the stand-in answered for a container whose name starts with `prefix`. */
+export function reproductionRuns(prefix: string): { container: string; cwd: string; path: string }[] {
+  let lines: string[];
+  try {
+    lines = readFileSync(join(STAND_IN_STATE, "reproduction-runs.jsonl"), "utf8").split("\n");
+  } catch {
+    return [];
+  }
+  return lines.filter((l) => l !== "").map((l) => JSON.parse(l)).filter((r) => r.container.startsWith(prefix));
 }
 
 /** Every acceptance run the stand-in answered for a container whose name starts with `prefix`. */

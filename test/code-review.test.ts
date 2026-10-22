@@ -205,6 +205,25 @@ test("passed-review parsing preserves the recorded remediation chain as checked 
   });
 });
 
+test("a record with reproductions and preserved checks parses to the same handoff as the recorded record from before them", () => {
+  // docs/features/reproduced-review-findings/plan.md, Task 6: the members are additive.
+  withRecordedReview((record, profile) => {
+    for (const round of record.rounds) assert.equal("reproductions" in round, false, "the recorded record predates reproductions");
+    const before = parsePassedCodeReviewRecord(record, record.runId, record.stageId, profile);
+    assert.ok(before.ok, before.ok ? "" : before.reason);
+    const changed = structuredClone(record);
+    changed.rounds[0]!.reproductions = [{
+      findingId: 1, reviewer: "code-reviewer-correctness", fileName: "enter.spec.mjs", contentSha256: "a".repeat(64),
+      outcome: "confirmed", detail: "Error: expect(locator).toHaveText(expected) failed", evidenceRef: "repro.log",
+    }];
+    changed.rounds[0]!.remediation!.preservedChecks = [{
+      findingId: 1, reviewer: "code-reviewer-correctness", fileName: "enter.spec.mjs", confirmedInRound: 1,
+      outcome: "fails", detail: "Error: expect(locator).toHaveText(expected) failed", evidenceRef: "check.log",
+    }];
+    assert.deepEqual(parsePassedCodeReviewRecord(changed, record.runId, record.stageId, profile), before);
+  });
+});
+
 test("passed-review parsing does not strengthen unvalidated findings, commands, metadata, or paths", () => {
   withRecordedReview((record, profile) => {
     const changed = structuredClone(record) as unknown as Record<string, unknown>;

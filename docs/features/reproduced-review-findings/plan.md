@@ -1,6 +1,6 @@
 # Reproduced Review Findings Implementation Plan
 
-**Status:** Reconciled
+**Status:** Implemented
 
 **Goal:** A code reviewer may attach an executable reproduction to each finding. The system runs it in the sandbox against the reviewed commit and records whether it confirmed the finding. Every confirmed reproduction of a kept finding then runs as a preserved check at every later verification point in the run, and every later panel sees each check that fails. No reproduction outcome, including its absence, ever lowers a finding's severity, removes it from remediation, or keeps it from the final severity gate. No preserved check blocks a run by its verdict alone.
 
@@ -403,6 +403,62 @@
 - Extract the load-bearing responses into `test/fixtures/recorded/` with provenance before any `driver.mjs clean`.
 
 **Task completion evidence:** the counts, the run record and the extracted fixture.
+
+## Implementation record (2026-10-22)
+
+**Hazards considered:** 1, 3, 4, 14, 15, 16, 18, 21, 22, 23, as in the header; 7 is unchanged because nothing retries.
+
+Tasks 1 to 9 and Task 10's documents are built, uncommitted, on `sandboxed-delivery`. Task 10's paid benchmark has not run: it needs the operator's consent to its spend.
+
+**What shipped, by task.**
+- **Task 1.** The image is `bw-sandbox:b3acf46315c0` (`sha256:3736e8f3…`). The spike's four recorded reports are `test/fixtures/recorded/reproduction-report-{acceptance-config,matcher,pass,hidden-locator}.json`. Plan 1's config discovers no test under `/bw-checks` ("Error: No tests found."). The hidden element's call log ends `waiting 500ms`. Break-test: confirming on any `valid_red` failed the hidden-locator test.
+- **Task 2.** Reviewers answer through `CODE_REVIEW_REPLY_SCHEMA`. Break-test: dropping `jsonSchema` failed the structured-reply test.
+- **Task 3.** `validateCodeReviewReproductions`. Both break-tests failed their tests.
+- **Task 4.** The optional `/bw-checks` mount. 17/17 container tests on the engine. Break-test: a mount without `:ro` failed the engine write test.
+- **Task 5.** `confirmReproductions` (exported from `src/code-review-stage.ts`) and per-command `blocking: false` in `verifyCommit`. Three break-tests failed their tests: confirming on any `valid_red`, passing the outcome to the reconciler prompt, and confirming in the run's worktree. After the review, each reproduction runs alone (see below).
+- **Task 6.** Built first as non-blocking commands after the frozen and acceptance commands. Two break-tests failed their tests: blocking checks, and preserving rejected findings. After the review, `preserveCheck` and `runPreservedChecks` replace that (see below).
+- **Task 7.** Three no-downgrade stage tests. Break-test: filtering `not_reproduced` findings from the round decision failed the first two.
+- **Task 8.** `REPRODUCTION_RULES`, the failing-check lines and the remediation's check lines, pinned in `CONSTRAINT_STRINGS`.
+- **Task 9.** `test/reproduced-findings-benchmark.test.ts` on the real engine. Finding 9 confirmed at `b5d42890` ("Error: expect(locator).toHaveAttribute(expected) failed"). It held at `bc57eb74` and on the control. Finding 10 confirmed at `bc57eb74` ("Error: expect(locator).toHaveText(expected) failed") and held on the control. Break-test: finding 9 against `bc57eb74` came back `not_reproduced`, which failed the test.
+
+**Deviations from the plan.**
+- **The reproduction report's root and prefix.** The checks reader passes root `/bw-checks/` and container prefix `""`, not `/bw-checks/` for both. The report names a test's file relative to `testDir` but an error's location absolutely. Stripping the prefix from the location would make it differ from the test's file, so the classifier could not find the file.
+- **The detail for a hidden element.** `locatorWaitDetail` skips the call log's retry-timing entries (`retrying click action`, `waiting 500ms`). For a hidden element it returns `element is not visible`, the reason the locator waited, not the literal last entry.
+- **Where the constants live.** `CHECKS_ROOT`, `REPRODUCTION_FILE_NAME`, `REPRODUCTION_MAX_COUNT` and `REPRODUCTION_MAX_CHARS` live in `src/acceptance.ts`. `src/prompts.ts` may import only that module, because the CLI-router test mirrors just those two files. `CHECKS_ROOT` is pinned equal to `CHECKS_MOUNT` and a slash by a test.
+- **A reply with no `structured_output`.** It fails the reviewer as `dispatch_failed`, at the envelope parse, as the patch dispatches do, not as `output_invalid`.
+- **The reviewer prompt without checks.** It is not byte-identical to Task 2's, because the reproduction contract is always stated. With no failing checks it differs from Task 2's only by that contract and the example's `reproductions` member, and the pre-suite hash test removes exactly those. The remediation prompt without checks is byte-identical.
+- **The no-reproduction rule.** It says a finding without one "counts exactly as one with a reproduction, at the severity you give it", not "is gated". The reviewer prompt states no consequence, and the test pins that no gate, threshold or block is named.
+- **Outside the plan's file list.** `test/commit-verification.test.ts` holds the per-command `blocking` tests. `test/code-review.test.ts` holds the parse test for the new members. `test/delivery-stage.test.ts`'s hand-built record gained the new members. `scripts/test-author-evaluation.ts` exports `controlTree`, so the benchmark builds the control the r1 record used.
+
+**Independent review (2026-10-22).** One independent reviewer read the full diff and reported seven findings. Each was checked against the code, and the operator decided findings 1, 2, 3/4 and 6. The decisions replace Task 3's refusal, Task 5's single call, and Task 6's in-verification checks and mount. The plan's steps above still describe the superseded design.
+1. **A bad reproduction blocked the run.** A reply whose reproductions the validator refused failed the reviewer as `output_invalid`, which fails the panel. *Fixed (operator: drop the reproductions, keep the findings).* The reply's findings stand, its reproductions are dropped, and `code_review.repro.refused` records the reviewer and reason. The validator also counts content in code points, as the schema's `maxLength` does.
+2. **A matcher on a missing element confirmed.** `expect(locator).toHaveText` on a locator that matches nothing fails as a matcher, so a reproduction with a wrong selector confirmed. *Fixed (operator: `repro_failed`).* `isMatcherFailure` excludes the `element(s) not found` failure, and the detail names the locator. The test is built from `acceptance-code-review-probes.json`'s recorded "AC-003 promise array awaits only the array" report.
+3. **A check that writes on its pass path blocked the run.** A preserved check ran inside the remediation's verification, where a dirty worktree blocks. *Fixed (operator: isolate each run).*
+4. **A dirtying reproduction stopped its siblings.** All reproductions shared one `verifyCommit` call, which stops at the first block. *Fixed with 3.* Each reproduction and each check now runs alone (`runAlone`), in its own sandbox and throwaway checkout, and a checkout that cannot be made, a sandbox failure, a dirty checkout or a throw ends only that run. The remediation's verification is back to the frozen and acceptance commands. The checks run after it passes, at `round-<n>/check-checkout/`, with evidence under `round-<n>/preserved-checks/`, and none runs when it blocks. `CodeReviewPreservedCheck.evidenceRef` may be `null`.
+5. **A thrown report error aborted the stage.** `readReproductionReport` throws on a report shape it cannot read. *Fixed.* `judgeReproductionRun` returns `other` with "the report cannot be read: …".
+6. **The remediation mount exposed rejected reproductions.** The remediation's container mounted the whole checks directory. *Fixed (operator: mount the preserved checks only).* `preserveCheck` copies each preserved file under `.governance/code-review/<run>/preserved/`, which is what remediation and the checks mount.
+7. **(a) The benchmark bypassed the preservation wiring, and (b) a confirmation sandbox failure was audited as `code_review.sandbox.failed`.** *Fixed.* (a) The benchmark's checks go through `preserveCheck` and `runPreservedChecks`. (b) The runs audit their steps as `code_review.repro.<action>` and `code_review.check.<action>`.
+
+Each fix has a test that failed when the fix was broken, and each file was restored byte-identical from a copy:
+- counting UTF-16 units failed the code-point test;
+- refusing the reviewer again failed the refused-reproductions test (finding 1);
+- treating a missing element as a matcher failure failed the not-found test (finding 2);
+- stopping confirmation after the first `repro_failed` failed the dirty-sibling and sandbox-failure tests (finding 4);
+- running the checks after a blocked verification failed the acceptance-suite test (finding 3);
+- mounting the checks directory for remediation failed the mount test (finding 6);
+- writing a preserved check into the checks directory failed the rejected-finding test (finding 6);
+- routing a confirmation's sandbox events through `sandboxAction` failed the cannot-start test (finding 7b);
+- removing `judgeReproductionRun`'s catch failed the "judged other, never thrown" test with "number 5 is not iterable" (finding 5).
+
+`runAlone`'s wrapper for a thrown error has no test that throws, so it is written, not verified.
+
+**Regression (2026-10-22, after the review's fixes).**
+- `npm run typecheck` and `npm run check:docs` were clean.
+- The full serial no-engine suite ran 1883 tests: 1877 passed, 2 failed and 4 were skipped. `git log -1` was still `de99c1d`.
+- The two failures are `test/sign-approval.test.ts`'s keygen refusal tests, which this change does not touch. `scripts/sign-approval.mjs` is unchanged since `72fe14f`. It prints its refusal and writes nothing. Node v26.4.0 then aborts inside `process.exit(2)` with `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 94`, exit `3221226505`. Run alone, they fail the same way.
+- The engine suites ran on Docker 29.8.2: `test/container.test.ts`, `test/acceptance-engine.test.ts` and the benchmark passed 28 of 28. The benchmark's six tests all passed.
+
+**Deferred.** The paid benchmark (Task 10) awaits consent.
 
 ## Rollback
 

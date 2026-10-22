@@ -303,6 +303,7 @@ ${scope.map((p) => `- ${p}`).join("\n")}
                 changedPaths: [ARTIFACT],
                 findings: [],
                 blocking: [],
+                reproductions: [],
                 reconciliation: null,
                 remediation: {
                   author: "implementer",
@@ -315,6 +316,7 @@ ${scope.map((p) => `- ${p}`).join("\n")}
                     blockingCommand: null,
                     commands: [],
                   },
+                  preservedChecks: [],
                 },
               },
               {
@@ -323,6 +325,7 @@ ${scope.map((p) => `- ${p}`).join("\n")}
                 changedPaths: [ARTIFACT],
                 findings: [],
                 blocking: [],
+                reproductions: [],
                 reconciliation: null,
                 remediation: null,
               },
@@ -336,6 +339,7 @@ ${scope.map((p) => `- ${p}`).join("\n")}
                 blocking: blockedReview
                   ? [{ findingId: 1, severity: "high", location: ARTIFACT }]
                   : [],
+                reproductions: [],
                 reconciliation: null,
                 remediation: null,
               },

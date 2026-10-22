@@ -15,10 +15,36 @@ import type { VerifyCommand } from "./governed-config.ts";
  */
 export const ACCEPTANCE_RUNNER = "/opt/bw-browser/node_modules/@playwright/test/cli.js";
 export const ACCEPTANCE_CONFIG = "/opt/bw-browser/acceptance.config.mjs";
+/**
+ * The reproduction runner's config: the acceptance config with `testDir` at
+ * `CHECKS_ROOT` (docs/features/reproduced-review-findings/plan.md). The
+ * acceptance config cannot run a file there: it reports "No tests found"
+ * (`test/fixtures/recorded/reproduction-report-acceptance-config.json`).
+ */
+export const CHECKS_CONFIG = "/opt/bw-browser/checks.config.mjs";
 /** The runner config's `testDir`, which the report's test paths are relative to. */
 const ACCEPTANCE_ROOT = "acceptance/";
 /** Where the worktree is mounted in the container; error locations are absolute under it. */
 const CONTAINER_WORKTREE = "/work/";
+/**
+ * The checks runner's `testDir`, by which a reproduction's tests and its error
+ * locations are both named: `CHECKS_MOUNT` in `src/container.ts` and a slash.
+ * Held apart, and pinned equal by a test, so this module keeps no runtime import.
+ */
+export const CHECKS_ROOT = "/bw-checks/";
+
+/**
+ * A reviewer reproduction's file name (docs/features/reproduced-review-findings/plan.md,
+ * hazard 3): the one rule the reply schema, the boundary validator and the
+ * reviewer prompt all read. A Playwright `.spec.mjs` file, so the checks
+ * runner's default test match finds it. Held here, beside the runner, because
+ * `src/prompts.ts` may import nothing else.
+ */
+export const REPRODUCTION_FILE_NAME = /^[a-z0-9][a-z0-9-]{0,63}\.spec\.mjs$/;
+/** The most reproductions one reviewer reply may carry (operator, 2026-10-22). */
+export const REPRODUCTION_MAX_COUNT = 5;
+/** The most characters one reproduction's content may hold. */
+export const REPRODUCTION_MAX_CHARS = 65_536;
 
 /**
  * The blank page the gate's baseline run uses when the suite commit has no
@@ -47,6 +73,15 @@ export function acceptanceCommand(dir: string, repeatEach: number): VerifyComman
     name: ACCEPTANCE_COMMAND_NAME,
     command: ["node", ACCEPTANCE_RUNNER, "test", "--config", ACCEPTANCE_CONFIG, "--repeat-each", String(repeatEach), dir],
   };
+}
+
+/**
+ * The system's command for one reproduction file at `path`
+ * (`/bw-checks/<finding>/<reviewer>/<file>`), named `name`, which names its
+ * retained log. The reviewer chooses no part of it.
+ */
+export function reproductionCommand(name: string, path: string): VerifyCommand {
+  return { name, command: ["node", ACCEPTANCE_RUNNER, "test", "--config", CHECKS_CONFIG, "--repeat-each", "2", path] };
 }
 
 export interface AcceptanceError {
@@ -88,18 +123,15 @@ function stripAnsi(text: string): string {
   return text.replace(ANSI, "");
 }
 
-function repoRelative(file: string): string {
-  return file.startsWith(CONTAINER_WORKTREE) ? file.slice(CONTAINER_WORKTREE.length) : file;
-}
-
-function readError(raw: unknown, stack: string | null): AcceptanceError {
+function readError(raw: unknown, stack: string | null, containerPrefix: string): AcceptanceError {
   const error = raw as { message?: unknown; location?: { file?: unknown; line?: unknown; column?: unknown } };
   const loc = error.location;
+  const file = typeof loc?.file === "string" && loc.file.startsWith(containerPrefix) ? loc.file.slice(containerPrefix.length) : loc?.file;
   return {
     message: typeof error.message === "string" ? stripAnsi(error.message) : "",
     location:
-      loc && typeof loc.file === "string" && typeof loc.line === "number" && typeof loc.column === "number"
-        ? { file: repoRelative(loc.file), line: loc.line, column: loc.column }
+      loc && typeof file === "string" && typeof loc.line === "number" && typeof loc.column === "number"
+        ? { file, line: loc.line, column: loc.column }
         : null,
     stack: stack === null ? null : stripAnsi(stack),
   };
@@ -116,9 +148,17 @@ interface RawSuite {
  * the header line `runInSandbox` writes, then the runner's stdout. Repeats of
  * one test arrive as separate entries with the same file and title path, and
  * are grouped here. Anything that does not parse as a complete report is
- * refused by name, never read as an empty suite.
+ * refused by name, never read as an empty suite. Each test's file is `root`
+ * and its path under the runner's `testDir`; each error location loses
+ * `containerPrefix`, so both name the same file. The defaults read an
+ * acceptance suite by its repository path; `readReproductionReport` keeps the
+ * container's `/bw-checks/` path for both.
  */
-export function readAcceptanceReport(log: string): { ok: true; report: AcceptanceReport } | { ok: false; reason: string } {
+export function readAcceptanceReport(
+  log: string,
+  root: string = ACCEPTANCE_ROOT,
+  containerPrefix: string = CONTAINER_WORKTREE
+): { ok: true; report: AcceptanceReport } | { ok: false; reason: string } {
   const body = log.startsWith("# ran in container ") ? log.slice(log.indexOf("\n") + 1) : log;
   let raw: { errors?: unknown; suites?: unknown };
   try {
@@ -132,7 +172,7 @@ export function readAcceptanceReport(log: string): { ok: true; report: Acceptanc
   const tests = new Map<string, AcceptanceTest>();
   const walk = (suite: RawSuite, path: string[]) => {
     for (const spec of suite.specs ?? []) {
-      const file = ACCEPTANCE_ROOT + spec.file;
+      const file = root + spec.file;
       const key = JSON.stringify([file, ...path, spec.title]);
       const test = tests.get(key) ?? { title: spec.title, file, results: [] };
       tests.set(key, test);
@@ -141,7 +181,7 @@ export function readAcceptanceReport(log: string): { ok: true; report: Acceptanc
           const stack = typeof result.error?.stack === "string" ? result.error.stack : null;
           test.results.push({
             status: result.status,
-            errors: (result.errors ?? []).map((error, i) => readError(error, i === 0 ? stack : null)),
+            errors: (result.errors ?? []).map((error, i) => readError(error, i === 0 ? stack : null, containerPrefix)),
           });
         }
       }
@@ -152,8 +192,13 @@ export function readAcceptanceReport(log: string): { ok: true; report: Acceptanc
   for (const fileSuite of raw.suites as RawSuite[]) walk(fileSuite, []);
   return {
     ok: true,
-    report: { loadErrors: (raw.errors as unknown[]).map((error) => readError(error, null)), tests: [...tests.values()] },
+    report: { loadErrors: (raw.errors as unknown[]).map((error) => readError(error, null, containerPrefix)), tests: [...tests.values()] },
   };
+}
+
+/** A reproduction's report, each test and error location named by its `/bw-checks/` path. */
+export function readReproductionReport(log: string): ReturnType<typeof readAcceptanceReport> {
+  return readAcceptanceReport(log, CHECKS_ROOT, "");
 }
 
 /**
@@ -201,6 +246,50 @@ export function classifyFailure(result: AcceptanceResult, suiteFiles: Acceptance
   if (MATCHER_ARGUMENT.test(first.message)) return "test_code";
   if (MATCHER.test(first.message) || CUSTOM_MESSAGE_MATCHER.test(first.message) || LOCATOR_TIMEOUT.test(first.message)) return "valid_red";
   return "test_code";
+}
+
+/**
+ * A matcher whose locator matched no element: `expect(locator).toBeVisible()
+ * failed`, then `Error: element(s) not found` on a line of its own
+ * (`test/fixtures/recorded/acceptance-code-review-probes.json`, `browser[0]`).
+ */
+const MATCHER_NOT_FOUND = /\nError: element\(s\) not found(?:\n|$)/;
+
+/**
+ * Whether a failed result is a matcher failure: a valid red that is neither a
+ * locator action's timeout nor a matcher whose locator found no element. Only
+ * this confirms a reviewer's reproduction
+ * (docs/features/reproduced-review-findings/plan.md): a locator that never
+ * resolved, or resolved to an element it could not act on, says the page
+ * differs from what the reproduction assumed, not that the defect is there
+ * (operator, 2026-10-22, the code review's finding 2).
+ */
+export function isMatcherFailure(result: AcceptanceResult, files: AcceptanceFile[]): boolean {
+  const message = result.errors[0]?.message ?? "";
+  return classifyFailure(result, files) === "valid_red" && !LOCATOR_TIMEOUT.test(message) && !MATCHER_NOT_FOUND.test(message);
+}
+
+/** A call-log entry that records the retry loop's timing, not what the locator found. */
+const RETRY_TIMING = /^(?:retrying \w+ action|waiting \d+ms)$/;
+
+/**
+ * Why a locator action timed out: the last entry of the call log in its
+ * message that is not retry timing, with its repeat count and marker dropped.
+ * For a locator that never resolved, that is `waiting for getByRole('button',
+ * { name: '7' })`; for one that resolved to a hidden element it is `element
+ * is not visible`, since the literal last entry is `waiting 500ms` (Task 1
+ * spike record, `reproduction-report-hidden-locator.json`). Null when the
+ * message has no call log.
+ */
+export function locatorWaitDetail(message: string): string | null {
+  const start = message.indexOf("\nCall log:\n");
+  if (start === -1) return null;
+  const entries: string[] = [];
+  for (const line of message.slice(start + "\nCall log:\n".length).split("\n")) {
+    if (line.trim() === "") break;
+    entries.push(line.trim().replace(/^(?:\d+ × )?- /, "").replace(/^\d+ × /, ""));
+  }
+  return entries.filter((entry) => !RETRY_TIMING.test(entry)).pop() ?? null;
 }
 
 export type TestOutcome = "pass" | "fail" | "flaky";
@@ -579,7 +668,7 @@ const FORBIDDEN_IN_SCRIPT: [RegExp, string][] = [
  * subject is left to Playwright, whose retrying matchers refuse anything but a
  * locator or page at run time.
  */
-function lintSuiteFile(file: AcceptanceFile): string[] {
+export function lintSuiteFile(file: AcceptanceFile): string[] {
   const source = parseSuiteFile(file.content);
   const refusals: string[] = [];
   const refuse = (node: ts.Node, rule: string) =>
@@ -824,6 +913,55 @@ export function judgeAcceptanceRun(
   else if (failed.length > 0) blockReason = `acceptance failed: ${failed.join(", ")}`;
   else if (flaky.length > 0) blockReason = `acceptance flaky: ${flaky.join(", ")}`;
   return { ok: true, tests, blockReason };
+}
+
+/**
+ * One reproduction's run, read from its retained log
+ * (docs/features/reproduced-review-findings/plan.md): `matcher_failure` when
+ * the report loads with at least one test and every result failed on a
+ * matcher, `passed` when every result passed, and `other` for anything else.
+ * `detail` says why it did not pass: a locator timeout's call-log entry, the
+ * locator a matcher found no element for, or the first line of the first
+ * error, of the load error, or of the refusal to read the report. `file` is
+ * the reproduction at its `/bw-checks/` path. A log whose JSON is shaped
+ * unlike any report, which the model-written file can print itself, is
+ * `other`, never a throw.
+ */
+export function judgeReproductionRun(
+  log: string,
+  file: AcceptanceFile
+): { kind: "matcher_failure" | "passed" | "other"; detail: string | null } {
+  let read: ReturnType<typeof readReproductionReport>;
+  try {
+    read = readReproductionReport(log);
+  } catch (err) {
+    return { kind: "other", detail: `the report cannot be read: ${(err as Error).message}` };
+  }
+  if (!read.ok) return { kind: "other", detail: read.reason };
+  const firstLine = (text: string) => text.split("\n")[0]!;
+  const { report } = read;
+  if (report.loadErrors.length > 0) {
+    return { kind: "other", detail: `the reproduction does not load: ${firstLine(report.loadErrors[0]!.message)}` };
+  }
+  if (report.tests.length === 0) return { kind: "other", detail: "the reproduction has no tests" };
+  const results = report.tests.flatMap((test) => test.results);
+  const failed = results.filter((result) => result.status !== "passed");
+  if (failed.length === 0) return { kind: "passed", detail: null };
+  const error = failed[0]!.errors[0];
+  let detail = error === undefined
+    ? `a test ended ${failed[0]!.status} with no error`
+    : LOCATOR_TIMEOUT.test(error.message)
+      ? locatorWaitDetail(error.message) ?? firstLine(error.message)
+      : MATCHER_NOT_FOUND.test(error.message)
+        ? `element(s) not found: ${/\nLocator: (.*)/.exec(error.message)?.[1] ?? "the locator"}`
+        : firstLine(error.message);
+  if (failed.length === results.length && failed.every((result) => isMatcherFailure(result, [file]))) {
+    return { kind: "matcher_failure", detail };
+  }
+  if (report.tests.some((test) => new Set(test.results.map((result) => result.status)).size > 1)) {
+    detail = `a test's repeats differ: ${detail}`;
+  }
+  return { kind: "other", detail };
 }
 
 /**

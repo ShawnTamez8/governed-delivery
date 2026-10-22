@@ -1,0 +1,34 @@
+{
+  "provenance": {
+    "capturedOn": "2026-10-22",
+    "plan": "docs/features/reproduced-review-findings/plan.md, Task 1 (the checks runner spike)",
+    "case": "the failing file named with the acceptance runner's config, whose testDir is /work/acceptance",
+    "image": {
+      "tag": "bw-sandbox:b3acf46315c0",
+      "imageId": "sha256:3736e8f3ecf7cea53d3241f94624808c354875ea2fc902019586d0102fb7f865",
+      "playwright": "1.64.1"
+    },
+    "sandbox": "seededSandbox(imageId) through createSandbox with checksDir, and runInSandbox",
+    "command": [
+      "node",
+      "/opt/bw-browser/node_modules/@playwright/test/cli.js",
+      "test",
+      "--config",
+      "/opt/bw-browser/acceptance.config.mjs",
+      "--repeat-each",
+      "2",
+      "/bw-checks/9/code-reviewer-correctness/fails.spec.mjs"
+    ],
+    "exitCode": 1,
+    "target": "a Git repository whose index.html has an h1, an output #out, a Go button that writes 'clicked' into it, and a hidden Later button",
+    "checksDir": "the reproduction file at <checks>/9/code-reviewer-correctness/<name>.spec.mjs, mounted read-only at /bw-checks",
+    "dropped": "nothing: log is the retained evidence file verbatim, header line included"
+  },
+  "files": [
+    {
+      "path": "/bw-checks/9/code-reviewer-correctness/fails.spec.mjs",
+      "content": "const { test, expect } = await import(process.env.BW_PLAYWRIGHT_TEST);\n\ntest(\"finding 9: the output shows 5 after load\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await expect(page.locator(\"#out\")).toHaveText(\"5\");\n});\n"
+    }
+  ],
+  "log": "# ran in container 435351c8d0d40cf342f01422242d20a4dfae512ea205a90895bb49c1710c757f (image sha256:3736e8f3ecf7cea53d3241f94624808c354875ea2fc902019586d0102fb7f865): [\"node\",\"/opt/bw-browser/node_modules/@playwright/test/cli.js\",\"test\",\"--config\",\"/opt/bw-browser/acceptance.config.mjs\",\"--repeat-each\",\"2\",\"/bw-checks/9/code-reviewer-correctness/fails.spec.mjs\"]\n{\n  \"config\": {\n    \"argv\": [\n      \"/usr/local/bin/node\",\n      \"/opt/bw-browser/node_modules/@playwright/test/cli.js\",\n      \"test\",\n      \"--config\",\n      \"/opt/bw-browser/acceptance.config.mjs\",\n      \"--repeat-each\",\n      \"2\",\n      \"/bw-checks/9/code-reviewer-correctness/fails.spec.mjs\"\n    ],\n    \"configFile\": \"/opt/bw-browser/acceptance.config.mjs\",\n    \"rootDir\": \"/work/acceptance\",\n    \"failOnFlakyTests\": false,\n    \"forbidOnly\": true,\n    \"fullyParallel\": true,\n    \"globalSetup\": null,\n    \"globalTeardown\": null,\n    \"globalTimeout\": 0,\n    \"grep\": {},\n    \"grepInvert\": null,\n    \"maxFailures\": 0,\n    \"metadata\": {},\n    \"preserveOutput\": \"always\",\n    \"projects\": [\n      {\n        \"outputDir\": \"/tmp/bw-acceptance-output\",\n        \"repeatEach\": 1,\n        \"retries\": 0,\n        \"metadata\": {},\n        \"id\": \"\",\n        \"name\": \"\",\n        \"testDir\": \"/work/acceptance\",\n        \"testIgnore\": [],\n        \"testMatch\": [\n          \"**/*.@(spec|test).?(c|m)[jt]s?(x)\"\n        ],\n        \"timeout\": 30000\n      }\n    ],\n    \"filteredProjects\": [\n      {\n        \"grep\": {},\n        \"grepInvert\": null,\n        \"outputDir\": \"/tmp/bw-acceptance-output\",\n        \"repeatEach\": 1,\n        \"retries\": 0,\n        \"metadata\": {},\n        \"name\": \"\",\n        \"testDir\": \"/work/acceptance\",\n        \"snapshotDir\": \"/work/acceptance\",\n        \"testIgnore\": [],\n        \"testMatch\": \"**/*.@(spec|test).?(c|m)[jt]s?(x)\",\n        \"timeout\": 30000,\n        \"use\": {\n          \"browserName\": \"chromium\",\n          \"headless\": true,\n          \"baseURL\": \"file:///work/\",\n          \"actionTimeout\": 5000,\n          \"navigationTimeout\": 5000,\n          \"trace\": \"off\",\n          \"screenshot\": \"off\",\n          \"video\": \"off\"\n        },\n        \"dependencies\": [],\n        \"ignoreSnapshots\": false,\n        \"__projectId\": \"\"\n      }\n    ],\n    \"quiet\": false,\n    \"reporter\": [\n      [\n        \"json\",\n        null\n      ]\n    ],\n    \"reportSlowTests\": {\n      \"max\": 5,\n      \"threshold\": 300000\n    },\n    \"shard\": null,\n    \"tags\": [],\n    \"updateSnapshots\": \"default\",\n    \"updateSourceMethod\": \"patch\",\n    \"version\": \"1.64.1\",\n    \"workers\": 4,\n    \"webServer\": null\n  },\n  \"suites\": [],\n  \"errors\": [\n    {\n      \"message\": \"Error: No tests found.\\nMake sure that arguments are regular expressions matching test files.\\nYou may need to escape symbols like \\\"$\\\" or \\\"*\\\" and quote the arguments.\",\n      \"stack\": \"Error: No tests found.\\nMake sure that arguments are regular expressions matching test files.\\nYou may need to escape symbols like \\\"$\\\" or \\\"*\\\" and quote the arguments.\"\n    }\n  ],\n  \"stats\": {\n    \"startTime\": \"2026-10-22T06:05:12.495Z\",\n    \"duration\": 5.942999999999984,\n    \"expected\": 0,\n    \"skipped\": 0,\n    \"unexpected\": 0,\n    \"flaky\": 0\n  }\n}\n"
+}

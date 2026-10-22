@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { CLAUDE_CODE } from "../src/executor.ts";
 import { parseEnvelope } from "../src/harness.ts";
-import { WORKSPACE_REPLY_SCHEMA } from "../src/agent-result.ts";
+import { CODE_REVIEW_REPLY_SCHEMA, WORKSPACE_REPLY_SCHEMA } from "../src/agent-result.ts";
 import { SELF_REVIEW_REPLY_SCHEMA } from "../src/implementation-self-review.ts";
 import { IMPLEMENTATION_PROMPT_PREFIX } from "../src/prompts.ts";
 
@@ -118,14 +118,17 @@ const EMISSIONS: Emission[] = [
     structured: true,
   },
   {
-    name: "emit-code-review",
+    name: "emit-code-review (reviewer, structured)",
     script: "emit-code-review.mjs",
     prompt: "you are the code reviewer code-reviewer-correctness with specialty x\n\nChanged paths:\n\nsrc/a.ts\n\n",
+    args: ["--json-schema", JSON.stringify(CODE_REVIEW_REPLY_SCHEMA)],
+    structured: true,
   },
   {
-    name: "emit-code-review (prose result)",
+    name: "emit-code-review (reviewer reply that never reached the structured channel)",
     script: "emit-code-review.mjs",
     prompt: "you are the code reviewer code-reviewer-correctness with specialty x\n\nChanged paths:\n\nsrc/a.ts\n\n",
+    args: ["--json-schema", JSON.stringify(CODE_REVIEW_REPLY_SCHEMA)],
     env: { EMIT_MODE: "prose" },
   },
   { name: "echo-json", script: "echo-json.mjs", prompt: "hello", extraResultFields: ["stdinLength", "argv"] },
@@ -189,6 +192,7 @@ test("each emitter refuses a dispatch that sends --json-schema or the tool serve
   // free-text dispatch fails loudly.
   const workspace = JSON.stringify(WORKSPACE_REPLY_SCHEMA);
   const selfReview = JSON.stringify(SELF_REVIEW_REPLY_SCHEMA);
+  const review = JSON.stringify(CODE_REVIEW_REPLY_SCHEMA);
   const reviewerPrompt = "you are the code reviewer code-reviewer-correctness with specialty x\n\nChanged paths:\n\nsrc/a.ts\n\n";
   const implementationRoute = `${IMPLEMENTATION_PROMPT_PREFIX} implementer\n\n${PHASE_PROMPT}`;
   const cases: Array<[string, string, string[], RegExp]> = [
@@ -201,12 +205,14 @@ test("each emitter refuses a dispatch that sends --json-schema or the tool serve
     ["emit-code-review.mjs", REMEDIATION_PROMPT, [...TOOL_SERVER], /a remediation prompt arrived without --json-schema/],
     ["emit-code-review.mjs", REMEDIATION_PROMPT, ["--json-schema", workspace], /a remediation prompt arrived without --mcp-config/],
     ["emit-code-review.mjs", REMEDIATION_PROMPT, ["--json-schema", selfReview, ...TOOL_SERVER], /a remediation prompt arrived with the wrong --json-schema/],
-    ["emit-code-review.mjs", reviewerPrompt, ["--json-schema", workspace], /a reviewer prompt arrived with --json-schema/],
-    ["emit-code-review.mjs", reviewerPrompt, [...TOOL_SERVER], /a reviewer prompt arrived with --mcp-config/],
+    ["emit-code-review.mjs", REMEDIATION_PROMPT, ["--json-schema", review, ...TOOL_SERVER], /a remediation prompt arrived with the wrong --json-schema/],
+    ["emit-code-review.mjs", reviewerPrompt, [], /a reviewer prompt arrived without --json-schema/],
+    ["emit-code-review.mjs", reviewerPrompt, ["--json-schema", workspace], /a reviewer prompt arrived with the wrong --json-schema/],
+    ["emit-code-review.mjs", reviewerPrompt, ["--json-schema", review, ...TOOL_SERVER], /a reviewer prompt arrived with --mcp-config/],
     ["emit-cli-run.mjs", implementationRoute, [...TOOL_SERVER], /a IMPLEMENTATION_PROMPT_PREFIX prompt arrived without --json-schema/],
     ["emit-cli-run.mjs", implementationRoute, ["--json-schema", workspace], /a IMPLEMENTATION_PROMPT_PREFIX prompt arrived without --mcp-config/],
-    ["emit-cli-run.mjs", reviewerPrompt, ["--json-schema", workspace], /a CODE_REVIEW_PROMPT_PREFIX prompt arrived with --json-schema/],
-    ["emit-cli-run.mjs", reviewerPrompt, [...TOOL_SERVER], /a CODE_REVIEW_PROMPT_PREFIX prompt arrived with --mcp-config/],
+    ["emit-cli-run.mjs", reviewerPrompt, [], /a CODE_REVIEW_PROMPT_PREFIX prompt arrived without --json-schema/],
+    ["emit-cli-run.mjs", reviewerPrompt, ["--json-schema", review, ...TOOL_SERVER], /a CODE_REVIEW_PROMPT_PREFIX prompt arrived with --mcp-config/],
   ];
   const cwd = mkdtempSync(join(tmpdir(), "bw-stream-fixture-"));
   try {
