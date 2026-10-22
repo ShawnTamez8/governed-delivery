@@ -27,7 +27,7 @@ the system of record; machine-local memory is only a cache
   - The evidence fixture is `test/fixtures/recorded/acceptance-web-calculator-e2e-2026-10-21.json`.
   - The record and the doc updates are committed in `b0f542e`.
   - Container mount argv is not recorded by the system, so that half of Task 11's criterion rests on tests.
-- **Next.** The operator decides whether to commit the Task 11 record. No spend is authorized.
+- **Next.** The operator decides whether to push `sandboxed-delivery` and which rework change follows change 4. No spend is authorized.
 
 **Resume point (2026-10-20, still current except as above).** Branch `sandboxed-delivery` is past `7a725e3`, none of it pushed
 (`origin/sandboxed-delivery` is `be6a88c`). The operator asked for three commits on 2026-10-20:
