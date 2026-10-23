@@ -1,0 +1,27 @@
+{
+  "provenance": {
+    "capturedOn": "2026-10-22",
+    "plan": "docs/features/served-browser-pages/plan.md, Task 1 (the served-page spike)",
+    "case": "a failed server start: a listener holds 127.0.0.1:47731 before the runner starts; the report loads with one top-level error naming the web server and no tests",
+    "image": {
+      "tag": "bw-sandbox:975c2e567b66",
+      "imageId": "sha256:dac27c6bdf2f652da84ca1f230b1eeb2c3c564a4a882021b58ea5400738ed037",
+      "playwright": "1.64.1"
+    },
+    "sandbox": "verifyCommit from src/commit-verification.ts, seededSandbox(imageId), readOnlyPaths [\"acceptance/s/\"], on the real engine; the command blocked",
+    "command": [
+      "sh",
+      "-c",
+      "node -e \"require('net').createServer().listen(47731, '127.0.0.1')\" > /dev/null 2>&1 & sleep 1; exec node /opt/bw-browser/node_modules/@playwright/test/cli.js test --config /opt/bw-browser/acceptance.config.mjs --repeat-each 2 acceptance/s/"
+    ],
+    "target": "a Git repository whose index.html is test/acceptance-engine.test.ts's PAGE: an h1, an output #out and a Go button that writes 'clicked' into it",
+    "dropped": "nothing: log is the retained evidence file verbatim, header line included"
+  },
+  "files": [
+    {
+      "path": "acceptance/s/pass.spec.mjs",
+      "content": "const { test, expect } = await import(process.env.BW_PLAYWRIGHT_TEST);\n\ntest(\"AC-001 the heading shows\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await expect(page.getByRole(\"heading\", { name: \"Spike page\" })).toBeVisible();\n});\n"
+    }
+  ],
+  "log": "# ran in container fd6f3c77e9407069a5462168f5dc263882c4292dfbb24f8df072e44418772483 (image sha256:dac27c6bdf2f652da84ca1f230b1eeb2c3c564a4a882021b58ea5400738ed037): [\"sh\",\"-c\",\"node -e \\\"require('net').createServer().listen(47731, '127.0.0.1')\\\" > /dev/null 2>&1 & sleep 1; exec node /opt/bw-browser/node_modules/@playwright/test/cli.js test --config /opt/bw-browser/acceptance.config.mjs --repeat-each 2 acceptance/s/\"]\n{\n  \"config\": {\n    \"argv\": [\n      \"/usr/local/bin/node\",\n      \"/opt/bw-browser/node_modules/@playwright/test/cli.js\",\n      \"test\",\n      \"--config\",\n      \"/opt/bw-browser/acceptance.config.mjs\",\n      \"--repeat-each\",\n      \"2\",\n      \"acceptance/s/\"\n    ],\n    \"configFile\": \"/opt/bw-browser/acceptance.config.mjs\",\n    \"rootDir\": \"/work/acceptance\",\n    \"failOnFlakyTests\": false,\n    \"forbidOnly\": true,\n    \"fullyParallel\": true,\n    \"globalSetup\": null,\n    \"globalTeardown\": null,\n    \"globalTimeout\": 0,\n    \"grep\": {},\n    \"grepInvert\": null,\n    \"maxFailures\": 0,\n    \"metadata\": {},\n    \"preserveOutput\": \"always\",\n    \"projects\": [\n      {\n        \"outputDir\": \"/tmp/bw-acceptance-output\",\n        \"repeatEach\": 1,\n        \"retries\": 0,\n        \"metadata\": {},\n        \"id\": \"\",\n        \"name\": \"\",\n        \"testDir\": \"/work/acceptance\",\n        \"testIgnore\": [],\n        \"testMatch\": [\n          \"**/*.@(spec|test).?(c|m)[jt]s?(x)\"\n        ],\n        \"timeout\": 30000\n      }\n    ],\n    \"filteredProjects\": [\n      {\n        \"grep\": {},\n        \"grepInvert\": null,\n        \"outputDir\": \"/tmp/bw-acceptance-output\",\n        \"repeatEach\": 1,\n        \"retries\": 0,\n        \"metadata\": {},\n        \"name\": \"\",\n        \"testDir\": \"/work/acceptance\",\n        \"snapshotDir\": \"/work/acceptance\",\n        \"testIgnore\": [],\n        \"testMatch\": \"**/*.@(spec|test).?(c|m)[jt]s?(x)\",\n        \"timeout\": 30000,\n        \"use\": {\n          \"browserName\": \"chromium\",\n          \"headless\": true,\n          \"baseURL\": \"http://127.0.0.1:47731/\",\n          \"actionTimeout\": 5000,\n          \"navigationTimeout\": 5000,\n          \"trace\": \"off\",\n          \"screenshot\": \"off\",\n          \"video\": \"off\"\n        },\n        \"dependencies\": [],\n        \"ignoreSnapshots\": false,\n        \"__projectId\": \"\"\n      }\n    ],\n    \"quiet\": false,\n    \"reporter\": [\n      [\n        \"json\",\n        null\n      ]\n    ],\n    \"reportSlowTests\": {\n      \"max\": 5,\n      \"threshold\": 300000\n    },\n    \"shard\": null,\n    \"tags\": [],\n    \"updateSnapshots\": \"default\",\n    \"updateSourceMethod\": \"patch\",\n    \"version\": \"1.64.1\",\n    \"workers\": 4,\n    \"webServer\": {\n      \"command\": \"node /opt/bw-browser/serve.mjs\",\n      \"port\": 47731,\n      \"reuseExistingServer\": false,\n      \"stdout\": \"ignore\",\n      \"stderr\": \"ignore\",\n      \"timeout\": 10000\n    }\n  },\n  \"suites\": [],\n  \"errors\": [\n    {\n      \"message\": \"Error: http://localhost:47731 is already used, make sure that nothing is running on the port/url or set reuseExistingServer:true in config.webServer.\",\n      \"stack\": \"Error: http://localhost:47731 is already used, make sure that nothing is running on the port/url or set reuseExistingServer:true in config.webServer.\"\n    }\n  ],\n  \"stats\": {\n    \"startTime\": \"2026-10-23T03:32:21.812Z\",\n    \"duration\": 9.256000000000085,\n    \"expected\": 0,\n    \"skipped\": 0,\n    \"unexpected\": 0,\n    \"flaky\": 0\n  }\n}\n"
+}

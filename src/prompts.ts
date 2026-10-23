@@ -278,7 +278,7 @@ export const REPRODUCTION_RULES = [
   `For a finding you may attach one reproduction, and at most ${REPRODUCTION_MAX_COUNT} in all, in proposedContentChanges.reproductions: a Playwright test file that names its finding by the same intentKey and location, with a fileName matching ${REPRODUCTION_FILE_NAME.source}.`,
   `A reproduction must fail at the reviewed commit because of the defect, and pass once the defect is fixed.`,
   `Begin its content with exactly this line, which loads the system's own runner: ${ACCEPTANCE_IMPORT_LINE}`,
-  `The system runs it with a checkout of the reviewed commit as the working directory, so open the page with \`await page.goto("index.html")\`.`,
+  `The system serves the reviewed commit's checkout over loopback HTTP, with the page at its root, so open the page with \`await page.goto("index.html")\`; module scripts and root-absolute paths load, and no build step runs.`,
   `Assert with \`await expect(<locator>)\` and Playwright's auto-retrying matchers, such as toHaveText: only a failed matcher confirms a finding, and a locator that never finds an element it can act on does not.`,
   `Use only trusted input, through page.keyboard and locator actions such as click and press, never dispatchEvent; write no hooks, and set no fixed wait or timeout.`,
   `A finding without a reproduction counts exactly as one with a reproduction, at the severity you give it.`,
@@ -1734,7 +1734,7 @@ Where a condition covers a set, such as keyboard focus on any element of the pag
 Where a criterion names an action without saying how the user performs it, such as activating a control, test each way a user performs it: a click, and each key that activates that kind of element while it has keyboard focus.
 Where two criteria apply to the same input, such as a key with a page-wide meaning pressed while an element that also reacts to that key has focus, write a test that checks both criteria hold together.
 Begin every file with exactly this line, which loads the system's own runner: ${ACCEPTANCE_IMPORT_LINE}
-Open the page in every test with \`await page.goto("index.html")\`: the page under test is index.html at the repository root, opened from the checkout.
+Open the page in every test with \`await page.goto("index.html")\`: the page under test is index.html at the repository root, served from the checkout over loopback HTTP, where module scripts and root-absolute paths load and no build step runs.
 Write no hooks (beforeEach, beforeAll, afterEach, afterAll): each test opens its own page and does its own setup.
 Find elements by role and accessible name wherever the page gives them one.
 Every assertion is \`await expect(<locator>)\`, optionally followed by \`.not\`, and then one of Playwright's auto-retrying matchers, such as toHaveText, toHaveAttribute, toBeVisible or toHaveCSS; never \`expect(await …)\`, expect.soft, expect.poll, or a value matcher such as toBe.

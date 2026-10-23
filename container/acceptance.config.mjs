@@ -10,6 +10,12 @@
 // On the blank baseline page every test waits out one such timeout, so tests
 // run four at a time, each test on its own: a serial baseline of more than
 // about 80 tests exceeds the verification command ceiling (Task 4 round 1).
+// Pages are served from /work by the system's page server on the container's
+// loopback, not opened from `file:///work/`: from disk, a module script is
+// refused by CORS and a root-absolute path resolves to `file:///src/...`, so
+// the page runs no code (docs/features/served-browser-pages/plan.md). The
+// server prints nothing and its streams are ignored, so the log stays one JSON
+// report.
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineConfig } from "@playwright/test";
@@ -24,10 +30,18 @@ export default defineConfig({
   forbidOnly: true,
   timeout: 30_000,
   expect: { timeout: 5_000 },
+  webServer: {
+    command: "node /opt/bw-browser/serve.mjs",
+    port: 47731,
+    reuseExistingServer: false,
+    stdout: "ignore",
+    stderr: "ignore",
+    timeout: 10_000,
+  },
   use: {
     browserName: "chromium",
     headless: true,
-    baseURL: "file:///work/",
+    baseURL: "http://127.0.0.1:47731/",
     actionTimeout: 5_000,
     navigationTimeout: 5_000,
     trace: "off",

@@ -419,8 +419,9 @@ Author the following inputs in the target using your editor:
 
 The design should explicitly require any tests or documentation you expect in
 the delivery. There is no separate implemented test-authoring or documentation
-stage that will fill those gaps later. For a static page that opens from the
-worktree, `new-run --acceptance-tests` adds an independently written browser
+stage that will fill those gaps later. For a page served from the checkout's
+root, entered at a root `index.html` with no build step,
+`new-run --acceptance-tests` adds an independently written browser
 suite for the acceptance criteria; see the
 [README](../../README.md#opt-in-to-acceptance-tests). It does not replace the
 tests the design asks for. You do not hand-author generated `spec.md`

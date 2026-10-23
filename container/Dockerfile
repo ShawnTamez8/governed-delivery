@@ -23,3 +23,6 @@ COPY acceptance.config.mjs /opt/bw-browser/acceptance.config.mjs
 # The reproduction runner (docs/features/reproduced-review-findings/plan.md):
 # the same config with testDir /bw-checks, where reviewer reproductions mount.
 COPY checks.config.mjs /opt/bw-browser/checks.config.mjs
+# The page server both configs start (docs/features/served-browser-pages/plan.md):
+# pages load over loopback HTTP, because from file:///work/ a module page runs no code.
+COPY serve.mjs /opt/bw-browser/serve.mjs

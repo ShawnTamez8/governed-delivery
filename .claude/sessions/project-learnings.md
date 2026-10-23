@@ -5,7 +5,7 @@ history and may name superseded state; Current state wins when they disagree. Th
 the system of record; machine-local memory is only a cache
 (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-10-22: change 7 built, `Implemented` and committed on `sandboxed-delivery` (`c52017f`, records `214bb84`), not pushed; Task 10's paid run and a Target Tap run completed; the served-browser-pages fix plan is `Proposed`; change 4 and change 1 built and committed; crew-chatter run 8 not merged; no spend authorized)
+## Current state (2026-10-22: change 7 built, `Implemented` and committed on `sandboxed-delivery` (`c52017f`, records `214bb84`), not pushed; Task 10's paid run and a Target Tap run completed; the served-browser-pages fix is built and `Implemented`, uncommitted; change 4 and change 1 built and committed; crew-chatter run 8 not merged; no spend authorized)
 
 **Change 7, reproduced review findings (2026-10-22).** `docs/features/reproduced-review-findings/plan.md` is `Implemented`. The build is `c52017f`; the paid-run records, the false-confirmation fixtures, hazard 18's measured paragraph and the fix plan are `214bb84`. `docs/runbooks/workflow-explorer.html` is not part of either.
 - **Independent review: 7 findings, all fixed.** Operator decisions:
@@ -21,7 +21,7 @@ the system of record; machine-local memory is only a cache
   - Confirmation and preservation have no live run, and reviewer recall has no sample.
   - A second paid run, Target Tap, also completed: 19 dispatches, $4.61744, one clean panel, at `C:\Users\tamezs\buildWorks_test_repos\target-tap-reproduced-findings-2026-10-22\target`. It paused at the package decision, which the operator answered from the dashboard; the auto-mode classifier then blocked the assistant's post-signing `run --yes`, so the operator launched it.
   - **Measured (free, on the engine):** both browser runners open `file:///work/`, so a module-script or root-absolute-path page runs no code, and two spec-derived reproductions falsely confirmed against Target Tap's delivered commit. The evidence is in hazard 18 and `test/fixtures/recorded/reproduction-{report-file-origin-ac-014,report-file-origin-ac-016,diagnostic-file-origin}.json`.
-  - The fix plan is `docs/features/served-browser-pages/plan.md` (`Proposed`): a loopback page server for both runners. Building it is not authorized.
+  - The fix plan `docs/features/served-browser-pages/plan.md` is `Implemented` (operator-authorized 2026-10-22, built 2026-10-22/23, **uncommitted**). The delivered-page fixture is committed as `12619c8`. Both runners now serve `/work` through `container/serve.mjs` on `127.0.0.1:47731` (image `bw-sandbox:975c2e567b66` at Task 1; the review fixes changed `container/` again, so new runs build a newer tag). The Target Tap reproductions are now `not_reproduced` on the engine. The full suite passed 1887/1893 (the 2 `sign-approval` failures, 4 skips). The code review (`2026-10-22-code-review.md`) had 4 accepted and 1 deferred: a runner killed at the ceiling in a shared dispatch container may hold the port, and fixing that is the operator's call. Plan decisions: accept the unretained server exception text (M4), and a `301` for a directory URL without a trailing slash.
   - `.claude/skills/run-buildworks/SKILL.md` still lists `target-tap` as "Never run".
   - Whether to spend again on a run that attracts findings is the operator's call.
 - `runAlone`'s thrown-error wrapper is written, not verified.

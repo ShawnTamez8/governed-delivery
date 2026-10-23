@@ -771,6 +771,39 @@ The acceptance runner opens the same `file:///work/` page. So on such a page eve
 acceptance test is expected to fail and block the run, closed rather than false
 [Inference, not run].
 
+**Remedy, 2026-10-22, free, on the engine: both runners serve the page**
+(`docs/features/served-browser-pages/plan.md`). Both runner configs now start the
+system's page server, `container/serve.mjs`, and open pages from
+`http://127.0.0.1:47731/`. The server serves only files under `/work`, and only
+for `GET` and `HEAD`. It answers anything it cannot serve by closing the socket,
+so a missing page still fails navigation, now as `net::ERR_EMPTY_RESPONSE`. It
+prints nothing, so the log is still one JSON report.
+
+On the rebuilt image, the two Target Tap reproductions came back `not_reproduced`
+through `confirmReproductions` on the delivered tree. The same two files, run as an
+acceptance suite through `verifyCommit`, passed both repeats. The Task 1 records
+are `test/fixtures/recorded/served-report-*.json`, and the delivered tree is
+`test/fixtures/recorded/target-tap-delivered-page.json`. The engine regression
+tests pin both outcomes, and with either config set back to `file:///work/` they
+fail: the reproduction ends `confirmed` again and the suite blocks.
+
+What this does not show:
+- Nothing checks that a page's code started. A missing imported module or a
+  startup exception can leave the same elements unchanged, so a matcher failure
+  on such a page still confirms a reproduction.
+- The server's own exception text is not retained. The one failed start
+  measured, a taken port, appeared only as Playwright's top-level report error
+  ("is already used"), and an unexpected read error looks the same as a missing
+  file.
+- The port is fixed. A runner killed at the command ceiling never stops its
+  server, so in a dispatch container that every `run_command` call shares, a
+  later runner may refuse with "is already used" [Inference, not run; the code
+  review's deferred finding 2]. The system's own gates run each runner last or
+  alone, so none of them is affected.
+- A page that needs a build step and a target that must start its own server are
+  still unsupported.
+- A run frozen on an earlier image keeps its file-origin configs.
+
 ## 19. An inactivity budget over non-streaming output is a wall clock
 
 An idle timer that resets "on any output" measures inactivity only if the

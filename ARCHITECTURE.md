@@ -222,9 +222,13 @@ The image also holds the system's acceptance runner (2026-10-21,
 and its Chromium under `/opt/bw-browser`, and the committed
 `container/acceptance.config.mjs`. The image's tag is a hash over every file in
 `container/`, not the Dockerfile alone, so a configuration-only change builds a
-new image. A run already frozen keeps its image ID. The runner opens static
-pages from the worktree (`file:///work/`); a target that must start a server
-first is not supported.
+new image. A run already frozen keeps its image ID. Both browser runners, the
+acceptance runner and the reproduction checks runner, serve the checkout's root
+over the container's loopback HTTP through the system's page server,
+`container/serve.mjs`, and open `index.html` there (2026-10-22,
+`docs/features/served-browser-pages/plan.md`): from `file:///work/` a module
+script is refused and a root-absolute path misses, so such a page ran no code. No
+build step runs, and a target that must start a server first is not supported.
 
 Verification commands live in a committed `governed.yaml` at the repository
 root, authored by the operator before the first run. The verification stage

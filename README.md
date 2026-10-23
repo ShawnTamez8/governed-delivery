@@ -732,9 +732,11 @@ the derived phase is not another stored lifecycle.
 
 `new-run --acceptance-tests` freezes an executable acceptance suite into the
 run (`docs/features/protected-acceptance-tests/plan.md`). The suite applies
-only to static pages that open from the worktree, with `index.html` at the
-repository root as the entry page. A target that must start a server first is
-not supported. Guided mode does not offer the option.
+only to a page served from the checkout's root, with `index.html` at the
+repository root as the entry page and no build step. The system serves it over
+the container's loopback HTTP, so module scripts and root-absolute paths load. A
+target that must start a server first is not supported. Guided mode does not
+offer the option.
 
 - **Before the first phase,** one dispatch of the `acceptance-test-author`
   agent writes browser tests from the approved acceptance criteria under

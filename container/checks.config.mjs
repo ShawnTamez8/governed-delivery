@@ -7,7 +7,11 @@
 // --config /opt/bw-browser/checks.config.mjs --repeat-each 2
 // /bw-checks/<finding>/<reviewer>/<file>` from /work, one file per command. The
 // JSON report goes to stdout and every other output to the container's
-// temporary directory, never the worktree (hazard 22).
+// temporary directory, never the worktree (hazard 22). Pages are served from
+// /work by the system's page server, as in the acceptance config: from
+// `file:///work/` a module script is refused by CORS and a root-absolute path
+// resolves to `file:///src/...`, so a page that never ran its code confirmed two
+// reproductions (docs/features/served-browser-pages/plan.md).
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineConfig } from "@playwright/test";
@@ -22,10 +26,18 @@ export default defineConfig({
   forbidOnly: true,
   timeout: 30_000,
   expect: { timeout: 5_000 },
+  webServer: {
+    command: "node /opt/bw-browser/serve.mjs",
+    port: 47731,
+    reuseExistingServer: false,
+    stdout: "ignore",
+    stderr: "ignore",
+    timeout: 10_000,
+  },
   use: {
     browserName: "chromium",
     headless: true,
-    baseURL: "file:///work/",
+    baseURL: "http://127.0.0.1:47731/",
     actionTimeout: 5_000,
     navigationTimeout: 5_000,
     trace: "off",

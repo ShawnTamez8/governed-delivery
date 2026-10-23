@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -225,4 +226,49 @@ test("finding 9's preserved check holds on the control tree", { skip }, async (t
   const result = await check(controlTree(BENCHMARK), FINDING_9);
   t.diagnostic(JSON.stringify(result));
   assert.equal(result.outcome, "holds", result.detail ?? "");
+});
+
+// --- The served page (docs/features/served-browser-pages/plan.md, Task 2) ---
+
+interface DeliveredPage {
+  manifest: { path: string; blob: string }[];
+  files: { path: string; blob: string; content: string }[];
+}
+
+/** The delivered Target Tap tree, each file's bytes rehashed to its manifest blob ID first. */
+function deliveredTree(): Record<string, string> {
+  const page = JSON.parse(readFileSync(join(RECORDED, "target-tap-delivered-page.json"), "utf8")) as DeliveredPage;
+  const tree: Record<string, string> = {};
+  for (const file of page.files) {
+    const bytes = Buffer.from(file.content, "utf8");
+    const blob = createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+    assert.equal(blob, page.manifest.find((e) => e.path === file.path)?.blob, `${file.path} is the committed blob`);
+    tree[file.path] = file.content;
+  }
+  return tree;
+}
+
+/**
+ * The two reproductions written from the approved Target Tap specification and
+ * recorded `confirmed` from `file:///work/`, where the delivered page's module
+ * script never loaded. Served, the same page met both criteria in the recorded
+ * HTTP diagnostic (`reproduction-diagnostic-file-origin.json`: the ready message
+ * showed, and `#start` hid after a click), so each must pass and be not reproduced.
+ */
+const FILE_ORIGIN = ["ac-014", "ac-016"].map((name) => {
+  const file = (JSON.parse(readFileSync(join(RECORDED, `reproduction-report-file-origin-${name}.json`), "utf8")) as {
+    files: { path: string; content: string }[];
+  }).files[0]!;
+  const [findingId, reviewer, fileName] = file.path.replace(/^\/bw-checks\//, "").split("/");
+  assert.equal(reviewer, REVIEWER);
+  return { findingId: Number(findingId), fileName: fileName!, content: file.content, title: name };
+});
+
+test("the Target Tap reproductions recorded confirmed from file:///work/ are not reproduced on the served delivered page", { skip }, async (t) => {
+  const tree = deliveredTree();
+  for (const reproduction of FILE_ORIGIN) {
+    const result = await confirm(tree, reproduction);
+    t.diagnostic(JSON.stringify(result));
+    assert.equal(result.outcome, "not_reproduced", `${reproduction.fileName}: ${result.detail ?? ""}`);
+  }
 });

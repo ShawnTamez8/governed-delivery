@@ -335,7 +335,8 @@ const REPRODUCTION_RULE_SENTENCES = [
   "in all, in proposedContentChanges.reproductions: a Playwright test file that names its finding by the same intentKey and location, with a fileName matching",
   "A reproduction must fail at the reviewed commit because of the defect, and pass once the defect is fixed.",
   "Begin its content with exactly this line, which loads the system's own runner:",
-  "The system runs it with a checkout of the reviewed commit as the working directory, so open the page with",
+  "The system serves the reviewed commit's checkout over loopback HTTP, with the page at its root, so open the page with",
+  "; module scripts and root-absolute paths load, and no build step runs.",
   "and Playwright's auto-retrying matchers, such as toHaveText: only a failed matcher confirms a finding, and a locator that never finds an element it can act on does not.",
   "Use only trusted input, through page.keyboard and locator actions such as click and press, never dispatchEvent; write no hooks, and set no fixed wait or timeout.",
   "A finding without a reproduction counts exactly as one with a reproduction, at the severity you give it.",
@@ -2852,7 +2853,8 @@ test("the reviewer prompt states the reproduction contract once, each rule on it
   assert.ok(prompt.includes(`at most ${REPRODUCTION_MAX_COUNT} in all`));
   assert.ok(prompt.includes(`with a fileName matching ${REPRODUCTION_FILE_NAME.source}.`));
   assert.ok(prompt.includes(`loads the system's own runner: ${ACCEPTANCE_IMPORT_LINE}\n`));
-  assert.ok(prompt.includes('open the page with `await page.goto("index.html")`.'));
+  assert.ok(prompt.includes('open the page with `await page.goto("index.html")`;'));
+  assert.ok(prompt.includes("over loopback HTTP"));
   // The example's shape is the reply schema's.
   const example = JSON.parse(prompt.split("\n").find((l) => l.startsWith('{"status": "proposed"'))!) as {
     proposedContentChanges: { reproductions: Record<string, string>[] };
