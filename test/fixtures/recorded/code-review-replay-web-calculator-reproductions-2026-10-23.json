@@ -1,0 +1,595 @@
+{
+  "provenance": {
+    "what": "Paid code-review replay with reproductions, operator-consented 2026-10-23 (\"go ahead with the code-review replay\"; ceiling $1.00). Question: do the seeded code reviewers attach reproductions to a known defect, and does the stage's confirmation classify them correctly?",
+    "script": "scripts/code-review-replay.ts, committed after the run as a typed restatement of the session script that ran (static imports and functions in place of dynamic imports; the same calls, arguments and order). It builds each prompt with buildCodeReviewPrompt(reviewer, specFull, planFull, changedPaths, diff, reviewedCommit, null, []); it invokes invokeHarness(CLAUDE_CODE) with --json-schema CODE_REVIEW_REPLY_SCHEMA, model claude-haiku-5-5, effort medium (the seeded reviewer setting), cwd a fresh repository at the reviewed commit; it validates with validateAgentResult, validateReviewerReports, validateCodeReviewReports and validateCodeReviewReproductions, as runCodeReviewStage does; and it passes every validated reproduction to confirmReproductions on seededSandbox(ensureImage()), first at the reviewed commit, then at controlTree(benchmark) from scripts/test-author-evaluation.ts.",
+    "source": "test/fixtures/recorded/code-review-web-calculator-remediation-regression.json: trees b5d42890 (finding 9) and bc57eb74 (finding 10), approvedDocuments.specFull and planFull",
+    "repository": "per call a fresh repository: a baseline commit holding the driver's .gitignore and governed.yaml, then the recorded tree. The diff is baseline..tree, so it covers index.html and src/ only; the real run's diff also held the projected spec and plan, which that fixture dropped, so the prompts are not byte-identical to the run's.",
+    "panel": "three repeats of the seeded three-reviewer panel per tree, each panel concurrent, trees interleaved; 18 dispatches",
+    "image": "bw-sandbox image from ensureImage(['docker']) at capture (the current container/ tag)",
+    "captured": "2026-10-23",
+    "totalCostUsd": 0.11079503,
+    "findingIds": "confirmation findingIds are synthetic (100 x reviewer position + finding index); the replay records no findings in a store",
+    "dropped": "the harness stream envelopes (the raw .jsonl files stay in C:\\Users\\tamezs\\buildWorks_test_repos\\code-review-replay-2026-10-23); each confirmation's evidenceRef, which named a temporary repository's .governance directory; the prompts, which the script rebuilds from the source fixture"
+  },
+  "summary": {
+    "panels": 6,
+    "dispatches": 18,
+    "validReplies": 18,
+    "panelsReportingTheKnownDefect": "4 of 6: b5d42890 r1 and r2 (correctness, medium); bc57eb74 r2 (correctness and state-integrity, high) and r3 (correctness, high). b5d42890 r3 and bc57eb74 r1 reported nothing.",
+    "reproductions": "5 attached, 0 refused by the validator; all 5 confirmed at the reviewed commit on a matcher failure and not_reproduced at the control"
+  },
+  "calls": [
+    {
+      "label": "b5d42890-r1",
+      "tree": "b5d428908cabbaece955a816a72ba0a477d3422e",
+      "defect": "finding 9: Enter on the focused theme control runs equals (round 1, state-integrity, medium)",
+      "reviewedCommit": "18254ce568ee89542ece43a924d6b724bc531d78",
+      "changedPaths": [
+        "index.html",
+        "src/app.js",
+        "src/calculator.js",
+        "src/styles.css"
+      ],
+      "panel": [
+        {
+          "reviewer": "code-reviewer-correctness",
+          "rawFile": "b5d42890-r1-code-reviewer-correctness.jsonl",
+          "rawWrittenAt": "2026-10-23T19:20:05.599Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.0084507,
+          "durationMs": 43754,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [
+            {
+              "severity": "medium",
+              "classification": "current_artifact",
+              "location": "src/app.js:84",
+              "intentKey": "enter-blocks-theme-toggle-keyboard-activation",
+              "subject": "Pressing Enter on the keyboard-focused theme toggle runs equals and calls preventDefault (src/app.js:92), so the native click never fires and the theme does not change; a keyboard user cannot switch themes with Enter."
+            }
+          ],
+          "rawReproductionCount": 1,
+          "reproductionRefusal": null,
+          "reproductions": [
+            {
+              "intentKey": "enter-blocks-theme-toggle-keyboard-activation",
+              "location": "src/app.js:84",
+              "fileName": "enter-theme-toggle.spec.mjs",
+              "content": "const { test, expect } = await import(process.env.BW_PLAYWRIGHT_TEST);\n\ntest('Enter activates the focused theme toggle', async ({ page }) => {\n  await page.goto(\"index.html\");\n  await page.keyboard.press(\"Tab\");\n  await expect(page.locator(\"#theme-toggle\")).toBeFocused();\n  await page.keyboard.press(\"Enter\");\n  await expect(page.locator(\"html\")).toHaveAttribute(\"data-theme\", \"dark\");\n});\n"
+            }
+          ]
+        },
+        {
+          "reviewer": "code-reviewer-security",
+          "rawFile": "b5d42890-r1-code-reviewer-security.jsonl",
+          "rawWrittenAt": "2026-10-23T19:19:31.012Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.00326769,
+          "durationMs": 9133,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [],
+          "rawReproductionCount": 0,
+          "reproductionRefusal": null,
+          "reproductions": []
+        },
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "rawFile": "b5d42890-r1-code-reviewer-state-integrity.jsonl",
+          "rawWrittenAt": "2026-10-23T19:19:52.070Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.00557299,
+          "durationMs": 30147,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [
+            {
+              "severity": "low",
+              "classification": "current_artifact",
+              "location": "src/app.js:6",
+              "intentKey": "dependency-failure-skips-theme-init",
+              "subject": "If src/calculator.js fails to load, the top-level Calculator() call throws before the saved theme is restored and before the theme toggle listener is attached, so the theme control does nothing and the stored theme is not applied even though theme handling does not depend on the calculator."
+            }
+          ],
+          "rawReproductionCount": 0,
+          "reproductionRefusal": null,
+          "reproductions": []
+        }
+      ]
+    },
+    {
+      "label": "bc57eb74-r1",
+      "tree": "bc57eb7482b4737fd1fe9e110e50652c630a0aa7",
+      "defect": "finding 10: Enter after a click on an operator re-runs that operator (round 2, correctness, high)",
+      "reviewedCommit": "b9fc57ebe660a58a989f79a01cd0cd4193e04e99",
+      "changedPaths": [
+        "index.html",
+        "src/app.js",
+        "src/calculator.js",
+        "src/styles.css"
+      ],
+      "panel": [
+        {
+          "reviewer": "code-reviewer-correctness",
+          "rawFile": "bc57eb74-r1-code-reviewer-correctness.jsonl",
+          "rawWrittenAt": "2026-10-23T19:21:28.433Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.008209089999999999,
+          "durationMs": 51566,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [],
+          "rawReproductionCount": 0,
+          "reproductionRefusal": null,
+          "reproductions": []
+        },
+        {
+          "reviewer": "code-reviewer-security",
+          "rawFile": "bc57eb74-r1-code-reviewer-security.jsonl",
+          "rawWrittenAt": "2026-10-23T19:20:48.673Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.0036601900000000002,
+          "durationMs": 11779,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [],
+          "rawReproductionCount": 0,
+          "reproductionRefusal": null,
+          "reproductions": []
+        },
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "rawFile": "bc57eb74-r1-code-reviewer-state-integrity.jsonl",
+          "rawWrittenAt": "2026-10-23T19:21:31.134Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.00817799,
+          "durationMs": 54207,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [],
+          "rawReproductionCount": 0,
+          "reproductionRefusal": null,
+          "reproductions": []
+        }
+      ]
+    },
+    {
+      "label": "b5d42890-r2",
+      "tree": "b5d428908cabbaece955a816a72ba0a477d3422e",
+      "defect": "finding 9: Enter on the focused theme control runs equals (round 1, state-integrity, medium)",
+      "reviewedCommit": "31c376c775b15854de05675c8d3b4645493ae190",
+      "changedPaths": [
+        "index.html",
+        "src/app.js",
+        "src/calculator.js",
+        "src/styles.css"
+      ],
+      "panel": [
+        {
+          "reviewer": "code-reviewer-correctness",
+          "rawFile": "b5d42890-r2-code-reviewer-correctness.jsonl",
+          "rawWrittenAt": "2026-10-23T19:22:25.853Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.00857319,
+          "durationMs": 53431,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [
+            {
+              "severity": "medium",
+              "classification": "current_artifact",
+              "location": "src/app.js:85",
+              "intentKey": "enter-blocks-theme-toggle-activation",
+              "subject": "Pressing Enter while the theme control has keyboard focus runs the calculator equals action and calls preventDefault, so the theme button is never activated and the theme does not change."
+            }
+          ],
+          "rawReproductionCount": 1,
+          "reproductionRefusal": null,
+          "reproductions": [
+            {
+              "intentKey": "enter-blocks-theme-toggle-activation",
+              "location": "src/app.js:85",
+              "fileName": "enter-blocks-theme-toggle.spec.mjs",
+              "content": "const { test, expect } = await import(process.env.BW_PLAYWRIGHT_TEST);\n\ntest(\"Enter on the focused theme control toggles the theme\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await page.keyboard.press(\"Tab\");\n  await page.keyboard.press(\"Enter\");\n  await expect(page.locator(\"html\")).toHaveAttribute(\"data-theme\", \"dark\");\n});\n"
+            }
+          ]
+        },
+        {
+          "reviewer": "code-reviewer-security",
+          "rawFile": "b5d42890-r2-code-reviewer-security.jsonl",
+          "rawWrittenAt": "2026-10-23T19:21:41.055Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.00325779,
+          "durationMs": 8602,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [],
+          "rawReproductionCount": 0,
+          "reproductionRefusal": null,
+          "reproductions": []
+        },
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "rawFile": "b5d42890-r2-code-reviewer-state-integrity.jsonl",
+          "rawWrittenAt": "2026-10-23T19:22:03.443Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.00579309,
+          "durationMs": 30961,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [
+            {
+              "severity": "low",
+              "classification": "current_artifact",
+              "location": "src/app.js:5",
+              "intentKey": "dependency-failure-blocks-theme-init",
+              "subject": "If src/calculator.js fails to load, the top-level Calculator() call in src/app.js throws before the saved theme is applied and before the #theme-toggle click listener is registered, so the theme control and persisted theme are lost even though they do not depend on the calculator logic."
+            }
+          ],
+          "rawReproductionCount": 0,
+          "reproductionRefusal": null,
+          "reproductions": []
+        }
+      ]
+    },
+    {
+      "label": "bc57eb74-r2",
+      "tree": "bc57eb7482b4737fd1fe9e110e50652c630a0aa7",
+      "defect": "finding 10: Enter after a click on an operator re-runs that operator (round 2, correctness, high)",
+      "reviewedCommit": "b71ed96a08c72b47b10df48db7bb3017344d7633",
+      "changedPaths": [
+        "index.html",
+        "src/app.js",
+        "src/calculator.js",
+        "src/styles.css"
+      ],
+      "panel": [
+        {
+          "reviewer": "code-reviewer-correctness",
+          "rawFile": "bc57eb74-r2-code-reviewer-correctness.jsonl",
+          "rawWrittenAt": "2026-10-23T19:23:27.890Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.007224989999999999,
+          "durationMs": 42378,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [
+            {
+              "severity": "high",
+              "classification": "current_artifact",
+              "location": "src/app.js:84",
+              "intentKey": "enter-key-activates-focused-button",
+              "subject": "When a calculator button such as 3 has focus (for example after a mouse click), pressing Enter re-runs that button's action instead of equals, so 2 + 3 then Enter shows 33 rather than 5, violating the Enter = equals keyboard mapping and the plan's requirement to preventDefault on Enter."
+            }
+          ],
+          "rawReproductionCount": 1,
+          "reproductionRefusal": null,
+          "reproductions": [
+            {
+              "intentKey": "enter-key-activates-focused-button",
+              "location": "src/app.js:84",
+              "fileName": "enter-after-digit-click.spec.mjs",
+              "content": "const { test, expect } = await import(process.env.BW_PLAYWRIGHT_TEST);\n\ntest(\"Enter after clicking a digit button still performs equals\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await page.getByRole(\"button\", { name: \"2\", exact: true }).click();\n  await page.getByRole(\"button\", { name: \"+\", exact: true }).click();\n  await page.getByRole(\"button\", { name: \"3\", exact: true }).click();\n  await page.keyboard.press(\"Enter\");\n  await expect(page.locator(\"#display\")).toHaveText(\"5\");\n});\n"
+            }
+          ]
+        },
+        {
+          "reviewer": "code-reviewer-security",
+          "rawFile": "bc57eb74-r2-code-reviewer-security.jsonl",
+          "rawWrittenAt": "2026-10-23T19:22:58.838Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.0038255900000000002,
+          "durationMs": 13296,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [],
+          "rawReproductionCount": 0,
+          "reproductionRefusal": null,
+          "reproductions": []
+        },
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "rawFile": "bc57eb74-r2-code-reviewer-state-integrity.jsonl",
+          "rawWrittenAt": "2026-10-23T19:23:30.678Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.00739689,
+          "durationMs": 45108,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [
+            {
+              "severity": "high",
+              "classification": "current_artifact",
+              "location": "src/app.js:83",
+              "intentKey": "enter-guard-suppresses-equals-after-button-focus",
+              "subject": "After any mouse click leaves a calculator button focused, pressing Enter activates that button again instead of running equals, so 5, +, 3 typed on the keyboard followed by Enter shows 35 rather than 8."
+            },
+            {
+              "severity": "low",
+              "classification": "current_artifact",
+              "location": "src/app.js:5",
+              "intentKey": "no-fallback-when-calculator-script-fails",
+              "subject": "If src/calculator.js fails to load, the top-level Calculator() call throws before the theme handler is registered, so the theme control silently does nothing as well."
+            }
+          ],
+          "rawReproductionCount": 1,
+          "reproductionRefusal": null,
+          "reproductions": [
+            {
+              "intentKey": "enter-guard-suppresses-equals-after-button-focus",
+              "location": "src/app.js:83",
+              "fileName": "enter-after-mouse-click-equals.spec.mjs",
+              "content": "const { test, expect } = await import(process.env.BW_PLAYWRIGHT_TEST);\n\ntest(\"Enter after a mouse click on a digit still runs equals\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await page.locator('[data-digit=\"5\"]').click();\n  await page.keyboard.press(\"+\");\n  await page.keyboard.press(\"3\");\n  await page.keyboard.press(\"Enter\");\n  await expect(page.locator(\"#display\")).toHaveText(\"8\");\n});\n"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "b5d42890-r3",
+      "tree": "b5d428908cabbaece955a816a72ba0a477d3422e",
+      "defect": "finding 9: Enter on the focused theme control runs equals (round 1, state-integrity, medium)",
+      "reviewedCommit": "803d832dc3090acce4c7095e95f1f59f766adee7",
+      "changedPaths": [
+        "index.html",
+        "src/app.js",
+        "src/calculator.js",
+        "src/styles.css"
+      ],
+      "panel": [
+        {
+          "reviewer": "code-reviewer-correctness",
+          "rawFile": "b5d42890-r3-code-reviewer-correctness.jsonl",
+          "rawWrittenAt": "2026-10-23T19:24:51.473Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.00748649,
+          "durationMs": 44084,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [],
+          "rawReproductionCount": 0,
+          "reproductionRefusal": null,
+          "reproductions": []
+        },
+        {
+          "reviewer": "code-reviewer-security",
+          "rawFile": "b5d42890-r3-code-reviewer-security.jsonl",
+          "rawWrittenAt": "2026-10-23T19:24:16.483Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.00331209,
+          "durationMs": 9063,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [],
+          "rawReproductionCount": 0,
+          "reproductionRefusal": null,
+          "reproductions": []
+        },
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "rawFile": "b5d42890-r3-code-reviewer-state-integrity.jsonl",
+          "rawWrittenAt": "2026-10-23T19:24:51.081Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.006962889999999999,
+          "durationMs": 43631,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [],
+          "rawReproductionCount": 0,
+          "reproductionRefusal": null,
+          "reproductions": []
+        }
+      ]
+    },
+    {
+      "label": "bc57eb74-r3",
+      "tree": "bc57eb7482b4737fd1fe9e110e50652c630a0aa7",
+      "defect": "finding 10: Enter after a click on an operator re-runs that operator (round 2, correctness, high)",
+      "reviewedCommit": "6f196363ecced67c5067a49d05d28c5c64fd6ee3",
+      "changedPaths": [
+        "index.html",
+        "src/app.js",
+        "src/calculator.js",
+        "src/styles.css"
+      ],
+      "panel": [
+        {
+          "reviewer": "code-reviewer-correctness",
+          "rawFile": "bc57eb74-r3-code-reviewer-correctness.jsonl",
+          "rawWrittenAt": "2026-10-23T19:25:53.079Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.009361789999999998,
+          "durationMs": 60351,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [
+            {
+              "severity": "high",
+              "classification": "current_artifact",
+              "location": "src/app.js:74",
+              "intentKey": "enter-skipped-when-button-focused",
+              "subject": "When a calculator key such as 3 has focus after a mouse click, pressing Enter enters that digit (display 33) instead of running equals (display 27), so the keyboard equals path fails the AC-013 expectation under the spec's focus convention."
+            }
+          ],
+          "rawReproductionCount": 1,
+          "reproductionRefusal": null,
+          "reproductions": [
+            {
+              "intentKey": "enter-skipped-when-button-focused",
+              "location": "src/app.js:74",
+              "fileName": "enter-after-button-click.spec.mjs",
+              "content": "const { test, expect } = await import(process.env.BW_PLAYWRIGHT_TEST);\n\ntest(\"Enter runs equals after calculator keys were clicked\", async ({ page }) => {\n  await page.goto(\"index.html\");\n  await page.locator('button[data-digit=\"9\"]').click();\n  await page.locator('button[data-operator=\"*\"]').click();\n  await page.locator('button[data-digit=\"3\"]').click();\n  await page.keyboard.press(\"Enter\");\n  await expect(page.locator(\"#display\")).toHaveText(\"27\");\n});\n"
+            }
+          ]
+        },
+        {
+          "reviewer": "code-reviewer-security",
+          "rawFile": "bc57eb74-r3-code-reviewer-security.jsonl",
+          "rawWrittenAt": "2026-10-23T19:25:00.040Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.00317889,
+          "durationMs": 7291,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [],
+          "rawReproductionCount": 0,
+          "reproductionRefusal": null,
+          "reproductions": []
+        },
+        {
+          "reviewer": "code-reviewer-state-integrity",
+          "rawFile": "bc57eb74-r3-code-reviewer-state-integrity.jsonl",
+          "rawWrittenAt": "2026-10-23T19:25:35.442Z",
+          "effectiveModel": "claude-haiku-5-5",
+          "costUsd": 0.00708269,
+          "durationMs": 42660,
+          "exitCode": 0,
+          "status": "valid",
+          "findings": [],
+          "rawReproductionCount": 0,
+          "reproductionRefusal": null,
+          "reproductions": []
+        }
+      ]
+    }
+  ],
+  "confirmations": [
+    {
+      "label": "b5d42890-r1",
+      "tree": "b5d428908cabbaece955a816a72ba0a477d3422e",
+      "where": "reviewed",
+      "results": [
+        {
+          "findingId": 100,
+          "reviewer": "code-reviewer-correctness",
+          "fileName": "enter-theme-toggle.spec.mjs",
+          "contentSha256": "04520fb2a4608a1aaef78cb0e98bce29eaa34ab6ea8a476d2db9875212535f48",
+          "outcome": "confirmed",
+          "detail": "Error: expect(locator).toHaveAttribute(expected) failed"
+        }
+      ]
+    },
+    {
+      "label": "b5d42890-r1",
+      "tree": "b5d428908cabbaece955a816a72ba0a477d3422e",
+      "where": "control",
+      "results": [
+        {
+          "findingId": 100,
+          "reviewer": "code-reviewer-correctness",
+          "fileName": "enter-theme-toggle.spec.mjs",
+          "contentSha256": "04520fb2a4608a1aaef78cb0e98bce29eaa34ab6ea8a476d2db9875212535f48",
+          "outcome": "not_reproduced",
+          "detail": null
+        }
+      ]
+    },
+    {
+      "label": "b5d42890-r2",
+      "tree": "b5d428908cabbaece955a816a72ba0a477d3422e",
+      "where": "reviewed",
+      "results": [
+        {
+          "findingId": 100,
+          "reviewer": "code-reviewer-correctness",
+          "fileName": "enter-blocks-theme-toggle.spec.mjs",
+          "contentSha256": "fa9c87fc408ca9d9a07d91b2a68174566c10034e34311cfd4a66df2a4c4de4f7",
+          "outcome": "confirmed",
+          "detail": "Error: expect(locator).toHaveAttribute(expected) failed"
+        }
+      ]
+    },
+    {
+      "label": "b5d42890-r2",
+      "tree": "b5d428908cabbaece955a816a72ba0a477d3422e",
+      "where": "control",
+      "results": [
+        {
+          "findingId": 100,
+          "reviewer": "code-reviewer-correctness",
+          "fileName": "enter-blocks-theme-toggle.spec.mjs",
+          "contentSha256": "fa9c87fc408ca9d9a07d91b2a68174566c10034e34311cfd4a66df2a4c4de4f7",
+          "outcome": "not_reproduced",
+          "detail": null
+        }
+      ]
+    },
+    {
+      "label": "bc57eb74-r2",
+      "tree": "bc57eb7482b4737fd1fe9e110e50652c630a0aa7",
+      "where": "reviewed",
+      "results": [
+        {
+          "findingId": 100,
+          "reviewer": "code-reviewer-correctness",
+          "fileName": "enter-after-digit-click.spec.mjs",
+          "contentSha256": "bc1ba657168af6c3918c24e471fb2333997c53ce1638d0b7558b6ef112f138ee",
+          "outcome": "confirmed",
+          "detail": "Error: expect(locator).toHaveText(expected) failed"
+        },
+        {
+          "findingId": 300,
+          "reviewer": "code-reviewer-state-integrity",
+          "fileName": "enter-after-mouse-click-equals.spec.mjs",
+          "contentSha256": "ebd9d3bc49426cd627e6f99a2b43d415b1c40c136a973ae01fb80fcfc43b7733",
+          "outcome": "confirmed",
+          "detail": "Error: expect(locator).toHaveText(expected) failed"
+        }
+      ]
+    },
+    {
+      "label": "bc57eb74-r2",
+      "tree": "bc57eb7482b4737fd1fe9e110e50652c630a0aa7",
+      "where": "control",
+      "results": [
+        {
+          "findingId": 100,
+          "reviewer": "code-reviewer-correctness",
+          "fileName": "enter-after-digit-click.spec.mjs",
+          "contentSha256": "bc1ba657168af6c3918c24e471fb2333997c53ce1638d0b7558b6ef112f138ee",
+          "outcome": "not_reproduced",
+          "detail": null
+        },
+        {
+          "findingId": 300,
+          "reviewer": "code-reviewer-state-integrity",
+          "fileName": "enter-after-mouse-click-equals.spec.mjs",
+          "contentSha256": "ebd9d3bc49426cd627e6f99a2b43d415b1c40c136a973ae01fb80fcfc43b7733",
+          "outcome": "not_reproduced",
+          "detail": null
+        }
+      ]
+    },
+    {
+      "label": "bc57eb74-r3",
+      "tree": "bc57eb7482b4737fd1fe9e110e50652c630a0aa7",
+      "where": "reviewed",
+      "results": [
+        {
+          "findingId": 100,
+          "reviewer": "code-reviewer-correctness",
+          "fileName": "enter-after-button-click.spec.mjs",
+          "contentSha256": "b6c8b0bc19b4100b3c25da0afe2a58c84df590acc9539b278fedfcfcdbc4b318",
+          "outcome": "confirmed",
+          "detail": "Error: expect(locator).toHaveText(expected) failed"
+        }
+      ]
+    },
+    {
+      "label": "bc57eb74-r3",
+      "tree": "bc57eb7482b4737fd1fe9e110e50652c630a0aa7",
+      "where": "control",
+      "results": [
+        {
+          "findingId": 100,
+          "reviewer": "code-reviewer-correctness",
+          "fileName": "enter-after-button-click.spec.mjs",
+          "contentSha256": "b6c8b0bc19b4100b3c25da0afe2a58c84df590acc9539b278fedfcfcdbc4b318",
+          "outcome": "not_reproduced",
+          "detail": null
+        }
+      ]
+    }
+  ]
+}
