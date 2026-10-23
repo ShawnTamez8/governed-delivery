@@ -850,6 +850,10 @@ if (-not $Request.eligible -or -not $Submit.eligible) {
 $ExpiresIndex = [array]::IndexOf($Request.args, '--expires')
 if ($ExpiresIndex -lt 0) { throw 'The approval action has no expiry; inspect the action.' }
 $Expires = $Request.args[$ExpiresIndex + 1]
+# PowerShell 7 parses the ISO text into a DateTime; restore the exact text.
+if ($Expires -is [datetime]) {
+    $Expires = $Expires.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [cultureinfo]::InvariantCulture)
+}
 $TransportId = [guid]::NewGuid().ToString('N')
 $PayloadFile = Join-Path $TransportDirectory "run-$RunId-$TransportId-payload.txt"
 $SignatureFile = Join-Path $TransportDirectory "run-$RunId-$TransportId-signature.txt"

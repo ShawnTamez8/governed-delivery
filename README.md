@@ -914,6 +914,10 @@ $Submit = $Snapshot.operatorActions | Where-Object kind -eq 'approval_submit'
 if (-not $Request.eligible -or -not $Submit.eligible) { throw 'Approval actions are not ready.' }
 $ExpiresIndex = [array]::IndexOf($Request.args, '--expires')
 $Expires = $Request.args[$ExpiresIndex + 1]
+# PowerShell 7 parses the ISO text into a DateTime; restore the exact text.
+if ($Expires -is [datetime]) {
+    $Expires = $Expires.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [cultureinfo]::InvariantCulture)
+}
 $PayloadFile = Join-Path $TransportDirectory "run-$RunId-payload.txt"
 $SignatureFile = Join-Path $TransportDirectory "run-$RunId-signature.txt"
 & node $BwCli approval-request --repo $Target --run $RunId --expires $Expires --out $PayloadFile

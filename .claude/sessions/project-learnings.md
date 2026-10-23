@@ -63,7 +63,7 @@ the system of record; machine-local memory is only a cache
 - The multi-stack model is recorded unbuilt in `docs/proposals/target-declared-environments.md`.
 - Open: whether per-seat use is "ordinary use" under Claude Code's legal terms.
 
-**Runbook defect, unfixed:** the approval export breaks under PowerShell 7.6. `ConvertFrom-Json` turns the `--expires` ISO string into a local date. `-DateKind String` fixes it but does not exist in Windows PowerShell 5.1, so `docs/runbooks/cli-operator.md` and `README.md` still need a fix that works in both.
+**Runbook defect, fixed 2026-10-23:** under PowerShell 7.6.7, `ConvertFrom-Json` turns the `--expires` ISO string into a `DateTime` of kind `Utc`. Passed as an argument it renders `10/23/2026 12:00:00` and drops the milliseconds, so `approval-request` refuses it. Windows PowerShell 5.1 keeps the string, and `-DateKind String` exists only in 7.x. The export snippet in `docs/runbooks/cli-operator.md` and `README.md` now formats a `DateTime` back with `ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [cultureinfo]::InvariantCulture)`. Each document's exact snippet, run in both editions against a stand-in CLI using `validateExpiry`, exported the issued expiry unchanged; the committed snippets were refused under 7.6. No test runs the documents' snippets. The other `ConvertFrom-Json` sites only display fields.
 
 **Decision-1 (`src/systemone.ts`, the operator's Foundry resource, API key):**
 - Config comes from user-scope `SYSTEMONE_ENDPOINT`, `SYSTEMONE_DEPLOYMENT`, `SYSTEMONE_DEPLOYMENT_TYPE` and `SYSTEMONE_API_KEY`. The deployment type is never checked (operator, 2026-10-17).
