@@ -1,0 +1,273 @@
+{
+  "provenance": {
+    "capturedOn": "2026-10-22",
+    "plan": "docs/features/served-browser-pages/plan.md (Task 1's delivered-page tree)",
+    "run": "the 2026-10-22 Target Tap paid run (run 1), code_review's reviewed and delivered commit",
+    "source": "C:\\Users\\tamezs\\buildWorks_test_repos\\target-tap-reproduced-findings-2026-10-22\\target at 37f048e3893eab96da3fa6b7880a849f8929668d (tree 4858dd42cbc225f797a4d6d981eb17f5d253cc3f)",
+    "method": "git ls-tree -r -l and git cat-file blob at the commit; each file's bytes rehashed to its git blob ID before writing",
+    "manifest": "every path in the commit's tree, with mode, blob ID and size; `files` holds the bytes of each captured path as UTF-8 text, LF line endings as committed",
+    "dropped": "the bytes of every path outside index.html, package.json and src/: the tests, docs, lockfile, governed.yaml, .gitignore, README.md and tool configs. They remain named, with their blob IDs, in `manifest`"
+  },
+  "commit": "37f048e3893eab96da3fa6b7880a849f8929668d",
+  "tree": "4858dd42cbc225f797a4d6d981eb17f5d253cc3f",
+  "manifest": [
+    {
+      "path": ".gitignore",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "ff8bbb90b11688f9621c29a834b6ed23fb672e2e",
+      "size": 47
+    },
+    {
+      "path": "README.md",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "d59c38515dfcb82970967ece9ed7bd22c9b35896",
+      "size": 1635
+    },
+    {
+      "path": "docs/features/target-tap/design.md",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "8fac7e042c7ec0390003f1ba6ce6e4d59ca29069",
+      "size": 18912
+    },
+    {
+      "path": "docs/features/target-tap/plan.md",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "8bb58df8f3ecccfc993d504a5aca2b10cc2484c9",
+      "size": 18054
+    },
+    {
+      "path": "docs/features/target-tap/spec.md",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "13973676871ddd1f48963fe79a6f47a282a4fce6",
+      "size": 23782
+    },
+    {
+      "path": "eslint.config.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "0f3df6cd70c8c38424390f1547478abf56cf318b",
+      "size": 486
+    },
+    {
+      "path": "governed.yaml",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "bda2808c4a491639e4b01565ae76db76383e188d",
+      "size": 122
+    },
+    {
+      "path": "index.html",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "8a8e622fe10829e878cc8523fda3e9369f89919c",
+      "size": 1149
+    },
+    {
+      "path": "package-lock.json",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "fa4f8d557d6ba58be2df89287adc3983c962ffd4",
+      "size": 107616
+    },
+    {
+      "path": "package.json",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "86064e90da053f4a93ef5aa854a6df52731cb5ee",
+      "size": 406
+    },
+    {
+      "path": "src/app.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "dfe7353111aea9493d3223edf332b12c1384fdef",
+      "size": 2254
+    },
+    {
+      "path": "src/config.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "e82d3c4322f27a1da661dc8129e2d3b0ddcfa54f",
+      "size": 168
+    },
+    {
+      "path": "src/controller.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "31f3621fbb664df81a7b07de71edc0638aa1a2eb",
+      "size": 1674
+    },
+    {
+      "path": "src/input.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "84a68e3e47f5aba63da672d2c2b818c8625ca386",
+      "size": 567
+    },
+    {
+      "path": "src/main.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "329c48a97d8f8f6232bb71321ebc5109301cc867",
+      "size": 58
+    },
+    {
+      "path": "src/placement.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "c9cf23289e908b018152642a9886403abd40a116",
+      "size": 613
+    },
+    {
+      "path": "src/render.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "c4ff8a4522469d251d5f9d184246368d1787740e",
+      "size": 1004
+    },
+    {
+      "path": "src/state.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "6230a1f444cad72eb5868bf4dd6bd5f605df9bed",
+      "size": 288
+    },
+    {
+      "path": "src/styles.css",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "0d23292de321637432547b563e0c0693149a1ba8",
+      "size": 1044
+    },
+    {
+      "path": "src/timer.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "744875dfb5d72ee5d825fed1bd381d3d19c30c02",
+      "size": 568
+    },
+    {
+      "path": "tests/a11y.test.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "40508db24621265db567b354932ed84e447442a5",
+      "size": 1699
+    },
+    {
+      "path": "tests/controller.test.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "462b015a02346f937dd993f93c4af4c2bdc8e61b",
+      "size": 6593
+    },
+    {
+      "path": "tests/placement.test.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "7cc1acd45af22904fc9f210100a2954a09f5b570",
+      "size": 2030
+    },
+    {
+      "path": "tests/round.test.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "7ac66fa7b4ba42cc1d2bf94ac225e9e2271f2681",
+      "size": 3153
+    },
+    {
+      "path": "tests/source-policy.test.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "b59479ed2d70379be13921d27bbb3afe9cc3f2cf",
+      "size": 3503
+    },
+    {
+      "path": "tests/timer.test.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "4cc720460a81fcd45e5c91656441cb8ca5ddda00",
+      "size": 2090
+    },
+    {
+      "path": "tests/ui.test.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "374eabd3f2ca7881d5328aeaa4935717bac5cd21",
+      "size": 10001
+    },
+    {
+      "path": "vite.config.js",
+      "mode": "100644",
+      "type": "blob",
+      "blob": "856056749180f15b237bb18a6756e37823b9efc0",
+      "size": 353
+    }
+  ],
+  "files": [
+    {
+      "path": "index.html",
+      "blob": "8a8e622fe10829e878cc8523fda3e9369f89919c",
+      "content": "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n    <title>Target Tap</title>\n    <link rel=\"stylesheet\" href=\"/src/styles.css\" />\n    <script type=\"module\" src=\"/src/main.js\"></script>\n  </head>\n  <body>\n    <header>\n      <h1>Target Tap</h1>\n      <p>Press Start, then tap the target as many times as you can before time runs out.</p>\n    </header>\n    <main>\n      <div class=\"status-row\">\n        <span id=\"score-label\">Score</span>\n        <output id=\"score\" aria-labelledby=\"score-label\">0</output>\n        <span id=\"time-label\">Time</span>\n        <span id=\"time\" role=\"timer\" aria-labelledby=\"time-label\">30</span>\n      </div>\n      <div id=\"play-area\" role=\"group\" aria-label=\"Play area\">\n        <button id=\"target\" type=\"button\" aria-label=\"Target\" hidden></button>\n      </div>\n      <div class=\"actions\">\n        <button id=\"start\" type=\"button\">Start</button>\n        <button id=\"play-again\" type=\"button\" hidden>Play Again</button>\n      </div>\n      <p id=\"message\" role=\"status\" aria-live=\"polite\"></p>\n    </main>\n  </body>\n</html>\n"
+    },
+    {
+      "path": "package.json",
+      "blob": "86064e90da053f4a93ef5aa854a6df52731cb5ee",
+      "content": "{\n  \"name\": \"target-tap\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\",\n    \"preview\": \"vite preview\",\n    \"test\": \"vitest run\",\n    \"lint\": \"eslint .\"\n  },\n  \"devDependencies\": {\n    \"@eslint/js\": \"^9\",\n    \"axe-core\": \"^4.10.0\",\n    \"eslint\": \"^9\",\n    \"globals\": \"^16.0.0\",\n    \"jsdom\": \"^26.0.0\",\n    \"vite\": \"^7.0.0\",\n    \"vitest\": \"^3.2.0\"\n  }\n}\n"
+    },
+    {
+      "path": "src/app.js",
+      "blob": "dfe7353111aea9493d3223edf332b12c1384fdef",
+      "content": "import { GAME_CONFIG } from './config.js';\nimport { createGameController } from './controller.js';\nimport { bindInput } from './input.js';\nimport { render } from './render.js';\nimport { createInitialState } from './state.js';\nimport { createTimer } from './timer.js';\n\nconst HIT_FEEDBACK_MS = 150;\n\nexport function mountApp(doc, options = {}) {\n  const byId = (id) => doc.getElementById(id);\n  const elements = {\n    score: byId('score'),\n    time: byId('time'),\n    playArea: byId('play-area'),\n    target: byId('target'),\n    start: byId('start'),\n    playAgain: byId('play-again'),\n    message: byId('message'),\n    win: doc.defaultView,\n  };\n\n  const measure =\n    options.measure ??\n    (() => ({\n      areaWidth: elements.playArea.clientWidth,\n      areaHeight: elements.playArea.clientHeight,\n      targetSize: GAME_CONFIG.targetSizePx,\n    }));\n  const timer = options.timer ?? createTimer();\n  const random = options.random ?? Math.random;\n\n  let previousStatus = createInitialState(GAME_CONFIG).status;\n  let feedbackTimeout = null;\n\n  const controller = createGameController({\n    config: GAME_CONFIG,\n    timer,\n    random,\n    measure,\n    onChange(state) {\n      render(elements, state, GAME_CONFIG);\n      if (state.status !== previousStatus) {\n        if (state.status === 'playing') {\n          elements.target.focus();\n        } else if (state.status === 'gameOver') {\n          elements.playAgain.focus();\n        }\n        previousStatus = state.status;\n      }\n    },\n  });\n\n  render(elements, controller.getState(), GAME_CONFIG);\n\n  const unbind = bindInput(elements, {\n    onStart: () => controller.start(),\n    onResize: () => controller.relayout(),\n    onHit: () => {\n      if (controller.hit()) {\n        elements.target.classList.add('hit');\n        if (feedbackTimeout !== null) {\n          clearTimeout(feedbackTimeout);\n        }\n        feedbackTimeout = setTimeout(() => {\n          feedbackTimeout = null;\n          elements.target.classList.remove('hit');\n        }, HIT_FEEDBACK_MS);\n      }\n    },\n  });\n\n  function unmount() {\n    controller.destroy();\n    if (feedbackTimeout !== null) {\n      clearTimeout(feedbackTimeout);\n      feedbackTimeout = null;\n    }\n    unbind();\n  }\n\n  return { controller, unmount };\n}\n"
+    },
+    {
+      "path": "src/config.js",
+      "blob": "e82d3c4322f27a1da661dc8129e2d3b0ddcfa54f",
+      "content": "export const GAME_CONFIG = Object.freeze({\n  roundDurationSeconds: 30,\n  scorePerHit: 1,\n  targetSizePx: 48,\n  tickIntervalMs: 1000,\n  features: Object.freeze({}),\n});\n"
+    },
+    {
+      "path": "src/controller.js",
+      "blob": "31f3621fbb664df81a7b07de71edc0638aa1a2eb",
+      "content": "import { computeTargetPosition, clampTargetPosition } from './placement.js';\nimport { GameStatus, createInitialState } from './state.js';\n\nexport function createGameController({ config, timer, random, measure, onChange }) {\n  let state = createInitialState(config);\n\n  function notify() {\n    if (onChange) {\n      onChange(getState());\n    }\n  }\n\n  function getState() {\n    return { ...state, target: state.target ? { ...state.target } : null };\n  }\n\n  function tick() {\n    if (state.status !== GameStatus.PLAYING) {\n      return;\n    }\n    state.remainingSeconds = Math.max(0, state.remainingSeconds - 1);\n    if (state.remainingSeconds === 0) {\n      timer.stop();\n      state.status = GameStatus.GAME_OVER;\n      state.target = null;\n    }\n    notify();\n  }\n\n  function start() {\n    if (state.status === GameStatus.PLAYING) {\n      return;\n    }\n    timer.stop();\n    const target = computeTargetPosition(measure(), random);\n    state.score = 0;\n    state.remainingSeconds = config.roundDurationSeconds;\n    state.status = GameStatus.PLAYING;\n    state.target = target;\n    timer.start(tick, config.tickIntervalMs);\n    notify();\n  }\n\n  function hit() {\n    if (state.status !== GameStatus.PLAYING) {\n      return false;\n    }\n    const target = computeTargetPosition(measure(), random);\n    state.score += config.scorePerHit;\n    state.target = target;\n    notify();\n    return true;\n  }\n\n  function relayout() {\n    if (state.status !== GameStatus.PLAYING) {\n      return;\n    }\n    state.target = clampTargetPosition(state.target, measure());\n    notify();\n  }\n\n  function destroy() {\n    timer.stop();\n  }\n\n  return { getState, start, hit, relayout, destroy };\n}\n"
+    },
+    {
+      "path": "src/input.js",
+      "blob": "84a68e3e47f5aba63da672d2c2b818c8625ca386",
+      "content": "export function bindInput(elements, handlers) {\n  const { start, target, playAgain, win } = elements;\n  const { onStart, onHit, onResize } = handlers;\n\n  start.addEventListener('click', onStart);\n  target.addEventListener('click', onHit);\n  playAgain.addEventListener('click', onStart);\n  win.addEventListener('resize', onResize);\n\n  return function unbind() {\n    start.removeEventListener('click', onStart);\n    target.removeEventListener('click', onHit);\n    playAgain.removeEventListener('click', onStart);\n    win.removeEventListener('resize', onResize);\n  };\n}\n"
+    },
+    {
+      "path": "src/main.js",
+      "blob": "329c48a97d8f8f6232bb71321ebc5109301cc867",
+      "content": "import { mountApp } from './app.js';\n\nmountApp(document);\n"
+    },
+    {
+      "path": "src/placement.js",
+      "blob": "c9cf23289e908b018152642a9886403abd40a116",
+      "content": "function computeBounds({ areaWidth, areaHeight, targetSize }) {\n  return {\n    maxX: Math.max(0, Math.floor(areaWidth - targetSize)),\n    maxY: Math.max(0, Math.floor(areaHeight - targetSize)),\n  };\n}\n\nexport function computeTargetPosition(area, random) {\n  const { maxX, maxY } = computeBounds(area);\n  return {\n    x: Math.floor(random() * (maxX + 1)),\n    y: Math.floor(random() * (maxY + 1)),\n  };\n}\n\nexport function clampTargetPosition(target, area) {\n  const { maxX, maxY } = computeBounds(area);\n  return {\n    x: Math.min(maxX, Math.max(0, target.x)),\n    y: Math.min(maxY, Math.max(0, target.y)),\n  };\n}\n"
+    },
+    {
+      "path": "src/render.js",
+      "blob": "c4ff8a4522469d251d5f9d184246368d1787740e",
+      "content": "import { GameStatus } from './state.js';\n\nexport function render(elements, state, config) {\n  const { score, time, target, start, playAgain, message } = elements;\n  score.textContent = String(state.score);\n  time.textContent = String(state.remainingSeconds);\n\n  target.hidden = state.status !== GameStatus.PLAYING;\n  start.hidden = state.status !== GameStatus.READY;\n  playAgain.hidden = state.status !== GameStatus.GAME_OVER;\n\n  if (state.status === GameStatus.PLAYING && state.target) {\n    target.style.left = `${state.target.x}px`;\n    target.style.top = `${state.target.y}px`;\n    target.style.width = `${config.targetSizePx}px`;\n    target.style.height = `${config.targetSizePx}px`;\n  }\n\n  if (state.status === GameStatus.READY) {\n    message.textContent = `Press Start to begin a ${config.roundDurationSeconds}-second round.`;\n  } else if (state.status === GameStatus.GAME_OVER) {\n    message.textContent = `Game over! Final score: ${state.score}.`;\n  } else {\n    message.textContent = '';\n  }\n}\n"
+    },
+    {
+      "path": "src/state.js",
+      "blob": "6230a1f444cad72eb5868bf4dd6bd5f605df9bed",
+      "content": "export const GameStatus = Object.freeze({\n  READY: 'ready',\n  PLAYING: 'playing',\n  GAME_OVER: 'gameOver',\n});\n\nexport function createInitialState(config) {\n  return {\n    status: GameStatus.READY,\n    score: 0,\n    remainingSeconds: config.roundDurationSeconds,\n    target: null,\n  };\n}\n"
+    },
+    {
+      "path": "src/styles.css",
+      "blob": "0d23292de321637432547b563e0c0693149a1ba8",
+      "content": "[hidden] {\n  display: none !important;\n}\n\nbody {\n  margin: 0;\n  padding: 16px;\n  font-family: system-ui, sans-serif;\n  color: #1a1a1a;\n  background: #ffffff;\n}\n\nheader {\n  margin-bottom: 16px;\n}\n\nh1 {\n  margin: 0 0 8px;\n}\n\n.status-row {\n  display: flex;\n  flex-wrap: wrap;\n  gap: 8px 16px;\n  align-items: baseline;\n  margin-bottom: 12px;\n  font-size: 1.25rem;\n}\n\n#play-area {\n  position: relative;\n  width: 100%;\n  max-width: 640px;\n  min-height: 300px;\n  overflow: hidden;\n  border: 2px solid #1a1a1a;\n  box-sizing: border-box;\n  background: #f2f2f2;\n}\n\n#target {\n  position: absolute;\n  padding: 0;\n  border: 4px double #1a1a1a;\n  border-radius: 50%;\n  background: #ffd23f;\n  cursor: pointer;\n  transition: transform 100ms ease-out;\n}\n\n#target.hit {\n  transform: scale(1.2);\n}\n\n.actions {\n  margin: 12px 0;\n}\n\nbutton {\n  font: inherit;\n  padding: 8px 16px;\n}\n\nbutton:focus-visible {\n  outline: 3px solid #0050d0;\n  outline-offset: 2px;\n}\n\n@media (prefers-reduced-motion: reduce) {\n  #target {\n    animation: none;\n    transition: none;\n  }\n}\n"
+    },
+    {
+      "path": "src/timer.js",
+      "blob": "744875dfb5d72ee5d825fed1bd381d3d19c30c02",
+      "content": "export function createTimer({ setIntervalFn, clearIntervalFn } = {}) {\n  let handle = null;\n  let active = false;\n\n  function stop() {\n    if (!active) {\n      return;\n    }\n    const clear = clearIntervalFn ?? globalThis.clearInterval;\n    clear(handle);\n    handle = null;\n    active = false;\n  }\n\n  function start(onTick, intervalMs) {\n    stop();\n    const schedule = setIntervalFn ?? globalThis.setInterval;\n    handle = schedule(onTick, intervalMs);\n    active = true;\n  }\n\n  function isRunning() {\n    return active;\n  }\n\n  return { start, stop, isRunning };\n}\n"
+    }
+  ]
+}
