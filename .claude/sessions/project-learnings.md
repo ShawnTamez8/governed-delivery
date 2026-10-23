@@ -5,7 +5,7 @@ history and may name superseded state; Current state wins when they disagree. Th
 the system of record; machine-local memory is only a cache
 (`docs/proposals/durable-knowledge-tiers.md`).
 
-## Current state (2026-10-22: change 7 built, `Implemented` and committed on `sandboxed-delivery` (`c52017f`, records `214bb84`), not pushed; Task 10's paid run and a Target Tap run completed; the served-browser-pages fix is built, `Implemented` and committed (`663b789`), not pushed; change 4 and change 1 built and committed; crew-chatter run 8 not merged; no spend authorized)
+## Current state (2026-10-23: change 7 built, `Implemented`, committed on `sandboxed-delivery` (`c52017f`, records `214bb84`) and pushed; Task 10's paid run and a Target Tap run completed; the served-browser-pages fix is built, `Implemented`, committed (`663b789`) and pushed; change 4 and change 1 built and committed; crew-chatter run 8 not merged; no spend authorized)
 
 **Change 7, reproduced review findings (2026-10-22).** `docs/features/reproduced-review-findings/plan.md` is `Implemented`. The build is `c52017f`; the paid-run records, the false-confirmation fixtures, hazard 18's measured paragraph and the fix plan are `214bb84`. `docs/runbooks/workflow-explorer.html` is not part of either.
 - **Independent review: 7 findings, all fixed.** Operator decisions:
@@ -14,14 +14,14 @@ the system of record; machine-local memory is only a cache
   - findings 3/4: each reproduction and check runs alone in its own checkout and sandbox, and checks run after verification passes;
   - finding 6: remediation mounts only `.governance/code-review/<run>/preserved/`.
 - **Regression:** the full suite is 1877/1883, with 4 skips. Its 2 failures are the `sign-approval` keygen refusal tests: Node v26.4.0 aborts in `process.exit` with a libuv `UV_HANDLE_CLOSING` assertion, and the script is unchanged. The engine suites pass 28/28, and the benchmark 6/6.
-- **Committed** as `c52017f`, with the run records in `214bb84`; neither is pushed.
+- **Committed** as `c52017f`, with the run records in `214bb84`; both pushed 2026-10-23.
 - **Task 10's paid run (operator-authorized):**
   - It completed: 16 dispatches, $1.49350, at `C:\Users\tamezs\buildWorks_test_repos\reproduced-findings-web-calculator-2026-10-22\target`.
   - Its one panel was clean, so no reproduction was ever written or run. Only the structured reviewer reply is proven live (fixture `code-review-structured-reply-web-calculator-2026-10-22.json`).
   - Confirmation and preservation have no live run, and reviewer recall has no sample.
   - A second paid run, Target Tap, also completed: 19 dispatches, $4.61744, one clean panel, at `C:\Users\tamezs\buildWorks_test_repos\target-tap-reproduced-findings-2026-10-22\target`. It paused at the package decision, which the operator answered from the dashboard; the auto-mode classifier then blocked the assistant's post-signing `run --yes`, so the operator launched it.
   - **Measured (free, on the engine):** both browser runners open `file:///work/`, so a module-script or root-absolute-path page runs no code, and two spec-derived reproductions falsely confirmed against Target Tap's delivered commit. The evidence is in hazard 18 and `test/fixtures/recorded/reproduction-{report-file-origin-ac-014,report-file-origin-ac-016,diagnostic-file-origin}.json`.
-  - The fix plan `docs/features/served-browser-pages/plan.md` is `Implemented` (operator-authorized 2026-10-22, built 2026-10-22/23). The build is committed as `663b789` and the delivered-page fixture as `12619c8`; neither is pushed. Both runners now serve `/work` through `container/serve.mjs` on `127.0.0.1:47731` (image `bw-sandbox:975c2e567b66` at Task 1; the review fixes changed `container/` again, so new runs build a newer tag). The Target Tap reproductions are now `not_reproduced` on the engine. The full suite passed 1887/1893 (the 2 `sign-approval` failures, 4 skips). The code review (`2026-10-22-code-review.md`) had 4 accepted and 1 deferred: a runner killed at the ceiling in a shared dispatch container may hold the port, and fixing that is the operator's call. Plan decisions: accept the unretained server exception text (M4), and a `301` for a directory URL without a trailing slash.
+  - The fix plan `docs/features/served-browser-pages/plan.md` is `Implemented` (operator-authorized 2026-10-22, built 2026-10-22/23). The build is committed as `663b789` and the delivered-page fixture as `12619c8`; both pushed 2026-10-23. Both runners now serve `/work` through `container/serve.mjs` on `127.0.0.1:47731` (image `bw-sandbox:975c2e567b66` at Task 1; the review fixes changed `container/` again, so new runs build a newer tag). The Target Tap reproductions are now `not_reproduced` on the engine. The full suite passed 1887/1893 (the 2 `sign-approval` failures, 4 skips). The code review (`2026-10-22-code-review.md`) had 4 accepted and 1 deferred: a runner killed at the ceiling in a shared dispatch container may hold the port, and fixing that is the operator's call. Plan decisions: accept the unretained server exception text (M4), and a `301` for a directory URL without a trailing slash.
   - `.claude/skills/run-buildworks/SKILL.md` still lists `target-tap` as "Never run".
   - Whether to spend again on a run that attracts findings is the operator's call.
 - `runAlone`'s thrown-error wrapper is written, not verified.
@@ -77,7 +77,7 @@ the system of record; machine-local memory is only a cache
 - Structured-output open decisions 1 (remediation drops unchanged files) and 3 (other dispatches to a schema) remain undecided.
 
 **Working state (verified 2026-10-23):**
-- `dashboard-restyling` is pushed at `7446cd0`; `sandboxed-delivery` is pushed through `5e4154e`; `de99c1d`, `c52017f`, `214bb84`, `83c8bd3`, `12619c8` and `663b789` are local only. Pushing uses the personal gh account (auto memory).
+- `dashboard-restyling` is pushed at `7446cd0`; `sandboxed-delivery` is pushed in full as of 2026-10-23, through the commit that records this line; no commit is local only. Pushing uses the personal gh account (auto memory), and the push needs The Snitch's approval.
 - `CLAUDE.md` and `AGENTS.md` are byte-identical.
 - Unbuilt by choice: `baseline-verification`, `implementation-phase-retry` (`Reconciled`), `implementation-segments-and-pause` (`Shelved`), `usage-limit-refusal-summary` and `code-review-contract-drift-issue` (`Proposed`). `dashboard-pwa-redesign` is `Reconciled` with Task 7 next.
 - No run or background process is in flight.
