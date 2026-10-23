@@ -14,7 +14,17 @@ the system of record; machine-local memory is only a cache
   - findings 3/4: each reproduction and check runs alone in its own checkout and sandbox, and checks run after verification passes;
   - finding 6: remediation mounts only `.governance/code-review/<run>/preserved/`.
 - **Regression:** the full suite is 1877/1883, with 4 skips. Its 2 failures are the `sign-approval` keygen refusal tests: Node v26.4.0 aborts in `process.exit` with a libuv `UV_HANDLE_CLOSING` assertion, and the script is unchanged. The engine suites pass 28/28, and the benchmark 6/6.
-- **Next:** the operator decides whether to commit and whether to authorize Task 10's paid run. It runs once on the web calculator, without `--acceptance-tests`, in a durable directory. `runAlone`'s thrown-error wrapper is written, not verified.
+- **Committed** as `c52017f`, not pushed.
+- **Task 10's paid run (operator-authorized):**
+  - It completed: 16 dispatches, $1.49350, at `C:\Users\tamezs\buildWorks_test_repos\reproduced-findings-web-calculator-2026-10-22\target`.
+  - Its one panel was clean, so no reproduction was ever written or run. Only the structured reviewer reply is proven live (fixture `code-review-structured-reply-web-calculator-2026-10-22.json`).
+  - Confirmation and preservation have no live run, and reviewer recall has no sample.
+  - A second paid run, Target Tap, also completed: 19 dispatches, $4.61744, one clean panel, at `C:\Users\tamezs\buildWorks_test_repos\target-tap-reproduced-findings-2026-10-22\target`. It paused at the package decision, which the operator answered from the dashboard; the auto-mode classifier then blocked the assistant's post-signing `run --yes`, so the operator launched it.
+  - **Measured (free, on the engine):** both browser runners open `file:///work/`, so a module-script or root-absolute-path page runs no code, and two spec-derived reproductions falsely confirmed against Target Tap's delivered commit. The evidence is in hazard 18 and `test/fixtures/recorded/reproduction-{report-file-origin-ac-014,report-file-origin-ac-016,diagnostic-file-origin}.json`.
+  - The fix plan is `docs/features/served-browser-pages/plan.md` (`Proposed`): a loopback page server for both runners. Building it is not authorized.
+  - `.claude/skills/run-buildworks/SKILL.md` still lists `target-tap` as "Never run".
+  - Whether to spend again on a run that attracts findings is the operator's call.
+- `runAlone`'s thrown-error wrapper is written, not verified.
 - The plan's review: `2026-10-22-plan-review.md` (3 critical, 4 high, 9 medium, 5 missing, 2 suggested: 22 accepted, 1 deferred).
 - Reproductions are Playwright `.spec.mjs` files (one constant, `REPRODUCTION_FILE_NAME`) run by a new system-owned `container/checks.config.mjs` (`testDir: "/bw-checks"`), one command per file, in a throwaway detached checkout of the reviewed commit, never the run's worktree.
 - Operator decisions, 2026-10-22:

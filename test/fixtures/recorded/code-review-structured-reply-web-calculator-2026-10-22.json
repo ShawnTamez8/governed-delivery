@@ -1,0 +1,65 @@
+{
+  "provenance": {
+    "run": "driver.mjs paid --yes --model claude-sonnet-5-5 on the committed web-calculator design, run 1 of C:\\Users\\tamezs\\buildWorks_test_repos\\reproduced-findings-web-calculator-2026-10-22\\target (docs/features/reproduced-review-findings/plan.md, Task 10)",
+    "buildworks": "c52017f",
+    "claude": "2.1.308 (Claude Code)",
+    "image": "sha256:3736e8f3ecf7cea53d3241f94624808c354875ea2fc902019586d0102fb7f865",
+    "reviewedCommit": "ae69699f4923640ee8d69dec3c9e0dff81fccc43",
+    "dispatched": "2026-10-22T19:43:21Z to 2026-10-22T19:44:11Z, the round-1 panel, Haiku 5.5 medium, under --json-schema CODE_REVIEW_REPLY_SCHEMA",
+    "captured": "2026-10-22",
+    "dropped": "everything in each retained stream-json file except the last line's total_cost_usd, duration_ms, is_error and structured_output; raw names the file under .governance/raw/1/",
+    "note": "The first live reviewer replies through structured output. The panel was clean: no finding, so no reproduction ran. Two replies carry an empty reproductions array and one omits the member."
+  },
+  "replies": [
+    {
+      "raw": "2026-10-22T19-43-21-096Z-52fe5dc878c1.json",
+      "total_cost_usd": 0.00367829,
+      "duration_ms": 6794,
+      "is_error": false,
+      "structured_output": {
+        "status": "proposed",
+        "agent": "code-reviewer-security",
+        "role": "reviewer",
+        "executor": "claude-code",
+        "summary": "No actionable security defects found in calculator.js, index.html or styles.css at ae69699. Display output uses textContent only, so no HTML injection path exists. The saved theme from localStorage is accepted only if it equals 'dark' or 'light' and is otherwise ignored. The script makes no network calls, uses no eval or Function, and has no secrets or credentials. Keyboard and click input only reach fixed state transitions with numeric and operator values, and results are checked with isFinite before display. The page has no password input, form or external resource.",
+        "proposedContentChanges": {
+          "findings": [],
+          "reproductions": []
+        }
+      }
+    },
+    {
+      "raw": "2026-10-22T19-43-49-229Z-a6f5bb144dcd.json",
+      "total_cost_usd": 0.00683359,
+      "duration_ms": 34801,
+      "is_error": false,
+      "structured_output": {
+        "status": "proposed",
+        "agent": "code-reviewer-state-integrity",
+        "role": "reviewer",
+        "executor": "claude-code",
+        "summary": "Audited calculator.js, index.html and styles.css for resilience defects (interruption, repetition, error recovery, storage failure, listener lifecycle, focus and click handling). No actionable resilience defect found. Storage access is wrapped in try/catch on both read and write; the error flag is cleared by the next digit, decimal or C; applyPending resets state on failure; repeated equals is a no-op; Enter on a focused button is left to native activation without double input; and render is null-guarded for key events that arrive before DOMContentLoaded. Remaining concerns are functional or outside the resilience lens, so no findings are reported.",
+        "proposedContentChanges": {
+          "findings": []
+        }
+      }
+    },
+    {
+      "raw": "2026-10-22T19-44-11-363Z-7d2919f39b61.json",
+      "total_cost_usd": 0.0104333,
+      "duration_ms": 57422,
+      "is_error": false,
+      "structured_output": {
+        "status": "proposed",
+        "agent": "code-reviewer-correctness",
+        "role": "reviewer",
+        "executor": "claude-code",
+        "summary": "Traced the calculator state machine, keyboard and click dispatch, error path, Backspace, decimal entry, theme persistence, and CSS focus/hover/viewport rules against AC-001 through AC-025 and the plan tasks. Each traced case produced the expected display text or state (for example AC-009 yields 3.75, AC-014 yields 15/5/42/4, AC-016 resets to 0, and division by zero shows Error with the next digit starting fresh). I found no concrete correctness defect in the committed change, so no findings are reported.",
+        "proposedContentChanges": {
+          "findings": [],
+          "reproductions": []
+        }
+      }
+    }
+  ]
+}

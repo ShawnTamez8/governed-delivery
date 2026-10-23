@@ -1,0 +1,45 @@
+{
+  "provenance": {
+    "capturedOn": "2026-10-22",
+    "plan": "docs/features/served-browser-pages/plan.md (the false-confirmation evidence)",
+    "case": "what the same page loads opened as the checks runner opens it (file:///work/index.html), served over loopback HTTP, and as a copy with relative paths still opened from disk",
+    "image": {
+      "tag": "bw-sandbox:b3acf46315c0",
+      "imageId": "sha256:3736e8f3ecf7cea53d3241f94624808c354875ea2fc902019586d0102fb7f865",
+      "playwright": "1.64.1"
+    },
+    "command": [
+      "docker",
+      "run",
+      "--rm",
+      "--network",
+      "none",
+      "-v",
+      "<tree>:/work:ro",
+      "-v",
+      "<checks>:/bw-checks:ro",
+      "-w",
+      "/work",
+      "bw-sandbox:b3acf46315c0",
+      "node",
+      "/opt/bw-browser/node_modules/@playwright/test/cli.js",
+      "test",
+      "--config",
+      "/opt/bw-browser/checks.config.mjs",
+      "--reporter=list",
+      "--workers=1",
+      "/bw-checks/diag.spec.mjs"
+    ],
+    "sandbox": "none: a direct docker run outside the system, so the spec could use events, waits and a server the lint refuses",
+    "exitCode": 0,
+    "target": "git archive of C:\\Users\\tamezs\\buildWorks_test_repos\\target-tap-reproduced-findings-2026-10-22\\target at 37f048e3893eab96da3fa6b7880a849f8929668d, the code_review stage's reviewed and delivered commit of the 2026-10-22 Target Tap paid run; its index.html loads <script type=\"module\" src=\"/src/main.js\"> and <link href=\"/src/styles.css\">",
+    "dropped": "nothing: output is the run's stdout and stderr verbatim"
+  },
+  "files": [
+    {
+      "path": "/bw-checks/diag.spec.mjs",
+      "content": "// Diagnostic, run directly in the image (not through the system): what the\n// delivered Target Tap page loads and does when opened the way the checks\n// runner opens it, against the same tree served over loopback HTTP, and against\n// a copy whose script and stylesheet paths are made relative.\nconst { test, expect } = await import(process.env.BW_PLAYWRIGHT_TEST);\nimport { createServer } from \"node:http\";\nimport { cpSync, mkdirSync, readFileSync, writeFileSync } from \"node:fs\";\nimport { extname, join } from \"node:path\";\n\nfunction watch(page) {\n  const events = [];\n  page.on(\"console\", (m) => events.push(`console.${m.type()}: ${m.text()}`));\n  page.on(\"pageerror\", (e) => events.push(`pageerror: ${e.message}`));\n  page.on(\"requestfailed\", (r) => events.push(`requestfailed: ${r.url()} ${r.failure()?.errorText}`));\n  page.on(\"requestfinished\", (r) => events.push(`requestfinished: ${r.url()}`));\n  return events;\n}\n\nasync function observe(page, url, events) {\n  await page.goto(url);\n  await page.waitForLoadState(\"load\");\n  await page.waitForTimeout(1000);\n  const message = await page.locator(\"#message\").textContent();\n  await page.locator(\"#start\").click();\n  await page.waitForTimeout(500);\n  const startHidden = await page.locator(\"#start\").isHidden();\n  console.log(JSON.stringify({ url, message, startHiddenAfterClick: startHidden, events }, null, 1));\n}\n\ntest(\"file: as the checks runner opens it\", async ({ page }) => {\n  const events = watch(page);\n  await observe(page, \"file:///work/index.html\", events);\n  await expect(page.locator(\"body\")).toBeVisible();\n});\n\ntest(\"http: the same tree over loopback\", async ({ page }) => {\n  const types = { \".html\": \"text/html\", \".js\": \"text/javascript\", \".css\": \"text/css\" };\n  const server = createServer((req, res) => {\n    try {\n      const body = readFileSync(join(\"/work\", decodeURIComponent(new URL(req.url, \"http://x\").pathname)));\n      res.writeHead(200, { \"content-type\": types[extname(req.url)] ?? \"application/octet-stream\" });\n      res.end(body);\n    } catch {\n      res.writeHead(404);\n      res.end();\n    }\n  });\n  await new Promise((resolve) => server.listen(0, \"127.0.0.1\", resolve));\n  try {\n    const events = watch(page);\n    await observe(page, `http://127.0.0.1:${server.address().port}/index.html`, events);\n  } finally {\n    server.close();\n  }\n  await expect(page.locator(\"body\")).toBeVisible();\n});\n\ntest(\"file: a copy with relative script and stylesheet paths\", async ({ page }) => {\n  mkdirSync(\"/tmp/relative\", { recursive: true });\n  cpSync(\"/work/src\", \"/tmp/relative/src\", { recursive: true });\n  const html = readFileSync(\"/work/index.html\", \"utf8\").replace('href=\"/src/styles.css\"', 'href=\"src/styles.css\"').replace('src=\"/src/main.js\"', 'src=\"src/main.js\"');\n  writeFileSync(\"/tmp/relative/index.html\", html);\n  const events = watch(page);\n  await observe(page, \"file:///tmp/relative/index.html\", events);\n  await expect(page.locator(\"body\")).toBeVisible();\n});\n"
+    }
+  ],
+  "output": "\nRunning 3 tests using 1 worker\n\n{\n \"url\": \"file:///work/index.html\",\n \"message\": \"\",\n \"startHiddenAfterClick\": false,\n \"events\": [\n  \"requestfailed: file:///src/styles.css net::ERR_FILE_NOT_FOUND\",\n  \"console.error: Failed to load resource: net::ERR_FILE_NOT_FOUND\",\n  \"requestfinished: file:///work/index.html\",\n  \"console.error: Access to script at 'file:///src/main.js' from origin 'null' has been blocked by CORS policy: Cross origin requests are only supported for protocol schemes: chrome, chrome-untrusted, data, http, https.\",\n  \"requestfailed: file:///src/main.js net::ERR_FAILED\",\n  \"console.error: Failed to load resource: net::ERR_FAILED\"\n ]\n}\n  ✓  1 ../bw-checks/diag.spec.mjs:30:1 › file: as the checks runner opens it (1.6s)\n{\n \"url\": \"http://127.0.0.1:41281/index.html\",\n \"message\": \"Press Start to begin a 30-second round.\",\n \"startHiddenAfterClick\": true,\n \"events\": [\n  \"requestfinished: http://127.0.0.1:41281/index.html\",\n  \"requestfinished: http://127.0.0.1:41281/src/styles.css\",\n  \"requestfinished: http://127.0.0.1:41281/src/main.js\",\n  \"requestfinished: http://127.0.0.1:41281/src/app.js\",\n  \"requestfinished: http://127.0.0.1:41281/src/config.js\",\n  \"requestfinished: http://127.0.0.1:41281/src/controller.js\",\n  \"requestfinished: http://127.0.0.1:41281/src/input.js\",\n  \"requestfinished: http://127.0.0.1:41281/src/placement.js\",\n  \"requestfinished: http://127.0.0.1:41281/src/render.js\",\n  \"requestfinished: http://127.0.0.1:41281/src/state.js\",\n  \"requestfinished: http://127.0.0.1:41281/src/timer.js\"\n ]\n}\n  ✓  2 ../bw-checks/diag.spec.mjs:36:1 › http: the same tree over loopback (1.6s)\n{\n \"url\": \"file:///tmp/relative/index.html\",\n \"message\": \"\",\n \"startHiddenAfterClick\": false,\n \"events\": [\n  \"requestfinished: file:///tmp/relative/index.html\",\n  \"console.error: Access to script at 'file:///tmp/relative/src/main.js' from origin 'null' has been blocked by CORS policy: Cross origin requests are only supported for protocol schemes: chrome, chrome-untrusted, data, http, https.\",\n  \"requestfailed: file:///tmp/relative/src/main.js net::ERR_FAILED\",\n  \"console.error: Failed to load resource: net::ERR_FAILED\",\n  \"requestfinished: file:///tmp/relative/src/styles.css\"\n ]\n}\n  ✓  3 ../bw-checks/diag.spec.mjs:58:1 › file: a copy with relative script and stylesheet paths (1.6s)\n\n  3 passed (5.4s)\n"
+}

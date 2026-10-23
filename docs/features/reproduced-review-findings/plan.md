@@ -458,7 +458,16 @@ Each fix has a test that failed when the fix was broken, and each file was resto
 - The two failures are `test/sign-approval.test.ts`'s keygen refusal tests, which this change does not touch. `scripts/sign-approval.mjs` is unchanged since `72fe14f`. It prints its refusal and writes nothing. Node v26.4.0 then aborts inside `process.exit(2)` with `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 94`, exit `3221226505`. Run alone, they fail the same way.
 - The engine suites ran on Docker 29.8.2: `test/container.test.ts`, `test/acceptance-engine.test.ts` and the benchmark passed 28 of 28. The benchmark's six tests all passed.
 
-**Deferred.** The paid benchmark (Task 10) awaits consent.
+**Task 10's paid run (2026-10-22, operator-authorized).** The build was committed as `c52017f` first. The run was `driver.mjs paid --yes --model claude-sonnet-5-5` on the committed web calculator, without `--acceptance-tests`. Its target is `C:\Users\tamezs\buildWorks_test_repos\reproduced-findings-web-calculator-2026-10-22\target` and its log is the `.log` file beside it.
+- **Result:** completed. 16 dispatches cost $1.49350, the driver's steps were 15/15, delivery was 3 of 3 declared artifacts, and the audit chain is valid. The frozen image was `sha256:3736e8f3…`.
+- **Code review:** one clean panel at `ae69699`, with 0 findings and no remediation. All three reviewers answered through `--json-schema` (outcomes `valid`). Two replies carried an empty `reproductions` array and one omitted it. The replies are `test/fixtures/recorded/code-review-structured-reply-web-calculator-2026-10-22.json`.
+- **Against the criterion:** with no finding there was no reproduction, so no outcome to record and no check to preserve or show. The criterion holds only vacuously. This run proves the structured reviewer reply live, and nothing after it. Confirmation, preservation and the failing-check prompt remain proven by tests and the free benchmark only. The recall measurement this run was to start has no sample.
+
+**A second paid run, Target Tap (2026-10-22, operator-authorized).** The run used `--design .claude/skills/run-buildworks/target-tap-design.md --slug target-tap`, with the target at `C:\Users\tamezs\buildWorks_test_repos\target-tap-reproduced-findings-2026-10-22\target`.
+- **Spec review paused** for the operator's package decision (change 10): `vite`, `vitest`, `jsdom`, `eslint`, `@eslint/js`, `globals` and `axe-core`. The operator approved it from the dashboard. The driver cannot answer a decision, so the rest was driven with `run --yes`, the driver's throwaway key, and a second `run --yes`.
+- **Result:** completed. 19 dispatches cost $4.61744, every stage passed, and the code review was one panel over 24 changed paths.
+- **Code review:** the panel was clean again, with 0 findings, so no reproduction was written or run.
+- **A latent defect, untested:** the specification's `index.html` loads `src/main.js` as a module. The checks runner opens pages at `file:///work/`, where Chromium is expected to refuse module scripts [Inference, not run on the image]. A reproduction against such a page could then fail on a matcher with none of the app's code loaded, and be recorded `confirmed`.
 
 ## Rollback
 

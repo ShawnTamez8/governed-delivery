@@ -743,6 +743,34 @@ reproduction that fails for another reason, such as a wrong selector, ends
 confirms falsely. Because no outcome changes a decision, a false confirmation
 can only add a check that the next panel is shown.
 
+**Measured, 2026-10-22, free, on the engine: a page whose code never ran
+confirmed two reproductions.** The checks runner opens the page at
+`file:///work/index.html`. The Target Tap paid run delivered commit `37f048e`, and
+its `index.html` loads `<script type="module" src="/src/main.js">`. Two
+reproductions were written in the session from the approved specification's
+AC-014 and AC-016 and run through `confirmReproductions`. Both were recorded
+`confirmed`, each repeat failing its matcher after the full 5,000 ms expect
+timeout. The same tree served over loopback HTTP shows the AC-014 message and
+hides `#start` after a click, as both criteria require, so both confirmations
+are false.
+
+The page's own errors name two separate causes:
+- the root-absolute paths resolve to `file:///src/...`, which do not exist;
+- a module script opened from `file://` is refused by CORS, so a copy with
+  relative paths still runs nothing.
+
+The evidence is `test/fixtures/recorded/reproduction-report-file-origin-ac-014.json`,
+`test/fixtures/recorded/reproduction-report-file-origin-ac-016.json` and
+`test/fixtures/recorded/reproduction-diagnostic-file-origin.json`. What this adds to
+the entry: an assertion that finds its element and never sees the value is a
+matcher failure whether the defect is there or the page never ran, so the
+confirmation rule cannot tell them apart. The free benchmark's web-calculator
+tree loads a classic script by a relative path, so nothing tested a module page.
+
+The acceptance runner opens the same `file:///work/` page. So on such a page every
+acceptance test is expected to fail and block the run, closed rather than false
+[Inference, not run].
+
 ## 19. An inactivity budget over non-streaming output is a wall clock
 
 An idle timer that resets "on any output" measures inactivity only if the
