@@ -42,6 +42,7 @@ the system of record; machine-local memory is only a cache
 **Change 1, sandboxed implementer: built and committed** (`ff260eb`), with inspectable frozen profiles (`7a725e3`). Its Task 13 paid record: web calculator $1.53764 in 21 dispatches; `CLAUDE.md` probe $0.0043; crew-chatter run 8 (below). Detail is in `docs/features/sandboxed-implementer/plan.md` and `.claude/sessions/2026-10-19-sandboxed-implementer-build.md`.
 
 **Open, the operator's call:**
+- Next build: change 8 part 1, per-phase verification (operator concurred 2026-10-23); its plan is not written yet. The hosted-BuildWorks idea (Azure controller, containerized Claude Code, Foundry models, multi-user, GitHub delivery) is recorded as `docs/proposals/hosted-buildworks.md`, unauthorized. Its first step, Foundry on the workstation, is about a week. The organization's repositories show OIDC deploys, managed identity and Entra sign-in working, but no containers in Azure, no keyless Claude access and no Git push.
 - Whether to fix the served-browser-pages code review's deferred finding 2 (a runner killed at the ceiling in a shared dispatch container may hold port 47731). Which change to build next: the rest of the rework is unbuilt except changes 1, 2, 4, 7 and 10.
 - Crew-chatter feature 5 (`crew-chatter-search`, proposal 32) is not exported or run; `--after 9` is available because `c0665ad` is in `main`.
 - `sandboxed-delivery` is not merged to `master` until the rework is complete, and there is no PR to `master` (operator, 2026-10-17/19).
